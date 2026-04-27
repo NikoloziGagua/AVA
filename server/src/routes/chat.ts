@@ -1,5 +1,6 @@
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
+import { nanoid } from "nanoid";
 import type { Db } from "../state/db.js";
 import { createSession, getSession, touchSession } from "../state/sessions.js";
 import { appendMessage, listMessages } from "../state/messages.js";
@@ -7,13 +8,21 @@ import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
+import type { Chrome } from "../tools/chrome.js";
+import type { PidfileRegistry } from "../process/pidfile.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
   text: z.string().min(1).max(10_000),
 });
 
-export function chatRoutes(db: Db, runs: ActiveRuns, auth: RequestHandler): Router {
+export type AgentDeps = {
+  pidfiles: PidfileRegistry;
+  fsRoots: string[];
+  getChrome: () => Promise<Chrome>;
+};
+
+export function chatRoutes(db: Db, runs: ActiveRuns, auth: RequestHandler, agentDeps: AgentDeps): Router {
   const r = Router();
 
   r.post("/", auth, (req, res) => {
@@ -45,6 +54,7 @@ export function chatRoutes(db: Db, runs: ActiveRuns, auth: RequestHandler): Rout
 
     void (async () => {
       const sid = sessionId!;
+      const runId = nanoid(12);
       const emit = (e: AgentEvent) => {
         const id = buffer.append({ kind: e.kind, payload: e.payload });
         if (e.kind === "final") {
@@ -53,7 +63,14 @@ export function chatRoutes(db: Db, runs: ActiveRuns, auth: RequestHandler): Rout
         return id;
       };
       try {
-        await runAgent({ prompt: transcriptForAgent, abort, emit });
+        const chrome = await agentDeps.getChrome();
+        await runAgent({
+          prompt: transcriptForAgent,
+          abort,
+          emit,
+          runId,
+          deps: { chrome, pidfiles: agentDeps.pidfiles, fsRoots: agentDeps.fsRoots },
+        });
       } finally {
         runs.unregister(sid);
       }

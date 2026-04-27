@@ -9,6 +9,10 @@ export type Config = {
   dbPath: string;
   logLevel: "debug" | "info" | "warn" | "error";
   pairingTtlMs: number;
+  chromeProfileDir: string;
+  screenshotDir: string;
+  pidfileDir: string;
+  fsRoots: string[];
 };
 
 const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -40,6 +44,13 @@ function parsePairingTtlMs(raw: string | undefined): number {
 export function loadConfig(): Config {
   const dataDir = resolve(process.env.DATA_DIR ?? "./data");
   mkdirSync(dataDir, { recursive: true });
+  const chromeProfileDir = resolve(process.env.CHROME_PROFILE_DIR ?? join(dataDir, "chrome-profile"));
+  const screenshotDir = resolve(process.env.SCREENSHOT_DIR ?? join(dataDir, "screenshots"));
+  const pidfileDir = resolve(process.env.PIDFILE_DIR ?? join(dataDir, "pidfiles"));
+  const fsRoots = (process.env.FS_ROOTS ?? "C:/ai/**,C:/projects/**,C:/Users/nikug/Downloads/**")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   return {
     port: parsePort(process.env.PORT),
     bindAddr: process.env.TAILSCALE_IP ?? "127.0.0.1",
@@ -47,5 +58,9 @@ export function loadConfig(): Config {
     dbPath: join(dataDir, "state.db"),
     logLevel: parseLogLevel(process.env.LOG_LEVEL),
     pairingTtlMs: parsePairingTtlMs(process.env.AUTH_PAIRING_TTL_SECONDS),
+    chromeProfileDir,
+    screenshotDir,
+    pidfileDir,
+    fsRoots,
   };
 }

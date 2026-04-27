@@ -31,7 +31,12 @@ export function authRoutes(db: Db, auth: RequestHandler): Router {
   });
 
   r.delete("/devices/:id", auth, (req, res) => {
-    revokeToken(db, req.params.id!);
+    const id = req.params.id;
+    if (typeof id !== "string") {
+      res.status(400).json({ error: "bad_request" });
+      return;
+    }
+    revokeToken(db, id);
     res.status(204).end();
   });
 

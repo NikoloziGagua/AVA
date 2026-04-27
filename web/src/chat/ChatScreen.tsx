@@ -7,9 +7,13 @@ import { useChatStream } from "./useChatStream.js";
 export function ChatScreen() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
-  const { events } = useChatStream(sessionId);
+  const [runEpoch, setRunEpoch] = useState(0);
+  const { events } = useChatStream(sessionId, runEpoch);
 
-  const busy = !events.some((e) => e.kind === "done" || e.kind === "killed" || e.kind === "error");
+  const currentRunFinished = events.some(
+    (e) => e.runEpoch === runEpoch && (e.kind === "done" || e.kind === "killed" || e.kind === "error")
+  );
+  const busy = runEpoch > 0 && !currentRunFinished;
 
   async function send(text: string) {
     const userMsg: ChatMessage = {
@@ -20,6 +24,7 @@ export function ChatScreen() {
     setHistory((prev) => [...prev, userMsg]);
     const r = await api.sendMessage(sessionId, text);
     setSessionId(r.sessionId);
+    setRunEpoch((n) => n + 1);
   }
 
   async function kill() {
@@ -33,7 +38,7 @@ export function ChatScreen() {
         <div className="text-lg font-semibold">Ava</div>
       </header>
       <MessageList history={history} liveEvents={events} />
-      <Composer onSend={send} onKill={kill} busy={!!sessionId && busy && events.length > 0} />
+      <Composer onSend={send} onKill={kill} busy={busy} />
     </div>
   );
 }

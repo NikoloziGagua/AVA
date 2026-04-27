@@ -2,17 +2,19 @@
 import { useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
 
-export type StreamEvent =
-  | { kind: "thought"; payload: { text: string }; id: number }
-  | { kind: "tool_call"; payload: { tool: string; args: unknown }; id: number }
-  | { kind: "tool_result"; payload: { tool: string; ok: boolean; result: string }; id: number }
-  | { kind: "final"; payload: { text: string }; id: number }
-  | { kind: "error"; payload: { message: string }; id: number }
-  | { kind: "killed"; payload: Record<string, never>; id: number }
-  | { kind: "done"; payload: Record<string, never>; id: number }
-  | { kind: "gap"; payload: { from: number; to: number }; id: number };
+type EventBase = { id: number; runEpoch: number };
 
-export function useChatStream(sessionId: string | null) {
+export type StreamEvent =
+  | (EventBase & { kind: "thought"; payload: { text: string } })
+  | (EventBase & { kind: "tool_call"; payload: { tool: string; args: unknown } })
+  | (EventBase & { kind: "tool_result"; payload: { tool: string; ok: boolean; result: string } })
+  | (EventBase & { kind: "final"; payload: { text: string } })
+  | (EventBase & { kind: "error"; payload: { message: string } })
+  | (EventBase & { kind: "killed"; payload: Record<string, never> })
+  | (EventBase & { kind: "done"; payload: Record<string, never> })
+  | (EventBase & { kind: "gap"; payload: { from: number; to: number } });
+
+export function useChatStream(sessionId: string | null, runEpoch: number) {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const lastIdRef = useRef(0);
   const esRef = useRef<EventSource | null>(null);
@@ -20,9 +22,13 @@ export function useChatStream(sessionId: string | null) {
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
+    let finished = false;
+    // Each run has its own event-id space starting at 1; reset id tracking
+    // but keep accumulated events from prior runs visible.
+    lastIdRef.current = 0;
 
     function connect() {
-      if (cancelled) return;
+      if (cancelled || finished) return;
       const token = getToken() ?? "";
       const url =
         `/api/chat/${sessionId}/stream` +
@@ -31,13 +37,24 @@ export function useChatStream(sessionId: string | null) {
       esRef.current = es;
       es.addEventListener("error", () => {
         es.close();
-        setTimeout(connect, 1000);
+        if (!finished) setTimeout(connect, 1000);
       });
       const handle = (kind: StreamEvent["kind"]) => (e: MessageEvent) => {
+        const data = (e as MessageEvent & { data?: string }).data;
+        if (!data || data === "undefined") return;
+        let payload: unknown;
+        try {
+          payload = JSON.parse(data);
+        } catch {
+          return;
+        }
         const id = Number((e as MessageEvent & { lastEventId?: string }).lastEventId ?? 0);
-        const payload = JSON.parse(e.data);
         lastIdRef.current = Math.max(lastIdRef.current, id);
-        setEvents((prev) => [...prev, { kind, payload, id } as StreamEvent]);
+        setEvents((prev) => [...prev, { kind, payload, id, runEpoch } as StreamEvent]);
+        if (kind === "done" || kind === "killed" || kind === "error") {
+          finished = true;
+          es.close();
+        }
       };
       for (const k of ["thought", "tool_call", "tool_result", "final", "error", "killed", "done", "gap"] as const) {
         es.addEventListener(k, handle(k));
@@ -46,7 +63,7 @@ export function useChatStream(sessionId: string | null) {
 
     connect();
     const onVisible = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && !finished) {
         esRef.current?.close();
         connect();
       }
@@ -58,7 +75,7 @@ export function useChatStream(sessionId: string | null) {
       document.removeEventListener("visibilitychange", onVisible);
       esRef.current?.close();
     };
-  }, [sessionId]);
+  }, [sessionId, runEpoch]);
 
   return { events };
 }

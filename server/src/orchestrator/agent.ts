@@ -41,6 +41,10 @@ export async function runAgent(opts: RunOpts): Promise<void> {
         mcpServers: {
           ava: { type: "sdk", name: "ava", instance: shellMcp as unknown as McpServer },
         },
+        // `tools: []` disables ALL built-in claude_code tools (Read/Bash/Edit/etc.).
+        // `allowedTools` is only an auto-approval list — without `tools`, the full
+        // claude_code preset would still be available to the model.
+        tools: [],
         allowedTools: ["mcp__ava__shell"],
       },
     });

@@ -1,0 +1,19 @@
+{
+  "name": "ava",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": ["m0-spike", "server", "web"],
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "spike": "npm -w m0-spike run start",
+    "server:dev": "npm -w server run dev",
+    "server:test": "npm -w server run test",
+    "web:dev": "npm -w web run dev",
+    "web:build": "npm -w web run build",
+    "test": "npm -w server run test && npm -w web run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "@types/node": "^24.0.0"
+  }
+}

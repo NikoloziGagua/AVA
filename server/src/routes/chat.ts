@@ -9,7 +9,7 @@ import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 
 const Body = z.object({
-  sessionId: z.string().optional(),
+  sessionId: z.string().nullish(),
   text: z.string().min(1).max(10_000),
 });
 

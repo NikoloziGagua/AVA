@@ -5,6 +5,16 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { runShell } from "./shell.js";
 
+const MAX_STREAM_CHARS = 4096;
+
+function truncate(s: string): string {
+  if (s.length <= MAX_STREAM_CHARS) return s;
+  return (
+    s.slice(0, MAX_STREAM_CHARS) +
+    `\n... [truncated, ${s.length - MAX_STREAM_CHARS} more chars]`
+  );
+}
+
 export type ShellEvent =
   | { kind: "shell.call"; args: { command: string } }
   | { kind: "shell.result"; ok: boolean; result: string };
@@ -49,9 +59,11 @@ export function buildShellMcp(opts: {
       timeoutMs: 30_000,
       signal: opts.signalForRun(),
     });
+    const stdout = truncate(r.stdout);
+    const stderr = truncate(r.stderr);
     const summary = r.ok
-      ? `EXIT 0\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`
-      : `ERROR: ${r.error}\nSTDOUT:\n${r.stdout}\nSTDERR:\n${r.stderr}`;
+      ? `EXIT 0\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`
+      : `ERROR: ${r.error}\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`;
     opts.emit({ kind: "shell.result", ok: r.ok, result: summary });
     return { content: [{ type: "text", text: summary }] };
   });

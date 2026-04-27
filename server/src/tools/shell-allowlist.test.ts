@@ -42,6 +42,11 @@ describe("shell allowlist", () => {
     }
   });
 
+  it("denies multiline commands (newline bypass)", () => {
+    expect(isAllowed("ls\nrm -rf /").allowed).toBe(false);
+    expect(isAllowed("ls\r\nrm").allowed).toBe(false);
+  });
+
   it("denies empty / whitespace input", () => {
     expect(isAllowed("").allowed).toBe(false);
     expect(isAllowed("   ").allowed).toBe(false);

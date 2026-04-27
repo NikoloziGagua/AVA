@@ -12,7 +12,7 @@ export const FIRST_TOKEN_ALLOWLIST = new Set([
   "echo",
 ]);
 
-const FORBIDDEN_META = /[;&|`$><]/;
+const FORBIDDEN_META = /[;&|`$><\n\r]/;
 const ENV_PATH = /(^|[\\/\s])([^\s\\/]*\.env(\.[a-zA-Z0-9]+)?(\s|$))/i;
 
 export type AllowedResult = { allowed: true } | { allowed: false; reason: string };

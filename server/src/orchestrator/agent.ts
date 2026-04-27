@@ -38,7 +38,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       prompt,
       options: {
         abortController: abort,
-        appendSystemPrompt: buildSystemPrompt(),
+        systemPrompt: { type: "preset", preset: "claude_code", append: buildSystemPrompt() },
         mcpServers: {
           ava: { type: "sdk", name: "ava", instance: shellMcp as unknown as McpServer },
         },

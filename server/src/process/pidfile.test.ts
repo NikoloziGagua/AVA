@@ -57,4 +57,26 @@ describe("PidfileRegistry", () => {
     writeFileSync(join(dir, "run-5", "garbage.txt"), "x");
     expect(reg.list("run-5")).toEqual([7]);
   });
+
+  it("remove deletes a single pid without touching siblings", () => {
+    const reg = new PidfileRegistry(dir);
+    reg.add("run-x", 100);
+    reg.add("run-x", 200);
+    reg.remove("run-x", 100);
+    expect(reg.list("run-x")).toEqual([200]);
+  });
+
+  it("remove on the last pid leaves the run dir empty (but does not delete it)", () => {
+    const reg = new PidfileRegistry(dir);
+    reg.add("run-y", 7);
+    reg.remove("run-y", 7);
+    expect(reg.list("run-y")).toEqual([]);
+  });
+
+  it("remove on an unknown pid is a no-op", () => {
+    const reg = new PidfileRegistry(dir);
+    reg.add("run-z", 1);
+    expect(() => reg.remove("run-z", 999)).not.toThrow();
+    expect(reg.list("run-z")).toEqual([1]);
+  });
 });

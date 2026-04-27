@@ -43,7 +43,8 @@ export function buildClaudeCode(cfg: ClaudeCodeConfig): ClaudeCode {
 
       const args = buildArgs(prompt, cwd, model);
       const child = spawn(claudeBinary, args, { cwd, windowsHide: true });
-      if (typeof child.pid === "number") cfg.pidfiles.add(runId, child.pid);
+      const childPid = child.pid;
+      if (typeof childPid === "number") cfg.pidfiles.add(runId, childPid);
 
       let buf = "";
       const append = (data: Buffer) => {
@@ -60,14 +61,11 @@ export function buildClaudeCode(cfg: ClaudeCodeConfig): ClaudeCode {
 
       return await new Promise<ClaudeCodeResult>((resolve) => {
         child.on("error", (err) => {
-          if (typeof child.pid === "number") cfg.pidfiles.clear(runId);
+          if (typeof childPid === "number") cfg.pidfiles.remove(runId, childPid);
           resolve({ ok: false, reason: String(err.message) });
         });
         child.on("close", (code) => {
-          if (typeof child.pid === "number") {
-            // remove just this pid; if it was the only one, clear() removes the dir
-            cfg.pidfiles.clear(runId);
-          }
+          if (typeof childPid === "number") cfg.pidfiles.remove(runId, childPid);
           const output = scrubSecrets(buf.trim());
           resolve({ ok: true, output, exitCode: code ?? 0 });
         });

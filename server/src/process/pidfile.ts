@@ -25,6 +25,11 @@ export class PidfileRegistry {
     rmSync(dir, { recursive: true, force: true });
   }
 
+  remove(runId: string, pid: number): void {
+    const file = join(this.baseDir, runId, String(pid));
+    rmSync(file, { force: true });
+  }
+
   listAll(): Array<{ runId: string; pid: number }> {
     if (!existsSync(this.baseDir)) return [];
     const out: Array<{ runId: string; pid: number }> = [];

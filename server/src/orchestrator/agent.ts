@@ -32,7 +32,6 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     signalForRun: () => abort.signal,
   });
 
-  let lastTextChunk = "";
   try {
     const result = query({
       prompt,
@@ -52,16 +51,20 @@ export async function runAgent(opts: RunOpts): Promise<void> {
         for (const block of evt.message.content) {
           if (block.type === "text") {
             const text = block.text;
-            if (text && text !== lastTextChunk) {
+            if (text) {
               emit({ kind: "thought", payload: { text } });
-              lastTextChunk = text;
             }
           }
         }
       }
       if (evt.type === "result") {
-        const finalText = (evt as { result?: string }).result ?? "";
-        if (finalText) emit({ kind: "final", payload: { text: finalText } });
+        if (evt.subtype === "success") {
+          if (evt.result) emit({ kind: "final", payload: { text: evt.result } });
+        } else {
+          const errs = evt.errors;
+          const detail = errs?.length ? errs.join("; ") : "unknown";
+          emit({ kind: "error", payload: { message: `${evt.subtype}: ${detail}` } });
+        }
       }
     }
 

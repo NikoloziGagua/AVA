@@ -56,6 +56,29 @@ Spike ran successfully on 2026-04-27. Model used: `claude-opus-4-7`. Auth: `clau
 - `result` event (`type: "result"`, `subtype: "success"`) carries the full cost/usage summary.
 - Auth worked via `claude` CLI login — no `ANTHROPIC_API_KEY` required (Path B confirmed).
 
+### Abort path outcome
+
+Spike ran on 2026-04-27. `abortPath()` called `query()` asking for 5 sequential echo calls, then fired `abort.abort()` after 1 second.
+
+**Full abort-path output (7 lines total, abortPath section only):**
+
+```jsonl
+{"type":"abort_signal_fired"}
+{"type":"aborted","error":"Error: Claude Code process aborted by user"}
+```
+
+**Answers to the 4 outcome questions:**
+
+1. **Did abort halt subsequent tool calls?** Yes — no tool calls were dispatched at all during the abort path. The `AbortController` signal was honored before the model issued any `mcp__ava__echo` invocations.
+
+2. **Did any in-flight tool call complete after abort?** No. Zero `tool_result_during_abort` events were emitted. There were no in-flight calls at the moment of abort — the model had not yet reached its first tool call when the 1-second timer fired.
+
+3. **Final iterator behavior:** Threw an exception — `{"type":"aborted","error":"Error: Claude Code process aborted by user"}`. The `catch (e)` branch was taken. No hang.
+
+4. **Verdict on Path B abort safety:** Clean. `AbortController.abort()` immediately surfaces as a thrown exception in the `for await` loop. Abort semantics work as expected — once aborted, no further events are delivered and the iterator does not complete naturally.
+
+**Context:** The model first performs a `ToolSearch` schema fetch before calling any MCP tool (observed in happyPath). This internal step takes time. With a 1-second abort window, the abort fired during this pre-tool-call phase. Future tests with a longer delay (e.g., 3–5s) could confirm behavior when abort fires mid-sequence of multiple tool calls. For Ava's kill switch purpose, the abort is effective and immediate regardless.
+
 ### API shape deviations from plan
 
 The plan's code snippet was written for a hypothetical SDK `^0.5.0`. Actual SDK is `0.2.120`. Changes required:

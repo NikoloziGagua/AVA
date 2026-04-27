@@ -60,3 +60,44 @@ async function happyPath() {
 }
 
 await happyPath();
+
+async function abortPath() {
+  const abort = new AbortController();
+  const echo = buildEchoServer();
+
+  const result = query({
+    prompt: "Call the echo tool 5 times in a row with messages '1','2','3','4','5'.",
+    options: {
+      abortController: abort,
+      mcpServers: {
+        ava: {
+          type: "sdk",
+          name: "ava",
+          instance: echo as unknown as McpServer,
+        },
+      },
+      allowedTools: ["mcp__ava__echo"],
+    },
+  });
+
+  // Abort after 1 second
+  setTimeout(() => {
+    abort.abort();
+    emit({ type: "abort_signal_fired" });
+  }, 1000);
+
+  try {
+    for await (const evt of result) {
+      if (evt.type === "user" && Array.isArray(evt.message?.content)) {
+        for (const block of evt.message.content) {
+          if (block.type === "tool_result") emit({ type: "tool_result_during_abort" });
+        }
+      }
+    }
+    emit({ type: "iterator_completed_naturally" });
+  } catch (e) {
+    emit({ type: "aborted", error: String(e) });
+  }
+}
+
+await abortPath();

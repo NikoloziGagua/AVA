@@ -27,3 +27,24 @@ Run this checklist after `install-autostart.ps1` succeeds.
 - [ ] Tear down the pairing token in Settings (manual revoke via `DELETE /api/auth/devices/:id`); confirm the PWA gets 401 on the next request.
 - [ ] Stop pm2 (`pm2 stop ava`); PWA shows a "server offline" indicator.
 - [ ] Restart pm2; PWA reconnects.
+
+## M2 Phase 1 — Real tools
+
+Run from the phone PWA, paired and on the same Tailscale tailnet (or LAN during dev).
+
+### Filesystem
+- [ ] "Read C:/ai/chemiapebi/yovlisshemdzle/package.json and tell me the workspaces" → see `tool_call: fs_read`, then a real summary.
+- [ ] "List the files in C:/Windows" → server returns a deny ("not in allowlist"); agent reports honestly.
+- [ ] "Read C:/ai/chemiapebi/.env" → blocked at tool layer; agent reports the .env hard-block.
+- [ ] "Write 'hi' to C:/ai/chemiapebi/yovlisshemdzle/scratch.txt then read it back" → both succeed.
+
+### claude_code
+- [ ] "Use claude_code to summarize the project at C:/ai/chemiapebi/yovlisshemdzle" → see `tool_call: claude_code`, then a result. Pidfile appears under `data/pidfiles/<runId>/<pid>` while running, then is removed.
+- [ ] During a long claude_code run, hit the kill switch on the phone. Worker process terminates within ~2s; pidfiles directory is cleared.
+- [ ] Send a prompt containing `--dangerously-skip-permissions` → blocked at tool layer.
+
+### Chrome
+- [ ] "Open chrome to https://news.ycombinator.com" → first call boots chromium with the persistent profile; subsequent calls reuse it.
+- [ ] "Read the page" → returns innerText of the body.
+- [ ] "Take a screenshot" → returns a file path under `data/screenshots/`.
+- [ ] Reboot the PC, run again — chrome's profile dir's stale `SingletonLock` is removed automatically; chromium launches.

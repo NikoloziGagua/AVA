@@ -53,7 +53,7 @@ describe("shell allowlist", () => {
   });
 
   it("FIRST_TOKEN_ALLOWLIST contains the documented commands", () => {
-    for (const cmd of ["ls", "dir", "cat", "pwd", "git", "npm", "node", "python", "pip", "where"]) {
+    for (const cmd of ["ls", "dir", "cat", "git", "npm", "node", "python", "pip", "where", "echo"]) {
       expect(FIRST_TOKEN_ALLOWLIST).toContain(cmd);
     }
   });

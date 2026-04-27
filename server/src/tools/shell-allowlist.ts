@@ -2,7 +2,6 @@ export const FIRST_TOKEN_ALLOWLIST = new Set([
   "ls",
   "dir",
   "cat",
-  "pwd",
   "git",
   "npm",
   "node",

@@ -48,11 +48,16 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     for await (const evt of result) {
       if (abort.signal.aborted) break;
       if (evt.type === "assistant" && Array.isArray(evt.message?.content)) {
-        for (const block of evt.message.content) {
-          if (block.type === "text") {
-            const text = block.text;
-            if (text) {
-              emit({ kind: "thought", payload: { text } });
+        const blocks = evt.message.content;
+        // Final-only assistant turns (text without tool_use) are re-emitted by
+        // the SDK as `result.result`. Skip them here to avoid duplicate
+        // rendering — only emit thoughts for intermediate turns that also call
+        // a tool.
+        const hasToolUse = blocks.some((b) => b.type === "tool_use");
+        if (hasToolUse) {
+          for (const block of blocks) {
+            if (block.type === "text" && block.text) {
+              emit({ kind: "thought", payload: { text: block.text } });
             }
           }
         }

@@ -1,0 +1,13 @@
+{
+  "name": "ava-m0-spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/spike.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.120",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "tsx": "^4.19.0"
+  }
+}

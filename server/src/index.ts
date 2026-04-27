@@ -31,6 +31,10 @@ function getChrome() {
   }
   return chromePromise;
 }
+// Single-tenant by design: the persistent chromium context is shared across all
+// chat runs in this process. Concurrent runs would race on the same active page;
+// chat.ts blocks a second run within a session at line 42, but cross-session
+// concurrency is not currently guarded. Fine for one user, one phone.
 
 const agentDeps = {
   pidfiles,
@@ -48,6 +52,24 @@ app.use("/", statusRoutes({ db, runs, startedAt }));
 
 const webDistDir = fileURLToPath(new URL("../../web/dist/", import.meta.url));
 app.use("/", express.static(webDistDir));
+
+let shuttingDown = false;
+async function shutdown(reason: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log.info({ reason }, "shutting down");
+  if (chromePromise) {
+    try {
+      const chrome = await chromePromise;
+      await chrome.close();
+    } catch (e) {
+      log.warn({ err: e instanceof Error ? e.message : String(e) }, "chrome close failed");
+    }
+  }
+  process.exit(0);
+}
+process.on("SIGINT", () => void shutdown("SIGINT"));
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
 app.listen(cfg.port, cfg.bindAddr, () => {
   log.info({ port: cfg.port, bind: cfg.bindAddr }, "ava server listening");

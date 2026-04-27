@@ -14,11 +14,13 @@ export function requireToken(db: Db): RequestHandler {
   return (req, res, next) => {
     const header = req.headers.authorization ?? "";
     const m = /^Bearer\s+(.+)$/.exec(header);
-    if (!m) {
+    const queryToken = typeof req.query.t === "string" ? req.query.t : null;
+    const presented = m?.[1] ?? queryToken;
+    if (!presented) {
       res.status(401).json({ error: "missing_token" });
       return;
     }
-    const id = validateToken(db, m[1]!);
+    const id = validateToken(db, presented);
     if (!id) {
       res.status(401).json({ error: "invalid_token" });
       return;

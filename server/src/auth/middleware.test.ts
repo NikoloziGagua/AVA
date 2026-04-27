@@ -70,4 +70,15 @@ describe("requireToken middleware", () => {
     expect(status).toBe(200);
     expect((body as { deviceId: string }).deviceId).toBe(id);
   });
+
+  it("accepts a query-string token (for EventSource)", async () => {
+    const { secret, id } = issueToken(db, { label: "x" });
+    const { status, body } = await callJson(
+      makeApp(db),
+      "GET",
+      `/protected?t=${encodeURIComponent(secret)}`
+    );
+    expect(status).toBe(200);
+    expect((body as { deviceId: string }).deviceId).toBe(id);
+  });
 });

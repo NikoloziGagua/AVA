@@ -3,17 +3,20 @@ import type { ClickEvent, Conf } from "systray2";
 import type { Logger } from "pino";
 import { exec } from "node:child_process";
 
-// systray2 v2.1.4 publishes a `.d.ts` with `export default class SysTray`, but
-// its CommonJS implementation only sets `exports.default = SysTray`. Node's
-// ESM loader exposes that as the namespace, so we have to reach into `.default`
-// at both type and runtime level.
+// systray2 v2.1.4 publishes `export default class SysTray` in its `.d.ts`, but
+// its CommonJS impl sets `exports.default = SysTray`. Different ESM loaders
+// expose that differently: tsc-compiled output gets the ctor at `m.default`,
+// while tsx/Node-native ESM gets it at `m.default.default`. Probe both.
 type SysTrayCtor = new (conf: Conf) => {
   onClick(listener: (action: ClickEvent) => void): Promise<unknown>;
   kill(exitNode?: boolean): Promise<void>;
 };
 type SysTrayModule = SysTrayCtor & { separator: { title: string; tooltip: string; enabled: boolean } };
 
-const SysTray = (SysTrayNs as unknown as { default: SysTrayModule }).default;
+const nsDefault = (SysTrayNs as unknown as { default: unknown }).default;
+const SysTray = (typeof nsDefault === "function"
+  ? nsDefault
+  : (nsDefault as { default: unknown }).default) as SysTrayModule;
 
 export function startSystray(opts: {
   onPair: () => string;

@@ -33,7 +33,14 @@ app.listen(cfg.port, cfg.bindAddr, () => {
   log.info({ port: cfg.port, bind: cfg.bindAddr }, "ava server listening");
 });
 
-startSystray({
-  onPair: () => issuePairingCode(db, cfg.pairingTtlMs),
-  log,
-});
+try {
+  startSystray({
+    onPair: () => issuePairingCode(db, cfg.pairingTtlMs),
+    log,
+  });
+} catch (e) {
+  log.warn(
+    { err: e instanceof Error ? e.message : String(e) },
+    "systray failed to start — server still running. Mint a pairing code with: npm -w server run pair"
+  );
+}

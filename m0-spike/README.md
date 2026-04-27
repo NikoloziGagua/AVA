@@ -86,3 +86,29 @@ The plan's code snippet was written for a hypothetical SDK `^0.5.0`. Actual SDK 
 1. **`abortController` location**: plan put it as a top-level `query()` param; actual API places it inside `options`.
 2. **`mcpServers` value shape**: plan used `{ type: "sdk", server: echo }`; actual type is `McpSdkServerConfigWithInstance = { type: "sdk", name: string, instance: McpServer }`. Required adding `name` field and renaming `server` → `instance`.
 3. **Type cast needed**: `buildEchoServer()` returns `Server` (low-level, from `@modelcontextprotocol/sdk/server/index.js`). SDK expects `McpServer` (high-level wrapper, from `@modelcontextprotocol/sdk/server/mcp.js`). Used `echo as unknown as McpServer` — both classes expose `connect(transport)`, so this is safe at runtime.
+
+## Verdict (2026-04-27)
+
+Path B is **VIABLE**.
+
+Evidence: happy path emitted `mcp__ava__echo` tool_call → tool_result → final text, with the Agent SDK driving the loop end-to-end. Abort path threw `"Claude Code process aborted by user"` after `abort_signal_fired` with zero `tool_result_during_abort` events. SDK version pinned to `0.2.120` (plan originally specified `^0.5.0` which doesn't exist; updated).
+
+Decisions for M1:
+
+- **Event shape mapping** (verified, must be applied in `server/src/orchestrator/agent.ts`):
+  - SDK `assistant` event with `content[].type === "text"` → our `thought` event.
+  - SDK `assistant` event with `content[].type === "tool_use"` → fired by our MCP tool's own `emit`, not the agent runner. Agent runner does not surface `tool_use` blocks directly.
+  - SDK `user` event with `content[].type === "tool_result"` → fired by the MCP tool's `emit` on the server side; the agent runner does not surface these either.
+  - SDK `result` event → our `final` event (text), then `done`.
+  - **Skip** internal `ToolSearch` tool calls — these are SDK-internal schema fetches, not user-visible work.
+
+- **`query()` call shape** (corrected from plan):
+  - `abortController` lives in `options`, not at top level.
+  - `mcpServers.<key>` is `{ type: "sdk", name: <key>, instance: <McpServer> }`.
+  - Cast in-process `Server` to `McpServer` via `as unknown as McpServer` until the MCP SDK aligns its types.
+
+- **Abort semantics**: confirmed clean. Use `if (abort.signal.aborted)` — do not match error messages.
+
+- **Cost / quota open question**: the SDK reports `total_cost_usd` per run even on Path B. The first M1 milestone with a real usage day must confirm these calls are absorbed by the Max subscription, not billed. If they're billed, the architecture cost picture in spec §3 needs revision.
+
+- **Follow-up risk**: abort during a multi-tool burst was not directly observed (the M0.4 abort fired before the model had reached its first real tool call). Re-test once M1's shell tool is in place by issuing an abort 5+ seconds into a multi-step run.

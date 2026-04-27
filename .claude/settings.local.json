@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git -C /c/ai/chemiapebi/yovlisshemdzle check-ignore -v docs/superpowers/plans/2026-04-27-ava-m0-m1.md)",
+      "Bash(git -C /c/ai/chemiapebi/yovlisshemdzle check-ignore -v docs/)",
+      "Bash(git -C /c/ai/chemiapebi/yovlisshemdzle status --short docs/)",
+      "Bash(git check-ignore *)",
+      "Bash(git -C /c/ai/chemiapebi/yovlisshemdzle log --oneline)",
+      "Bash(npm install *)",
+      "Bash(npm view *)",
+      "Bash(node *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(npm *)",
+      "Bash(curl -s \"https://api.github.com/repos/WiseLibs/better-sqlite3/releases/latest\")",
+      "Bash(python -c \"import sys,json; r=json.load\\(sys.stdin\\); [print\\(a['name']\\) for a in r.get\\('assets',[]\\)]\")",
+      "Bash(git -C C:/ai/chemiapebi/yovlisshemdzle log --oneline)",
+      "Bash(git -C C:/ai/chemiapebi/yovlisshemdzle status)",
+      "Bash(curl -s \"https://registry.npmjs.org/better-sqlite3/12.9.0\")",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(npx vitest *)",
+      "Bash(git reset *)"
+    ]
+  }
+}

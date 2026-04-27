@@ -21,13 +21,14 @@
     "picomatch": "^4.0.4",
     "pino": "^9.5.0",
     "systray2": "^2.1.4",
+    "tree-kill": "^1.2.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/picomatch": "^4.0.3",
     "@types/better-sqlite3": "^7.6.11",
     "@types/express": "^5.0.0",
+    "@types/picomatch": "^4.0.3",
     "tsx": "^4.19.0",
     "vitest": "^2.1.4"
   }

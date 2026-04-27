@@ -13,3 +13,4 @@ logs/
 chrome-profile/
 .vite/
 .pm2/
+*.tsbuildinfo

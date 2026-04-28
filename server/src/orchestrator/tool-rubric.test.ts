@@ -27,6 +27,11 @@ describe("TOOL_RUBRIC", () => {
     expect(TOOL_RUBRIC).toContain("memory_forget");
   });
 
+  it("instructs that memory-read queries route through memory_read, not recitation", () => {
+    expect(TOOL_RUBRIC.toLowerCase()).toContain("what do you remember");
+    expect(TOOL_RUBRIC).toContain("memory_read");
+  });
+
   it("hard rules: .env paths blocked, no --dangerously-skip-permissions", () => {
     expect(TOOL_RUBRIC).toContain(".env");
     expect(TOOL_RUBRIC).toContain("dangerously-skip-permissions");

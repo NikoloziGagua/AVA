@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
-import { createSession, getSession, listSessions, touchSession } from "./sessions.js";
+import { createSession, getSession, listSessions, touchSession, updateTitle } from "./sessions.js";
 
 describe("sessions repo", () => {
   let db: Db;
@@ -41,5 +41,11 @@ describe("sessions repo", () => {
     touchSession(db, s.id);
     const got = getSession(db, s.id)!;
     expect(got.updated_at).toBeGreaterThan(original - 5000);
+  });
+
+  it("updateTitle writes the new title", () => {
+    const s = createSession(db, { title: "old" });
+    updateTitle(db, s.id, "new title");
+    expect(getSession(db, s.id)?.title).toBe("new title");
   });
 });

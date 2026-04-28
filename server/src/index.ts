@@ -1,5 +1,6 @@
 import express from "express";
 import { fileURLToPath } from "node:url";
+import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "./config.js";
 import { buildLogger } from "./logs/logger.js";
 import { openDb } from "./state/db.js";
@@ -43,12 +44,14 @@ const agentDeps = {
   getChrome,
 };
 
+const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;
+
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 app.use("/api", healthRoutes(startedAt));
 app.use("/api/auth", authRoutes(db, requireToken(db)));
-app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps));
+app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps, { anthropic }));
 app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
 app.use("/", statusRoutes({ db, runs, startedAt }));
 

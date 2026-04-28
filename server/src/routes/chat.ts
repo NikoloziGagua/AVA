@@ -1,13 +1,15 @@
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { nanoid } from "nanoid";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "../state/db.js";
-import { createSession, getSession, touchSession } from "../state/sessions.js";
+import { createSession, getSession, touchSession, updateTitle } from "../state/sessions.js";
 import { appendMessage, listMessages } from "../state/messages.js";
 import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
+import { autoTitle } from "../orchestrator/auto-title.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 
@@ -22,7 +24,15 @@ export type AgentDeps = {
   getChrome: () => Promise<Chrome>;
 };
 
-export function chatRoutes(db: Db, runs: ActiveRuns, auth: RequestHandler, agentDeps: AgentDeps): Router {
+export type Metered = { anthropic: Anthropic | null };
+
+export function chatRoutes(
+  db: Db,
+  runs: ActiveRuns,
+  auth: RequestHandler,
+  agentDeps: AgentDeps,
+  metered: Metered,
+): Router {
   const r = Router();
 
   r.post("/", auth, (req, res) => {
@@ -32,12 +42,24 @@ export function chatRoutes(db: Db, runs: ActiveRuns, auth: RequestHandler, agent
       return;
     }
     let sessionId = parsed.data.sessionId;
+    let createdNew = false;
     if (!sessionId || !getSession(db, sessionId)) {
       sessionId = createSession(db, { title: parsed.data.text.slice(0, 60) }).id;
+      createdNew = true;
     } else {
       touchSession(db, sessionId);
     }
     appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
+
+    if (createdNew && metered.anthropic) {
+      const sid = sessionId;
+      const firstMessage = parsed.data.text;
+      const client = metered.anthropic;
+      void (async () => {
+        const title = await autoTitle({ client, firstMessage });
+        updateTitle(db, sid, title);
+      })();
+    }
 
     if (runs.get(sessionId)) {
       res.status(409).json({ error: "run_in_progress" });

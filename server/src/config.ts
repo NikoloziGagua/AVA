@@ -14,6 +14,7 @@ export type Config = {
   pidfileDir: string;
   logsDir: string;
   fsRoots: string[];
+  anthropicApiKey: string | null;
 };
 
 const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -66,5 +67,6 @@ export function loadConfig(): Config {
     pidfileDir,
     logsDir,
     fsRoots,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? null,
   };
 }

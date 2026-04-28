@@ -30,3 +30,11 @@ export function listSessions(db: Db): Session[] {
 export function touchSession(db: Db, id: string): void {
   db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(Date.now(), id);
 }
+
+export function updateTitle(db: Db, id: string, title: string): void {
+  db.prepare("UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?").run(
+    title,
+    Date.now(),
+    id,
+  );
+}

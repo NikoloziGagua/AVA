@@ -2,13 +2,14 @@ import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "../state/db.js";
+import type { Logger } from "../logs/logger.js";
 import { createRule, listRules, updateRule, deleteRule, getRule } from "../state/rules.js";
 import { parseRule } from "../policy/rule-parser.js";
 
 const PostBody = z.object({ source: z.string().min(1).max(2000) });
 const PatchBody = z.object({ enabled: z.boolean() });
 
-export type RulesDeps = { anthropic: Anthropic | null };
+export type RulesDeps = { anthropic: Anthropic | null; log?: Logger };
 
 export function rulesRoutes(db: Db, auth: RequestHandler, deps: RulesDeps): Router {
   const r = Router();
@@ -31,6 +32,7 @@ export function rulesRoutes(db: Db, auth: RequestHandler, deps: RulesDeps): Rout
         if (r.ok) {
           updateRule(db, rule.id, { parsed: JSON.stringify(r.parsed), status: "active" });
         } else {
+          deps.log?.warn({ ruleId: rule.id, reason: r.reason }, "rule parse failed");
           updateRule(db, rule.id, { status: "failed" });
         }
       })();

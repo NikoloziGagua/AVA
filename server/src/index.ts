@@ -79,7 +79,7 @@ app.use("/api/auth", authRoutes(db, requireToken(db)));
 app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps, { anthropic }));
 app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
 app.use("/api/push", pushRoutes(db, requireToken(db), { vapidPublicKey: cfg.vapidPublicKey }));
-app.use("/api/rules", rulesRoutes(db, requireToken(db), { anthropic }));
+app.use("/api/rules", rulesRoutes(db, requireToken(db), { anthropic, log }));
 app.use("/api/approvals", approvalsRoutes(db, requireToken(db)));
 
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });

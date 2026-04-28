@@ -16,6 +16,7 @@ export type Config = {
   fsRoots: string[];
   anthropicApiKey: string | null;
   openaiApiKey: string | null;
+  llmProvider: "openai" | "anthropic";
   vapidPublicKey: string | null;
   vapidPrivateKey: string | null;
 };
@@ -58,6 +59,8 @@ export function loadConfig(): Config {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const rawProvider = (process.env.LLM_PROVIDER ?? "openai").toLowerCase();
+  const llmProvider: "openai" | "anthropic" = rawProvider === "anthropic" ? "anthropic" : "openai";
   return {
     port: parsePort(process.env.PORT),
     bindAddr: process.env.TAILSCALE_IP ?? "127.0.0.1",
@@ -72,6 +75,7 @@ export function loadConfig(): Config {
     fsRoots,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? null,
     openaiApiKey: process.env.OPENAI_API_KEY ?? null,
+    llmProvider,
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? null,
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? null,
   };

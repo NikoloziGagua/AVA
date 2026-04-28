@@ -2,7 +2,14 @@ import { describe, it, expect, vi } from "vitest";
 import { runAgent, type AgentEvent } from "./agent.js";
 import { MockLLMProvider } from "./llm/mock-provider.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
-import { openInMemoryDb } from "../state/db.js";
+import { openInMemoryDb, type Db } from "../state/db.js";
+
+function seedAllowAllRule(db: Db): void {
+  const now = Date.now();
+  db.prepare(
+    "INSERT INTO rules (id, source, parsed, enabled, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  ).run("test-allow-all", "allow all", JSON.stringify({ match: {}, action: "allow" }), 1, "active", now, now);
+}
 
 function makeShellTool(): ToolDef {
   return {
@@ -25,6 +32,7 @@ describe("runAgent (v2 loop)", () => {
     });
     const events: AgentEvent[] = [];
     const db = openInMemoryDb();
+    seedAllowAllRule(db);
     await runAgent({
       prompt: "hi",
       abort: new AbortController(),
@@ -58,13 +66,15 @@ describe("runAgent (v2 loop)", () => {
       ],
     });
     const events: AgentEvent[] = [];
+    const db2 = openInMemoryDb();
+    seedAllowAllRule(db2);
     await runAgent({
       prompt: "list",
       abort: new AbortController(),
       emit: (e: AgentEvent) => events.push(e),
       runId: "r1",
       sessionId: "s1",
-      db: openInMemoryDb(),
+      db: db2,
       deps: {
         chrome: null as never, pidfiles: null as never, fsRoots: [],
         provider, tools: [tool],
@@ -82,11 +92,13 @@ describe("runAgent (v2 loop)", () => {
       scripts: [[{ kind: "delta", text: "stalling…" }, { kind: "done", stop_reason: "abort" }]],
     });
     const events: AgentEvent[] = [];
+    const db3 = openInMemoryDb();
+    seedAllowAllRule(db3);
     const promise = runAgent({
       prompt: "x",
       abort: ac,
       emit: (e: AgentEvent) => events.push(e),
-      runId: "r1", sessionId: "s1", db: openInMemoryDb(),
+      runId: "r1", sessionId: "s1", db: db3,
       deps: { chrome: null as never, pidfiles: null as never, fsRoots: [], provider, tools: [] } as never,
     } as never);
     ac.abort();

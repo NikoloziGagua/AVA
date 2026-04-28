@@ -86,13 +86,13 @@ export function chatRoutes(
       return;
     }
 
-    const buffer = new SseBuffer({ maxEvents: 500, maxBytes: 5 * 1024 * 1024 });
-    const abort = new AbortController();
-    runs.register({ sessionId, abort, buffer });
-
     if (metered.anthropic) {
       await maybeSummarize({ db, sessionId, client: metered.anthropic });
     }
+
+    const buffer = new SseBuffer({ maxEvents: 500, maxBytes: 5 * 1024 * 1024 });
+    const abort = new AbortController();
+    runs.register({ sessionId, abort, buffer });
 
     const full = getSessionFull(db, sessionId);
     const recent = full?.summary_through_message_id

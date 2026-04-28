@@ -1,5 +1,6 @@
 import type { ToolDef } from "./ava-mcp.js";
 import { runShell } from "./shell.js";
+import { TOOL_BUDGET_MS } from "../orchestrator/timeout.js";
 
 const MAX_STREAM_CHARS = 4096;
 
@@ -24,7 +25,7 @@ export function buildShellTool(opts: { signal: AbortSignal }): ToolDef {
     },
     run: async (args) => {
       const command = String(args.command ?? "");
-      const r = await runShell({ command, timeoutMs: 30_000, signal: opts.signal });
+      const r = await runShell({ command, timeoutMs: TOOL_BUDGET_MS["shell"] ?? 30_000, signal: opts.signal });
       const stdout = truncate(r.stdout);
       const stderr = truncate(r.stderr);
       if (r.ok) {

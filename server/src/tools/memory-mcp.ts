@@ -51,6 +51,8 @@ function isoToday(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+const VALID_CONFIDENCE: ReadonlySet<string> = new Set(["low", "medium", "high"]);
+
 function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
   return {
     tool: {
@@ -77,6 +79,12 @@ function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
       const file = String(args.file ?? "observations");
 
       if (typeof args.refresh === "string" && args.refresh.length > 0) {
+        if (file !== "observations") {
+          return { ok: false, text: "refresh is only valid for file=observations" };
+        }
+        if (typeof args.supersedes === "string" && args.supersedes.length > 0) {
+          return { ok: false, text: "refresh and supersedes are mutually exclusive" };
+        }
         const r = applyRefresh(readMemFile(p.observations),
           { match: args.refresh, today });
         if (!r.changed) return { ok: false, text: "refresh: no matching observation" };
@@ -107,7 +115,11 @@ function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
       // file === "observations"
       const text = String(args.text ?? "").trim();
       const category = String(args.category ?? "context").trim();
-      const confidence = (args.confidence as Confidence | undefined) ?? "low";
+      const rawConf = String(args.confidence ?? "low");
+      if (!VALID_CONFIDENCE.has(rawConf)) {
+        return { ok: false, text: `invalid confidence: ${rawConf}` };
+      }
+      const confidence = rawConf as Confidence;
       if (!text) return { ok: false, text: "missing text" };
 
       if (typeof args.supersedes === "string" && args.supersedes.length > 0) {

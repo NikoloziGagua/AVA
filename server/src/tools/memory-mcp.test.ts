@@ -132,4 +132,32 @@ describe("memory_remember", () => {
     expect(persisted).not.toContain("sk-AAAA");
     expect(persisted).toContain("sk-***");
   });
+
+  it("rejects refresh when file is not observations", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    const r = await t.run({ file: "preferences", refresh: "X" }, ctx);
+    expect(r.ok).toBe(false);
+    expect(r.text).toContain("refresh is only valid for file=observations");
+  });
+
+  it("rejects refresh combined with supersedes", async () => {
+    writeFileSync(join(dir, "observations.md"),
+      "- [2026-04-20 / low / preferences] uses pwsh for shell\n", "utf8");
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    const r = await t.run({ refresh: "pwsh", supersedes: "pwsh", today: "2026-04-28" }, ctx);
+    expect(r.ok).toBe(false);
+    expect(r.text).toContain("mutually exclusive");
+  });
+
+  it("rejects invalid confidence values", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    const r = await t.run({
+      text: "x", category: "context", confidence: "extreme", today: "2026-04-28",
+    }, ctx);
+    expect(r.ok).toBe(false);
+    expect(r.text).toContain("invalid confidence");
+  });
 });

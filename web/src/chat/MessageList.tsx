@@ -51,7 +51,7 @@ export function MessageList({
         }
         if (e.kind === "thought" || e.kind === "final") {
           return (
-            <div key={`${e.runEpoch}-${e.id}`}>
+            <div key={`${e.runEpoch}-${e.id}`} data-testid={e.kind === "final" ? "final-message" : "thought-message"}>
               <div className="inline-block px-3 py-2 rounded-2xl max-w-[80%] bg-neutral-800 text-neutral-100">
                 {e.payload.text}
               </div>

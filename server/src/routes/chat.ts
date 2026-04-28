@@ -25,6 +25,8 @@ export type AgentDeps = {
   fsRoots: string[];
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
+  /** Optional override; lets tests substitute a fake agent loop. Defaults to runAgent. */
+  runAgentImpl?: typeof runAgent;
 };
 
 export type Metered = { anthropic: Anthropic | null };
@@ -101,8 +103,9 @@ export function chatRoutes(
         return id;
       };
       try {
+        const impl = agentDeps.runAgentImpl ?? runAgent;
         const chrome = await agentDeps.getChrome();
-        await runAgent({
+        await impl({
           prompt: transcriptForAgent,
           abort,
           emit,

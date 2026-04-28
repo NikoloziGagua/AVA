@@ -10,10 +10,13 @@
     "server:test": "npm -w server run test",
     "web:dev": "npm -w web run dev",
     "web:build": "npm -w web run build",
-    "test": "npm -w server run test && npm -w web run test"
+    "test": "npm -w server run test && npm -w web run test",
+    "test:e2e": "vitest run --root . --config vitest.config.ts"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
-    "@types/node": "^24.0.0"
+    "@types/node": "^24.0.0",
+    "playwright": "^1.59.1",
+    "vitest": "^2.1.4"
   }
 }

@@ -25,7 +25,7 @@ export function ApprovalCard({
       resolvedStatus === "approved" ? "text-emerald-400" :
       resolvedStatus === "denied" ? "text-red-400" : "text-neutral-500";
     return (
-      <div className={`text-xs ${cls} font-mono`}>
+      <div data-testid="approval-card-resolved" data-status={resolvedStatus} className={`text-xs ${cls} font-mono`}>
         {label} · {tool} · {new Date().toLocaleTimeString()}
       </div>
     );
@@ -46,7 +46,7 @@ export function ApprovalCard({
   }
 
   return (
-    <div className="border border-amber-500 rounded-lg bg-amber-900/30 p-3 my-2 max-w-[90%]">
+    <div data-testid="approval-card" className="border border-amber-500 rounded-lg bg-amber-900/30 p-3 my-2 max-w-[90%]">
       <div className="flex items-center gap-2 text-sm font-semibold text-amber-200">
         <span>⚠</span>
         <span>Ava wants to: {summary}</span>
@@ -60,6 +60,7 @@ export function ApprovalCard({
       {err && <div className="text-xs text-red-400 mt-2">{err}</div>}
       <div className="flex gap-2 mt-3">
         <button
+          data-testid="approval-deny"
           onClick={() => act("deny")}
           disabled={busy}
           className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-sm px-3 py-1.5 rounded text-white"
@@ -67,6 +68,7 @@ export function ApprovalCard({
           Deny
         </button>
         <button
+          data-testid="approval-approve"
           onClick={() => act("approve")}
           disabled={busy}
           className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm px-3 py-1.5 rounded text-white"

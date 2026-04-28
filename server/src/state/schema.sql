@@ -47,3 +47,14 @@ CREATE TABLE IF NOT EXISTS pairing_codes (
   expires_at INTEGER NOT NULL,
   used_at INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_token_id TEXT REFERENCES device_tokens(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  device_label TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);

@@ -73,7 +73,7 @@ export class OpenAIProvider implements LLMProvider {
     });
     // Tool calls arrive in deltas keyed by index. Accumulate by index.
     const partial = new Map<number, { id: string; name: string; argsBuf: string }>();
-    let stopReason: StreamEvent extends { kind: "done"; stop_reason: infer R } ? R : never = "end_turn";
+    let stopReason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error" = "end_turn";
 
     try {
       for await (const chunk of stream as AsyncIterable<{

@@ -11,6 +11,9 @@ import { buildChromeTools } from "../tools/chrome-mcp.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
+import { buildPolicyHook, type PolicyHook } from "../policy/runtime.js";
+import type { Db } from "../state/db.js";
+import type { Approval } from "../state/approvals.js";
 
 export type AgentEvent =
   | { kind: "thought"; payload: { text: string } }
@@ -19,12 +22,15 @@ export type AgentEvent =
   | { kind: "final"; payload: { text: string } }
   | { kind: "error"; payload: { message: string } }
   | { kind: "killed"; payload: Record<string, never> }
-  | { kind: "done"; payload: Record<string, never> };
+  | { kind: "done"; payload: Record<string, never> }
+  | { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } }
+  | { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } };
 
 export type AgentDeps = {
   chrome: Chrome;
   pidfiles: PidfileRegistry;
   fsRoots: string[];
+  pushDeliver?: (a: Approval) => Promise<void>;
 };
 
 export type RunOpts = {
@@ -33,6 +39,8 @@ export type RunOpts = {
   emit: (e: AgentEvent) => void;
   runId: string;
   deps: AgentDeps;
+  db: Db;
+  sessionId: string;
 };
 
 const ALL_TOOL_NAMES = [
@@ -55,6 +63,28 @@ const ALL_TOOL_NAMES = [
 export async function runAgent(opts: RunOpts): Promise<void> {
   const { prompt, abort, emit, runId, deps } = opts;
 
+  const policy = buildPolicyHook({
+    db: opts.db,
+    sessionId: opts.sessionId,
+    emit: (e) => emit(e),
+    pushDeliver: deps.pushDeliver,
+  });
+
+  function wrapToolDef(td: ToolDef, hook: PolicyHook): ToolDef {
+    return {
+      tool: td.tool,
+      run: async (args, ctx) => {
+        const r = await hook(td.tool.name, args);
+        if (!r.allow) {
+          emit({ kind: "tool_call", payload: { tool: td.tool.name, args } });
+          emit({ kind: "tool_result", payload: { tool: td.tool.name, ok: false, result: r.message } });
+          return { ok: false, text: r.message };
+        }
+        return td.run(args, ctx);
+      },
+    };
+  }
+
   const shellSrv = buildShellMcp({
     emit: (e) => {
       if (e.kind === "shell.call") {
@@ -64,6 +94,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       }
     },
     signalForRun: () => abort.signal,
+    policyCheck: policy,
   });
 
   const fs = buildFilesystem({ roots: deps.fsRoots });
@@ -102,9 +133,13 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     },
   }) as ToolDef[];
 
+  const wrappedFsTools = fsTools.map((t) => wrapToolDef(t, policy));
+  const wrappedCcTool = wrapToolDef(ccTool, policy);
+  const wrappedChromeTools = chromeTools.map((t) => wrapToolDef(t, policy));
+
   const ava = buildAvaMcp({
     ctx: { runId },
-    tools: [...fsTools, ccTool, ...chromeTools],
+    tools: [...wrappedFsTools, wrappedCcTool, ...wrappedChromeTools],
   });
 
   try {

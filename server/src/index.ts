@@ -20,6 +20,7 @@ import { PidfileRegistry } from "./process/pidfile.js";
 import { killTree } from "./process/kill-tree.js";
 import { runRecovery } from "./state/recovery.js";
 import { buildChrome } from "./tools/chrome.js";
+import { buildDeliverer } from "./push/deliver.js";
 
 const startedAt = Date.now();
 const cfg = loadConfig();
@@ -45,10 +46,25 @@ function getChrome() {
 // chat.ts blocks a second run within a session at line 42, but cross-session
 // concurrency is not currently guarded. Fine for one user, one phone.
 
+const pushDeliver = (cfg.vapidPublicKey && cfg.vapidPrivateKey)
+  ? (() => {
+      const deliverer = buildDeliverer({
+        db,
+        vapid: {
+          publicKey: cfg.vapidPublicKey!,
+          privateKey: cfg.vapidPrivateKey!,
+          subject: process.env.VAPID_SUBJECT ?? "mailto:nobody@example.com",
+        },
+      });
+      return (a: import("./state/approvals.js").Approval) => deliverer.deliverApprovalPush(a).then(() => undefined);
+    })()
+  : undefined;
+
 const agentDeps = {
   pidfiles,
   fsRoots: cfg.fsRoots,
   getChrome,
+  pushDeliver,
 };
 
 const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;

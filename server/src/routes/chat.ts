@@ -13,6 +13,7 @@ import { autoTitle } from "../orchestrator/auto-title.js";
 import { maybeSummarize } from "../orchestrator/auto-summary.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
+import type { Approval } from "../state/approvals.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -23,6 +24,7 @@ export type AgentDeps = {
   pidfiles: PidfileRegistry;
   fsRoots: string[];
   getChrome: () => Promise<Chrome>;
+  pushDeliver?: (a: Approval) => Promise<void>;
 };
 
 export type Metered = { anthropic: Anthropic | null };
@@ -105,7 +107,14 @@ export function chatRoutes(
           abort,
           emit,
           runId,
-          deps: { chrome, pidfiles: agentDeps.pidfiles, fsRoots: agentDeps.fsRoots },
+          db,
+          sessionId: sid,
+          deps: {
+            chrome,
+            pidfiles: agentDeps.pidfiles,
+            fsRoots: agentDeps.fsRoots,
+            pushDeliver: agentDeps.pushDeliver,
+          },
         });
       } finally {
         runs.unregister(sid);

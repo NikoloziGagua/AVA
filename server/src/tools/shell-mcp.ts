@@ -22,6 +22,7 @@ export type ShellEvent =
 export function buildShellMcp(opts: {
   emit: (e: ShellEvent) => void;
   signalForRun: () => AbortSignal | undefined;
+  policyCheck?: (toolName: string, args: unknown) => Promise<{ allow: true } | { allow: false; message: string }>;
 }): Server {
   const s = new Server(
     { name: "ava-shell", version: "0.0.1" },
@@ -53,6 +54,16 @@ export function buildShellMcp(opts: {
     const command = String(
       (req.params.arguments as { command?: string })?.command ?? ""
     );
+
+    if (opts.policyCheck) {
+      const check = await opts.policyCheck("shell", { command });
+      if (!check.allow) {
+        opts.emit({ kind: "shell.call", args: { command } });
+        opts.emit({ kind: "shell.result", ok: false, result: check.message });
+        return { content: [{ type: "text", text: check.message }] };
+      }
+    }
+
     opts.emit({ kind: "shell.call", args: { command } });
     const r = await runShell({
       command,

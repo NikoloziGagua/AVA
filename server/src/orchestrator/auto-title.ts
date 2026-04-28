@@ -1,33 +1,39 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import type { LLMProvider } from "./llm/types.js";
 
 export type AutoTitleArgs = {
-  client: Anthropic;
+  provider: LLMProvider;
   firstMessage: string;
 };
 
 const MAX = 60;
 
+const SYSTEM =
+  "You produce short session titles. Output ONLY a 3-7 word phrase summarizing the user's message. No quotes. No trailing punctuation.";
+
 function truncate(s: string): string {
   return s.slice(0, MAX);
 }
 
-export async function autoTitle({ client, firstMessage }: AutoTitleArgs): Promise<string> {
+function stripQuotes(s: string): string {
+  if (s.length >= 2) {
+    const first = s.charAt(0);
+    const last = s.charAt(s.length - 1);
+    if ((first === '"' || first === "'") && first === last) {
+      return s.slice(1, -1);
+    }
+  }
+  return s;
+}
+
+export async function autoTitle({ provider, firstMessage }: AutoTitleArgs): Promise<string> {
   try {
-    const r = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
-      max_tokens: 32,
-      messages: [
-        {
-          role: "user",
-          content:
-            "Title the following user message in 3-7 words. Output the title only, no quotes, no preamble.\n\n" +
-            firstMessage,
-        },
-      ],
+    const raw = await provider.complete({
+      model: provider.defaultSideModel,
+      system: SYSTEM,
+      user: firstMessage,
+      maxTokens: 32,
     });
-    const block = r.content.find((b) => b.type === "text");
-    if (!block || block.type !== "text") return truncate(firstMessage);
-    const title = block.text.trim();
+    const title = stripQuotes(raw.trim()).trim();
     if (!title) return truncate(firstMessage);
     return title.length > MAX ? truncate(title) : title;
   } catch {

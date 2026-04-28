@@ -71,12 +71,12 @@ export function chatRoutes(
     }
     appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
 
-    if (createdNew && metered.anthropic) {
+    if (createdNew && agentDeps.provider) {
       const sid = sessionId;
       const firstMessage = parsed.data.text;
-      const client = metered.anthropic;
+      const provider = agentDeps.provider;
       void (async () => {
-        const title = await autoTitle({ client, firstMessage });
+        const title = await autoTitle({ provider, firstMessage });
         updateTitle(db, sid, title);
       })();
     }

@@ -36,6 +36,12 @@ describe("memory/observations parse + serialize", () => {
     const line = "- [2026-04-28 / medium / context] main project is Ava";
     expect(serializeObservation(parseObservation(line)!)).toBe(line);
   });
+
+  it("round-trips serialize(parse(line)) for the superseded format", () => {
+    const line =
+      "- [2026-01-12 / high / preferences / superseded 2026-04-28] uses pwsh for shell";
+    expect(serializeObservation(parseObservation(line)!)).toBe(line);
+  });
 });
 
 describe("memory/observations confidence transitions", () => {

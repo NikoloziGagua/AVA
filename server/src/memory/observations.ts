@@ -17,14 +17,14 @@ export function parseObservation(line: string): Observation | null {
   const sm = SUPERSEDED_RE.exec(line);
   if (sm) {
     return {
-      date: sm[1]!, confidence: sm[2]! as Confidence, category: sm[3]!.trim(),
+      date: sm[1]!, confidence: sm[2]! as Confidence, category: sm[3]!,
       text: sm[5]!, superseded: sm[4]!,
     };
   }
   const am = ACTIVE_RE.exec(line);
   if (am) {
     return {
-      date: am[1]!, confidence: am[2]! as Confidence, category: am[3]!.trim(),
+      date: am[1]!, confidence: am[2]! as Confidence, category: am[3]!,
       text: am[4]!, superseded: null,
     };
   }

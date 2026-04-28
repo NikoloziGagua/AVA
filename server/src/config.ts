@@ -15,6 +15,7 @@ export type Config = {
   logsDir: string;
   fsRoots: string[];
   anthropicApiKey: string | null;
+  openaiApiKey: string | null;
   vapidPublicKey: string | null;
   vapidPrivateKey: string | null;
 };
@@ -70,6 +71,7 @@ export function loadConfig(): Config {
     logsDir,
     fsRoots,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? null,
+    openaiApiKey: process.env.OPENAI_API_KEY ?? null,
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? null,
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? null,
   };

@@ -14,12 +14,14 @@ import { statusRoutes } from "./routes/status.js";
 import { pushRoutes } from "./routes/push.js";
 import { rulesRoutes } from "./routes/rules.js";
 import { approvalsRoutes } from "./routes/approvals.js";
+import { voiceRoutes } from "./routes/voice.js";
 import { ActiveRuns } from "./orchestrator/active-runs.js";
 import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
 import { killTree } from "./process/kill-tree.js";
 import { runRecovery } from "./state/recovery.js";
 import { buildChrome } from "./tools/chrome.js";
+import { buildVoiceClients } from "./tools/voice-clients.js";
 import { buildDeliverer } from "./push/deliver.js";
 
 const startedAt = Date.now();
@@ -79,6 +81,10 @@ app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
 app.use("/api/push", pushRoutes(db, requireToken(db), { vapidPublicKey: cfg.vapidPublicKey }));
 app.use("/api/rules", rulesRoutes(db, requireToken(db), { anthropic }));
 app.use("/api/approvals", approvalsRoutes(db, requireToken(db)));
+
+const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });
+app.use("/api", voiceRoutes({ clients: voiceClients, requireToken: requireToken(db) }));
+
 app.use("/", statusRoutes({ db, runs, startedAt }));
 
 const webDistDir = fileURLToPath(new URL("../../web/dist/", import.meta.url));

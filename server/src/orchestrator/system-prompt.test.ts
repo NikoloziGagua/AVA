@@ -35,12 +35,23 @@ describe("buildSystemPrompt (layered)", () => {
     expect(buildSystemPrompt({ memoryDir: dir })).toBe(buildSystemPrompt({ memoryDir: dir }));
   });
 
+  it("is byte-stable with observations present (cache safety)", () => {
+    writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
+    writeFileSync(join(dir, "observations.md"),
+      "- [2026-04-01 / high / preferences] uses pwsh\n", "utf8");
+    const opts = { memoryDir: dir, today: "2026-04-28" };
+    expect(buildSystemPrompt(opts)).toBe(buildSystemPrompt(opts));
+  });
+
   it("omits a layer entirely when its file is absent or empty (no whitespace fingerprint)", () => {
     writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
     const out = buildSystemPrompt({ memoryDir: dir });
     expect(out).not.toMatch(/INDEX-BLOCK/);
     expect(out).not.toMatch(/PREFS-BLOCK/);
     expect(out).not.toMatch(/OBS-BLOCK/);
+    expect(out).not.toContain("# Memory index");
+    expect(out).not.toContain("# Preferences");
+    expect(out).not.toContain("# Observations");
     expect(out).toContain(TOOL_RUBRIC);
   });
 

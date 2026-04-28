@@ -31,7 +31,7 @@ export function forgetMatch(opts: { paths: MemoryPaths; target: string }): Forge
   const matches: number[] = [];
   for (let i = 0; i < lines.length; i++) {
     const obs = parseObservation(lines[i]!);
-    if (obs && obs.text.toLowerCase().includes(opts.target.toLowerCase())) matches.push(i);
+    if (obs && !obs.superseded && obs.text.toLowerCase().includes(opts.target.toLowerCase())) matches.push(i);
   }
   if (matches.length === 0) return { status: "not_found" };
   if (matches.length > 1) {

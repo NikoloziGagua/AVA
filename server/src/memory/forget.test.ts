@@ -70,6 +70,14 @@ describe("forgetMatch", () => {
     const r = forgetMatch({ paths: p, target: "PWSH" });
     expect(r.status).toBe("dropped");
   });
+
+  it("ignores superseded lines (consistent with forgetLast)", () => {
+    writeFileSync(p.observations,
+      "- [2026-04-20 / high / context / superseded 2026-04-28] uses pwsh\n" +
+      "- [2026-04-28 / medium / context] uses bash\n", "utf8");
+    const r = forgetMatch({ paths: p, target: "pwsh" });
+    expect(r.status).toBe("not_found");
+  });
 });
 
 describe("forgetProject", () => {

@@ -204,4 +204,15 @@ describe("memory_forget", () => {
     expect(r.ok).toBe(true);
     expect(readFileSync(join(dir, "preferences.md"), "utf8")).toBe("");
   });
+
+  it("mode=match returns not_found when the only matching line is superseded", async () => {
+    writeFileSync(join(dir, "observations.md"),
+      "- [2026-04-20 / high / context / superseded 2026-04-28] uses pwsh\n" +
+      "- [2026-04-28 / medium / context] uses bash\n", "utf8");
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_forget")!;
+    const r = await t.run({ mode: "match", target: "pwsh" }, ctx);
+    expect(r.ok).toBe(false);
+    expect(r.text).toContain("not found");
+  });
 });

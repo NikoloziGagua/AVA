@@ -35,6 +35,18 @@ describe("autoPruneObservations", () => {
     expect(out.action).toBe("dropped_stale_low");
   });
 
+  it("returns only dropped_superseded when both superseded and stale-low lines exist (one tier per turn)", () => {
+    const c =
+      "- [2026-01-12 / high / preferences / superseded 2026-04-28] old pwsh\n" +
+      "- [2026-01-01 / low / context] stale low entry\n" +
+      "- [2026-04-28 / high / preferences] fresh\n";
+    const out = autoPruneObservations(c, { today: "2026-04-28", softCap: 5 });
+    expect(out.action).toBe("dropped_superseded");
+    expect(out.content).toBe(
+      "- [2026-01-01 / low / context] stale low entry\n" +
+      "- [2026-04-28 / high / preferences] fresh\n");
+  });
+
   it("returns action=needs_user when still over after both passes", () => {
     const huge = Array.from({ length: 50 }, (_, i) =>
       `- [2026-04-28 / high / preferences] entry ${i} that is moderately long`).join("\n") + "\n";

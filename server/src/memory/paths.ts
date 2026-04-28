@@ -10,6 +10,8 @@ export type MemoryPaths = {
   projectFile: (slug: string) => string;
 };
 
+const SLUG_RE = /^[a-z0-9][a-z0-9_-]*$/i;
+
 export function memoryPaths(dir: string): MemoryPaths {
   return {
     root: dir,
@@ -18,6 +20,11 @@ export function memoryPaths(dir: string): MemoryPaths {
     preferences: join(dir, "preferences.md"),
     observations: join(dir, "observations.md"),
     projectsDir: join(dir, "projects"),
-    projectFile: (slug: string) => join(dir, "projects", `${slug}.md`),
+    projectFile: (slug: string) => {
+      if (!SLUG_RE.test(slug)) {
+        throw new Error(`invalid project slug: ${slug}`);
+      }
+      return join(dir, "projects", `${slug}.md`);
+    },
   };
 }

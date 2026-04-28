@@ -48,6 +48,14 @@ describe("memory_read", () => {
     expect(r.text).toContain("project");
   });
 
+  it("file=project rejects path-traversal slugs", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_read")!;
+    const r = await t.run({ file: "project", project: "../../etc/passwd" }, ctx);
+    expect(r.ok).toBe(false);
+    expect(r.text).toContain("invalid project slug");
+  });
+
   it("file=all concatenates preferences + observations + index", async () => {
     writeFileSync(join(dir, "preferences.md"), "PREFS\n", "utf8");
     writeFileSync(join(dir, "observations.md"), "OBS\n", "utf8");

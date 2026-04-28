@@ -27,7 +27,11 @@ function buildMemoryRead(deps: MemoryToolDeps): ToolDef {
       if (file === "project") {
         const slug = String(args.project ?? "").trim();
         if (!slug) return { ok: false, text: "missing project slug" };
-        return { ok: true, text: readFile(p.projectFile(slug)) };
+        try {
+          return { ok: true, text: readFile(p.projectFile(slug)) };
+        } catch (e) {
+          return { ok: false, text: e instanceof Error ? e.message : String(e) };
+        }
       }
       if (file === "all") {
         const parts = [

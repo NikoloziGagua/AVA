@@ -38,3 +38,26 @@ export const api = {
   kill: (sessionId: string) =>
     request<{ aborted: boolean }>(`/api/chat/${sessionId}/kill`, { method: "POST" }),
 };
+
+export type SessionRow = {
+  id: string;
+  title: string | null;
+  created_at: number;
+  updated_at: number;
+  status: string;
+};
+
+export async function fetchSessions(): Promise<SessionRow[]> {
+  const j = await request<{ sessions: SessionRow[] }>("/api/sessions");
+  return j.sessions;
+}
+
+export async function fetchSession(id: string): Promise<{
+  session: SessionRow;
+  messages: Array<{ id: number; role: string; content: string; created_at: number }>;
+}> {
+  return request<{
+    session: SessionRow;
+    messages: Array<{ id: number; role: string; content: string; created_at: number }>;
+  }>(`/api/sessions/${id}`);
+}

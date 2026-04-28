@@ -112,13 +112,13 @@ export function chatRoutes(
           runId,
           db,
           sessionId: sid,
+          // TODO(M4 Task 9): wire real provider + tools instead of this shim cast.
           deps: {
             chrome,
             pidfiles: agentDeps.pidfiles,
             fsRoots: agentDeps.fsRoots,
             pushDeliver: agentDeps.pushDeliver,
-            anthropic: metered.anthropic,
-          },
+          } as unknown as import("../orchestrator/agent.js").AgentDeps,
         });
       } finally {
         runs.unregister(sid);

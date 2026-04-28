@@ -1,18 +1,10 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type Anthropic from "@anthropic-ai/sdk";
+// server/src/orchestrator/agent.ts
 import { buildSystemPrompt } from "./system-prompt.js";
-import { buildShellMcp } from "../tools/shell-mcp.js";
-import { buildAvaMcp, type ToolDef } from "../tools/ava-mcp.js";
-import { buildFilesystem } from "../tools/filesystem.js";
-import { buildFilesystemTools } from "../tools/filesystem-mcp.js";
-import { buildClaudeCode } from "../tools/claude-code.js";
-import { buildClaudeCodeTool } from "../tools/claude-code-mcp.js";
-import { buildChromeTools } from "../tools/chrome-mcp.js";
-import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
+import { buildToolRegistry } from "./tool-registry.js";
+import type { LLMProvider, Message, ToolCall } from "./llm/types.js";
+import type { ToolDef } from "../tools/ava-mcp.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
-import { buildPathAllowlist } from "../security/path-allowlist.js";
 import { buildPolicyHook, type PolicyHook } from "../policy/runtime.js";
 import type { Db } from "../state/db.js";
 import type { Approval } from "../state/approvals.js";
@@ -35,7 +27,8 @@ export type AgentDeps = {
   pidfiles: PidfileRegistry;
   fsRoots: string[];
   pushDeliver?: (a: Approval) => Promise<void>;
-  anthropic?: Anthropic | null;
+  provider: LLMProvider;
+  tools: ToolDef[];
 };
 
 export type RunOpts = {
@@ -48,224 +41,107 @@ export type RunOpts = {
   sessionId: string;
 };
 
-const ALL_TOOL_NAMES = [
-  "shell",
-  "fs_read",
-  "fs_write",
-  "fs_list",
-  "fs_stat",
-  "fs_delete",
-  "claude_code",
-  "chrome_navigate",
-  "chrome_click",
-  "chrome_type",
-  "chrome_press_key",
-  "chrome_read_page",
-  "chrome_screenshot",
-  "chrome_tabs",
-  "computer_use",
-];
-
 export async function runAgent(opts: RunOpts): Promise<void> {
   const { prompt, abort, runId, deps } = opts;
-
   const stuckLoop = createStuckLoop();
   const innerEmit = opts.emit;
   let stuckReason: "stuck" | undefined = undefined;
   const emit = (e: AgentEvent) => {
     innerEmit(e);
-    if (e.kind === "thought") {
-      stuckLoop.observeThought(e.payload.text);
-    } else if (e.kind === "tool_result") {
+    if (e.kind === "thought") stuckLoop.observeThought(e.payload.text);
+    else if (e.kind === "tool_result") {
       const r = stuckLoop.observe({
         tool: e.payload.tool,
         resultText: e.payload.result,
         at: Date.now(),
       });
       if (r.halt && !abort.signal.aborted) {
-        innerEmit({
-          kind: "thought",
-          payload: {
-            text: "I've been trying for a while without progress — want me to stop or try a different angle?",
-          },
-        });
+        innerEmit({ kind: "thought",
+          payload: { text: "I've been trying for a while without progress, Sir. Halting." } });
         stuckReason = "stuck";
         abort.abort();
       }
     }
   };
 
-  const policy = buildPolicyHook({
-    db: opts.db,
-    sessionId: opts.sessionId,
-    emit: (e) => emit(e),
+  const policy: PolicyHook = buildPolicyHook({
+    db: opts.db, sessionId: opts.sessionId, emit,
     pushDeliver: deps.pushDeliver,
   });
 
-  function wrapToolDef(td: ToolDef, hook: PolicyHook): ToolDef {
-    return {
-      tool: td.tool,
-      run: async (args, ctx) => {
-        const r = await hook(td.tool.name, args);
-        if (!r.allow) {
-          emit({ kind: "tool_call", payload: { tool: td.tool.name, args } });
-          emit({ kind: "tool_result", payload: { tool: td.tool.name, ok: false, result: r.message } });
-          return { ok: false, text: r.message };
-        }
-        const budget = TOOL_BUDGET_MS[td.tool.name] ?? 30_000;
-        try {
-          return await withTimeout(td.run(args, ctx), budget, td.tool.name);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg.startsWith("timeout: ")) {
-            emit({ kind: "tool_result", payload: { tool: td.tool.name, ok: false, result: "timeout" } });
-            return { ok: false, text: "timeout" };
+  const system = buildSystemPrompt();
+  const registry = buildToolRegistry({ tools: deps.tools, ctx: { runId } });
+  const tools = registry.toolDefinitions();
+
+  const messages: Message[] = [{ role: "user", content: prompt }];
+  let finalText = "";
+
+  loop: for (let turn = 0; turn < 32; turn++) {
+    if (abort.signal.aborted) break;
+    let assistantText = "";
+    const pendingCalls: ToolCall[] = [];
+    let stopReason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error" = "end_turn";
+
+    try {
+      for await (const ev of deps.provider.stream({
+        model: deps.provider.defaultOrchestratorModel,
+        system, messages, tools, abort: abort.signal,
+      })) {
+        if (ev.kind === "delta") {
+          assistantText += ev.text;
+          emit({ kind: "thought", payload: { text: ev.text } });
+        } else if (ev.kind === "tool_call") {
+          pendingCalls.push(ev.call);
+        } else if (ev.kind === "done") {
+          stopReason = ev.stop_reason;
+          if (ev.stop_reason === "error") {
+            emit({ kind: "error", payload: { message: ev.error ?? "stream error" } });
+            break loop;
           }
-          throw err;
         }
-      },
-    };
-  }
-
-  const shellSrv = buildShellMcp({
-    emit: (e) => {
-      if (e.kind === "shell.call") {
-        emit({ kind: "tool_call", payload: { tool: "shell", args: e.args } });
-      } else {
-        emit({ kind: "tool_result", payload: { tool: "shell", ok: e.ok, result: e.result } });
       }
-    },
-    signalForRun: () => abort.signal,
-    policyCheck: policy,
-  });
+    } catch (err) {
+      emit({ kind: "error", payload: { message: err instanceof Error ? err.message : String(err) } });
+      break;
+    }
 
-  const fs = buildFilesystem({ roots: deps.fsRoots });
-  const fsTools: ToolDef[] = buildFilesystemTools({
-    fs,
-    emit: (e) => {
-      if (e.kind === "fs.call")
-        emit({ kind: "tool_call", payload: { tool: e.tool, args: e.args } });
-      else emit({ kind: "tool_result", payload: { tool: e.tool, ok: e.ok, result: e.result } });
-    },
-  }) as ToolDef[];
+    if (stopReason === "abort" || abort.signal.aborted) {
+      emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : { reason: "manual" } });
+      break;
+    }
 
-  const cc = buildClaudeCode({
-    pidfiles: deps.pidfiles,
-    check: buildPathAllowlist({ roots: deps.fsRoots }),
-  });
-  const ccTool = buildClaudeCodeTool({
-    cc,
-    emit: (e) => {
-      if (e.kind === "claude_code.call")
-        emit({ kind: "tool_call", payload: { tool: "claude_code", args: e.args } });
-      else
-        emit({
-          kind: "tool_result",
-          payload: { tool: "claude_code", ok: e.ok, result: e.result },
-        });
-    },
-  });
+    if (stopReason === "end_turn" || pendingCalls.length === 0) {
+      finalText = assistantText;
+      emit({ kind: "final", payload: { text: finalText } });
+      break;
+    }
 
-  const chromeTools: ToolDef[] = buildChromeTools({
-    chrome: deps.chrome,
-    emit: (e) => {
-      if (e.kind === "chrome.call")
-        emit({ kind: "tool_call", payload: { tool: e.tool, args: e.args } });
-      else emit({ kind: "tool_result", payload: { tool: e.tool, ok: e.ok, result: e.result } });
-    },
-  }) as ToolDef[];
+    messages.push({ role: "assistant", content: assistantText, tool_calls: pendingCalls });
 
-  const computerUseTool: ToolDef = buildComputerUseTool({
-    client: deps.anthropic ?? null,
-    chrome: deps.chrome,
-    emit: (e) => {
-      if (e.kind === "computer_use.call")
-        emit({ kind: "tool_call", payload: { tool: "computer_use", args: e.args } });
-      else
-        emit({
-          kind: "tool_result",
-          payload: { tool: "computer_use", ok: e.ok, result: e.result },
-        });
-    },
-  }) as ToolDef;
-
-  const wrappedFsTools = fsTools.map((t) => wrapToolDef(t, policy));
-  const wrappedCcTool = wrapToolDef(ccTool, policy);
-  const wrappedChromeTools = chromeTools.map((t) => wrapToolDef(t, policy));
-  const wrappedComputerUseTool = wrapToolDef(computerUseTool, policy);
-
-  const ava = buildAvaMcp({
-    ctx: { runId },
-    tools: [...wrappedFsTools, wrappedCcTool, ...wrappedChromeTools, wrappedComputerUseTool],
-  });
-
-  try {
-    const result = query({
-      prompt,
-      options: {
-        abortController: abort,
-        systemPrompt: { type: "preset", preset: "claude_code", append: buildSystemPrompt() },
-        mcpServers: {
-          shell: { type: "sdk", name: "shell", instance: shellSrv as unknown as McpServer },
-          ava: { type: "sdk", name: "ava", instance: ava as unknown as McpServer },
-        },
-        // `tools: []` disables ALL built-in claude_code tools (Read/Bash/Edit/etc.).
-        // `allowedTools` is only an auto-approval list — without `tools`, the full
-        // claude_code preset would still be available to the model.
-        tools: [],
-        allowedTools: [
-          "mcp__shell__shell",
-          ...ALL_TOOL_NAMES.filter((n) => n !== "shell").map((n) => `mcp__ava__${n}`),
-        ],
-      },
-    });
-
-    for await (const evt of result) {
+    for (const call of pendingCalls) {
       if (abort.signal.aborted) break;
-      if (evt.type === "assistant" && Array.isArray(evt.message?.content)) {
-        const blocks = evt.message.content;
-        // Final-only assistant turns (text without tool_use) are re-emitted by
-        // the SDK as `result.result`. Skip them here to avoid duplicate
-        // rendering — only emit thoughts for intermediate turns that also call
-        // a tool.
-        const hasToolUse = blocks.some((b) => b.type === "tool_use");
-        if (hasToolUse) {
-          for (const block of blocks) {
-            if (block.type === "text" && block.text) {
-              emit({ kind: "thought", payload: { text: block.text } });
-            }
-          }
-        }
-      }
-      if (evt.type === "result") {
-        if (evt.subtype === "success") {
-          if (evt.result) emit({ kind: "final", payload: { text: evt.result } });
-        } else {
-          const errs = evt.errors;
-          const detail = errs?.length ? errs.join("; ") : "unknown";
-          emit({ kind: "error", payload: { message: `${evt.subtype}: ${detail}` } });
-        }
-      }
-    }
+      emit({ kind: "tool_call", payload: { tool: call.name, args: call.args } });
 
-    if (abort.signal.aborted) {
-      const pids = deps.pidfiles.list(runId);
-      const { killTree } = await import("../process/kill-tree.js");
-      await Promise.all(pids.map((p) => killTree(p)));
-      deps.pidfiles.clear(runId);
-      emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : {} });
-    } else {
-      emit({ kind: "done", payload: {} });
-    }
-  } catch (e) {
-    if (abort.signal.aborted) {
-      const pids = deps.pidfiles.list(runId);
-      const { killTree } = await import("../process/kill-tree.js");
-      await Promise.all(pids.map((p) => killTree(p)));
-      deps.pidfiles.clear(runId);
-      emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : {} });
-    } else {
-      emit({ kind: "error", payload: { message: String(e instanceof Error ? e.message : e) } });
+      const decision = await policy(call.name, call.args);
+      if (!decision.allow) {
+        const result = { call_id: call.id, output: decision.message, is_error: true };
+        emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: result.output } });
+        messages.push({ role: "tool", content: result });
+        continue;
+      }
+
+      const budget = TOOL_BUDGET_MS[call.name] ?? 30_000;
+      try {
+        const r = await withTimeout(registry.dispatch(call), budget, call.name);
+        emit({ kind: "tool_result", payload: { tool: call.name, ok: !r.is_error, result: r.output } });
+        messages.push({ role: "tool", content: r });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: msg } });
+        messages.push({ role: "tool", content: { call_id: call.id, output: msg, is_error: true } });
+      }
     }
   }
+
+  emit({ kind: "done", payload: {} });
 }

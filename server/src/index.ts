@@ -13,6 +13,7 @@ import { sessionsRoutes } from "./routes/sessions.js";
 import { statusRoutes } from "./routes/status.js";
 import { pushRoutes } from "./routes/push.js";
 import { rulesRoutes } from "./routes/rules.js";
+import { approvalsRoutes } from "./routes/approvals.js";
 import { ActiveRuns } from "./orchestrator/active-runs.js";
 import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
@@ -61,6 +62,7 @@ app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps, { anthrop
 app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
 app.use("/api/push", pushRoutes(db, requireToken(db), { vapidPublicKey: cfg.vapidPublicKey }));
 app.use("/api/rules", rulesRoutes(db, requireToken(db), { anthropic }));
+app.use("/api/approvals", approvalsRoutes(db, requireToken(db)));
 app.use("/", statusRoutes({ db, runs, startedAt }));
 
 const webDistDir = fileURLToPath(new URL("../../web/dist/", import.meta.url));

@@ -32,4 +32,15 @@ describe("memory/store", () => {
     appendLine(join(dir, "new.md"), "hello");
     expect(readFileSync(join(dir, "new.md"), "utf8")).toBe("hello\n");
   });
+
+  it("appendLine inserts a missing newline before appending when the file does not end with one", () => {
+    writeFileSync(join(dir, "obs.md"), "first", "utf8");
+    appendLine(join(dir, "obs.md"), "second");
+    expect(readFileSync(join(dir, "obs.md"), "utf8")).toBe("first\nsecond\n");
+  });
+
+  it("writeFile does not append a trailing newline (callers own newline structure)", () => {
+    writeFile(join(dir, "x.md"), "abc");
+    expect(readFileSync(join(dir, "x.md"), "utf8")).toBe("abc");
+  });
 });

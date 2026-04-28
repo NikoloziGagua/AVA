@@ -16,5 +16,7 @@ export function appendLine(path: string, line: string): void {
     writeFileSync(path, safe + "\n", "utf8");
     return;
   }
-  appendFileSync(path, safe + "\n", "utf8");
+  const existing = readFileSync(path, "utf8");
+  const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  appendFileSync(path, prefix + safe + "\n", "utf8");
 }

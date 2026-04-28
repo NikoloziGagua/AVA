@@ -1,4 +1,3 @@
-// server/src/orchestrator/agent.ts
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildToolRegistry } from "./tool-registry.js";
 import type { LLMProvider, Message, ToolCall } from "./llm/types.js";
@@ -76,7 +75,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
   const messages: Message[] = [{ role: "user", content: prompt }];
   let finalText = "";
 
-  loop: for (let turn = 0; turn < 32; turn++) {
+  for (let turn = 0; turn < 32; turn++) {
     if (abort.signal.aborted) break;
     let assistantText = "";
     const pendingCalls: ToolCall[] = [];
@@ -96,17 +95,25 @@ export async function runAgent(opts: RunOpts): Promise<void> {
           stopReason = ev.stop_reason;
           if (ev.stop_reason === "error") {
             emit({ kind: "error", payload: { message: ev.error ?? "stream error" } });
-            break loop;
+            return;
           }
         }
       }
     } catch (err) {
       emit({ kind: "error", payload: { message: err instanceof Error ? err.message : String(err) } });
-      break;
+      return;
     }
 
     if (stopReason === "abort" || abort.signal.aborted) {
       emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : { reason: "manual" } });
+      break;
+    }
+
+    // Phase 1: surface max_tokens as a visible thought; future work can request continuation.
+    if (stopReason === "max_tokens") {
+      emit({ kind: "thought", payload: { text: "[response truncated by token limit]" } });
+      finalText = assistantText;
+      emit({ kind: "final", payload: { text: finalText } });
       break;
     }
 

@@ -86,7 +86,7 @@ describe("runAgent (v2 loop)", () => {
     expect(events.find((e) => e.kind === "final")?.payload).toEqual({ text: "Done." });
   });
 
-  it("emits killed when the abort signal fires mid-stream", async () => {
+  it("emits killed when the provider reports stop_reason abort", async () => {
     const ac = new AbortController();
     const provider = new MockLLMProvider({
       scripts: [[{ kind: "delta", text: "stalling…" }, { kind: "done", stop_reason: "abort" }]],

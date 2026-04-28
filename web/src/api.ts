@@ -61,3 +61,19 @@ export async function fetchSession(id: string): Promise<{
     messages: Array<{ id: number; role: string; content: string; created_at: number }>;
   }>(`/api/sessions/${id}`);
 }
+
+export async function fetchVapidPublicKey(): Promise<string> {
+  const j = await request<{ key: string }>("/api/push/vapid-public");
+  return j.key;
+}
+
+export async function registerPushSubscription(input: {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+  deviceLabel: string | null;
+}): Promise<void> {
+  await request<{ ok: true }>("/api/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}

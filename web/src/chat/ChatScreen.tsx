@@ -3,6 +3,7 @@ import { api, fetchSession } from "../api.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
+import { enablePush } from "../push/register.js";
 
 export function ChatScreen({
   sessionId: requestedSessionId,
@@ -15,6 +16,9 @@ export function ChatScreen({
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [runEpoch, setRunEpoch] = useState(0);
   const { events } = useChatStream(sessionId, runEpoch);
+  const [pushState, setPushState] = useState<"idle" | "pending" | "ok" | string>(
+    typeof Notification !== "undefined" && Notification.permission === "granted" ? "ok" : "idle",
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -80,7 +84,26 @@ export function ChatScreen({
           ☰
         </button>
         <div className="text-lg font-semibold">Ava</div>
-        <div className="w-8" />
+        {pushState !== "ok" ? (
+          <button
+            disabled={pushState === "pending"}
+            onClick={async () => {
+              setPushState("pending");
+              const r = await enablePush("phone");
+              setPushState(r.ok ? "ok" : r.reason);
+              if (!r.ok) setTimeout(() => setPushState("idle"), 5000);
+            }}
+            className="text-xs text-emerald-400 px-2 disabled:opacity-50"
+          >
+            {pushState === "pending"
+              ? "enabling..."
+              : pushState === "idle"
+                ? "enable notifications"
+                : pushState}
+          </button>
+        ) : (
+          <div className="w-8" />
+        )}
       </header>
       <MessageList history={history} liveEvents={events} />
       <Composer onSend={send} onKill={kill} busy={busy} />

@@ -88,8 +88,8 @@ export function chatRoutes(
       return;
     }
 
-    if (metered.anthropic) {
-      await maybeSummarize({ db, sessionId, client: metered.anthropic });
+    if (agentDeps.provider) {
+      await maybeSummarize({ db, sessionId, provider: agentDeps.provider });
     }
 
     const buffer = new SseBuffer({ maxEvents: 500, maxBytes: 5 * 1024 * 1024 });

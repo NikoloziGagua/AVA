@@ -1,20 +1,23 @@
-import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "../state/db.js";
 import { listMessages } from "../state/messages.js";
 import { updateSummary, getSessionFull } from "../state/sessions.js";
+import type { LLMProvider } from "./llm/types.js";
 
 export type SummarizeArgs = {
   db: Db;
   sessionId: string;
-  client: Anthropic;
+  provider: LLMProvider;
   threshold?: number;     // default 50
   keepRecent?: number;    // default 20
 };
 
+const SYSTEM =
+  "You produce concise conversation summaries. Output 6-12 bullet points. Preserve names, numbers, file paths, and outcomes. No preamble, no fences.";
+
 export async function maybeSummarize({
   db,
   sessionId,
-  client,
+  provider,
   threshold = 50,
   keepRecent = 20,
 }: SummarizeArgs): Promise<void> {
@@ -35,22 +38,15 @@ export async function maybeSummarize({
     : "";
 
   try {
-    const r = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 1024,
-      messages: [
-        {
-          role: "user",
-          content:
-            priorSummary +
-            "Summarize the following conversation transcript in 6-12 bullet points. Preserve names, numbers, file paths, and outcomes. No preamble.\n\n" +
-            transcript,
-        },
-      ],
+    const text = await provider.complete({
+      model: provider.defaultSideModel,
+      system: SYSTEM,
+      user: priorSummary + transcript,
+      maxTokens: 1024,
     });
-    const block = r.content.find((b) => b.type === "text");
-    if (!block || block.type !== "text") return;
-    updateSummary(db, sessionId, block.text.trim(), throughId);
+    const trimmed = text.trim();
+    if (trimmed.length === 0) return;
+    updateSummary(db, sessionId, trimmed, throughId);
   } catch {
     return;
   }

@@ -3,10 +3,12 @@ import { getToken } from "./auth/tokens.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
 import { ChatScreen } from "./chat/ChatScreen.js";
 import { SessionsScreen } from "./sessions/SessionsScreen.js";
+import { RulesScreen } from "./rules/RulesScreen.js";
 
 type View =
   | { name: "chat"; sessionId: string | null }
-  | { name: "sessions" };
+  | { name: "sessions" }
+  | { name: "rules" };
 
 export function App() {
   const [paired, setPaired] = useState<boolean>(!!getToken());
@@ -24,10 +26,15 @@ export function App() {
     );
   }
 
+  if (view.name === "rules") {
+    return <RulesScreen onClose={() => setView({ name: "chat", sessionId: null })} />;
+  }
+
   return (
     <ChatScreen
       sessionId={view.sessionId}
       onOpenSessions={() => setView({ name: "sessions" })}
+      onOpenRules={() => setView({ name: "rules" })}
     />
   );
 }

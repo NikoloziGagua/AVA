@@ -8,9 +8,11 @@ import { enablePush } from "../push/register.js";
 export function ChatScreen({
   sessionId: requestedSessionId,
   onOpenSessions,
+  onOpenRules,
 }: {
   sessionId: string | null;
   onOpenSessions: () => void;
+  onOpenRules: () => void;
 }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
@@ -84,26 +86,27 @@ export function ChatScreen({
           ☰
         </button>
         <div className="text-lg font-semibold">Ava</div>
-        {pushState !== "ok" ? (
-          <button
-            disabled={pushState === "pending"}
-            onClick={async () => {
-              setPushState("pending");
-              const r = await enablePush("phone");
-              setPushState(r.ok ? "ok" : r.reason);
-              if (!r.ok) setTimeout(() => setPushState("idle"), 5000);
-            }}
-            className="text-xs text-emerald-400 px-2 disabled:opacity-50"
-          >
-            {pushState === "pending"
-              ? "enabling..."
-              : pushState === "idle"
-                ? "enable notifications"
-                : pushState}
-          </button>
-        ) : (
-          <div className="w-8" />
-        )}
+        <div className="flex items-center gap-1">
+          {pushState !== "ok" ? (
+            <button
+              disabled={pushState === "pending"}
+              onClick={async () => {
+                setPushState("pending");
+                const r = await enablePush("phone");
+                setPushState(r.ok ? "ok" : r.reason);
+                if (!r.ok) setTimeout(() => setPushState("idle"), 5000);
+              }}
+              className="text-xs text-emerald-400 px-2 disabled:opacity-50"
+            >
+              {pushState === "pending"
+                ? "enabling..."
+                : pushState === "idle"
+                  ? "enable notifications"
+                  : pushState}
+            </button>
+          ) : null}
+          <button onClick={onOpenRules} aria-label="rules" className="text-neutral-400 text-lg px-2">⚙</button>
+        </div>
       </header>
       <MessageList history={history} liveEvents={events} />
       <Composer onSend={send} onKill={kill} busy={busy} />

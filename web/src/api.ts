@@ -77,3 +77,36 @@ export async function registerPushSubscription(input: {
     body: JSON.stringify(input),
   });
 }
+
+export type RuleRow = {
+  id: string;
+  source: string;
+  parsed: string | null;
+  enabled: number;
+  status: "pending" | "active" | "failed";
+  created_at: number;
+  updated_at: number;
+};
+
+export async function fetchRules(): Promise<RuleRow[]> {
+  const j = await request<{ rules: RuleRow[] }>("/api/rules");
+  return j.rules;
+}
+
+export async function createRule(source: string): Promise<{ rule: RuleRow }> {
+  return request<{ rule: RuleRow }>("/api/rules", {
+    method: "POST",
+    body: JSON.stringify({ source }),
+  });
+}
+
+export async function patchRule(id: string, enabled: boolean): Promise<void> {
+  await request<{ ok: true }>(`/api/rules/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function deleteRuleApi(id: string): Promise<void> {
+  await request<{ ok: true }>(`/api/rules/${id}`, { method: "DELETE" });
+}

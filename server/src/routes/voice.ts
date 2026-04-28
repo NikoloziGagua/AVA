@@ -39,7 +39,7 @@ export function voiceRoutes(deps: {
       const f = await toFile(blob, filename, { type: file.mimetype });
       const r = await deps.clients.openai.audio.transcriptions.create({
         file: f,
-        model: "whisper-1",
+        model: "gpt-4o-transcribe",
       });
       return res.json({ text: r.text });
     } catch (err) {
@@ -57,8 +57,8 @@ export function voiceRoutes(deps: {
     if (!text.trim()) return res.status(400).json({ error: "text required" });
     try {
       const r = await deps.clients.openai.audio.speech.create({
-        model: "tts-1",
-        voice: voice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer",
+        model: "gpt-4o-mini-tts",
+        voice: voice as "alloy" | "ash" | "ballad" | "coral" | "echo" | "fable" | "onyx" | "nova" | "sage" | "shimmer" | "verse",
         input: text,
       });
       res.setHeader("Content-Type", "audio/mpeg");

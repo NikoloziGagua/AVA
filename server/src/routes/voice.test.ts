@@ -51,7 +51,7 @@ describe("voiceRoutes /api/transcribe", () => {
     expect(res.body).toEqual({ text: "hello" });
     expect(transcribe).toHaveBeenCalledOnce();
     const arg = transcribe.mock.calls[0]?.[0] as { model: string };
-    expect(arg.model).toBe("whisper-1");
+    expect(arg.model).toBe("gpt-4o-transcribe");
   });
 
   it("returns 400 for unsupported mime", async () => {
@@ -88,7 +88,7 @@ describe("voiceRoutes /api/speak", () => {
     expect(Array.from(res.body as Buffer)).toEqual([10, 20, 30, 40]);
     expect(speak).toHaveBeenCalledOnce();
     const arg = speak.mock.calls[0]?.[0] as { model: string; input: string; voice: string };
-    expect(arg.model).toBe("tts-1");
+    expect(arg.model).toBe("gpt-4o-mini-tts");
     expect(arg.input).toBe("hello world");
     expect(arg.voice).toBe("alloy");
   });

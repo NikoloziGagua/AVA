@@ -33,6 +33,7 @@ const Body = z.object({
 export type AgentDeps = {
   pidfiles: PidfileRegistry;
   fsRoots: string[];
+  memoryDir: string;
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
   provider: LLMProvider | null;
@@ -155,6 +156,7 @@ export function chatRoutes(
             chrome,
             pidfiles: agentDeps.pidfiles,
             fsRoots: agentDeps.fsRoots,
+            memoryDir: agentDeps.memoryDir,
             pushDeliver: agentDeps.pushDeliver,
             provider,
             tools,

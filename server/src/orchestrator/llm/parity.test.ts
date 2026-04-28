@@ -1,9 +1,19 @@
 import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { OpenAIProvider } from "./openai-provider.js";
 import { AnthropicProvider } from "./anthropic-provider.js";
 import { runAgent, type AgentEvent } from "../agent.js";
 import type { ToolDef } from "../../tools/ava-mcp.js";
 import { openInMemoryDb, type Db } from "../../state/db.js";
+import { bootstrapMemoryDir } from "../../memory/bootstrap.js";
+
+function makeMemDir(): string {
+  const d = mkdtempSync(join(tmpdir(), "ava-test-mem-"));
+  bootstrapMemoryDir({ dir: d });
+  return d;
+}
 
 function seedAllowAllRule(db: Db): void {
   const now = Date.now();
@@ -75,7 +85,7 @@ describe("provider parity (mocked SDKs)", () => {
       prompt: "list", abort: new AbortController(), emit: (e: AgentEvent) => events1.push(e),
       runId: "r1", sessionId: "s1", db: db1,
       deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
-        memoryDir: "", provider: new OpenAIProvider({ client: openaiClient }), tools: [tool1] } as never,
+        memoryDir: makeMemDir(), provider: new OpenAIProvider({ client: openaiClient }), tools: [tool1] } as never,
     } as never);
 
     // ---- Anthropic run ----
@@ -95,7 +105,7 @@ describe("provider parity (mocked SDKs)", () => {
       prompt: "list", abort: new AbortController(), emit: (e: AgentEvent) => events2.push(e),
       runId: "r1", sessionId: "s1", db: db2,
       deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
-        memoryDir: "", provider: new AnthropicProvider({ client: anthropicClient }), tools: [tool2] } as never,
+        memoryDir: makeMemDir(), provider: new AnthropicProvider({ client: anthropicClient }), tools: [tool2] } as never,
     } as never);
 
     // Full event-stream equality (kinds and payloads).

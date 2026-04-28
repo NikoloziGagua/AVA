@@ -24,6 +24,7 @@ import { buildChrome } from "./tools/chrome.js";
 import { buildVoiceClients } from "./tools/voice-clients.js";
 import { buildDeliverer } from "./push/deliver.js";
 import { buildProvider } from "./orchestrator/llm/factory.js";
+import { bootstrapMemoryDir } from "./memory/bootstrap.js";
 
 const startedAt = Date.now();
 const cfg = loadConfig();
@@ -33,6 +34,7 @@ const runs = new ActiveRuns();
 const pidfiles = new PidfileRegistry(cfg.pidfileDir);
 
 await runRecovery({ db, pidfiles, kill: (pid) => killTree(pid) });
+bootstrapMemoryDir({ dir: cfg.memoryDir });
 
 let chromePromise: ReturnType<typeof buildChrome> | null = null;
 function getChrome() {
@@ -73,6 +75,7 @@ const provider = buildProvider({
 const agentDeps = {
   pidfiles,
   fsRoots: cfg.fsRoots,
+  memoryDir: cfg.memoryDir,
   getChrome,
   pushDeliver,
   provider,  // LLMProvider | null

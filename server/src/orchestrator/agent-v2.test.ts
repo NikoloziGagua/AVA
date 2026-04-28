@@ -1,8 +1,18 @@
 import { describe, it, expect, vi } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runAgent, type AgentEvent } from "./agent.js";
 import { MockLLMProvider } from "./llm/mock-provider.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { openInMemoryDb, type Db } from "../state/db.js";
+import { bootstrapMemoryDir } from "../memory/bootstrap.js";
+
+function makeMemDir(): string {
+  const d = mkdtempSync(join(tmpdir(), "ava-test-mem-"));
+  bootstrapMemoryDir({ dir: d });
+  return d;
+}
 
 function seedAllowAllRule(db: Db): void {
   const now = Date.now();
@@ -42,7 +52,7 @@ describe("runAgent (v2 loop)", () => {
       db,
       deps: {
         chrome: null as never, pidfiles: null as never, fsRoots: [],
-        memoryDir: "", provider, tools: [],
+        memoryDir: makeMemDir(), provider, tools: [],
       } as never,
     } as never);
     expect(events.find((e) => e.kind === "final")?.payload).toEqual({ text: "Good morning, Sir." });
@@ -77,7 +87,7 @@ describe("runAgent (v2 loop)", () => {
       db: db2,
       deps: {
         chrome: null as never, pidfiles: null as never, fsRoots: [],
-        memoryDir: "", provider, tools: [tool],
+        memoryDir: makeMemDir(), provider, tools: [tool],
       } as never,
     } as never);
     expect(tool.run).toHaveBeenCalledWith({ command: "ls" }, expect.objectContaining({ runId: "r1" }));
@@ -99,7 +109,7 @@ describe("runAgent (v2 loop)", () => {
       abort: ac,
       emit: (e: AgentEvent) => events.push(e),
       runId: "r1", sessionId: "s1", db: db3,
-      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [], memoryDir: "", provider, tools: [] } as never,
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [], memoryDir: makeMemDir(), provider, tools: [] } as never,
     } as never);
     ac.abort();
     await promise;

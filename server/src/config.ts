@@ -13,6 +13,7 @@ export type Config = {
   screenshotDir: string;
   pidfileDir: string;
   logsDir: string;
+  memoryDir: string;
   fsRoots: string[];
   anthropicApiKey: string | null;
   openaiApiKey: string | null;
@@ -55,6 +56,7 @@ export function loadConfig(): Config {
   const pidfileDir = resolve(process.env.PIDFILE_DIR ?? join(dataDir, "pidfiles"));
   const logsDir = resolve(process.env.LOGS_DIR ?? join(dataDir, "logs"));
   mkdirSync(logsDir, { recursive: true });
+  const memoryDir = resolve(process.env.MEMORY_DIR ?? join(dataDir, "memory"));
   const fsRoots = (process.env.FS_ROOTS ?? "C:/ai/**,C:/projects/**,C:/Users/nikug/Downloads/**")
     .split(",")
     .map((s) => s.trim())
@@ -72,6 +74,7 @@ export function loadConfig(): Config {
     screenshotDir,
     pidfileDir,
     logsDir,
+    memoryDir,
     fsRoots,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? null,
     openaiApiKey: process.env.OPENAI_API_KEY ?? null,

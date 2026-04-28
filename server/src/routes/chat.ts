@@ -114,6 +114,7 @@ export function chatRoutes(
             pidfiles: agentDeps.pidfiles,
             fsRoots: agentDeps.fsRoots,
             pushDeliver: agentDeps.pushDeliver,
+            anthropic: metered.anthropic,
           },
         });
       } finally {

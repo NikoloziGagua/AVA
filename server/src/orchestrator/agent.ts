@@ -1,5 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type Anthropic from "@anthropic-ai/sdk";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildShellMcp } from "../tools/shell-mcp.js";
 import { buildAvaMcp, type ToolDef } from "../tools/ava-mcp.js";
@@ -8,6 +9,7 @@ import { buildFilesystemTools } from "../tools/filesystem-mcp.js";
 import { buildClaudeCode } from "../tools/claude-code.js";
 import { buildClaudeCodeTool } from "../tools/claude-code-mcp.js";
 import { buildChromeTools } from "../tools/chrome-mcp.js";
+import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
@@ -33,6 +35,7 @@ export type AgentDeps = {
   pidfiles: PidfileRegistry;
   fsRoots: string[];
   pushDeliver?: (a: Approval) => Promise<void>;
+  anthropic?: Anthropic | null;
 };
 
 export type RunOpts = {
@@ -60,6 +63,7 @@ const ALL_TOOL_NAMES = [
   "chrome_read_page",
   "chrome_screenshot",
   "chrome_tabs",
+  "computer_use",
 ];
 
 export async function runAgent(opts: RunOpts): Promise<void> {
@@ -171,13 +175,28 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     },
   }) as ToolDef[];
 
+  const computerUseTool: ToolDef = buildComputerUseTool({
+    client: deps.anthropic ?? null,
+    chrome: deps.chrome,
+    emit: (e) => {
+      if (e.kind === "computer_use.call")
+        emit({ kind: "tool_call", payload: { tool: "computer_use", args: e.args } });
+      else
+        emit({
+          kind: "tool_result",
+          payload: { tool: "computer_use", ok: e.ok, result: e.result },
+        });
+    },
+  }) as ToolDef;
+
   const wrappedFsTools = fsTools.map((t) => wrapToolDef(t, policy));
   const wrappedCcTool = wrapToolDef(ccTool, policy);
   const wrappedChromeTools = chromeTools.map((t) => wrapToolDef(t, policy));
+  const wrappedComputerUseTool = wrapToolDef(computerUseTool, policy);
 
   const ava = buildAvaMcp({
     ctx: { runId },
-    tools: [...wrappedFsTools, wrappedCcTool, ...wrappedChromeTools],
+    tools: [...wrappedFsTools, wrappedCcTool, ...wrappedChromeTools, wrappedComputerUseTool],
   });
 
   try {

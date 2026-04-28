@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMemoryTools } from "./memory-mcp.js";
@@ -66,5 +66,70 @@ describe("memory_read", () => {
     expect(r.text).toContain("PREFS");
     expect(r.text).toContain("OBS");
     expect(r.text).toContain("INDEX");
+  });
+});
+
+describe("memory_remember", () => {
+  it("appends to observations.md by default with confidence=low", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    const r = await t.run({ text: "uses pwsh", category: "preferences", today: "2026-04-28" }, ctx);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(join(dir, "observations.md"), "utf8"))
+      .toBe("- [2026-04-28 / low / preferences] uses pwsh\n");
+  });
+
+  it("file=preferences appends a plain line to preferences.md (no confidence)", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    const r = await t.run({ file: "preferences", text: "prefers terse responses" }, ctx);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(join(dir, "preferences.md"), "utf8")).toBe("prefers terse responses\n");
+  });
+
+  it("file=project requires a slug and appends to projects/<slug>.md", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    const r = await t.run({ file: "project", project: "yov", text: "uses C:/ai/yov" }, ctx);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(join(dir, "projects", "yov.md"), "utf8")).toBe("uses C:/ai/yov\n");
+  });
+
+  it("refresh=<substring> bumps the matching observation's confidence and date", async () => {
+    writeFileSync(join(dir, "observations.md"),
+      "- [2026-04-20 / low / preferences] uses pwsh for shell\n", "utf8");
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    const r = await t.run({ refresh: "pwsh", today: "2026-04-28" }, ctx);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(join(dir, "observations.md"), "utf8"))
+      .toBe("- [2026-04-28 / medium / preferences] uses pwsh for shell\n");
+  });
+
+  it("supersedes=<substring> marks the old line and appends the new one", async () => {
+    writeFileSync(join(dir, "observations.md"),
+      "- [2026-01-12 / high / preferences] uses pwsh for shell\n", "utf8");
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    const r = await t.run({
+      text: "uses bash on macOS now", category: "preferences", confidence: "medium",
+      supersedes: "pwsh", today: "2026-04-28",
+    }, ctx);
+    expect(r.ok).toBe(true);
+    const out = readFileSync(join(dir, "observations.md"), "utf8");
+    expect(out).toContain("/ superseded 2026-04-28] uses pwsh for shell");
+    expect(out).toContain("- [2026-04-28 / medium / preferences] uses bash on macOS now");
+  });
+
+  it("scrubs secrets in the text before persisting (firewall)", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    await t.run({
+      text: "OPENAI_API_KEY=sk-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      category: "setup", today: "2026-04-28",
+    }, ctx);
+    const persisted = readFileSync(join(dir, "observations.md"), "utf8");
+    expect(persisted).not.toContain("sk-AAAA");
+    expect(persisted).toContain("sk-***");
   });
 });

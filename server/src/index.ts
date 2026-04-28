@@ -23,6 +23,7 @@ import { runRecovery } from "./state/recovery.js";
 import { buildChrome } from "./tools/chrome.js";
 import { buildVoiceClients } from "./tools/voice-clients.js";
 import { buildDeliverer } from "./push/deliver.js";
+import { buildProvider } from "./orchestrator/llm/factory.js";
 
 const startedAt = Date.now();
 const cfg = loadConfig();
@@ -62,11 +63,19 @@ const pushDeliver = (cfg.vapidPublicKey && cfg.vapidPrivateKey)
     })()
   : undefined;
 
+const provider = buildProvider({
+  preferred: cfg.llmProvider,
+  openaiApiKey: cfg.openaiApiKey,
+  anthropicApiKey: cfg.anthropicApiKey,
+  log,
+});
+
 const agentDeps = {
   pidfiles,
   fsRoots: cfg.fsRoots,
   getChrome,
   pushDeliver,
+  provider,  // LLMProvider | null
 };
 
 const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;

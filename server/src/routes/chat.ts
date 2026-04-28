@@ -14,6 +14,16 @@ import { maybeSummarize } from "../orchestrator/auto-summary.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 import type { Approval } from "../state/approvals.js";
+import type { LLMProvider } from "../orchestrator/llm/types.js";
+import { buildShellTool } from "../tools/shell-tool.js";
+import { buildFilesystem } from "../tools/filesystem.js";
+import { buildFilesystemTools } from "../tools/filesystem-mcp.js";
+import { buildClaudeCode } from "../tools/claude-code.js";
+import { buildClaudeCodeTool } from "../tools/claude-code-mcp.js";
+import { buildChromeTools } from "../tools/chrome-mcp.js";
+import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
+import { buildPathAllowlist } from "../security/path-allowlist.js";
+import type { ToolDef } from "../tools/ava-mcp.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -25,6 +35,7 @@ export type AgentDeps = {
   fsRoots: string[];
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
+  provider: LLMProvider | null;
   /** Optional override; lets tests substitute a fake agent loop. Defaults to runAgent. */
   runAgentImpl?: typeof runAgent;
 };
@@ -44,6 +55,10 @@ export function chatRoutes(
     const parsed = Body.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "bad_request", details: parsed.error.flatten() });
+      return;
+    }
+    if (!agentDeps.provider) {
+      res.status(503).json({ error: "no_llm_provider" });
       return;
     }
     let sessionId = parsed.data.sessionId;
@@ -105,6 +120,28 @@ export function chatRoutes(
       try {
         const impl = agentDeps.runAgentImpl ?? runAgent;
         const chrome = await agentDeps.getChrome();
+        const provider = agentDeps.provider!;  // null-check happened earlier (503)
+        // The agent loop emits tool_call/tool_result centrally via the ToolRegistry,
+        // so we pass noop emits to legacy builders. Phase 2 cleanup removes
+        // the `emit` parameters from these builders entirely.
+        const noop = () => {};
+        const fs = buildFilesystem({ roots: agentDeps.fsRoots });
+        const cc = buildClaudeCode({
+          pidfiles: agentDeps.pidfiles,
+          check: buildPathAllowlist({ roots: agentDeps.fsRoots }),
+        });
+        const tools: ToolDef[] = [
+          buildShellTool({ signal: abort.signal }),
+          ...(buildFilesystemTools({ fs, emit: noop }) as ToolDef[]),
+          buildClaudeCodeTool({ cc, emit: noop }) as ToolDef,
+          ...(buildChromeTools({ chrome, emit: noop }) as ToolDef[]),
+          // TODO(M4 Phase 4): replace with OpenAI computer_use_preview when provider is openai.
+          buildComputerUseTool({
+            client: provider.name === "anthropic" ? metered.anthropic : null,
+            chrome,
+            emit: noop,
+          }) as ToolDef,
+        ];
         await impl({
           prompt: transcriptForAgent,
           abort,
@@ -112,13 +149,14 @@ export function chatRoutes(
           runId,
           db,
           sessionId: sid,
-          // TODO(M4 Task 9): wire real provider + tools instead of this shim cast.
           deps: {
             chrome,
             pidfiles: agentDeps.pidfiles,
             fsRoots: agentDeps.fsRoots,
             pushDeliver: agentDeps.pushDeliver,
-          } as unknown as import("../orchestrator/agent.js").AgentDeps,
+            provider,
+            tools,
+          },
         });
       } finally {
         runs.unregister(sid);

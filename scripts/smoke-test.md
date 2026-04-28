@@ -48,3 +48,30 @@ Run from the phone PWA, paired and on the same Tailscale tailnet (or LAN during 
 - [ ] "Read the page" → returns innerText of the body.
 - [ ] "Take a screenshot" → returns a file path under `data/screenshots/`.
 - [ ] Reboot the PC, run again — chrome's profile dir's stale `SingletonLock` is removed automatically; chromium launches.
+
+## M2 Phase 2 — Polish, sessions, push, recovery
+
+### Logger
+- [ ] Hit `/api/health` once, then check `server/data/logs/server-YYYY-MM-DD*.log` exists and contains JSON lines.
+- [ ] Send a chat message containing `sk-ant-fake12345`. The transcript and message DB show the original; logs for the request show `sk-ant-***`.
+
+### Sessions screen
+- [ ] In the PWA, tap the hamburger (☰) on the chat header. Sessions list opens, newest-first.
+- [ ] Tap an old session → its transcript loads in chat.
+- [ ] Tap "+ new" → empty chat appears; first message creates a new session.
+
+### Auto-title
+- [ ] Send a fresh message like "explore the structure of this repo and tell me where the auth code lives". Within ~2 seconds, refresh the sessions list — the title should be a 3-7 word phrase, not the truncated message.
+- [ ] Block outgoing requests to api.anthropic.com via a hosts entry; send a new message; verify the title falls back to the truncation.
+
+### Auto-summary
+- [ ] In a session, send 60+ messages quickly (a script/copy-paste). On the 51st, observe a brief delay before the agent responds. Verify in the DB: `SELECT summary, summary_through_message_id FROM sessions WHERE id=...`.
+- [ ] Block api.anthropic.com mid-summarize; verify the agent still responds (no summary stored, raw transcript used).
+
+### Push subscription
+- [ ] Tap "enable notifications" on the PWA. Grant permission. Verify `SELECT endpoint FROM push_subscriptions;` returns one row.
+- [ ] Revoke notification permission in browser settings, reload, tap again — should re-register cleanly.
+
+### pm2 boot recovery
+- [ ] Start server, send a long claude_code prompt; while it's running, `taskkill /F /PID <node-pid>` of the server (not Ctrl+C). Confirm orphan claude.exe in Task Manager.
+- [ ] Restart server. Verify the orphan claude.exe is gone, `data/pidfiles/` is empty, and the session that was running is now `status='interrupted'` with a trailing system message in the transcript.

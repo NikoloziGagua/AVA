@@ -14,6 +14,8 @@ import { buildPathAllowlist } from "../security/path-allowlist.js";
 import { buildPolicyHook, type PolicyHook } from "../policy/runtime.js";
 import type { Db } from "../state/db.js";
 import type { Approval } from "../state/approvals.js";
+import { withTimeout, TOOL_BUDGET_MS } from "./timeout.js";
+import { createStuckLoop } from "./stuck-loop.js";
 
 export type AgentEvent =
   | { kind: "thought"; payload: { text: string } }
@@ -21,7 +23,7 @@ export type AgentEvent =
   | { kind: "tool_result"; payload: { tool: string; ok: boolean; result: string } }
   | { kind: "final"; payload: { text: string } }
   | { kind: "error"; payload: { message: string } }
-  | { kind: "killed"; payload: Record<string, never> }
+  | { kind: "killed"; payload: { reason?: "stuck" | "manual" } }
   | { kind: "done"; payload: Record<string, never> }
   | { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } }
   | { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } };
@@ -61,7 +63,33 @@ const ALL_TOOL_NAMES = [
 ];
 
 export async function runAgent(opts: RunOpts): Promise<void> {
-  const { prompt, abort, emit, runId, deps } = opts;
+  const { prompt, abort, runId, deps } = opts;
+
+  const stuckLoop = createStuckLoop();
+  const innerEmit = opts.emit;
+  let stuckReason: "stuck" | undefined = undefined;
+  const emit = (e: AgentEvent) => {
+    innerEmit(e);
+    if (e.kind === "thought") {
+      stuckLoop.observeThought(e.payload.text);
+    } else if (e.kind === "tool_result") {
+      const r = stuckLoop.observe({
+        tool: e.payload.tool,
+        resultText: e.payload.result,
+        at: Date.now(),
+      });
+      if (r.halt && !abort.signal.aborted) {
+        innerEmit({
+          kind: "thought",
+          payload: {
+            text: "I've been trying for a while without progress — want me to stop or try a different angle?",
+          },
+        });
+        stuckReason = "stuck";
+        abort.abort();
+      }
+    }
+  };
 
   const policy = buildPolicyHook({
     db: opts.db,
@@ -80,7 +108,17 @@ export async function runAgent(opts: RunOpts): Promise<void> {
           emit({ kind: "tool_result", payload: { tool: td.tool.name, ok: false, result: r.message } });
           return { ok: false, text: r.message };
         }
-        return td.run(args, ctx);
+        const budget = TOOL_BUDGET_MS[td.tool.name] ?? 30_000;
+        try {
+          return await withTimeout(td.run(args, ctx), budget, td.tool.name);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.startsWith("timeout: ")) {
+            emit({ kind: "tool_result", payload: { tool: td.tool.name, ok: false, result: "timeout" } });
+            return { ok: false, text: "timeout" };
+          }
+          throw err;
+        }
       },
     };
   }
@@ -196,7 +234,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       const { killTree } = await import("../process/kill-tree.js");
       await Promise.all(pids.map((p) => killTree(p)));
       deps.pidfiles.clear(runId);
-      emit({ kind: "killed", payload: {} });
+      emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : {} });
     } else {
       emit({ kind: "done", payload: {} });
     }
@@ -206,7 +244,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       const { killTree } = await import("../process/kill-tree.js");
       await Promise.all(pids.map((p) => killTree(p)));
       deps.pidfiles.clear(runId);
-      emit({ kind: "killed", payload: {} });
+      emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : {} });
     } else {
       emit({ kind: "error", payload: { message: String(e instanceof Error ? e.message : e) } });
     }

@@ -10,7 +10,7 @@ export type StreamEvent =
   | (EventBase & { kind: "tool_result"; payload: { tool: string; ok: boolean; result: string } })
   | (EventBase & { kind: "final"; payload: { text: string } })
   | (EventBase & { kind: "error"; payload: { message: string } })
-  | (EventBase & { kind: "killed"; payload: Record<string, never> })
+  | (EventBase & { kind: "killed"; payload: { reason?: "stuck" } })
   | (EventBase & { kind: "done"; payload: Record<string, never> })
   | (EventBase & { kind: "gap"; payload: { from: number; to: number } })
   | (EventBase & { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } })

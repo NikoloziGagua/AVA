@@ -4,6 +4,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { runShell } from "./shell.js";
+import { withTimeout, TOOL_BUDGET_MS } from "../orchestrator/timeout.js";
 
 const MAX_STREAM_CHARS = 4096;
 
@@ -65,11 +66,25 @@ export function buildShellMcp(opts: {
     }
 
     opts.emit({ kind: "shell.call", args: { command } });
-    const r = await runShell({
-      command,
-      timeoutMs: 30_000,
-      signal: opts.signalForRun(),
-    });
+    let r: Awaited<ReturnType<typeof runShell>>;
+    try {
+      r = await withTimeout(
+        runShell({
+          command,
+          timeoutMs: 30_000,
+          signal: opts.signalForRun(),
+        }),
+        TOOL_BUDGET_MS["shell"] ?? 30_000,
+        "shell"
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("timeout: ")) {
+        opts.emit({ kind: "shell.result", ok: false, result: "timeout" });
+        return { content: [{ type: "text", text: "timeout" }] };
+      }
+      throw err;
+    }
     const stdout = truncate(r.stdout);
     const stderr = truncate(r.stderr);
     const summary = r.ok

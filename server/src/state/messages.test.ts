@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
 import { createSession } from "./sessions.js";
-import { appendMessage, listMessages } from "./messages.js";
+import { appendMessage, countMessages, listMessages, listMessagesAfterId } from "./messages.js";
 
 describe("messages repo", () => {
   let db: Db;
@@ -33,5 +33,26 @@ describe("messages repo", () => {
     const list = listMessages(db, sessionId);
     expect(list).toHaveLength(1);
     expect(list[0]?.content).toBe("mine");
+  });
+
+  it("countMessages returns total messages for session", () => {
+    expect(countMessages(db, sessionId)).toBe(0);
+    appendMessage(db, { sessionId, role: "user", content: "1" });
+    appendMessage(db, { sessionId, role: "assistant", content: "2" });
+    expect(countMessages(db, sessionId)).toBe(2);
+    const otherSession = createSession(db, { title: null }).id;
+    appendMessage(db, { sessionId: otherSession, role: "user", content: "x" });
+    expect(countMessages(db, sessionId)).toBe(2);
+    expect(countMessages(db, otherSession)).toBe(1);
+  });
+
+  it("listMessagesAfterId returns only messages with id > afterId", () => {
+    const m1 = appendMessage(db, { sessionId, role: "user", content: "1" });
+    const m2 = appendMessage(db, { sessionId, role: "assistant", content: "2" });
+    const m3 = appendMessage(db, { sessionId, role: "user", content: "3" });
+    const after = listMessagesAfterId(db, sessionId, m1.id);
+    expect(after.map((m) => m.id)).toEqual([m2.id, m3.id]);
+    const afterAll = listMessagesAfterId(db, sessionId, m3.id);
+    expect(afterAll).toEqual([]);
   });
 });

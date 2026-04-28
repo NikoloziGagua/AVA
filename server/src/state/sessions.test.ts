@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
-import { createSession, getSession, listSessions, touchSession, updateTitle } from "./sessions.js";
+import { createSession, getSession, getSessionFull, listSessions, touchSession, updateSummary, updateTitle } from "./sessions.js";
 
 describe("sessions repo", () => {
   let db: Db;
@@ -47,5 +47,24 @@ describe("sessions repo", () => {
     const s = createSession(db, { title: "old" });
     updateTitle(db, s.id, "new title");
     expect(getSession(db, s.id)?.title).toBe("new title");
+  });
+
+  it("getSessionFull returns null for unknown id", () => {
+    expect(getSessionFull(db, "nope")).toBeNull();
+  });
+
+  it("getSessionFull returns summary fields as null for fresh session", () => {
+    const s = createSession(db, { title: "X" });
+    const full = getSessionFull(db, s.id)!;
+    expect(full.summary).toBeNull();
+    expect(full.summary_through_message_id).toBeNull();
+  });
+
+  it("updateSummary round-trips into getSessionFull", () => {
+    const s = createSession(db, { title: "X" });
+    updateSummary(db, s.id, "earlier discussion", 42);
+    const full = getSessionFull(db, s.id)!;
+    expect(full.summary).toBe("earlier discussion");
+    expect(full.summary_through_message_id).toBe(42);
   });
 });

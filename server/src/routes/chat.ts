@@ -3,13 +3,14 @@ import { z } from "zod";
 import { nanoid } from "nanoid";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "../state/db.js";
-import { createSession, getSession, touchSession, updateTitle } from "../state/sessions.js";
-import { appendMessage, listMessages } from "../state/messages.js";
+import { createSession, getSession, getSessionFull, touchSession, updateTitle } from "../state/sessions.js";
+import { appendMessage, listMessages, listMessagesAfterId } from "../state/messages.js";
 import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { autoTitle } from "../orchestrator/auto-title.js";
+import { maybeSummarize } from "../orchestrator/auto-summary.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 
@@ -35,7 +36,7 @@ export function chatRoutes(
 ): Router {
   const r = Router();
 
-  r.post("/", auth, (req, res) => {
+  r.post("/", auth, async (req, res) => {
     const parsed = Body.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "bad_request", details: parsed.error.flatten() });
@@ -70,9 +71,22 @@ export function chatRoutes(
     const abort = new AbortController();
     runs.register({ sessionId, abort, buffer });
 
-    const transcriptForAgent = listMessages(db, sessionId)
-      .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
-      .join("\n\n");
+    if (metered.anthropic) {
+      await maybeSummarize({ db, sessionId, client: metered.anthropic });
+    }
+
+    const full = getSessionFull(db, sessionId);
+    const recent = full?.summary_through_message_id
+      ? listMessagesAfterId(db, sessionId, full.summary_through_message_id)
+      : listMessages(db, sessionId);
+
+    const summaryHeader = full?.summary
+      ? `[CONVERSATION SUMMARY OF EARLIER MESSAGES]\n${full.summary}\n\n`
+      : "";
+
+    const transcriptForAgent =
+      summaryHeader +
+      recent.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
 
     void (async () => {
       const sid = sessionId!;

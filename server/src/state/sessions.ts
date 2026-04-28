@@ -23,6 +23,22 @@ export function getSession(db: Db, id: string): Session | null {
   return row ?? null;
 }
 
+export type SessionWithSummary = Session & {
+  summary: string | null;
+  summary_through_message_id: number | null;
+};
+
+export function getSessionFull(db: Db, id: string): SessionWithSummary | null {
+  const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as SessionWithSummary | undefined;
+  return row ?? null;
+}
+
+export function updateSummary(db: Db, id: string, summary: string, throughMessageId: number): void {
+  db.prepare(
+    "UPDATE sessions SET summary = ?, summary_through_message_id = ?, updated_at = ? WHERE id = ?",
+  ).run(summary, throughMessageId, Date.now(), id);
+}
+
 export function listSessions(db: Db): Session[] {
   return db.prepare("SELECT * FROM sessions ORDER BY updated_at DESC").all() as Session[];
 }

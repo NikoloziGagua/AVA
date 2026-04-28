@@ -34,3 +34,14 @@ export function listMessages(db: Db, sessionId: string): Message[] {
     .prepare("SELECT * FROM messages WHERE session_id = ? ORDER BY id ASC")
     .all(sessionId) as Message[];
 }
+
+export function listMessagesAfterId(db: Db, sessionId: string, afterId: number): Message[] {
+  return db
+    .prepare("SELECT * FROM messages WHERE session_id = ? AND id > ? ORDER BY id ASC")
+    .all(sessionId, afterId) as Message[];
+}
+
+export function countMessages(db: Db, sessionId: string): number {
+  const r = db.prepare("SELECT COUNT(*) as n FROM messages WHERE session_id = ?").get(sessionId) as { n: number };
+  return r.n;
+}

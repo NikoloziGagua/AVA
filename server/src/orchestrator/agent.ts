@@ -25,6 +25,7 @@ export type AgentDeps = {
   chrome: Chrome;
   pidfiles: PidfileRegistry;
   fsRoots: string[];
+  memoryDir: string;
   pushDeliver?: (a: Approval) => Promise<void>;
   provider: LLMProvider;
   tools: ToolDef[];
@@ -68,7 +69,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     pushDeliver: deps.pushDeliver,
   });
 
-  const system = buildSystemPrompt();
+  const system = buildSystemPrompt({ memoryDir: deps.memoryDir });
   const registry = buildToolRegistry({ tools: deps.tools, ctx: { runId } });
   const tools = registry.toolDefinitions();
 

@@ -42,7 +42,7 @@ describe("runAgent (v2 loop)", () => {
       db,
       deps: {
         chrome: null as never, pidfiles: null as never, fsRoots: [],
-        provider, tools: [],
+        memoryDir: "", provider, tools: [],
       } as never,
     } as never);
     expect(events.find((e) => e.kind === "final")?.payload).toEqual({ text: "Good morning, Sir." });
@@ -77,7 +77,7 @@ describe("runAgent (v2 loop)", () => {
       db: db2,
       deps: {
         chrome: null as never, pidfiles: null as never, fsRoots: [],
-        provider, tools: [tool],
+        memoryDir: "", provider, tools: [tool],
       } as never,
     } as never);
     expect(tool.run).toHaveBeenCalledWith({ command: "ls" }, expect.objectContaining({ runId: "r1" }));
@@ -99,7 +99,7 @@ describe("runAgent (v2 loop)", () => {
       abort: ac,
       emit: (e: AgentEvent) => events.push(e),
       runId: "r1", sessionId: "s1", db: db3,
-      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [], provider, tools: [] } as never,
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [], memoryDir: "", provider, tools: [] } as never,
     } as never);
     ac.abort();
     await promise;

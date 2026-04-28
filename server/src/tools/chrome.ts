@@ -1,4 +1,5 @@
 import { mkdirSync, existsSync, rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { BrowserContext, Page } from "playwright";
 import { chromium } from "playwright";
@@ -19,6 +20,17 @@ export type Chrome = {
   readPage: () => Promise<{ ok: boolean; text?: string; reason?: string }>;
   screenshot: () => Promise<{ ok: boolean; path?: string; reason?: string }>;
   tabs: () => Promise<{ ok: boolean; tabs?: Array<{ index: number; url: string; title: string }> }>;
+  mouseClick: (x: number, y: number) => Promise<{ ok: boolean; reason?: string }>;
+  mouseWheel: (deltaY: number) => Promise<{ ok: boolean; reason?: string }>;
+  keyboardType: (text: string) => Promise<{ ok: boolean; reason?: string }>;
+  keyboardPress: (key: string) => Promise<{ ok: boolean; reason?: string }>;
+  screenshotBytes: () => Promise<{
+    ok: boolean;
+    base64?: string;
+    path?: string;
+    reason?: string;
+  }>;
+  viewport: () => { width: number; height: number };
   close: () => Promise<void>;
 };
 
@@ -102,6 +114,53 @@ export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
         })),
       );
       return { ok: true, tabs };
+    },
+    async mouseClick(x, y) {
+      try {
+        await page.mouse.click(x, y);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, reason: String(e instanceof Error ? e.message : e) };
+      }
+    },
+    async mouseWheel(deltaY) {
+      try {
+        await page.mouse.wheel(0, deltaY);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, reason: String(e instanceof Error ? e.message : e) };
+      }
+    },
+    async keyboardType(text) {
+      try {
+        await page.keyboard.type(text);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, reason: String(e instanceof Error ? e.message : e) };
+      }
+    },
+    async keyboardPress(key) {
+      try {
+        await page.keyboard.press(key);
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, reason: String(e instanceof Error ? e.message : e) };
+      }
+    },
+    async screenshotBytes() {
+      try {
+        const filename = `${Date.now()}.png`;
+        const path = join(cfg.screenshotDir, filename);
+        const buf = await page.screenshot();
+        await writeFile(path, buf);
+        return { ok: true, base64: buf.toString("base64"), path };
+      } catch (e) {
+        return { ok: false, reason: String(e instanceof Error ? e.message : e) };
+      }
+    },
+    viewport() {
+      const vp = page.viewportSize() ?? { width: 1280, height: 720 };
+      return vp;
     },
     async close() {
       await ctx.close();

@@ -161,3 +161,47 @@ describe("memory_remember", () => {
     expect(r.text).toContain("invalid confidence");
   });
 });
+
+describe("memory_forget", () => {
+  it("mode=last drops the most recent observation", async () => {
+    writeFileSync(join(dir, "observations.md"),
+      "- [2026-04-28 / low / context] foo\n- [2026-04-28 / low / context] bar\n", "utf8");
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_forget")!;
+    const r = await t.run({ mode: "last" }, ctx);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(join(dir, "observations.md"), "utf8"))
+      .toBe("- [2026-04-28 / low / context] foo\n");
+  });
+
+  it("mode=match drops a uniquely matching line", async () => {
+    writeFileSync(join(dir, "observations.md"),
+      "- [2026-04-28 / low / context] uses pwsh\n- [2026-04-28 / low / context] uses VS Code\n", "utf8");
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_forget")!;
+    const r = await t.run({ mode: "match", target: "pwsh" }, ctx);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(join(dir, "observations.md"), "utf8"))
+      .toBe("- [2026-04-28 / low / context] uses VS Code\n");
+  });
+
+  it("mode=match returns ok=false with candidates when ambiguous", async () => {
+    writeFileSync(join(dir, "observations.md"),
+      "- [2026-04-28 / low / context] uses pwsh\n- [2026-04-28 / low / context] hates pwsh\n", "utf8");
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_forget")!;
+    const r = await t.run({ mode: "match", target: "pwsh" }, ctx);
+    expect(r.ok).toBe(false);
+    expect(r.text.toLowerCase()).toContain("ambiguous");
+  });
+
+  it("mode=project removes the project file and references", async () => {
+    writeFileSync(join(dir, "projects", "yov.md"), "# yov", "utf8");
+    writeFileSync(join(dir, "preferences.md"), "yov layout\n", "utf8");
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_forget")!;
+    const r = await t.run({ mode: "project", target: "yov" }, ctx);
+    expect(r.ok).toBe(true);
+    expect(readFileSync(join(dir, "preferences.md"), "utf8")).toBe("");
+  });
+});

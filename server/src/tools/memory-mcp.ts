@@ -2,6 +2,7 @@ import type { ToolDef } from "./ava-mcp.js";
 import { memoryPaths } from "../memory/paths.js";
 import { writeFile, appendLine, readFile as readMemFile } from "../memory/store.js";
 import { applyRefresh, applySupersede, serializeObservation, type Confidence } from "../memory/observations.js";
+import { forgetLast, forgetMatch, forgetProject } from "../memory/forget.js";
 
 export type MemoryToolDeps = { memoryDir: string };
 
@@ -136,6 +137,54 @@ function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
   };
 }
 
+function buildMemoryForget(deps: MemoryToolDeps): ToolDef {
+  return {
+    tool: {
+      name: "memory_forget",
+      description:
+        "Drop a memory entry. Use mode=last after Sir says 'forget that' shortly after a remember; mode=match for 'forget what I said about X' (returns ambiguous with candidates if more than one matches); mode=project for 'forget everything about project <slug>'.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          mode: { type: "string", enum: ["last", "match", "project"] },
+          target: { type: "string", description: "Required for mode=match (substring) and mode=project (slug)." },
+        },
+        required: ["mode"],
+      },
+    },
+    run: async (args) => {
+      const mode = String(args.mode ?? "");
+      const p = memoryPaths(deps.memoryDir);
+
+      if (mode === "last") {
+        const r = forgetLast({ paths: p });
+        if (!r.dropped) return { ok: false, text: "no observations to forget" };
+        return { ok: true, text: `dropped: ${r.dropped}` };
+      }
+      if (mode === "match") {
+        const target = String(args.target ?? "").trim();
+        if (!target) return { ok: false, text: "missing target" };
+        const r = forgetMatch({ paths: p, target });
+        if (r.status === "not_found") return { ok: false, text: "not found" };
+        if (r.status === "ambiguous")
+          return { ok: false, text: `ambiguous; candidates:\n${r.candidates.join("\n")}` };
+        return { ok: true, text: `dropped: ${r.line}` };
+      }
+      if (mode === "project") {
+        const slug = String(args.target ?? "").trim();
+        if (!slug) return { ok: false, text: "missing project slug" };
+        try {
+          const r = forgetProject({ paths: p, slug });
+          return { ok: true, text: `dropped project ${slug}; file removed: ${r.removedFile}` };
+        } catch (e) {
+          return { ok: false, text: e instanceof Error ? e.message : String(e) };
+        }
+      }
+      return { ok: false, text: `unknown mode: ${mode}` };
+    },
+  };
+}
+
 export function buildMemoryTools(deps: MemoryToolDeps): ToolDef[] {
-  return [buildMemoryRead(deps), buildMemoryRemember(deps)];
+  return [buildMemoryRead(deps), buildMemoryRemember(deps), buildMemoryForget(deps)];
 }

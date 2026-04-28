@@ -24,6 +24,7 @@ import { buildChromeTools } from "../tools/chrome-mcp.js";
 import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
+import { buildMemoryTools } from "../tools/memory-mcp.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -133,6 +134,7 @@ export function chatRoutes(
           pidfiles: agentDeps.pidfiles,
           check: buildPathAllowlist({ roots: agentDeps.fsRoots }),
         });
+        const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
         const tools: ToolDef[] = [
           buildShellTool({ signal: abort.signal }),
           ...(buildFilesystemTools({ fs, emit: noop }) as ToolDef[]),
@@ -144,6 +146,7 @@ export function chatRoutes(
             chrome,
             emit: noop,
           }) as ToolDef,
+          ...memoryTools,
         ];
         await impl({
           prompt: transcriptForAgent,

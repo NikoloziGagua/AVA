@@ -53,7 +53,7 @@ export function voiceRoutes(deps: {
       return res.status(503).json({ error: "OPENAI_API_KEY not configured" });
     }
     const text = typeof req.body?.text === "string" ? req.body.text : "";
-    const voice = typeof req.body?.voice === "string" ? req.body.voice : "alloy";
+    const voice = typeof req.body?.voice === "string" ? req.body.voice : "nova";
     if (!text.trim()) return res.status(400).json({ error: "text required" });
     try {
       const r = await deps.clients.openai.audio.speech.create({

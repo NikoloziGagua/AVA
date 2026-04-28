@@ -90,7 +90,7 @@ describe("voiceRoutes /api/speak", () => {
     const arg = speak.mock.calls[0]?.[0] as { model: string; input: string; voice: string };
     expect(arg.model).toBe("gpt-4o-mini-tts");
     expect(arg.input).toBe("hello world");
-    expect(arg.voice).toBe("alloy");
+    expect(arg.voice).toBe("nova");
   });
 
   it("uses provided voice when given", async () => {

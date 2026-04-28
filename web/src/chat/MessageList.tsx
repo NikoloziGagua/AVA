@@ -1,4 +1,5 @@
 import type { StreamEvent } from "./useChatStream.js";
+import { ApprovalCard } from "../approvals/ApprovalCard.js";
 
 export type ChatMessage =
   | { role: "user"; text: string; id: string }
@@ -11,6 +12,11 @@ export function MessageList({
   history: ChatMessage[];
   liveEvents: StreamEvent[];
 }) {
+  const resolved = new Map<string, "approved" | "denied" | "expired">();
+  for (const e of liveEvents) {
+    if (e.kind === "approval_resolved") resolved.set(e.payload.id, e.payload.status);
+  }
+
   return (
     <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
       {history.map((m) => (
@@ -28,6 +34,21 @@ export function MessageList({
         </div>
       ))}
       {liveEvents.map((e) => {
+        if (e.kind === "approval_required") {
+          return (
+            <ApprovalCard
+              key={`${e.runEpoch}-${e.id}`}
+              id={e.payload.id}
+              tool={e.payload.tool}
+              args={e.payload.args}
+              summary={e.payload.summary}
+              resolvedStatus={resolved.get(e.payload.id) ?? null}
+            />
+          );
+        }
+        if (e.kind === "approval_resolved") {
+          return null;
+        }
         if (e.kind === "thought" || e.kind === "final") {
           return (
             <div key={`${e.runEpoch}-${e.id}`}>

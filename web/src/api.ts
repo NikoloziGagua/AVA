@@ -110,3 +110,10 @@ export async function patchRule(id: string, enabled: boolean): Promise<void> {
 export async function deleteRuleApi(id: string): Promise<void> {
   await request<{ ok: true }>(`/api/rules/${id}`, { method: "DELETE" });
 }
+
+export async function approveApproval(id: string): Promise<void> {
+  await request<{ ok: true; status: string }>(`/api/approvals/${id}/approve`, { method: "POST" });
+}
+export async function denyApproval(id: string): Promise<void> {
+  await request<{ ok: true; status: string }>(`/api/approvals/${id}/deny`, { method: "POST" });
+}

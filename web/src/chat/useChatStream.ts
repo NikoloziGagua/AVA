@@ -12,7 +12,9 @@ export type StreamEvent =
   | (EventBase & { kind: "error"; payload: { message: string } })
   | (EventBase & { kind: "killed"; payload: Record<string, never> })
   | (EventBase & { kind: "done"; payload: Record<string, never> })
-  | (EventBase & { kind: "gap"; payload: { from: number; to: number } });
+  | (EventBase & { kind: "gap"; payload: { from: number; to: number } })
+  | (EventBase & { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } })
+  | (EventBase & { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } });
 
 export function useChatStream(sessionId: string | null, runEpoch: number) {
   const [events, setEvents] = useState<StreamEvent[]>([]);
@@ -56,7 +58,7 @@ export function useChatStream(sessionId: string | null, runEpoch: number) {
           es.close();
         }
       };
-      for (const k of ["thought", "tool_call", "tool_result", "final", "error", "killed", "done", "gap"] as const) {
+      for (const k of ["thought", "tool_call", "tool_result", "final", "error", "killed", "done", "gap", "approval_required", "approval_resolved"] as const) {
         es.addEventListener(k, handle(k));
       }
     }

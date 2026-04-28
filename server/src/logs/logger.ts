@@ -63,11 +63,12 @@ export async function buildLogger(cfg: LoggerConfig): Promise<Logger> {
   const wrap =
     (level: "info" | "warn" | "error" | "debug") =>
     (...args: unknown[]) => {
+      const fn = inner[level].bind(inner) as (...a: unknown[]) => void;
       const [first, ...rest] = args;
       if (first && typeof first === "object") {
-        inner[level](first as object, ...(rest as [string?, ...unknown[]]));
+        fn(first, ...rest);
       } else {
-        inner[level](first as string, ...(rest as unknown[]));
+        fn(first, ...rest);
       }
     };
 

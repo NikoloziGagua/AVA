@@ -12,6 +12,7 @@ export type Config = {
   chromeProfileDir: string;
   screenshotDir: string;
   pidfileDir: string;
+  logsDir: string;
   fsRoots: string[];
 };
 
@@ -47,6 +48,8 @@ export function loadConfig(): Config {
   const chromeProfileDir = resolve(process.env.CHROME_PROFILE_DIR ?? join(dataDir, "chrome-profile"));
   const screenshotDir = resolve(process.env.SCREENSHOT_DIR ?? join(dataDir, "screenshots"));
   const pidfileDir = resolve(process.env.PIDFILE_DIR ?? join(dataDir, "pidfiles"));
+  const logsDir = resolve(process.env.LOGS_DIR ?? join(dataDir, "logs"));
+  mkdirSync(logsDir, { recursive: true });
   const fsRoots = (process.env.FS_ROOTS ?? "C:/ai/**,C:/projects/**,C:/Users/nikug/Downloads/**")
     .split(",")
     .map((s) => s.trim())
@@ -61,6 +64,7 @@ export function loadConfig(): Config {
     chromeProfileDir,
     screenshotDir,
     pidfileDir,
+    logsDir,
     fsRoots,
   };
 }

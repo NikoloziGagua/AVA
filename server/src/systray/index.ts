@@ -1,6 +1,6 @@
 import * as SysTrayNs from "systray2";
 import type { ClickEvent, Conf } from "systray2";
-import type { Logger } from "pino";
+import type { Logger } from "../logs/logger.js";
 import { exec } from "node:child_process";
 
 // systray2 v2.1.4 publishes `export default class SysTray` in its `.d.ts`, but

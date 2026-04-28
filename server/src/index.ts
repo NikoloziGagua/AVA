@@ -1,7 +1,7 @@
 import express from "express";
-import pino from "pino";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
+import { buildLogger } from "./logs/logger.js";
 import { openDb } from "./state/db.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
@@ -16,7 +16,7 @@ import { buildChrome } from "./tools/chrome.js";
 
 const startedAt = Date.now();
 const cfg = loadConfig();
-const log = pino({ level: cfg.logLevel });
+const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
 const runs = new ActiveRuns();
 const pidfiles = new PidfileRegistry(cfg.pidfileDir);

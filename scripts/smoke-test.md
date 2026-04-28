@@ -98,3 +98,15 @@ Run from the phone PWA, paired and on the same Tailscale tailnet (or LAN during 
 ### Voice
 - [ ] `curl -F audio=@hello.webm -H "Authorization: Bearer <token>" http://localhost:8787/api/transcribe` → JSON `{ "text": "..." }`.
 - [ ] `curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"text":"hi"}' http://localhost:8787/api/speak -o out.mp3` → playable mp3.
+
+## M4 Phase 1 — Foundation (LLM provider abstraction)
+
+### Provider parity
+- [ ] Start server with `LLM_PROVIDER=openai` (and `OPENAI_API_KEY` set). Send "hi" — get a streamed reply.
+- [ ] Send "open chrome to https://example.com" — `tool_call: chrome_navigate` appears, page loads.
+- [ ] Stop server. Restart with `LLM_PROVIDER=anthropic` (and `ANTHROPIC_API_KEY` set). Send the same two prompts — same shape of behavior, possibly different wording.
+- [ ] With neither key set, `POST /api/chat` returns `503 no_llm_provider`.
+
+### Code health
+- [ ] No file under `server/src` imports `@anthropic-ai/claude-agent-sdk`.
+- [ ] `server/package.json` does not list `@anthropic-ai/claude-agent-sdk` as a dependency.

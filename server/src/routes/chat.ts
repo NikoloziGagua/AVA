@@ -76,8 +76,10 @@ export function chatRoutes(
       const firstMessage = parsed.data.text;
       const provider = agentDeps.provider;
       void (async () => {
-        const title = await autoTitle({ provider, firstMessage });
-        updateTitle(db, sid, title);
+        try {
+          const title = await autoTitle({ provider, firstMessage });
+          updateTitle(db, sid, title);
+        } catch { /* fire-and-forget; title generation is non-critical */ }
       })();
     }
 

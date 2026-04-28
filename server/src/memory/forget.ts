@@ -9,7 +9,8 @@ export function forgetLast(opts: { paths: MemoryPaths }): ForgetLastResult {
   const content = readFile(opts.paths.observations);
   const lines = content.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (parseObservation(lines[i]!)) {
+    const obs = parseObservation(lines[i]!);
+    if (obs && !obs.superseded) {
       const dropped = lines[i]!;
       lines.splice(i, 1);
       writeFile(opts.paths.observations, lines.join("\n"));
@@ -49,13 +50,26 @@ export function forgetProject(opts: { paths: MemoryPaths; slug: string }): Forge
   let removedFile = false;
   if (existsSync(file)) { rmSync(file, { force: true }); removedFile = true; }
 
-  for (const path of [opts.paths.preferences, opts.paths.observations]) {
-    const content = readFile(path);
-    if (!content) continue;
-    const filtered = content.split("\n")
-      .filter((ln) => !ln.toLowerCase().includes(opts.slug.toLowerCase()))
+  const slugLower = opts.slug.toLowerCase();
+
+  const prefContent = readFile(opts.paths.preferences);
+  if (prefContent) {
+    const filtered = prefContent.split("\n")
+      .filter((ln) => !ln.toLowerCase().includes(slugLower))
       .join("\n");
-    if (filtered !== content) writeFile(path, filtered);
+    if (filtered !== prefContent) writeFile(opts.paths.preferences, filtered);
+  }
+
+  const obsContent = readFile(opts.paths.observations);
+  if (obsContent) {
+    const filtered = obsContent.split("\n")
+      .filter((ln) => {
+        const obs = parseObservation(ln);
+        if (obs) return !obs.text.toLowerCase().includes(slugLower);
+        return !ln.toLowerCase().includes(slugLower);
+      })
+      .join("\n");
+    if (filtered !== obsContent) writeFile(opts.paths.observations, filtered);
   }
   return { removedFile };
 }

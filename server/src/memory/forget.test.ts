@@ -27,6 +27,18 @@ describe("forgetLast", () => {
     const r = forgetLast({ paths: p });
     expect(r.dropped).toBeNull();
   });
+
+  it("skips superseded observations and drops the last active one", () => {
+    writeFileSync(p.observations,
+      "- [2026-04-20 / low / context] foo\n" +
+      "- [2026-04-21 / medium / context] bar\n" +
+      "- [2026-01-12 / high / context / superseded 2026-04-28] old\n", "utf8");
+    const r = forgetLast({ paths: p });
+    expect(r.dropped).toBe("- [2026-04-21 / medium / context] bar");
+    expect(readFileSync(p.observations, "utf8")).toBe(
+      "- [2026-04-20 / low / context] foo\n" +
+      "- [2026-01-12 / high / context / superseded 2026-04-28] old\n");
+  });
 });
 
 describe("forgetMatch", () => {
@@ -51,6 +63,13 @@ describe("forgetMatch", () => {
     writeFileSync(p.observations, "- [2026-04-28 / low / context] foo\n", "utf8");
     expect(forgetMatch({ paths: p, target: "bar" }).status).toBe("not_found");
   });
+
+  it("matches case-insensitively", () => {
+    writeFileSync(p.observations,
+      "- [2026-04-28 / low / context] uses pwsh\n", "utf8");
+    const r = forgetMatch({ paths: p, target: "PWSH" });
+    expect(r.status).toBe("dropped");
+  });
 });
 
 describe("forgetProject", () => {
@@ -63,6 +82,16 @@ describe("forgetProject", () => {
     expect(r.removedFile).toBe(true);
     expect(existsSync(p.projectFile("yov"))).toBe(false);
     expect(readFileSync(p.preferences, "utf8")).toBe("likes dark mode\n");
+    expect(readFileSync(p.observations, "utf8")).toBe(
+      "- [2026-04-28 / low / context] uses bash\n");
+  });
+
+  it("does not drop observations whose metadata bracket happens to contain the slug", () => {
+    writeFileSync(p.observations,
+      "- [2026-04-28 / low / context] uses bash\n" +
+      "- [2026-04-28 / low / context] uses low-power mode\n", "utf8");
+    const r = forgetProject({ paths: p, slug: "low" });
+    expect(r.removedFile).toBe(false);
     expect(readFileSync(p.observations, "utf8")).toBe(
       "- [2026-04-28 / low / context] uses bash\n");
   });

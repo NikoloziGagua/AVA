@@ -1,15 +1,15 @@
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
-import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "../state/db.js";
 import type { Logger } from "../logs/logger.js";
+import type { LLMProvider } from "../orchestrator/llm/types.js";
 import { createRule, listRules, updateRule, deleteRule, getRule } from "../state/rules.js";
 import { parseRule } from "../policy/rule-parser.js";
 
 const PostBody = z.object({ source: z.string().min(1).max(2000) });
 const PatchBody = z.object({ enabled: z.boolean() });
 
-export type RulesDeps = { anthropic: Anthropic | null; log?: Logger };
+export type RulesDeps = { provider: LLMProvider | null; log?: Logger };
 
 export function rulesRoutes(db: Db, auth: RequestHandler, deps: RulesDeps): Router {
   const r = Router();
@@ -25,10 +25,10 @@ export function rulesRoutes(db: Db, auth: RequestHandler, deps: RulesDeps): Rout
       return;
     }
     const rule = createRule(db, { source: parsed.data.source, status: "pending" });
-    if (deps.anthropic) {
-      const client = deps.anthropic;
+    if (deps.provider) {
+      const provider = deps.provider;
       void (async () => {
-        const r = await parseRule({ client, source: parsed.data.source });
+        const r = await parseRule({ provider, source: parsed.data.source });
         if (r.ok) {
           updateRule(db, rule.id, { parsed: JSON.stringify(r.parsed), status: "active" });
         } else {

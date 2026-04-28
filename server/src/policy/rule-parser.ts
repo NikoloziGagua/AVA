@@ -1,4 +1,4 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import type { LLMProvider } from "../orchestrator/llm/types.js";
 
 export type ParseResult =
   | { ok: true; parsed: object }
@@ -21,26 +21,21 @@ function isValid(parsed: unknown): parsed is { match: object; action: string } {
   return true;
 }
 
-export async function parseRule({
-  client,
-  source,
-}: {
-  client: Anthropic;
+export async function parseRule(opts: {
+  provider: LLMProvider;
   source: string;
 }): Promise<ParseResult> {
   try {
-    const r = await client.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 512,
+    const text = await opts.provider.complete({
+      model: opts.provider.defaultSideModel,
       system: SYSTEM,
-      messages: [{ role: "user", content: source }],
+      user: opts.source,
+      maxTokens: 512,
     });
-    const block = r.content.find((b) => b.type === "text");
-    if (!block || block.type !== "text") return { ok: false, reason: "no text response" };
-    const text = block.text.trim();
+    const trimmed = text.trim();
     let json: unknown;
     try {
-      json = JSON.parse(text);
+      json = JSON.parse(trimmed);
     } catch {
       return { ok: false, reason: "invalid JSON in response" };
     }

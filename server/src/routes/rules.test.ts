@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import express from "express";
 import request from "supertest";
 import { mkdtempSync } from "node:fs";
@@ -7,14 +7,15 @@ import { join } from "node:path";
 import { openDb } from "../state/db.js";
 import { listRules, getRule } from "../state/rules.js";
 import { rulesRoutes } from "./rules.js";
+import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
 
-function setup(opts: { anthropic?: any } = {}) {
+function setup(opts: { provider?: MockLLMProvider | null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ava-rules-r-"));
   const db = openDb(join(dir, "x.db"));
   const app = express();
   app.use(express.json());
   const auth = (_req: any, _res: any, next: any) => next();
-  app.use("/api/rules", rulesRoutes(db, auth, { anthropic: opts.anthropic ?? null }));
+  app.use("/api/rules", rulesRoutes(db, auth, { provider: opts.provider ?? null }));
   return { app, db };
 }
 
@@ -25,7 +26,7 @@ describe("rules routes", () => {
     expect(res.body.rules).toEqual([]);
   });
 
-  it("POST /api/rules creates a pending rule and returns it (no anthropic)", async () => {
+  it("POST /api/rules creates a pending rule and returns it (no provider)", async () => {
     const { app, db } = setup();
     const res = await request(app)
       .post("/api/rules")
@@ -40,13 +41,10 @@ describe("rules routes", () => {
     expect(rules[0]!.status).toBe("pending");
   });
 
-  it("POST /api/rules with anthropic → status becomes active and parsed is set", async () => {
+  it("POST /api/rules with provider → status becomes active and parsed is set", async () => {
     const validParsed = { match: { tool: "*" }, action: "allow" };
-    const mockCreate = vi.fn().mockResolvedValue({
-      content: [{ type: "text", text: JSON.stringify(validParsed) }],
-    });
-    const anthropic = { messages: { create: mockCreate } };
-    const { app, db } = setup({ anthropic });
+    const provider = new MockLLMProvider({ completions: [JSON.stringify(validParsed)] });
+    const { app, db } = setup({ provider });
     const res = await request(app)
       .post("/api/rules")
       .send({ source: "allow all tools" })
@@ -58,15 +56,12 @@ describe("rules routes", () => {
     expect(rule).not.toBeNull();
     expect(rule!.status).toBe("active");
     expect(rule!.parsed).toBe(JSON.stringify(validParsed));
-    expect(mockCreate).toHaveBeenCalledOnce();
+    expect(provider.calls.complete).toHaveLength(1);
   });
 
-  it("POST /api/rules with anthropic returning bad JSON → status becomes failed", async () => {
-    const mockCreate = vi.fn().mockResolvedValue({
-      content: [{ type: "text", text: "not valid json at all" }],
-    });
-    const anthropic = { messages: { create: mockCreate } };
-    const { app, db } = setup({ anthropic });
+  it("POST /api/rules with provider returning bad JSON → status becomes failed", async () => {
+    const provider = new MockLLMProvider({ completions: ["not valid json at all"] });
+    const { app, db } = setup({ provider });
     const res = await request(app)
       .post("/api/rules")
       .send({ source: "deny all shell" })

@@ -98,15 +98,9 @@ describe("provider parity (mocked SDKs)", () => {
         provider: new AnthropicProvider({ client: anthropicClient }), tools: [tool2] } as never,
     } as never);
 
-    // Same event shape sequence
-    const shape = (events: AgentEvent[]) => events.map((e) => e.kind);
-    expect(shape(events1)).toEqual(shape(events2));
-
-    // Same final text
-    const final1 = events1.find((e) => e.kind === "final");
-    const final2 = events2.find((e) => e.kind === "final");
-    expect(final1?.payload).toEqual(final2?.payload);
-    expect(final1?.payload).toEqual({ text: "Done." });
+    // Full event-stream equality (kinds and payloads).
+    expect(events1).toEqual(events2);
+    expect(events1.find((e) => e.kind === "final")?.payload).toEqual({ text: "Done." });
 
     // Both ran the tool with the same args
     expect(tool1.run).toHaveBeenCalledWith({ command: "ls" }, expect.objectContaining({ runId: "r1" }));

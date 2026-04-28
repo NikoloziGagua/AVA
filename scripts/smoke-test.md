@@ -75,3 +75,26 @@ Run from the phone PWA, paired and on the same Tailscale tailnet (or LAN during 
 ### pm2 boot recovery
 - [ ] Start server, send a long claude_code prompt; while it's running, `taskkill /F /PID <node-pid>` of the server (not Ctrl+C). Confirm orphan claude.exe in Task Manager.
 - [ ] Restart server. Verify the orphan claude.exe is gone, `data/pidfiles/` is empty, and the session that was running is now `status='interrupted'` with a trailing system message in the transcript.
+
+## M3 — Policy, approvals, push, voice, computer_use
+
+### Policy + approvals
+- [ ] Send "run `rm -rf C:/tmp/x`" — chat shows an approval card; tap **Approve** → tool executes; tap **Deny** in a second run → tool reports "denied".
+- [ ] Send "read C:/ai/chemiapebi/.env" — server returns `BLOCKED` without surfacing an approval card (hard-block).
+- [ ] Open the Rules screen; add "always allow `git status` in this repo"; the next `git status` runs without asking.
+
+### Per-tool timeout
+- [ ] In a shell prompt, ask the agent to run `timeout 60` (or `Start-Sleep -Seconds 60`); after 30s the tool result line shows `timeout`.
+
+### Stuck-loop guard
+- [ ] Ask the agent to take 6 screenshots of `about:blank` in a row; after the 5th identical screenshot, the run halts with the "I've been trying for a while…" message and a `killed` event with reason `stuck`.
+
+### Push delivery
+- [ ] Phone has push enabled (M2 step). Trigger an approval-required prompt while the PWA is backgrounded → a Web Push notification arrives with **Approve / Deny** buttons (Android) or a tap-to-open card (iOS).
+
+### computer_use
+- [ ] "Use computer_use to find the headline at https://news.ycombinator.com" → tool emits `tool_call: computer_use`, drives chrome via mouse/keyboard, returns a summary referencing the headline.
+
+### Voice
+- [ ] `curl -F audio=@hello.webm -H "Authorization: Bearer <token>" http://localhost:8787/api/transcribe` → JSON `{ "text": "..." }`.
+- [ ] `curl -X POST -H "Authorization: Bearer <token>" -H "Content-Type: application/json" -d '{"text":"hi"}' http://localhost:8787/api/speak -o out.mp3` → playable mp3.

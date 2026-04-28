@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
-import { createSession, getSession, getSessionFull, listSessions, touchSession, updateSummary, updateTitle } from "./sessions.js";
+import { createSession, getSession, getSessionFull, listByStatus, listSessions, setStatus, touchSession, updateSummary, updateTitle } from "./sessions.js";
 
 describe("sessions repo", () => {
   let db: Db;
@@ -66,5 +66,33 @@ describe("sessions repo", () => {
     const full = getSessionFull(db, s.id)!;
     expect(full.summary).toBe("earlier discussion");
     expect(full.summary_through_message_id).toBe(42);
+  });
+
+  it("setStatus updates the status field and bumps updated_at", () => {
+    const s = createSession(db, { title: "X" });
+    db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(s.updated_at - 5000, s.id);
+    setStatus(db, s.id, "interrupted");
+    const got = getSession(db, s.id)!;
+    expect(got.status).toBe("interrupted");
+    expect(got.updated_at).toBeGreaterThan(s.updated_at - 5000);
+  });
+
+  it("listByStatus returns only matching sessions, newest first", () => {
+    const a = createSession(db, { title: "A" });
+    const b = createSession(db, { title: "B" });
+    const c = createSession(db, { title: "C" });
+    setStatus(db, a.id, "idle");
+    setStatus(db, c.id, "idle");
+    // bump b update so it stays active and newer
+    db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(Date.now() + 1000, b.id);
+    const idle = listByStatus(db, "idle");
+    expect(idle.map((s) => s.id).sort()).toEqual([a.id, c.id].sort());
+    const active = listByStatus(db, "active");
+    expect(active.map((s) => s.id)).toEqual([b.id]);
+  });
+
+  it("listByStatus returns [] when no sessions match", () => {
+    createSession(db, { title: "x" });
+    expect(listByStatus(db, "interrupted")).toEqual([]);
   });
 });

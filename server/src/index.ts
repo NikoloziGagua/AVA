@@ -15,6 +15,8 @@ import { pushRoutes } from "./routes/push.js";
 import { ActiveRuns } from "./orchestrator/active-runs.js";
 import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
+import { killTree } from "./process/kill-tree.js";
+import { runRecovery } from "./state/recovery.js";
 import { buildChrome } from "./tools/chrome.js";
 
 const startedAt = Date.now();
@@ -23,6 +25,8 @@ const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
 const runs = new ActiveRuns();
 const pidfiles = new PidfileRegistry(cfg.pidfileDir);
+
+await runRecovery({ db, pidfiles, kill: (pid) => killTree(pid) });
 
 let chromePromise: ReturnType<typeof buildChrome> | null = null;
 function getChrome() {

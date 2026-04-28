@@ -54,3 +54,11 @@ export function updateTitle(db: Db, id: string, title: string): void {
     id,
   );
 }
+
+export function setStatus(db: Db, id: string, status: string): void {
+  db.prepare("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?").run(status, Date.now(), id);
+}
+
+export function listByStatus(db: Db, status: string): Session[] {
+  return db.prepare("SELECT * FROM sessions WHERE status = ? ORDER BY updated_at DESC").all(status) as Session[];
+}

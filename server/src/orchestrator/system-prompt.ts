@@ -1,6 +1,7 @@
 import { memoryPaths } from "../memory/paths.js";
 import { readFile } from "../memory/store.js";
 import { autoPruneObservations, SOFT_CAPS } from "../memory/budgets.js";
+import { bootstrapMemoryDir } from "../memory/bootstrap.js";
 import { TOOL_RUBRIC } from "./tool-rubric.js";
 
 export type BuildSystemPromptOpts = {
@@ -22,6 +23,9 @@ function block(label: string, body: string): string {
 }
 
 export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
+  // Defense-in-depth: server start calls bootstrap, but tests and scripts can
+  // bypass that path. Bootstrap is idempotent (existsSync-guarded) and cheap.
+  bootstrapMemoryDir({ dir: opts.memoryDir });
   const p = memoryPaths(opts.memoryDir);
   const today = opts.today ?? isoToday();
 

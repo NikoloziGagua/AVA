@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildSystemPrompt } from "./system-prompt.js";
 import { TOOL_RUBRIC } from "./tool-rubric.js";
+import { PERSONALITY_MD } from "../memory/personality-content.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "ava-sp-")); });
@@ -65,6 +66,13 @@ describe("buildSystemPrompt (layered)", () => {
     const out = buildSystemPrompt({ memoryDir: dir, today: "2026-04-28" });
     expect(out).toContain("uses pwsh");
     expect(out).not.toContain("stale entry 199");
+  });
+
+  it("bootstraps the memory dir defensively when persona is missing", () => {
+    // Caller skipped server-start bootstrap (test/script path). Persona must
+    // still arrive — buildSystemPrompt is the last line of defense.
+    const out = buildSystemPrompt({ memoryDir: dir });
+    expect(out).toContain(PERSONALITY_MD.split("\n")[0]!);
   });
 
   it("appends a project-context layer after the rubric when supplied (mid-run mutation point)", () => {

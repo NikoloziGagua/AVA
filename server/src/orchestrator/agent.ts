@@ -39,6 +39,12 @@ export type RunOpts = {
   deps: AgentDeps;
   db: Db;
   sessionId: string;
+  /**
+   * "conversation": no tools exposed, side model used. The persona's
+   * conversation-mode bias is enforced by withholding tools entirely.
+   * "action" (default): full tool registry + orchestrator model.
+   */
+  mode?: "conversation" | "action";
 };
 
 export async function runAgent(opts: RunOpts): Promise<void> {
@@ -69,9 +75,16 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     pushDeliver: deps.pushDeliver,
   });
 
+  const mode = opts.mode ?? "action";
   const system = buildSystemPrompt({ memoryDir: deps.memoryDir });
   const registry = buildToolRegistry({ tools: deps.tools, ctx: { runId } });
-  const tools = registry.toolDefinitions();
+  const allTools = registry.toolDefinitions();
+  // Conversation mode hides tools entirely so the side model can't try to call
+  // them. Persona/system prompt stays byte-stable in both modes for cache hits.
+  const tools = mode === "conversation" ? [] : allTools;
+  const model = mode === "conversation"
+    ? deps.provider.defaultSideModel
+    : deps.provider.defaultOrchestratorModel;
 
   const messages: Message[] = [{ role: "user", content: prompt }];
   let finalText = "";
@@ -84,7 +97,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
 
     try {
       for await (const ev of deps.provider.stream({
-        model: deps.provider.defaultOrchestratorModel,
+        model,
         system, messages, tools, abort: abort.signal,
       })) {
         if (ev.kind === "delta") {

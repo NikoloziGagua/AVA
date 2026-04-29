@@ -96,6 +96,54 @@ describe("runAgent (v2 loop)", () => {
     expect(events.find((e) => e.kind === "final")?.payload).toEqual({ text: "Done." });
   });
 
+  it("conversation mode hides tools and uses the side model", async () => {
+    const tool = makeShellTool();
+    const provider = new MockLLMProvider({
+      scripts: [[{ kind: "delta", text: "hi Sir." }, { kind: "done", stop_reason: "end_turn" }]],
+    });
+    const events: AgentEvent[] = [];
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "hi",
+      abort: new AbortController(),
+      emit: (e: AgentEvent) => events.push(e),
+      runId: "r1", sessionId: "s1", db,
+      mode: "conversation",
+      deps: {
+        chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [tool],
+      } as never,
+    } as never);
+    expect(provider.calls.stream).toHaveLength(1);
+    expect(provider.calls.stream[0]!.model).toBe("mock-side");
+    expect(provider.calls.stream[0]!.tools).toEqual([]);
+    expect(tool.run).not.toHaveBeenCalled();
+  });
+
+  it("action mode uses the orchestrator model and exposes tools", async () => {
+    const tool = makeShellTool();
+    const provider = new MockLLMProvider({
+      scripts: [[{ kind: "delta", text: "ok." }, { kind: "done", stop_reason: "end_turn" }]],
+    });
+    const events: AgentEvent[] = [];
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "run the tests",
+      abort: new AbortController(),
+      emit: (e: AgentEvent) => events.push(e),
+      runId: "r1", sessionId: "s1", db,
+      mode: "action",
+      deps: {
+        chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [tool],
+      } as never,
+    } as never);
+    expect(provider.calls.stream[0]!.model).toBe("mock-orchestrator");
+    expect((provider.calls.stream[0]!.tools as unknown[]).length).toBeGreaterThan(0);
+  });
+
   it("emits killed when the provider reports stop_reason abort", async () => {
     const ac = new AbortController();
     const provider = new MockLLMProvider({

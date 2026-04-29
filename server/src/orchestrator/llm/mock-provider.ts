@@ -2,8 +2,8 @@ import type { LLMProvider, StreamEvent, StreamInput, CompleteInput } from "./typ
 
 export class MockLLMProvider implements LLMProvider {
   readonly name = "openai" as const;
-  readonly defaultOrchestratorModel = "mock";
-  readonly defaultSideModel = "mock";
+  readonly defaultOrchestratorModel = "mock-orchestrator";
+  readonly defaultSideModel = "mock-side";
   private scripts: StreamEvent[][];
   private completions: string[];
   public calls: { stream: StreamInput[]; complete: CompleteInput[] } = { stream: [], complete: [] };

@@ -8,6 +8,7 @@ import { appendMessage, listMessages, listMessagesAfterId } from "../state/messa
 import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
+import { classifyIntent } from "../orchestrator/intent-classifier.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { autoTitle } from "../orchestrator/auto-title.js";
 import { maybeSummarize } from "../orchestrator/auto-summary.js";
@@ -155,6 +156,7 @@ export function chatRoutes(
           runId,
           db,
           sessionId: sid,
+          mode: classifyIntent(parsed.data.text),
           deps: {
             chrome,
             pidfiles: agentDeps.pidfiles,

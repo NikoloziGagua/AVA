@@ -184,3 +184,52 @@ export async function putReasoning(level: "fast" | "thorough"): Promise<void> {
     body: JSON.stringify({ level }),
   });
 }
+
+export type MemoryView = {
+  personality: string;
+  memoryIndex: string;
+  preferences: { lines: string[] };
+  observations: {
+    lines: Array<{
+      raw: string;
+      date: string;
+      confidence: "low" | "medium" | "high";
+      category: string;
+      text: string;
+      superseded: string | null;
+    }>;
+  };
+  projects: Array<{ slug: string; body: string }>;
+};
+
+export async function fetchMemory(): Promise<MemoryView> {
+  return request<MemoryView>("/api/memory");
+}
+
+export async function patchMemoryLine(input: {
+  file: "preferences" | "observations";
+  oldLine: string;
+  newLine?: string;
+}): Promise<{ ok: boolean; stale?: string }> {
+  const headers = new Headers({ "content-type": "application/json" });
+  const token = getToken();
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  const r = await fetch("/api/memory/lines", {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(input),
+  });
+  if (r.status === 409) {
+    const j = await r.json();
+    return { ok: false, stale: j.current };
+  }
+  if (!r.ok) throw new ApiError(r.status, "patch_failed");
+  return { ok: true };
+}
+
+export async function postMemoryLine(line: string): Promise<void> {
+  await request<{ line: string }>("/api/memory/lines", {
+    method: "POST",
+    body: JSON.stringify({ file: "preferences", line }),
+  });
+}

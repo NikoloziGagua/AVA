@@ -10,10 +10,12 @@ export function ChatScreen({
   sessionId: requestedSessionId,
   onOpenSessions,
   onOpenRules,
+  onOpenMemory,
 }: {
   sessionId: string | null;
   onOpenSessions: () => void;
   onOpenRules: () => void;
+  onOpenMemory: () => void;
 }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
@@ -107,6 +109,7 @@ export function ChatScreen({
                   : pushState}
             </button>
           ) : null}
+          <button onClick={onOpenMemory} aria-label="memory" className="text-neutral-400 text-lg px-2">⊕</button>
           <button onClick={onOpenRules} aria-label="rules" className="text-neutral-400 text-lg px-2">⚙</button>
         </div>
       </header>

@@ -26,15 +26,14 @@ export function MemoryEditor({ onClose }: { onClose: () => void }) {
   useEffect(() => { load(); }, []);
 
   async function savePref(oldLine: string, newLine: string) {
-    const r = await patchMemoryLine({ file: "preferences", oldLine, newLine });
+    await patchMemoryLine({ file: "preferences", oldLine, newLine });
     setEditing(null);
-    if (!r.ok) await load();
-    else await load();
+    await load();
   }
   async function deletePref(oldLine: string) {
-    const r = await patchMemoryLine({ file: "preferences", oldLine });
-    if (!r.ok) await load();
-    else await load();
+    await patchMemoryLine({ file: "preferences", oldLine });
+    setEditing(null);
+    await load();
   }
   async function addPref() {
     const v = newPref.trim();
@@ -44,13 +43,14 @@ export function MemoryEditor({ onClose }: { onClose: () => void }) {
     await load();
   }
   async function saveObs(oldLine: string, newLine: string) {
-    const r = await patchMemoryLine({ file: "observations", oldLine, newLine });
+    await patchMemoryLine({ file: "observations", oldLine, newLine });
     setEditing(null);
-    if (!r.ok) await load(); else await load();
+    await load();
   }
   async function deleteObs(oldLine: string) {
-    const r = await patchMemoryLine({ file: "observations", oldLine });
-    if (!r.ok) await load(); else await load();
+    await patchMemoryLine({ file: "observations", oldLine });
+    setEditing(null);
+    await load();
   }
 
   if (err) return (
@@ -97,8 +97,8 @@ export function MemoryEditor({ onClose }: { onClose: () => void }) {
           {view.preferences.lines.length === 0 && (
             <div className="text-xs text-neutral-500">none yet.</div>
           )}
-          {view.preferences.lines.map((line) => (
-            <div key={line} className="flex items-start gap-2 py-1">
+          {view.preferences.lines.map((line, i) => (
+            <div key={`pref-${i}`} className="flex items-start gap-2 py-1">
               {editing === `pref:${line}` ? (
                 <>
                   <textarea value={draft}
@@ -145,8 +145,8 @@ export function MemoryEditor({ onClose }: { onClose: () => void }) {
           {obs.length === 0 && (
             <div className="text-xs text-neutral-500">none.</div>
           )}
-          {obs.map((o) => (
-            <div key={o.raw} className="py-1 border-t border-neutral-900 first:border-t-0">
+          {obs.map((o, i) => (
+            <div key={`obs-${i}`} className="py-1 border-t border-neutral-900 first:border-t-0">
               {editing === `obs:${o.raw}` ? (
                 <div className="flex items-start gap-2">
                   <textarea value={draft}

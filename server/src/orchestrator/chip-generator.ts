@@ -1,6 +1,7 @@
 import type { Db } from "../state/db.js";
 import { listChips, type ChipOverride } from "../state/chip-overrides.js";
 import { loadProjectIndex, detectProject } from "../memory/project-index.js";
+import { getCachedLabel, hashPrompt } from "../state/chip-label-cache.js";
 
 export type SuggestedChip = {
   /** Stable id; derived for auto chips, real for pinned ones. */
@@ -78,7 +79,12 @@ export function generateChips(opts: GenerateChipsOpts): SuggestedChip[] {
     });
   }
 
-  return [...pinned, ...auto].slice(0, MAX_CHIPS);
+  const merged = [...pinned, ...auto].slice(0, MAX_CHIPS);
+  return merged.map((c) => {
+    if (c.source !== "auto") return c;
+    const cached = getCachedLabel(opts.db, opts.deviceId, hashPrompt(c.prompt), now);
+    return cached ? { ...c, label: cached } : c;
+  });
 }
 
 function pinnedToChip(c: ChipOverride): SuggestedChip {

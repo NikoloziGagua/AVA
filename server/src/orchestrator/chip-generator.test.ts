@@ -7,6 +7,7 @@ import { generateChips } from "./chip-generator.js";
 import { createSession } from "../state/sessions.js";
 import { appendMessage } from "../state/messages.js";
 import { createChip } from "../state/chip-overrides.js";
+import { setCachedLabel, hashPrompt } from "../state/chip-label-cache.js";
 
 function setup(): { db: ReturnType<typeof openInMemoryDb>; memDir: string; deviceId: string } {
   const db = openInMemoryDb();
@@ -92,5 +93,20 @@ describe("generateChips", () => {
     const r = generateChips({ db, deviceId, memoryDir: memDir, now: NOW });
     const labels = r.map((c) => c.label.toLowerCase());
     expect(labels.filter((l) => l === "resume yesterday")).toHaveLength(1);
+  });
+
+  it("substitutes cached LLM labels for matching prompt hashes on auto chips", () => {
+    const { db, memDir, deviceId } = setup();
+    // Simulate two prior user messages so the heuristic surfaces a recurring phrase.
+    const m1 = "list contents of home folder";
+    const sid = createSession(db, { title: "" }).id;
+    appendMessage(db, { sessionId: sid, role: "user", content: m1 });
+    appendMessage(db, { sessionId: sid, role: "user", content: m1 });
+    setCachedLabel(db, "d1", hashPrompt(m1), "List home folder",
+      NOW + 24 * 3600_000);
+
+    const chips = generateChips({ db, deviceId, memoryDir: memDir, now: NOW });
+    const labels = chips.map((c) => c.label);
+    expect(labels).toContain("List home folder");
   });
 });

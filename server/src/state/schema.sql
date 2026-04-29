@@ -87,3 +87,16 @@ CREATE TABLE IF NOT EXISTS device_state (
   last_greeting_date TEXT,
   updated_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS chip_overrides (
+  id TEXT PRIMARY KEY,
+  device_id TEXT NOT NULL REFERENCES device_tokens(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 1,
+  position INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chip_overrides_device ON chip_overrides(device_id, position);

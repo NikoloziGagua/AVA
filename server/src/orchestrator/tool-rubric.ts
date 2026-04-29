@@ -46,7 +46,7 @@ I write observations in this exact line format:
 
 - date: today, ISO yyyy-mm-dd
 - confidence: low | medium | high
-- category: preferences | context | skills | setup | schedule
+- category: preferences | context | skills | setup | schedule | people
 
 Single explicit statements from Sir → confidence "medium".
 Inferred from a single session → "low".

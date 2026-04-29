@@ -36,4 +36,10 @@ describe("TOOL_RUBRIC", () => {
     expect(TOOL_RUBRIC).toContain(".env");
     expect(TOOL_RUBRIC).toContain("dangerously-skip-permissions");
   });
+
+  it("advertises 'people' as a memory category", () => {
+    expect(TOOL_RUBRIC).toContain(
+      "category: preferences | context | skills | setup | schedule | people",
+    );
+  });
 });

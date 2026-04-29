@@ -128,10 +128,11 @@ function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
           { match: args.supersedes, today });
         if (r.changed) writeFile(p.observations, r.content);
       }
-      const line = serializeObservation({
-        date: today, confidence, category, text, superseded: null,
+
+      const { rememberObservation } = await import("../memory/remember.js");
+      rememberObservation({
+        memoryDir: deps.memoryDir, category, confidence, text, today,
       });
-      appendLine(p.observations, line);
       return { ok: true, text: "remembered (observation)" };
     },
   };

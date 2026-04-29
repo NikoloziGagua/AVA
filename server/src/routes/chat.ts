@@ -173,9 +173,10 @@ export function chatRoutes(
         // so we pass noop emits to legacy builders. Phase 2 cleanup removes
         // the `emit` parameters from these builders entirely.
         const noop = () => {};
-        // Conversation mode never dispatches tools, so we skip the Chromium
-        // boot wait (multi-second on first call) and the tool-def assembly.
-        // Memory tools stay available so the agent can still write/read.
+        // Conversation mode skips the Chromium boot wait and the heavy tool
+        // builders, but memory tools stay available so the agent can still
+        // record observations or recall facts mid-conversation.
+        const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
         let tools: ToolDef[];
         let chrome: Chrome | null = null;
         if (mode === "action") {
@@ -185,7 +186,6 @@ export function chatRoutes(
             pidfiles: agentDeps.pidfiles,
             check: buildPathAllowlist({ roots: agentDeps.fsRoots }),
           });
-          const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
           tools = [
             buildShellTool({ signal: abort.signal }),
             ...(buildFilesystemTools({ fs, emit: noop }) as ToolDef[]),
@@ -200,7 +200,7 @@ export function chatRoutes(
             ...memoryTools,
           ];
         } else {
-          tools = [];
+          tools = memoryTools;
         }
         await impl({
           prompt: promptForAgent,

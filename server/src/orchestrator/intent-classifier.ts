@@ -42,8 +42,9 @@ const ACTION_PATTERNS: RegExp[] = [
   /\btake\s+a?\s*screenshot/i,
   /\btype\s+["'`]/i,
 
-  // Memory ops.
-  /\b(remember|forget)\s+(that|what|everything|this|my)\b/i,
+  // Memory ops. Catches "remember that/what/everything/this/my" plus first-
+  // and second-person framings ("remember I…", "remember me", "remember you…").
+  /\b(remember|forget)\s+(that|what|everything|this|my|i|i'm|me|you|you're|your)\b/i,
   /\bwhat\s+do\s+you\s+remember\b/i,
 
   // Direct "use X" phrasing — pulls bare "chrome"/"shell" into action mode

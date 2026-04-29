@@ -44,6 +44,10 @@ describe("classifyIntent", () => {
     expect(classifyIntent("forget what I said about VS Code")).toBe("action");
     expect(classifyIntent("what do you remember about my setup?")).toBe("action");
     expect(classifyIntent("forget everything about project yov")).toBe("action");
+    expect(classifyIntent("remember I live in Ireland")).toBe("action");
+    expect(classifyIntent("remember me as terse")).toBe("action");
+    expect(classifyIntent("remember I'm allergic to dairy")).toBe("action");
+    expect(classifyIntent("remember you should always confirm before pushing")).toBe("action");
   });
 
   it("treats file ops imperatives as action", () => {

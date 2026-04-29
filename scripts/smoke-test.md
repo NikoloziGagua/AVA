@@ -110,3 +110,35 @@ Run from the phone PWA, paired and on the same Tailscale tailnet (or LAN during 
 ### Code health
 - [ ] No file under `server/src` imports `@anthropic-ai/claude-agent-sdk`.
 - [ ] `server/package.json` does not list `@anthropic-ai/claude-agent-sdk` as a dependency.
+
+## M4 Phase 2 — Persona + Memory
+
+**Persona bootstrap**
+- [ ] First run with a fresh `data/memory/` dir creates `personality.md` byte-for-byte equal to `server/src/memory/personality-content.ts` (`PERSONALITY_MD`).
+- [ ] Editing `personality.md` and restarting the server preserves the edit.
+
+**Memory writes**
+- [ ] `"remember I prefer terse responses"` → `data/memory/preferences.md` contains a new line `prefers terse responses` (or similar).
+- [ ] Casually mention a preference once → no write. Mention it across two sessions → `data/memory/observations.md` gains an entry `[YYYY-MM-DD / low / preferences] …`.
+- [ ] Mention same observation in a third session → tier bumps to `medium` (date refreshed in place — no duplicate line).
+
+**Forgetting**
+- [ ] `"forget that"` shortly after Ava confirms a remember → most recent line dropped.
+- [ ] `"forget what I said about pwsh"` (with one matching line) → match dropped. With two matches → Ava asks which one.
+- [ ] `"forget everything about project <slug>"` → `projects/<slug>.md` removed; references in preferences/observations dropped.
+
+**Firewall**
+- [ ] Add `OPENAI_API_KEY=sk-...` deliberately into a remembered observation → file write contains `sk-***`, not the original key.
+
+**System prompt**
+- [ ] First request after server start: prompt cache miss is acceptable.
+- [ ] Subsequent requests within the session: cache hit (verify via OpenAI usage `cached_tokens` field in logs, or Anthropic `cache_read_input_tokens`).
+- [ ] Add a stale low-confidence entry dated >60d ago to `observations.md`, then send a request with the file otherwise full → entry pruned from the rendered prompt.
+
+**Conversation-mode bias**
+- [ ] `"how are you, Ava?"` → reply has zero `tool_call` events on SSE.
+- [ ] `"how's the build?"` → reply offers to check (no auto-execute).
+- [ ] `"run the tests"` → action announced + tool call dispatched.
+
+**Voice**
+- [ ] `POST /api/tts` with no `voice` field returns audio voiced in **nova** (not alloy).

@@ -5,6 +5,7 @@ export type Classification = { tier: Tier; reason: string };
 const READ_ONLY_TOOLS = new Set([
   "fs_read", "fs_list", "fs_stat",
   "chrome_read_page", "chrome_screenshot", "chrome_tabs",
+  "memory_read",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -67,6 +68,10 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   }
 
   if (tool === "computer_use") return { tier: "medium", reason: "computer_use is GUI scripting" };
+
+  if (tool === "memory_remember" || tool === "memory_forget") {
+    return { tier: "low", reason: "memory mutation stays inside the local memory dir" };
+  }
 
   return { tier: "medium", reason: "unknown tool defaults to ask" };
 }

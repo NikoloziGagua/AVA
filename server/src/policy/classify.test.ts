@@ -43,4 +43,11 @@ describe("classifyRisk", () => {
   it("blocked: --dangerously-skip-permissions in claude_code prompt or args", () => {
     expect(classifyRisk("claude_code", { prompt: "--dangerously-skip-permissions" }).tier).toBe("blocked");
   });
+  it("read-only: memory_read", () => {
+    expect(classifyRisk("memory_read", { category: "preferences" }).tier).toBe("read-only");
+  });
+  it("low: memory_remember and memory_forget (local memory dir, behind firewall)", () => {
+    expect(classifyRisk("memory_remember", { category: "preferences", text: "user prefers pwsh" }).tier).toBe("low");
+    expect(classifyRisk("memory_forget", { category: "preferences", line: "old pref" }).tier).toBe("low");
+  });
 });

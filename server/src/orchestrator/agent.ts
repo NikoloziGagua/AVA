@@ -126,6 +126,10 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       for await (const ev of deps.provider.stream({
         model,
         system, messages, tools, abort: abort.signal,
+        // Conversation mode prioritizes TTFT over deep reasoning. For OpenAI
+        // gpt-5-mini this trims ~5s of invisible reasoning before the first
+        // token. No-op on Anthropic.
+        reasoningEffort: mode === "conversation" ? "minimal" : "low",
       })) {
         if (ev.kind === "delta") {
           assistantText += ev.text;

@@ -70,7 +70,10 @@ export class OpenAIProvider implements LLMProvider {
       stream: true,
       messages: toOpenAIMessages(input.system, input.messages),
       tools: input.tools.length ? toOpenAITools(input.tools) : undefined,
-    });
+      ...(input.reasoningEffort
+        ? { reasoning_effort: input.reasoningEffort }
+        : {}),
+    } as Parameters<typeof this.client.chat.completions.create>[0]);
     // Tool calls arrive in deltas keyed by index. Accumulate by index.
     const partial = new Map<number, { id: string; name: string; argsBuf: string }>();
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error" = "end_turn";

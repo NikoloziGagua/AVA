@@ -39,6 +39,13 @@ export type StreamInput = {
   messages: Message[];
   tools: ToolDefinition[];
   abort: AbortSignal;
+  /**
+   * For OpenAI reasoning models (gpt-5, gpt-5-mini): how much invisible
+   * reasoning to allow before the first token. "minimal" is critical for
+   * sub-second TTFT in conversation mode. Ignored by non-reasoning models
+   * and by Anthropic (which doesn't expose reasoning effort here).
+   */
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
 };
 
 export type CompleteInput = {

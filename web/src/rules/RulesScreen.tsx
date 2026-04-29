@@ -1,11 +1,15 @@
 import { useEffect, useState, useRef } from "react";
-import { fetchRules, createRule, patchRule, deleteRuleApi, type RuleRow } from "../api.js";
+import {
+  fetchRules, createRule, patchRule, deleteRuleApi, type RuleRow,
+  fetchReasoning, putReasoning, type ReasoningPref,
+} from "../api.js";
 
 export function RulesScreen({ onClose }: { onClose: () => void }) {
   const [rows, setRows] = useState<RuleRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
+  const [reason, setReason] = useState<ReasoningPref | null>(null);
   const pollRef = useRef<number | null>(null);
 
   async function refresh() {
@@ -35,6 +39,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
   }
 
   useEffect(() => {
+    fetchReasoning().then(setReason).catch(() => {});
     refresh();
     return () => {
       if (pollRef.current != null) window.clearInterval(pollRef.current);
@@ -66,12 +71,55 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
     await refresh();
   }
 
+  async function setReasoningLevel(level: "fast" | "thorough") {
+    if (!reason) return;
+    setReason({ ...reason, level });
+    try { await putReasoning(level); }
+    catch { fetchReasoning().then(setReason).catch(() => {}); }
+  }
+
   return (
     <div className="h-full flex flex-col bg-neutral-950 text-neutral-100">
       <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
         <button onClick={onClose} className="text-neutral-400">← back</button>
         <h1 className="text-base">Autonomy rules</h1>
         <div className="w-12" />
+      </div>
+      <div className="p-3 border-b border-neutral-800">
+        <div className="text-sm font-semibold mb-2">Reasoning</div>
+        <label className="flex items-start gap-2 mb-2 text-sm">
+          <input
+            type="radio"
+            name="reasoning"
+            disabled={!reason || reason.supported === false}
+            checked={reason?.level === "fast"}
+            onChange={() => setReasoningLevel("fast")}
+            className="mt-1"
+          />
+          <span>
+            <span className="font-medium">Fast</span>
+            <span className="text-neutral-500"> — instant replies, light reasoning on actions</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm">
+          <input
+            type="radio"
+            name="reasoning"
+            disabled={!reason || reason.supported === false}
+            checked={reason?.level === "thorough"}
+            onChange={() => setReasoningLevel("thorough")}
+            className="mt-1"
+          />
+          <span>
+            <span className="font-medium">Thorough</span>
+            <span className="text-neutral-500"> — slower, thinks more before acting</span>
+          </span>
+        </label>
+        {reason && reason.supported === false && (
+          <div className="text-xs text-neutral-500 mt-2">
+            Available with OpenAI provider only.
+          </div>
+        )}
       </div>
       <div className="p-3 border-b border-neutral-800 space-y-2">
         <textarea

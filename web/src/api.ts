@@ -171,3 +171,16 @@ export async function updatePinnedChip(
 export async function deletePinnedChip(id: string): Promise<void> {
   await request<{ ok: true }>(`/api/chips/${id}`, { method: "DELETE" });
 }
+
+export type ReasoningPref = { level: "fast" | "thorough"; supported: boolean };
+
+export async function fetchReasoning(): Promise<ReasoningPref> {
+  return request<ReasoningPref>("/api/reasoning");
+}
+
+export async function putReasoning(level: "fast" | "thorough"): Promise<void> {
+  await request<{ level: string }>("/api/reasoning", {
+    method: "PUT",
+    body: JSON.stringify({ level }),
+  });
+}

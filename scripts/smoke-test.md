@@ -159,3 +159,12 @@ Run from the phone PWA, paired and on the same Tailscale tailnet (or LAN during 
 - [ ] Tap a chip → composer is filled, **not** auto-sent.
 - [ ] Long-press an auto chip → dialog with `Pin` button → confirm pin, reload, chip persists with the dot indicator.
 - [ ] Long-press a pinned chip → `Save` and `Delete` work.
+
+## M5
+
+- **Promotion**: send "remember I prefer terse responses" twice in two sessions same day → observations.md has one line at `medium` confidence with the second date.
+- **People category**: send "remember Ali likes async standups" → observations.md has a line with `category=people`.
+- **Reasoning toggle**: open Rules, switch to Thorough, send a complex prompt → response noticeably slower; toggle back to Fast → instant.
+- **Memory editor**: open the new memory screen (⊕ in chat header), delete a low-confidence observation, refresh → it's gone.
+- **Auto-learn**: reply "no, don't auto-run things" to an Ava response within 5 minutes; observations.md gains a `(corrected)` line at low confidence.
+- **Chip labels**: open chat with no chips, send a few messages, then check the chip labels — they read as imperative phrases ("Resume yesterday", "Open yov", etc., not truncated raw text).

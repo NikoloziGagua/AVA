@@ -142,3 +142,20 @@ Run from the phone PWA, paired and on the same Tailscale tailnet (or LAN during 
 
 **Voice**
 - [ ] `POST /api/tts` with no `voice` field returns audio voiced in **nova** (not alloy).
+
+## M4 Phase 4 — App-feel layer
+
+**First-of-day greeting**
+- [ ] Open the PWA in the morning (first chat request from this device today) → reply opens with `Good morning, Sir.` and references "yesterday" or the last topic.
+- [ ] Send a second message in the same day → no greeting prefix appears in the prompt; Ava replies normally.
+- [ ] On the next calendar day, first request → greeting fires again.
+
+**Project auto-load**
+- [ ] Add a `projects/yov.md` containing `C:/ai/chemiapebi/yovlisshemdzle` — first request mentioning that path → system prompt includes the project notes (Ava can answer questions about the project without a fresh tool call).
+- [ ] Mid-run: send `"hi"` (no path) then have Ava run `fs_list` on `C:/ai/chemiapebi/yovlisshemdzle/server` → next assistant turn knows project context (a `[PROJECT CONTEXT — yov]` user message appears in the transcript).
+
+**Quick chips**
+- [ ] After a few sessions, open the chat → chips render below the message list.
+- [ ] Tap a chip → composer is filled, **not** auto-sent.
+- [ ] Long-press an auto chip → dialog with `Pin` button → confirm pin, reload, chip persists with the dot indicator.
+- [ ] Long-press a pinned chip → `Save` and `Delete` work.

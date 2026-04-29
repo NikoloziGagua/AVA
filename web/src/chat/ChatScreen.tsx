@@ -4,6 +4,7 @@ import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
 import { enablePush } from "../push/register.js";
+import { QuickChips } from "./QuickChips.js";
 
 export function ChatScreen({
   sessionId: requestedSessionId,
@@ -21,6 +22,7 @@ export function ChatScreen({
   const [pushState, setPushState] = useState<"idle" | "pending" | "ok" | string>(
     typeof Notification !== "undefined" && Notification.permission === "granted" ? "ok" : "idle",
   );
+  const [seed, setSeed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +111,11 @@ export function ChatScreen({
         </div>
       </header>
       <MessageList history={history} liveEvents={events} />
-      <Composer onSend={send} onKill={kill} busy={busy} />
+      <QuickChips
+        refreshKey={runEpoch}
+        onTap={(prompt) => setSeed({ text: prompt, version: Date.now() })}
+      />
+      <Composer onSend={send} onKill={kill} busy={busy} seed={seed} />
     </div>
   );
 }

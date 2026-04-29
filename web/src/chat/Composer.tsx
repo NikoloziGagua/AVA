@@ -1,15 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export function Composer({
   onSend,
   onKill,
   busy,
+  /** Seeds the input when this prop's identity changes (e.g. chip tap). */
+  seed,
 }: {
   onSend: (text: string) => void;
   onKill: () => void;
   busy: boolean;
+  seed?: { text: string; version: number };
 }) {
   const [text, setText] = useState("");
+  useEffect(() => {
+    if (seed) setText(seed.text);
+  }, [seed?.version]);
   return (
     <form
       onSubmit={(e) => {

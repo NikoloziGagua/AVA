@@ -117,3 +117,57 @@ export async function approveApproval(id: string): Promise<void> {
 export async function denyApproval(id: string): Promise<void> {
   await request<{ ok: true; status: string }>(`/api/approvals/${id}/deny`, { method: "POST" });
 }
+
+export type SuggestedChip = {
+  id: string;
+  source: "pinned" | "auto";
+  label: string;
+  prompt: string;
+};
+
+export type ChipOverrideRow = {
+  id: string;
+  device_id: string;
+  label: string;
+  prompt: string;
+  pinned: 0 | 1;
+  position: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export async function fetchSuggestedChips(): Promise<SuggestedChip[]> {
+  const j = await request<{ chips: SuggestedChip[] }>("/api/chips/suggested");
+  return j.chips;
+}
+
+export async function fetchPinnedChips(): Promise<ChipOverrideRow[]> {
+  const j = await request<{ chips: ChipOverrideRow[] }>("/api/chips");
+  return j.chips;
+}
+
+export async function createPinnedChip(input: {
+  label: string;
+  prompt: string;
+}): Promise<ChipOverrideRow> {
+  const j = await request<{ chip: ChipOverrideRow }>("/api/chips", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return j.chip;
+}
+
+export async function updatePinnedChip(
+  id: string,
+  patch: { label?: string; prompt?: string; pinned?: boolean },
+): Promise<ChipOverrideRow> {
+  const j = await request<{ chip: ChipOverrideRow }>(`/api/chips/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+  return j.chip;
+}
+
+export async function deletePinnedChip(id: string): Promise<void> {
+  await request<{ ok: true }>(`/api/chips/${id}`, { method: "DELETE" });
+}

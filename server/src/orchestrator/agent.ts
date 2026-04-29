@@ -9,6 +9,7 @@ import type { Db } from "../state/db.js";
 import type { Approval } from "../state/approvals.js";
 import { withTimeout, TOOL_BUDGET_MS } from "./timeout.js";
 import { createStuckLoop } from "./stuck-loop.js";
+import { loadProjectIndex, detectProject, readProjectFile, type ProjectEntry } from "../memory/project-index.js";
 
 export type AgentEvent =
   | { kind: "thought"; payload: { text: string } }
@@ -76,7 +77,16 @@ export async function runAgent(opts: RunOpts): Promise<void> {
   });
 
   const mode = opts.mode ?? "action";
-  const system = buildSystemPrompt({ memoryDir: deps.memoryDir });
+  const projectIndex = loadProjectIndex(deps.memoryDir);
+  const initialProject = detectProject(prompt, projectIndex);
+  const initialProjectContext = initialProject
+    ? readProjectFile(deps.memoryDir, initialProject.slug)
+    : "";
+  const system = buildSystemPrompt({
+    memoryDir: deps.memoryDir,
+    projectContext: initialProjectContext,
+  });
+  let loadedProjectSlug: string | null = initialProject?.slug ?? null;
   const registry = buildToolRegistry({ tools: deps.tools, ctx: { runId } });
   const allTools = registry.toolDefinitions();
   // Conversation mode hides tools entirely so the side model can't try to call
@@ -143,6 +153,18 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       if (abort.signal.aborted) break;
       emit({ kind: "tool_call", payload: { tool: call.name, args: call.args } });
 
+      const detected = detectProjectInArgs(call.args, projectIndex);
+      if (detected && detected.slug !== loadedProjectSlug) {
+        const body = readProjectFile(deps.memoryDir, detected.slug);
+        if (body) {
+          messages.push({
+            role: "user",
+            content: `[PROJECT CONTEXT — ${detected.slug}]\n${body}`,
+          });
+        }
+        loadedProjectSlug = detected.slug;
+      }
+
       const decision = await policy(call.name, call.args);
       if (!decision.allow) {
         const result = { call_id: call.id, output: decision.message, is_error: true };
@@ -165,4 +187,24 @@ export async function runAgent(opts: RunOpts): Promise<void> {
   }
 
   emit({ kind: "done", payload: {} });
+}
+
+/**
+ * Recursively flatten string values from a tool-call args object and run them
+ * through detectProject. Returns the longest-matching project, or null. We
+ * walk the whole tree because args may carry path-bearing fields under any
+ * name (path, cwd, args[*], file, etc.).
+ */
+function detectProjectInArgs(args: unknown, index: ProjectEntry[]): ProjectEntry | null {
+  if (index.length === 0) return null;
+  const haystack = collectStrings(args).join(" ");
+  if (!haystack) return null;
+  return detectProject(haystack, index);
+}
+
+function collectStrings(v: unknown): string[] {
+  if (typeof v === "string") return [v];
+  if (Array.isArray(v)) return v.flatMap(collectStrings);
+  if (v && typeof v === "object") return Object.values(v as Record<string, unknown>).flatMap(collectStrings);
+  return [];
 }

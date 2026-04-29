@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAgent, type AgentEvent } from "./agent.js";
@@ -142,6 +142,106 @@ describe("runAgent (v2 loop)", () => {
     } as never);
     expect(provider.calls.stream[0]!.model).toBe("mock-orchestrator");
     expect((provider.calls.stream[0]!.tools as unknown[]).length).toBeGreaterThan(0);
+  });
+
+  it("loads project context into the system prompt when prompt path matches", async () => {
+    const memDir = makeMemDir();
+    writeFileSync(join(memDir, "MEMORY.md"), "- [yov](projects/yov.md)\n", "utf8");
+    mkdirSync(join(memDir, "projects"), { recursive: true });
+    writeFileSync(
+      join(memDir, "projects", "yov.md"),
+      "Root: C:/ai/yov\nNotes: build with npm run dev.\n",
+      "utf8",
+    );
+    const provider = new MockLLMProvider({
+      scripts: [[{ kind: "delta", text: "ok." }, { kind: "done", stop_reason: "end_turn" }]],
+    });
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "look at C:/ai/yov/package.json",
+      abort: new AbortController(),
+      emit: () => {},
+      runId: "r1", sessionId: "s1", db,
+      mode: "action",
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: memDir, provider, tools: [makeShellTool()] } as never,
+    } as never);
+    const sys = String(provider.calls.stream[0]!.system);
+    expect(sys).toContain("Project context");
+    expect(sys).toContain("npm run dev");
+  });
+
+  it("appends project context as user message when a tool-call arg matches a project root", async () => {
+    const memDir = makeMemDir();
+    writeFileSync(join(memDir, "MEMORY.md"), "- [yov](projects/yov.md)\n", "utf8");
+    mkdirSync(join(memDir, "projects"), { recursive: true });
+    writeFileSync(
+      join(memDir, "projects", "yov.md"),
+      "Root: C:/ai/yov\nNotes: yov-specific.\n",
+      "utf8",
+    );
+    const tool = makeShellTool();
+    const provider = new MockLLMProvider({
+      scripts: [
+        [{ kind: "tool_call", call: { id: "c1", name: "shell", args: { command: "ls C:/ai/yov" } } },
+         { kind: "done", stop_reason: "tool_use" }],
+        [{ kind: "delta", text: "done" }, { kind: "done", stop_reason: "end_turn" }],
+      ],
+    });
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "ls things",  // no project match in prompt
+      abort: new AbortController(),
+      emit: () => {},
+      runId: "r1", sessionId: "s1", db,
+      mode: "action",
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: memDir, provider, tools: [tool] } as never,
+    } as never);
+    // Second turn's messages should include the [PROJECT CONTEXT] user message
+    expect(provider.calls.stream).toHaveLength(2);
+    const secondTurnMessages = provider.calls.stream[1]!.messages;
+    const projectMsg = secondTurnMessages.find(
+      (m: { role: string; content?: unknown }) =>
+        m.role === "user" && typeof m.content === "string" && m.content.startsWith("[PROJECT CONTEXT"),
+    );
+    expect(projectMsg).toBeDefined();
+    expect((projectMsg as { content: string }).content).toContain("yov-specific");
+  });
+
+  it("does not re-inject project context when the same project is detected twice", async () => {
+    const memDir = makeMemDir();
+    writeFileSync(join(memDir, "MEMORY.md"), "- [yov](projects/yov.md)\n", "utf8");
+    mkdirSync(join(memDir, "projects"), { recursive: true });
+    writeFileSync(join(memDir, "projects", "yov.md"), "Root: C:/ai/yov\n", "utf8");
+    const tool = makeShellTool();
+    const provider = new MockLLMProvider({
+      scripts: [
+        // Project already loaded at run start via prompt; tool call into same root.
+        [{ kind: "tool_call", call: { id: "c1", name: "shell", args: { command: "ls C:/ai/yov" } } },
+         { kind: "done", stop_reason: "tool_use" }],
+        [{ kind: "delta", text: "done" }, { kind: "done", stop_reason: "end_turn" }],
+      ],
+    });
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "look at C:/ai/yov",
+      abort: new AbortController(),
+      emit: () => {},
+      runId: "r1", sessionId: "s1", db,
+      mode: "action",
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: memDir, provider, tools: [tool] } as never,
+    } as never);
+    const secondTurnMessages = provider.calls.stream[1]!.messages;
+    const projectMsg = secondTurnMessages.find(
+      (m: { role: string; content?: unknown }) =>
+        m.role === "user" && typeof m.content === "string" && m.content.startsWith("[PROJECT CONTEXT"),
+    );
+    expect(projectMsg).toBeUndefined();
   });
 
   it("emits killed when the provider reports stop_reason abort", async () => {

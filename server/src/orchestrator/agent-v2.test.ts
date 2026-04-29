@@ -244,6 +244,51 @@ describe("runAgent (v2 loop)", () => {
     expect(projectMsg).toBeUndefined();
   });
 
+  it("forwards priorMessages as the cacheable prefix and appends prompt as the final user turn", async () => {
+    const provider = new MockLLMProvider({
+      scripts: [[{ kind: "delta", text: "ack." }, { kind: "done", stop_reason: "end_turn" }]],
+    });
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "and also that",
+      priorMessages: [
+        { role: "user", content: "remember this" },
+        { role: "assistant", content: "noted, Sir." },
+      ],
+      abort: new AbortController(),
+      emit: () => {},
+      runId: "r1", sessionId: "s1", db,
+      mode: "conversation",
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [] } as never,
+    } as never);
+    const sent = provider.calls.stream[0]!.messages;
+    expect(sent).toHaveLength(3);
+    expect(sent[0]).toMatchObject({ role: "user", content: "remember this" });
+    expect(sent[1]).toMatchObject({ role: "assistant", content: "noted, Sir." });
+    expect(sent[2]).toMatchObject({ role: "user", content: "and also that" });
+  });
+
+  it("conversation mode omits the tool rubric from the system prompt", async () => {
+    const provider = new MockLLMProvider({
+      scripts: [[{ kind: "delta", text: "hi." }, { kind: "done", stop_reason: "end_turn" }]],
+    });
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "hi",
+      abort: new AbortController(),
+      emit: () => {},
+      runId: "r1", sessionId: "s1", db,
+      mode: "conversation",
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [] } as never,
+    } as never);
+    const sys = String(provider.calls.stream[0]!.system);
+    expect(sys).not.toContain("# Tools and rubric");
+  });
+
   it("emits killed when the provider reports stop_reason abort", async () => {
     const ac = new AbortController();
     const provider = new MockLLMProvider({

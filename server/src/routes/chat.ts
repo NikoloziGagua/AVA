@@ -16,7 +16,7 @@ import { maybeSummarize } from "../orchestrator/auto-summary.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 import type { Approval } from "../state/approvals.js";
-import type { LLMProvider } from "../orchestrator/llm/types.js";
+import type { LLMProvider, Message as LLMMessage } from "../orchestrator/llm/types.js";
 import { buildShellTool } from "../tools/shell-tool.js";
 import { buildFilesystem } from "../tools/filesystem.js";
 import { buildFilesystemTools } from "../tools/filesystem-mcp.js";
@@ -111,10 +111,19 @@ export function chatRoutes(
 
     const greeting = decideGreeting({ db, deviceId: req.deviceId, sessionId });
 
-    const transcriptForAgent =
-      greeting.prefix +
-      summaryHeader +
-      recent.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
+    // Split history: everything except the just-appended user turn becomes the
+    // cacheable prefix; the latest turn carries the (rare) greeting/summary
+    // prefix and is sent as the final user message.
+    const priorRows = recent.slice(0, -1);
+    const latestRow = recent.at(-1);
+    const priorMessages: LLMMessage[] = priorRows
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: m.content,
+      }));
+    const latestUserText = latestRow?.content ?? parsed.data.text;
+    const promptForAgent = greeting.prefix + summaryHeader + latestUserText;
 
     void (async () => {
       const sid = sessionId!;
@@ -154,7 +163,8 @@ export function chatRoutes(
           ...memoryTools,
         ];
         await impl({
-          prompt: transcriptForAgent,
+          prompt: promptForAgent,
+          priorMessages,
           abort,
           emit,
           runId,

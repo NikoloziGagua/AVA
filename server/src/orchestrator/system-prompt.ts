@@ -10,6 +10,12 @@ export type BuildSystemPromptOpts = {
   projectContext?: string;
   /** ISO yyyy-mm-dd; injectable for deterministic tests. Defaults to today. */
   today?: string;
+  /**
+   * In "conversation" mode the tool rubric is omitted — tools aren't exposed
+   * to the model anyway, so the rubric is dead prefill. Each mode is its own
+   * cache lane and stays byte-stable within itself.
+   */
+  mode?: "conversation" | "action";
 };
 
 function isoToday(): string {
@@ -42,7 +48,7 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
   if (memoryIndex.trim()) layers.push(block("Memory index", memoryIndex));
   if (preferences.trim()) layers.push(block("Preferences", preferences));
   if (observations.trim()) layers.push(block("Observations", observations));
-  layers.push(TOOL_RUBRIC);
+  if (opts.mode !== "conversation") layers.push(TOOL_RUBRIC);
   if (opts.projectContext && opts.projectContext.trim()) {
     layers.push(block("Project context", opts.projectContext));
   }

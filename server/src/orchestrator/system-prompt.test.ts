@@ -82,4 +82,18 @@ describe("buildSystemPrompt (layered)", () => {
     const iProj = out.indexOf("PROJ-BLOCK");
     expect(iProj).toBeGreaterThan(iRubric);
   });
+
+  it("omits the tool rubric in conversation mode (dead prefill)", () => {
+    writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
+    const conv = buildSystemPrompt({ memoryDir: dir, mode: "conversation" });
+    const action = buildSystemPrompt({ memoryDir: dir, mode: "action" });
+    expect(conv).not.toContain(TOOL_RUBRIC);
+    expect(action).toContain(TOOL_RUBRIC);
+  });
+
+  it("conversation-mode prompt is byte-stable across runs (cache safety)", () => {
+    writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
+    const opts = { memoryDir: dir, mode: "conversation" as const };
+    expect(buildSystemPrompt(opts)).toBe(buildSystemPrompt(opts));
+  });
 });

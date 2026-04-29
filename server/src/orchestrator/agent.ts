@@ -33,7 +33,14 @@ export type AgentDeps = {
 };
 
 export type RunOpts = {
+  /** The latest user turn — becomes the final user message in the messages array. */
   prompt: string;
+  /**
+   * Prior conversation history (from oldest to newest, excluding the current
+   * user turn). Passed as a real Message[] so the provider can cache the
+   * stable prefix across turns instead of re-prefilling a concatenated blob.
+   */
+  priorMessages?: Message[];
   abort: AbortController;
   emit: (e: AgentEvent) => void;
   runId: string;
@@ -85,6 +92,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
   const system = buildSystemPrompt({
     memoryDir: deps.memoryDir,
     projectContext: initialProjectContext,
+    mode,
   });
   let loadedProjectSlug: string | null = initialProject?.slug ?? null;
   const registry = buildToolRegistry({ tools: deps.tools, ctx: { runId } });
@@ -96,7 +104,10 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     ? deps.provider.defaultSideModel
     : deps.provider.defaultOrchestratorModel;
 
-  const messages: Message[] = [{ role: "user", content: prompt }];
+  const messages: Message[] = [
+    ...(opts.priorMessages ?? []),
+    { role: "user", content: prompt },
+  ];
   let finalText = "";
 
   for (let turn = 0; turn < 32; turn++) {

@@ -29,6 +29,8 @@ import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
 import { getReasoningLevel } from "../state/reasoning-pref.js";
 import { mapReasoning } from "../orchestrator/reasoning.js";
+import { detectCorrection } from "../orchestrator/correction-detector.js";
+import { rememberObservation } from "../memory/remember.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -74,6 +76,29 @@ export function chatRoutes(
       createdNew = true;
     } else {
       touchSession(db, sessionId);
+    }
+    // Auto-learn from corrections: if the user is pushing back on the previous
+    // assistant turn within 5 minutes, capture it as a low-confidence preference
+    // observation. Fire-and-forget; never blocks dispatch.
+    {
+      const prior = listMessages(db, sessionId).at(-1);
+      const corrected = detectCorrection({
+        userText: parsed.data.text,
+        priorRole: (prior?.role ?? null) as "user" | "assistant" | "system" | null,
+        priorAtMs: prior?.created_at ?? null,
+        nowMs: Date.now(),
+      });
+      if (corrected) {
+        void Promise.resolve().then(() => {
+          rememberObservation({
+            memoryDir: agentDeps.memoryDir,
+            category: "preferences",
+            confidence: "low",
+            text: `(corrected) ${parsed.data.text.slice(0, 200)}`,
+            today: new Date().toISOString().slice(0, 10),
+          });
+        }).catch(() => {});
+      }
     }
     appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
 

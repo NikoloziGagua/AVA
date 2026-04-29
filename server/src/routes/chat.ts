@@ -9,6 +9,7 @@ import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
 import { classifyIntent } from "../orchestrator/intent-classifier.js";
+import { decideGreeting } from "../orchestrator/greeting.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { autoTitle } from "../orchestrator/auto-title.js";
 import { maybeSummarize } from "../orchestrator/auto-summary.js";
@@ -108,7 +109,10 @@ export function chatRoutes(
       ? `[CONVERSATION SUMMARY OF EARLIER MESSAGES]\n${full.summary}\n\n`
       : "";
 
+    const greeting = decideGreeting({ db, deviceId: req.deviceId, sessionId });
+
     const transcriptForAgent =
+      greeting.prefix +
       summaryHeader +
       recent.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n\n");
 

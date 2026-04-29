@@ -81,3 +81,9 @@ CREATE TABLE IF NOT EXISTS approvals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_approvals_session_status ON approvals(session_id, status);
+
+CREATE TABLE IF NOT EXISTS device_state (
+  device_id TEXT PRIMARY KEY REFERENCES device_tokens(id) ON DELETE CASCADE,
+  last_greeting_date TEXT,
+  updated_at INTEGER NOT NULL
+);

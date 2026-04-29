@@ -23,7 +23,13 @@ export type AgentEvent =
   | { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } };
 
 export type AgentDeps = {
-  chrome: Chrome;
+  /**
+   * Null in conversation mode — the chat route skips the Chromium boot wait
+   * when no tools will be dispatched. The orchestrator never reads this
+   * directly; tool builders close over chrome at construction time and
+   * land in `deps.tools` already bound.
+   */
+  chrome: Chrome | null;
   pidfiles: PidfileRegistry;
   fsRoots: string[];
   memoryDir: string;

@@ -124,6 +124,7 @@ export function chatRoutes(
       }));
     const latestUserText = latestRow?.content ?? parsed.data.text;
     const promptForAgent = greeting.prefix + summaryHeader + latestUserText;
+    const mode = classifyIntent(parsed.data.text);
 
     void (async () => {
       const sid = sessionId!;
@@ -137,31 +138,40 @@ export function chatRoutes(
       };
       try {
         const impl = agentDeps.runAgentImpl ?? runAgent;
-        const chrome = await agentDeps.getChrome();
         const provider = agentDeps.provider!;  // null-check happened earlier (503)
         // The agent loop emits tool_call/tool_result centrally via the ToolRegistry,
         // so we pass noop emits to legacy builders. Phase 2 cleanup removes
         // the `emit` parameters from these builders entirely.
         const noop = () => {};
-        const fs = buildFilesystem({ roots: agentDeps.fsRoots });
-        const cc = buildClaudeCode({
-          pidfiles: agentDeps.pidfiles,
-          check: buildPathAllowlist({ roots: agentDeps.fsRoots }),
-        });
-        const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
-        const tools: ToolDef[] = [
-          buildShellTool({ signal: abort.signal }),
-          ...(buildFilesystemTools({ fs, emit: noop }) as ToolDef[]),
-          buildClaudeCodeTool({ cc, emit: noop }) as ToolDef,
-          ...(buildChromeTools({ chrome, emit: noop }) as ToolDef[]),
-          // TODO(M4 Phase 4): replace with OpenAI computer_use_preview when provider is openai.
-          buildComputerUseTool({
-            client: provider.name === "anthropic" ? metered.anthropic : null,
-            chrome,
-            emit: noop,
-          }) as ToolDef,
-          ...memoryTools,
-        ];
+        // Conversation mode never dispatches tools, so we skip the Chromium
+        // boot wait (multi-second on first call) and the tool-def assembly.
+        // Memory tools stay available so the agent can still write/read.
+        let tools: ToolDef[];
+        let chrome: Chrome | null = null;
+        if (mode === "action") {
+          chrome = await agentDeps.getChrome();
+          const fs = buildFilesystem({ roots: agentDeps.fsRoots });
+          const cc = buildClaudeCode({
+            pidfiles: agentDeps.pidfiles,
+            check: buildPathAllowlist({ roots: agentDeps.fsRoots }),
+          });
+          const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
+          tools = [
+            buildShellTool({ signal: abort.signal }),
+            ...(buildFilesystemTools({ fs, emit: noop }) as ToolDef[]),
+            buildClaudeCodeTool({ cc, emit: noop }) as ToolDef,
+            ...(buildChromeTools({ chrome, emit: noop }) as ToolDef[]),
+            // TODO(M4 Phase 4): replace with OpenAI computer_use_preview when provider is openai.
+            buildComputerUseTool({
+              client: provider.name === "anthropic" ? metered.anthropic : null,
+              chrome,
+              emit: noop,
+            }) as ToolDef,
+            ...memoryTools,
+          ];
+        } else {
+          tools = [];
+        }
         await impl({
           prompt: promptForAgent,
           priorMessages,
@@ -170,7 +180,7 @@ export function chatRoutes(
           runId,
           db,
           sessionId: sid,
-          mode: classifyIntent(parsed.data.text),
+          mode,
           deps: {
             chrome,
             pidfiles: agentDeps.pidfiles,

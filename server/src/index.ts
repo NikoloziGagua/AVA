@@ -94,7 +94,7 @@ app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
 app.use("/api/push", pushRoutes(db, requireToken(db), { vapidPublicKey: cfg.vapidPublicKey }));
 app.use("/api/rules", rulesRoutes(db, requireToken(db), { provider, log }));
 app.use("/api/approvals", approvalsRoutes(db, requireToken(db)));
-app.use("/api/chips", chipsRoutes(db, requireToken(db)));
+app.use("/api/chips", chipsRoutes(db, requireToken(db), { memoryDir: cfg.memoryDir }));
 
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });
 app.use("/api", voiceRoutes({ clients: voiceClients, requireToken: requireToken(db) }));

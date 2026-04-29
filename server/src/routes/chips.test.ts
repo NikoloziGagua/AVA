@@ -22,7 +22,7 @@ function setup(opts: { deviceId?: string | null } = {}) {
     if (opts.deviceId !== null) req.deviceId = opts.deviceId ?? "d1";
     next();
   };
-  app.use("/api/chips", chipsRoutes(db, auth));
+  app.use("/api/chips", chipsRoutes(db, auth, { memoryDir: dir }));
   return { app, db };
 }
 
@@ -86,5 +86,12 @@ describe("chips routes", () => {
   it("GET /api/chips returns 401 when no device id", async () => {
     const { app } = setup({ deviceId: null });
     await request(app).get("/api/chips").expect(401);
+  });
+
+  it("GET /api/chips/suggested merges pinned + auto", async () => {
+    const { app } = setup();
+    await request(app).post("/api/chips").send({ label: "Pinned A", prompt: "p" }).expect(200);
+    const r = await request(app).get("/api/chips/suggested").expect(200);
+    expect(r.body.chips.some((c: { source: string }) => c.source === "pinned")).toBe(true);
   });
 });

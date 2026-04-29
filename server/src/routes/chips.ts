@@ -8,6 +8,7 @@ import {
   listChips,
   updateChip,
 } from "../state/chip-overrides.js";
+import { generateChips } from "../orchestrator/chip-generator.js";
 
 const PostBody = z.object({
   label: z.string().min(1).max(40),
@@ -23,7 +24,9 @@ const PatchBody = z.object({
   position: z.number().int().optional(),
 });
 
-export function chipsRoutes(db: Db, auth: RequestHandler): Router {
+export type ChipsDeps = { memoryDir: string };
+
+export function chipsRoutes(db: Db, auth: RequestHandler, deps: ChipsDeps): Router {
   const r = Router();
 
   r.get("/", auth, (req, res) => {
@@ -32,6 +35,16 @@ export function chipsRoutes(db: Db, auth: RequestHandler): Router {
       return;
     }
     res.json({ chips: listChips(db, req.deviceId) });
+  });
+
+  r.get("/suggested", auth, (req, res) => {
+    if (!req.deviceId) {
+      res.status(401).json({ error: "missing_device" });
+      return;
+    }
+    res.json({
+      chips: generateChips({ db, deviceId: req.deviceId, memoryDir: deps.memoryDir }),
+    });
   });
 
   r.post("/", auth, (req, res) => {

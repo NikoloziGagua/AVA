@@ -16,6 +16,7 @@ import { rulesRoutes } from "./routes/rules.js";
 import { approvalsRoutes } from "./routes/approvals.js";
 import { voiceRoutes } from "./routes/voice.js";
 import { chipsRoutes } from "./routes/chips.js";
+import { reasoningRoutes } from "./routes/reasoning.js";
 import { ActiveRuns } from "./orchestrator/active-runs.js";
 import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
@@ -95,6 +96,9 @@ app.use("/api/push", pushRoutes(db, requireToken(db), { vapidPublicKey: cfg.vapi
 app.use("/api/rules", rulesRoutes(db, requireToken(db), { provider, log }));
 app.use("/api/approvals", approvalsRoutes(db, requireToken(db)));
 app.use("/api/chips", chipsRoutes(db, requireToken(db), { memoryDir: cfg.memoryDir }));
+app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
+  supported: provider?.name === "openai",
+}));
 
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });
 app.use("/api", voiceRoutes({ clients: voiceClients, requireToken: requireToken(db) }));

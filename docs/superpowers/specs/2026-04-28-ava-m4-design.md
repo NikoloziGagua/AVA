@@ -443,6 +443,8 @@ A new component `web/src/chat/QuickChips.tsx` renders below the input on the cha
 
 **Generation:** a small `gpt-5-mini` call summarizes recent prompts into 2–4 word chip labels. Runs on session-create, async, refreshes the chip list when complete (debounced 5s after creation so it doesn't block the greeting).
 
+> **Phase 5 deferred:** the LLM summarizer step is not in the initial Phase 4 implementation. The first cut uses heuristic-only auto labels (truncated message starts). Adding the `gpt-5-mini` summarization with batched call + per-device cache lands in M5 alongside the memory editor UI.
+
 ### 5.3 Project auto-load
 
 Triggered by either:

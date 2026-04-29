@@ -309,3 +309,50 @@ describe("runAgent (v2 loop)", () => {
     expect(events.find((e) => e.kind === "killed")).toBeDefined();
   });
 });
+
+describe("runAgent reasoning passthrough", () => {
+  it("forwards opts.reasoningEffort to provider.stream", async () => {
+    const provider = new MockLLMProvider({
+      scripts: [[{ kind: "delta", text: "ok" }, { kind: "done", stop_reason: "end_turn" }]],
+    });
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "hi",
+      abort: new AbortController(),
+      emit: () => {},
+      runId: "r1",
+      sessionId: "s1",
+      db,
+      mode: "action",
+      reasoningEffort: "medium",
+      deps: {
+        chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [],
+      } as never,
+    } as never);
+    expect(provider.calls.stream[0]!.reasoningEffort).toBe("medium");
+  });
+
+  it("falls back to mode-default when reasoningEffort is undefined", async () => {
+    const provider = new MockLLMProvider({
+      scripts: [[{ kind: "delta", text: "ok" }, { kind: "done", stop_reason: "end_turn" }]],
+    });
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "hi",
+      abort: new AbortController(),
+      emit: () => {},
+      runId: "r1",
+      sessionId: "s1",
+      db,
+      mode: "conversation",
+      deps: {
+        chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [],
+      } as never,
+    } as never);
+    expect(provider.calls.stream[0]!.reasoningEffort).toBe("minimal");
+  });
+});

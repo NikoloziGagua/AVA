@@ -27,6 +27,8 @@ import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
+import { getReasoningLevel } from "../state/reasoning-pref.js";
+import { mapReasoning } from "../orchestrator/reasoning.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -125,6 +127,9 @@ export function chatRoutes(
     const latestUserText = latestRow?.content ?? parsed.data.text;
     const promptForAgent = greeting.prefix + summaryHeader + latestUserText;
     const mode = classifyIntent(parsed.data.text);
+    const reasoningEffort = agentDeps.provider!.name === "openai"
+      ? mapReasoning(getReasoningLevel(db), mode)
+      : undefined;
 
     void (async () => {
       const sid = sessionId!;
@@ -181,6 +186,7 @@ export function chatRoutes(
           db,
           sessionId: sid,
           mode,
+          reasoningEffort,
           deps: {
             chrome,
             pidfiles: agentDeps.pidfiles,

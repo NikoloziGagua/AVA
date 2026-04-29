@@ -1,6 +1,7 @@
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildToolRegistry } from "./tool-registry.js";
 import type { LLMProvider, Message, ToolCall } from "./llm/types.js";
+import type { ReasoningEffort } from "./reasoning.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
@@ -59,6 +60,11 @@ export type RunOpts = {
    * "action" (default): full tool registry + orchestrator model.
    */
   mode?: "conversation" | "action";
+  /**
+   * Per-call override for OpenAI reasoning effort. Falls back to the per-mode
+   * default (conversation=minimal, action=low) when undefined.
+   */
+  reasoningEffort?: ReasoningEffort;
 };
 
 export async function runAgent(opts: RunOpts): Promise<void> {
@@ -126,10 +132,8 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       for await (const ev of deps.provider.stream({
         model,
         system, messages, tools, abort: abort.signal,
-        // Conversation mode prioritizes TTFT over deep reasoning. For OpenAI
-        // gpt-5-mini this trims ~5s of invisible reasoning before the first
-        // token. No-op on Anthropic.
-        reasoningEffort: mode === "conversation" ? "minimal" : "low",
+        reasoningEffort: opts.reasoningEffort
+          ?? (mode === "conversation" ? "minimal" : "low"),
       })) {
         if (ev.kind === "delta") {
           assistantText += ev.text;

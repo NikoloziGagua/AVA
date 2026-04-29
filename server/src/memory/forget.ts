@@ -45,17 +45,25 @@ export function forgetMatch(opts: { paths: MemoryPaths; target: string }): Forge
 
 export type ForgetProjectResult = { removedFile: boolean };
 
+// Slug grammar (paths.ts SLUG_RE) is `[a-z0-9][a-z0-9_-]*`, all regex-safe — no
+// escape needed. Token boundaries reject neighbouring `[a-zA-Z0-9_-]` so
+// slug "yov" doesn't fire on "yovlisshemdzle" and "low" doesn't fire on
+// "low-power".
+function slugTokenRe(slug: string): RegExp {
+  return new RegExp(`(?<![a-zA-Z0-9_-])${slug}(?![a-zA-Z0-9_-])`, "i");
+}
+
 export function forgetProject(opts: { paths: MemoryPaths; slug: string }): ForgetProjectResult {
   const file = opts.paths.projectFile(opts.slug);
   let removedFile = false;
   if (existsSync(file)) { rmSync(file, { force: true }); removedFile = true; }
 
-  const slugLower = opts.slug.toLowerCase();
+  const re = slugTokenRe(opts.slug);
 
   const prefContent = readFile(opts.paths.preferences);
   if (prefContent) {
     const filtered = prefContent.split("\n")
-      .filter((ln) => !ln.toLowerCase().includes(slugLower))
+      .filter((ln) => !re.test(ln))
       .join("\n");
     if (filtered !== prefContent) writeFile(opts.paths.preferences, filtered);
   }
@@ -65,8 +73,8 @@ export function forgetProject(opts: { paths: MemoryPaths; slug: string }): Forge
     const filtered = obsContent.split("\n")
       .filter((ln) => {
         const obs = parseObservation(ln);
-        if (obs) return !obs.text.toLowerCase().includes(slugLower);
-        return !ln.toLowerCase().includes(slugLower);
+        if (obs) return !re.test(obs.text);
+        return !re.test(ln);
       })
       .join("\n");
     if (filtered !== obsContent) writeFile(opts.paths.observations, filtered);

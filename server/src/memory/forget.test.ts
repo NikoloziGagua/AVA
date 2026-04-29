@@ -96,11 +96,33 @@ describe("forgetProject", () => {
 
   it("does not drop observations whose metadata bracket happens to contain the slug", () => {
     writeFileSync(p.observations,
-      "- [2026-04-28 / low / context] uses bash\n" +
-      "- [2026-04-28 / low / context] uses low-power mode\n", "utf8");
+      "- [2026-04-28 / low / context] uses bash\n", "utf8");
     const r = forgetProject({ paths: p, slug: "low" });
     expect(r.removedFile).toBe(false);
     expect(readFileSync(p.observations, "utf8")).toBe(
       "- [2026-04-28 / low / context] uses bash\n");
+  });
+
+  it("only drops observations where the slug appears as a standalone token", () => {
+    writeFileSync(p.observations,
+      "- [2026-04-28 / low / context] uses yov daily\n" +
+      "- [2026-04-28 / low / context] uses yovlisshemdzle for builds\n", "utf8");
+    forgetProject({ paths: p, slug: "yov" });
+    expect(readFileSync(p.observations, "utf8")).toBe(
+      "- [2026-04-28 / low / context] uses yovlisshemdzle for builds\n");
+  });
+
+  it("treats hyphen as part of the slug token (no false match inside compound words)", () => {
+    writeFileSync(p.observations,
+      "- [2026-04-28 / low / context] uses low-power mode\n", "utf8");
+    forgetProject({ paths: p, slug: "low" });
+    expect(readFileSync(p.observations, "utf8")).toBe(
+      "- [2026-04-28 / low / context] uses low-power mode\n");
+  });
+
+  it("does not drop preference lines whose words contain the slug as a substring", () => {
+    writeFileSync(p.preferences, "likes yov layout\nlikes yovlisshemdzle for builds\n", "utf8");
+    forgetProject({ paths: p, slug: "yov" });
+    expect(readFileSync(p.preferences, "utf8")).toBe("likes yovlisshemdzle for builds\n");
   });
 });

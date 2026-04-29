@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rememberObservation } from "./remember.js";
@@ -49,5 +49,19 @@ describe("rememberObservation", () => {
     const body = readFileSync(memoryPaths(dir).observations, "utf8");
     expect(body).not.toContain("1234567890abcdefghijklmnopqrstuvwx");
     expect(body).toContain("sk-ant-***");
+  });
+
+  it("respects the firewall on the promote path", () => {
+    const secretText = "API key sk-ant-1234567890abcdefghijklmnopqrstuvwx";
+    rememberObservation({
+      memoryDir: dir, category: "context", confidence: "low",
+      text: secretText, today: "2026-04-29",
+    });
+    rememberObservation({
+      memoryDir: dir, category: "context", confidence: "low",
+      text: secretText, today: "2026-04-30",
+    });
+    const body = readFileSync(memoryPaths(dir).observations, "utf8");
+    expect(body).not.toContain("1234567890abcdefghijklmnopqrstuvwx");
   });
 });

@@ -1,7 +1,7 @@
 import { memoryPaths } from "./paths.js";
 import { readFile, writeFile } from "./store.js";
 import { serializeObservation, type Confidence } from "./observations.js";
-import { promoteOnRepeat } from "./promote.js";
+import { promoteOnRepeat, type PromoteResult } from "./promote.js";
 
 export type RememberOpts = {
   memoryDir: string;
@@ -11,7 +11,7 @@ export type RememberOpts = {
   today: string;
 };
 
-export function rememberObservation(opts: RememberOpts): void {
+export function rememberObservation(opts: RememberOpts): PromoteResult {
   const p = memoryPaths(opts.memoryDir);
   const newLine = serializeObservation({
     date: opts.today,
@@ -23,4 +23,5 @@ export function rememberObservation(opts: RememberOpts): void {
   const existing = readFile(p.observations);
   const r = promoteOnRepeat(existing, newLine, opts.today);
   writeFile(p.observations, r.content);
+  return r;
 }

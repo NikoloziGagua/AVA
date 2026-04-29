@@ -3,6 +3,7 @@ import { memoryPaths } from "../memory/paths.js";
 import { writeFile, appendLine, readFile as readMemFile } from "../memory/store.js";
 import { applyRefresh, applySupersede, serializeObservation, type Confidence } from "../memory/observations.js";
 import { forgetLast, forgetMatch, forgetProject } from "../memory/forget.js";
+import { rememberObservation } from "../memory/remember.js";
 
 export type MemoryToolDeps = { memoryDir: string };
 
@@ -129,7 +130,6 @@ function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
         if (r.changed) writeFile(p.observations, r.content);
       }
 
-      const { rememberObservation } = await import("../memory/remember.js");
       rememberObservation({
         memoryDir: deps.memoryDir, category, confidence, text, today,
       });

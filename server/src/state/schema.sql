@@ -100,3 +100,9 @@ CREATE TABLE IF NOT EXISTS chip_overrides (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chip_overrides_device ON chip_overrides(device_id, position);
+
+CREATE TABLE IF NOT EXISTS reasoning_pref (
+  scope_id   TEXT PRIMARY KEY,
+  level      TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);

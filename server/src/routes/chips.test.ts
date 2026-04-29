@@ -6,8 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
 import { chipsRoutes } from "./chips.js";
+import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
+import { createSession } from "../state/sessions.js";
+import { appendMessage } from "../state/messages.js";
+import type { LLMProvider } from "../orchestrator/llm/types.js";
 
-function setup(opts: { deviceId?: string | null } = {}) {
+function setup(opts: { deviceId?: string | null; provider?: LLMProvider | null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ava-chips-r-"));
   const db = openDb(join(dir, "x.db"));
   if (opts.deviceId !== null) {
@@ -22,7 +26,10 @@ function setup(opts: { deviceId?: string | null } = {}) {
     if (opts.deviceId !== null) req.deviceId = opts.deviceId ?? "d1";
     next();
   };
-  app.use("/api/chips", chipsRoutes(db, auth, { memoryDir: dir }));
+  app.use("/api/chips", chipsRoutes(db, auth, {
+    memoryDir: dir,
+    provider: opts.provider ?? null,
+  }));
   return { app, db };
 }
 
@@ -93,5 +100,27 @@ describe("chips routes", () => {
     await request(app).post("/api/chips").send({ label: "Pinned A", prompt: "p" }).expect(200);
     const r = await request(app).get("/api/chips/suggested").expect(200);
     expect(r.body.chips.some((c: { source: string }) => c.source === "pinned")).toBe(true);
+  });
+
+  it("kicks off summarizeChips for auto chips with no cached label (fire-and-forget)", async () => {
+    const provider = new MockLLMProvider({
+      completions: [JSON.stringify({ labels: [
+        { id: "auto:phrase-list-contents-of-home-folder", label: "List home" },
+      ]})],
+    });
+    const { app, db } = setup({ provider });
+    // seed two recent user messages to surface the "list contents" auto chip
+    const sid = createSession(db, { title: "" }).id;
+    appendMessage(db, { sessionId: sid, role: "user", content: "list contents of home folder" });
+    appendMessage(db, { sessionId: sid, role: "user", content: "list contents of home folder" });
+
+    await request(app).get("/api/chips/suggested").expect(200);
+    // give the background promise a microtask
+    await new Promise((r) => setTimeout(r, 30));
+    expect(provider.calls.complete).toHaveLength(1);
+    // second call should now reflect the cached label
+    const r = await request(app).get("/api/chips/suggested").expect(200);
+    const labels = r.body.chips.map((c: { label: string }) => c.label);
+    expect(labels).toContain("List home");
   });
 });

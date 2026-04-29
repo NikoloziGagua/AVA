@@ -9,6 +9,9 @@ import {
   updateChip,
 } from "../state/chip-overrides.js";
 import { generateChips } from "../orchestrator/chip-generator.js";
+import type { LLMProvider } from "../orchestrator/llm/types.js";
+import { summarizeChips } from "../orchestrator/chip-summarizer.js";
+import { hashPrompt, getCachedLabel } from "../state/chip-label-cache.js";
 
 const PostBody = z.object({
   label: z.string().min(1).max(40),
@@ -24,7 +27,7 @@ const PatchBody = z.object({
   position: z.number().int().optional(),
 });
 
-export type ChipsDeps = { memoryDir: string };
+export type ChipsDeps = { memoryDir: string; provider: LLMProvider | null };
 
 export function chipsRoutes(db: Db, auth: RequestHandler, deps: ChipsDeps): Router {
   const r = Router();
@@ -42,9 +45,21 @@ export function chipsRoutes(db: Db, auth: RequestHandler, deps: ChipsDeps): Rout
       res.status(401).json({ error: "missing_device" });
       return;
     }
-    res.json({
-      chips: generateChips({ db, deviceId: req.deviceId, memoryDir: deps.memoryDir }),
-    });
+    const chips = generateChips({ db, deviceId: req.deviceId, memoryDir: deps.memoryDir });
+    if (deps.provider && req.deviceId) {
+      const deviceId = req.deviceId;
+      const provider = deps.provider;
+      const misses = chips
+        .filter((c) => c.source === "auto")
+        .filter((c) => !getCachedLabel(db, deviceId, hashPrompt(c.prompt), Date.now()))
+        .map((c) => ({ id: c.id, prompt: c.prompt }));
+      if (misses.length > 0) {
+        void summarizeChips(misses, {
+          db, deviceId, provider, nowMs: Date.now(),
+        }).catch(() => {});
+      }
+    }
+    res.json({ chips });
   });
 
   r.post("/", auth, (req, res) => {

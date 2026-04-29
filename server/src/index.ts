@@ -96,7 +96,7 @@ app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
 app.use("/api/push", pushRoutes(db, requireToken(db), { vapidPublicKey: cfg.vapidPublicKey }));
 app.use("/api/rules", rulesRoutes(db, requireToken(db), { provider, log }));
 app.use("/api/approvals", approvalsRoutes(db, requireToken(db)));
-app.use("/api/chips", chipsRoutes(db, requireToken(db), { memoryDir: cfg.memoryDir }));
+app.use("/api/chips", chipsRoutes(db, requireToken(db), { memoryDir: cfg.memoryDir, provider }));
 app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
   supported: provider?.name === "openai",
 }));

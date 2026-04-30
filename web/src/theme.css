@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+:root {
+  /* Color tokens */
+  --ava-bg: #000;
+  --ava-fg: rgba(255, 255, 255, 0.85);
+  --ava-fg-muted: rgba(255, 255, 255, 0.5);
+  --ava-border: rgba(255, 255, 255, 0.08);
+  --ava-purple: #a855f7;
+  --ava-blue: #3b82f6;
+  --ava-teal: #14b8a6;
+
+  /* Confidence pills */
+  --conf-high: #10b981;
+  --conf-med: #eab308;
+  --conf-low: rgba(255, 255, 255, 0.5);
+
+  /* Motion tokens */
+  --motion-fast: 200ms;
+  --motion-screen: 300ms;
+  --motion-cinematic: 600ms;
+  --ease-cinematic: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--ava-bg);
+  color: var(--ava-fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Gradient pulse class — use as bg for the orb */
+.ava-gradient {
+  background: linear-gradient(135deg, var(--ava-purple), var(--ava-blue), var(--ava-teal));
+}
+
+/* Reduce motion: collapse all transitions to opacity fades */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

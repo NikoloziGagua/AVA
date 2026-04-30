@@ -4,7 +4,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "./config.js";
 import { buildLogger } from "./logs/logger.js";
 import { openDb } from "./state/db.js";
-import { purgeDeletedSessions } from "./state/sessions.js";
+import { createSession, getSession, purgeDeletedSessions } from "./state/sessions.js";
+import { appendMessage } from "./state/messages.js";
+import { runVoiceTurn } from "./agent/voice-turn.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
 import { authRoutes } from "./routes/auth.js";
@@ -106,7 +108,17 @@ app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
 app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
 
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });
-app.use("/api", voiceRoutes({ clients: voiceClients, requireToken: requireToken(db) }));
+app.use("/api", voiceRoutes({
+  clients: voiceClients,
+  requireToken: requireToken(db),
+  voiceTurn: provider ? {
+    getSession: (id) => getSession(db, id),
+    createSession: (opts) => createSession(db, opts),
+    appendMessage: (m) => { appendMessage(db, m); },
+    runTurn: ({ sessionId, userText }) =>
+      runVoiceTurn({ db, provider, memoryDir: cfg.memoryDir, sessionId, userText }),
+  } : undefined,
+}));
 
 app.use("/", statusRoutes({ db, runs, startedAt }));
 

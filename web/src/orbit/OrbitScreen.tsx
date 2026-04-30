@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { Plus, List, Brain, Settings2 } from "lucide-react";
 import { Pulse } from "../components/ava/Pulse.js";
 import { DottedSurface } from "../components/ava/DottedSurface.js";
+import { HoverHalo } from "../components/ava/HoverHalo.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { computeNodePosition } from "../components/ava/OrbitRing.js";
 import { OrbitNode } from "./OrbitNode.js";
@@ -85,11 +86,13 @@ export function OrbitScreen({
   const visibleSessions = sessions.slice(0, MAX_CHAT_NODES);
 
   const tools: ToolNode[] = [
-    { angleDeg: 315, label: "new",    Icon: Plus,       accent: "168,85,247",  action: () => onOpenChat(null) },
-    { angleDeg: 45,  label: "list",   Icon: List,       accent: "59,130,246",  action: onOpenList },
-    { angleDeg: 135, label: "memory", Icon: Brain,      accent: "20,184,166",  action: onOpenMemory },
-    { angleDeg: 225, label: "rules",  Icon: Settings2,  accent: "168,85,247",  action: onOpenRules },
+    { angleDeg: 315, label: "new",    Icon: Plus,       accent: "248,250,252",  action: () => onOpenChat(null) },
+    { angleDeg: 45,  label: "list",   Icon: List,       accent: "248,250,252",  action: onOpenList },
+    { angleDeg: 135, label: "memory", Icon: Brain,      accent: "248,250,252",  action: onOpenMemory },
+    { angleDeg: 225, label: "rules",  Icon: Settings2,  accent: "248,250,252",  action: onOpenRules },
   ];
+
+  const [hoveredTool, setHoveredTool] = useState<number | null>(null);
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-black">
@@ -143,6 +146,7 @@ export function OrbitScreen({
         const x = INNER_RADIUS * Math.cos(rad);
         const y = INNER_RADIUS * Math.sin(rad);
         const Icon = t.Icon;
+        const hovered = hoveredTool === i;
         return (
           <button
             key={i}
@@ -150,50 +154,42 @@ export function OrbitScreen({
             className="group absolute left-1/2 top-1/2 z-10 flex flex-col items-center"
             style={{ transform: `translate(${x}px, ${y}px) translate(-50%, -50%)` }}
             onClick={t.action}
+            onPointerEnter={() => setHoveredTool(i)}
+            onPointerLeave={() => setHoveredTool((cur) => (cur === i ? null : cur))}
           >
             {/* Glass pill */}
             <span
-              className="relative w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer overflow-hidden"
+              className="relative w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer"
               style={{
-                background: "linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02))",
-                border: "1px solid rgba(255,255,255,0.18)",
-                backdropFilter: "blur(14px) saturate(140%)",
-                WebkitBackdropFilter: "blur(14px) saturate(140%)",
+                background: "linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.03))",
+                border: "1px solid rgba(255,255,255,0.10)",
+                backdropFilter: "blur(18px) saturate(160%)",
+                WebkitBackdropFilter: "blur(18px) saturate(160%)",
                 boxShadow:
-                  "inset 0 1px 0 rgba(255,255,255,0.15), 0 6px 24px -8px rgba(0,0,0,0.6)",
+                  "inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.25), 0 8px 28px -10px rgba(0,0,0,0.7)",
               }}
             >
-              {/* Hover gradient ring */}
+              {/* Always-rotating halo (subtle), brightens + speeds up on hover */}
+              <HoverHalo hovered={hovered} accent={t.accent} />
+              {/* Hover ambient glow */}
               <span
                 aria-hidden="true"
-                className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                className="absolute inset-0 rounded-full transition-opacity duration-300 pointer-events-none"
                 style={{
-                  background: `conic-gradient(from 0deg, rgba(${t.accent},0.85), rgba(${t.accent},0.05), rgba(${t.accent},0.85))`,
-                  padding: 1,
-                  WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
-                  WebkitMaskComposite: "xor",
-                  maskComposite: "exclude",
+                  opacity: hovered ? 1 : 0,
+                  boxShadow: `0 0 32px rgba(${t.accent},0.55)`,
                 }}
-              />
-              {/* Hover glow */}
-              <span
-                aria-hidden="true"
-                className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-                style={{ boxShadow: `0 0 28px rgba(${t.accent},0.65)` }}
               />
               <Icon size={18} className="relative text-white/90 group-hover:text-white transition-colors" />
             </span>
-            <span className="mt-2 text-[9px] text-white/55 group-hover:text-white/90 uppercase tracking-[0.22em] whitespace-nowrap transition-colors">
+            <span className="mt-2 text-[9px] text-white/55 group-hover:text-white/95 uppercase tracking-[0.22em] whitespace-nowrap transition-colors">
               {t.label}
             </span>
           </button>
         );
       })}
 
-      <div
-        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/8"
-        style={{ width: OUTER_RADIUS * 2, height: OUTER_RADIUS * 2 }}
-      />
+      {/* Outer ring removed — chat nodes still orbit at OUTER_RADIUS but no visible track. */}
       {visibleSessions.map((s, i) => {
         const p = computeNodePosition({
           index: i,

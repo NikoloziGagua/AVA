@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { motion } from "motion/react";
 import { Pulse } from "../components/ava/Pulse.js";
 import { ShiningText } from "../components/ava/ShiningText.js";
 import { ToolCallChip } from "./ToolCallChip.js";
@@ -38,23 +39,68 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
     if (e?.kind === "thought") { thinkingCaption = e.payload.text.slice(0, 80); break; }
   }
 
+  const isEmpty = history.length === 0 && liveEvents.length === 0;
+
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
+    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-5">
+      {isEmpty && (
+        <motion.div
+          className="flex flex-col items-center justify-center h-full min-h-[55vh] text-center pointer-events-none"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5 }}
+        >
+          <motion.div
+            initial={{ opacity: 0, filter: "blur(20px)", y: 8 }}
+            animate={{ opacity: 1, filter: "blur(0px)", y: 0 }}
+            transition={{ duration: 1.0, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
+          >
+            <div className="text-[10px] tracking-[0.45em] uppercase text-white/40 mb-2">I AM</div>
+            <div className="text-7xl sm:text-8xl font-bold tracking-[0.2em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/85 to-white/40">
+              AVA
+            </div>
+          </motion.div>
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.6, delay: 0.6 }}
+            className="mt-6 text-sm text-white/45 max-w-xs"
+          >
+            How can I help today? Type a message, tap a chip, or hold the orb to speak.
+          </motion.p>
+        </motion.div>
+      )}
       {history.map((m) => (
         <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
           {m.role === "user" ? (
             <div
-              className="max-w-[75%] rounded-2xl rounded-br-md px-3.5 py-2 text-sm text-white/95 border border-white/10"
+              className="group relative max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14.5px] text-white/95 overflow-hidden"
               style={{
-                background: "linear-gradient(135deg, rgba(168,85,247,0.18), rgba(59,130,246,0.18))",
-                boxShadow: "0 4px 24px -8px rgba(168,85,247,0.35)",
+                background:
+                  "linear-gradient(135deg, rgba(168,85,247,0.22), rgba(59,130,246,0.22))",
+                border: "1px solid rgba(255,255,255,0.10)",
+                backdropFilter: "blur(14px) saturate(150%)",
+                WebkitBackdropFilter: "blur(14px) saturate(150%)",
+                boxShadow:
+                  "inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 28px -10px rgba(168,85,247,0.45)",
               }}
             >
-              {m.text}
+              <span className="relative">{m.text}</span>
             </div>
           ) : (
-            <div className="max-w-[85%] text-[15px] leading-[1.6] text-white/90 whitespace-pre-wrap">
-              {m.text}
+            <div className="flex items-start gap-3 max-w-[88%]">
+              <div className="shrink-0 mt-1.5">
+                <Pulse state="idle" size={10} />
+              </div>
+              <div
+                className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
+                style={{
+                  backgroundImage:
+                    "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
+                }}
+              >
+                {m.text}
+              </div>
             </div>
           )}
         </div>
@@ -104,8 +150,19 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
 
       {lastFinal && (
         <div className="flex justify-start" data-testid="final-message">
-          <div className="max-w-[85%] text-sm leading-[1.55] text-white/85 whitespace-pre-wrap">
-            {lastFinal.payload.text}
+          <div className="flex items-start gap-3 max-w-[88%]">
+            <div className="shrink-0 mt-1.5">
+              <Pulse state="responding" size={10} />
+            </div>
+            <div
+              className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
+              style={{
+                backgroundImage:
+                  "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
+              }}
+            >
+              {lastFinal.payload.text}
+            </div>
           </div>
         </div>
       )}

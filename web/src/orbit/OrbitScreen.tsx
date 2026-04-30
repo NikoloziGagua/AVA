@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Pulse } from "../components/ava/Pulse.js";
-import { PathsBackground } from "../components/ava/PathsBackground.js";
+import { SpaceBackground } from "../components/ava/SpaceBackground.js";
+import { TextEffect } from "../components/ava/TextEffect.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { computeNodePosition } from "../components/ava/OrbitRing.js";
 import { OrbitNode } from "./OrbitNode.js";
@@ -82,7 +83,18 @@ export function OrbitScreen({
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-black">
-      <PathsBackground opacity={0.1} />
+      <SpaceBackground particleCount={420} coreRadius={130} />
+
+      {/* Cinematic AVA wordmark — top of screen */}
+      <div className="absolute top-[14%] left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+        <TextEffect
+          text="AVA"
+          preset="blur"
+          per="char"
+          staggerChildren={0.12}
+          className="text-5xl sm:text-6xl font-bold tracking-[0.25em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/85 to-white/40"
+        />
+      </div>
 
       <div
         className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 cursor-pointer"
@@ -95,9 +107,6 @@ export function OrbitScreen({
         }}
       >
         <Pulse layoutId="ava-pulse" state="idle" size={64} />
-      </div>
-      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 z-20 pointer-events-none text-[9px] tracking-[0.2em] uppercase text-white/55 whitespace-nowrap" style={{ marginTop: 44 }}>
-        hold to speak
       </div>
 
       <div

@@ -6,8 +6,11 @@ import {
   fetchPinnedChips, createPinnedChip, deletePinnedChip, type ChipOverrideRow,
 } from "../api.js";
 import { getToken } from "../auth/tokens.js";
+import { enablePush } from "../push/register.js";
 
 interface Device { id: string; label: string; created_at: number; revoked_at: number | null; }
+
+type PushStatus = "unknown" | "granted" | "denied" | "default" | "unsupported" | "pending" | "error";
 
 export function RulesScreen({ onClose }: { onClose: () => void }) {
   const [rows, setRows] = useState<RuleRow[] | null>(null);
@@ -19,6 +22,8 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
   const [newChipLabel, setNewChipLabel] = useState("");
   const [newChipPrompt, setNewChipPrompt] = useState("");
   const [devices, setDevices] = useState<Device[]>([]);
+  const [pushStatus, setPushStatus] = useState<PushStatus>("unknown");
+  const [pushError, setPushError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
 
   async function refreshRules() {
@@ -50,10 +55,28 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
     fetchPinnedChips().then(setChips).catch(() => {});
     fetchDevices().then(setDevices).catch(() => {});
     refreshRules();
+    if (typeof window === "undefined" || !("Notification" in window) || !("PushManager" in window) || !("serviceWorker" in navigator)) {
+      setPushStatus("unsupported");
+    } else {
+      setPushStatus(Notification.permission as PushStatus);
+    }
     return () => {
       if (pollRef.current != null) window.clearInterval(pollRef.current);
     };
   }, []);
+
+  async function turnOnPush() {
+    setPushStatus("pending");
+    setPushError(null);
+    const label = navigator.userAgent.includes("iPhone") ? "iPhone" : "Phone";
+    const r = await enablePush(label);
+    if (r.ok) {
+      setPushStatus("granted");
+    } else {
+      setPushError(r.reason);
+      setPushStatus("error");
+    }
+  }
 
   async function setReasoningLevel(level: "fast" | "thorough") {
     if (!reason) return;
@@ -218,6 +241,38 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
           />
         </div>
         <button onClick={addChip} className="mt-2 px-3 py-1 text-xs rounded-md bg-white text-black">Add chip</button>
+      </Section>
+
+      <Section title="Notifications">
+        {pushStatus === "unsupported" && (
+          <div className="text-xs text-white/40">Push notifications aren't supported in this browser.</div>
+        )}
+        {pushStatus === "granted" && (
+          <div className="flex items-center gap-2 text-xs text-emerald-300">
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            Enabled — Ava can send approval prompts to this device.
+          </div>
+        )}
+        {pushStatus === "denied" && (
+          <div className="text-xs text-white/40">
+            Browser blocked notifications. Re-enable in your browser site settings, then reload.
+          </div>
+        )}
+        {(pushStatus === "default" || pushStatus === "error" || pushStatus === "unknown") && (
+          <div className="space-y-2">
+            <div className="text-xs text-white/55">Get push prompts when Ava needs your approval — even when the app is closed.</div>
+            <button
+              onClick={turnOnPush}
+              className="px-3 py-1.5 text-xs rounded-md bg-white text-black"
+            >
+              Enable notifications
+            </button>
+            {pushError && <div className="text-xs text-red-400">{pushError}</div>}
+          </div>
+        )}
+        {pushStatus === "pending" && (
+          <div className="text-xs text-white/55">Asking permission…</div>
+        )}
       </Section>
 
       <Section title="Devices">

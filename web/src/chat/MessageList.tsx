@@ -1,43 +1,65 @@
-import type { StreamEvent } from "./useChatStream.js";
+import { useEffect, useRef } from "react";
+import { Pulse } from "../components/ava/Pulse.js";
+import { ShiningText } from "../components/ava/ShiningText.js";
+import { ToolCallChip } from "./ToolCallChip.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
+import type { StreamEvent } from "./useChatStream.js";
 
 export type ChatMessage =
   | { role: "user"; text: string; id: string }
   | { role: "assistant"; text: string; id: string };
 
-export function MessageList({
-  history,
-  liveEvents,
-}: {
+export interface MessageListProps {
   history: ChatMessage[];
   liveEvents: StreamEvent[];
-}) {
+}
+
+export function MessageList({ history, liveEvents }: MessageListProps) {
+  const endRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [history.length, liveEvents.length]);
+
   const resolved = new Map<string, "approved" | "denied" | "expired">();
   for (const e of liveEvents) {
     if (e.kind === "approval_resolved") resolved.set(e.payload.id, e.payload.status);
   }
 
+  const hasTerminal = liveEvents.some(
+    (e) => e.kind === "done" || e.kind === "killed" || e.kind === "error",
+  );
+  const lastFinal = [...liveEvents].reverse().find((e) => e.kind === "final");
+  const isThinking = liveEvents.length > 0 && !lastFinal && !hasTerminal;
+
+  let thinkingCaption = "thinking…";
+  for (let i = liveEvents.length - 1; i >= 0; i--) {
+    const e = liveEvents[i];
+    if (e?.kind === "tool_call") { thinkingCaption = `running ${e.payload.tool}…`; break; }
+    if (e?.kind === "thought") { thinkingCaption = e.payload.text.slice(0, 80); break; }
+  }
+
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-3">
       {history.map((m) => (
-        <div key={m.id} className={m.role === "user" ? "text-right" : ""}>
-          <div
-            className={
-              "inline-block px-3 py-2 rounded-2xl max-w-[80%] " +
-              (m.role === "user"
-                ? "bg-emerald-700 text-white"
-                : "bg-neutral-800 text-neutral-100")
-            }
-          >
-            {m.text}
-          </div>
+        <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+          {m.role === "user" ? (
+            <div className="max-w-[75%] rounded-2xl rounded-br-sm border border-white/10 bg-white/10 px-3 py-2 text-sm">
+              {m.text}
+            </div>
+          ) : (
+            <div className="max-w-[85%] text-sm leading-[1.55] text-white/85 whitespace-pre-wrap">
+              {m.text}
+            </div>
+          )}
         </div>
       ))}
+
       {liveEvents.map((e) => {
+        const key = `${e.runEpoch}-${e.id}`;
         if (e.kind === "approval_required") {
           return (
             <ApprovalCard
-              key={`${e.runEpoch}-${e.id}`}
+              key={key}
               id={e.payload.id}
               tool={e.payload.tool}
               args={e.payload.args}
@@ -46,55 +68,50 @@ export function MessageList({
             />
           );
         }
-        if (e.kind === "approval_resolved") {
-          return null;
-        }
-        if (e.kind === "thought" || e.kind === "final") {
-          return (
-            <div key={`${e.runEpoch}-${e.id}`} data-testid={e.kind === "final" ? "final-message" : "thought-message"}>
-              <div className="inline-block px-3 py-2 rounded-2xl max-w-[80%] bg-neutral-800 text-neutral-100">
-                {e.payload.text}
-              </div>
-            </div>
-          );
-        }
         if (e.kind === "tool_call") {
-          return (
-            <div key={`${e.runEpoch}-${e.id}`} className="text-xs text-neutral-500 font-mono">
-              → {e.payload.tool}({JSON.stringify(e.payload.args)})
-            </div>
-          );
+          const summary = typeof e.payload.args === "object"
+            ? JSON.stringify(e.payload.args).slice(0, 40)
+            : String(e.payload.args);
+          return <ToolCallChip key={key} tool={e.payload.tool} argSummary={summary} />;
         }
         if (e.kind === "tool_result") {
-          return (
-            <div key={`${e.runEpoch}-${e.id}`} className="text-xs text-neutral-500 font-mono">
-              ← {e.payload.tool} {e.payload.ok ? "ok" : "err"}
-            </div>
-          );
+          return <ToolCallChip key={key} tool={e.payload.tool} ok={e.payload.ok} result={e.payload.result} />;
+        }
+        if (e.kind === "thought") {
+          return null; // thoughts surface via thinkingCaption, not rendered as message
         }
         if (e.kind === "error") {
-          return (
-            <div key={`${e.runEpoch}-${e.id}`} className="text-sm text-red-400">
-              error: {e.payload.message}
-            </div>
-          );
+          return <div key={key} className="text-sm text-red-400">error: {e.payload.message}</div>;
         }
         if (e.kind === "killed") {
-          return (
-            <div key={`${e.runEpoch}-${e.id}`} className="text-sm text-amber-400">
-              stopped.
-            </div>
-          );
+          return <div key={key} className="text-sm text-amber-400">stopped.</div>;
         }
         if (e.kind === "gap") {
           return (
-            <div key={`${e.runEpoch}-${e.id}`} className="text-xs text-amber-500">
+            <div key={key} className="text-xs text-amber-500">
               ⚠ missed {e.payload.to - e.payload.from + 1} events — see Sessions for the full trace.
             </div>
           );
         }
         return null;
       })}
+
+      {lastFinal && (
+        <div className="flex justify-start" data-testid="final-message">
+          <div className="max-w-[85%] text-sm leading-[1.55] text-white/85 whitespace-pre-wrap">
+            {lastFinal.payload.text}
+          </div>
+        </div>
+      )}
+
+      {isThinking && (
+        <div className="flex items-center gap-2 text-white/60">
+          <Pulse state="thinking" size={14} />
+          <ShiningText text={thinkingCaption} className="text-xs" />
+        </div>
+      )}
+
+      <div ref={endRef} />
     </div>
   );
 }

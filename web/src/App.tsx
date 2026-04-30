@@ -56,6 +56,7 @@ export function App() {
               onOpenSessions={() => setView({ name: "orbit" })}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenMemory={() => setView({ name: "memory" })}
+              onEnterVoice={() => setView({ name: "voice", from: "chat", sessionId: view.sessionId })}
             />
           </motion.div>
         )}

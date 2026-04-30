@@ -4,7 +4,7 @@ import { getToken } from "./auth/tokens.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
 import { ChatScreen } from "./chat/ChatScreen.js";
 import { RulesScreen } from "./rules/RulesScreen.js";
-import { MemoryEditor } from "./memory/MemoryEditor.js";
+import { MemoryScreen } from "./memory/MemoryScreen.js";
 import { OrbitScreen } from "./orbit/OrbitScreen.js";
 import { VoiceScreen } from "./voice/VoiceScreen.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
@@ -89,7 +89,7 @@ export function App() {
             exit={{ y: "100%" }}
             transition={{ duration: 0.3, ease: "easeOut" }}
           >
-            <MemoryEditor onClose={() => setView({ name: "orbit" })} />
+            <MemoryScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
         )}
         {view.name === "rules" && (

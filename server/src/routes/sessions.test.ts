@@ -5,7 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
-import { createSession } from "../state/sessions.js";
+import { createSession, listSessions } from "../state/sessions.js";
 import { appendMessage } from "../state/messages.js";
 import { sessionsRoutes } from "./sessions.js";
 
@@ -43,5 +43,26 @@ describe("sessionsRoutes", () => {
   it("GET /api/sessions/:id returns 404 for unknown session", async () => {
     const { app } = setup();
     await request(app).get("/api/sessions/nope").expect(404);
+  });
+});
+
+describe("DELETE /api/sessions/:id", () => {
+  it("204 and removes from listing", async () => {
+    const { app, db } = setup();
+    const s = createSession(db, { title: "to delete" });
+    await request(app).delete(`/api/sessions/${s.id}`).expect(204);
+    expect(listSessions(db).find((x) => x.id === s.id)).toBeUndefined();
+  });
+
+  it("404 for unknown id", async () => {
+    const { app } = setup();
+    await request(app).delete("/api/sessions/unknown").expect(404);
+  });
+
+  it("404 if already deleted", async () => {
+    const { app, db } = setup();
+    const s = createSession(db, { title: "x" });
+    await request(app).delete(`/api/sessions/${s.id}`).expect(204);
+    await request(app).delete(`/api/sessions/${s.id}`).expect(404);
   });
 });

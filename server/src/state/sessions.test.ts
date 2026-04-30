@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
-import { createSession, getSession, getSessionFull, listByStatus, listSessions, setStatus, touchSession, updateSummary, updateTitle } from "./sessions.js";
+import { createSession, getSession, getSessionFull, listByStatus, listSessions, setStatus, softDeleteSession, touchSession, updateSummary, updateTitle } from "./sessions.js";
 
 describe("sessions repo", () => {
   let db: Db;
@@ -94,5 +94,32 @@ describe("sessions repo", () => {
   it("listByStatus returns [] when no sessions match", () => {
     createSession(db, { title: "x" });
     expect(listByStatus(db, "interrupted")).toEqual([]);
+  });
+});
+
+describe("soft delete", () => {
+  it("softDeleteSession sets deleted_at to now", () => {
+    const db = openDb(":memory:");
+    const s = createSession(db, { title: "x" });
+    const before = Date.now();
+    softDeleteSession(db, s.id);
+    const row = db.prepare("SELECT deleted_at FROM sessions WHERE id = ?").get(s.id) as { deleted_at: number };
+    expect(row.deleted_at).toBeGreaterThanOrEqual(before);
+  });
+
+  it("listSessions excludes soft-deleted rows", () => {
+    const db = openDb(":memory:");
+    const a = createSession(db, { title: "a" });
+    const b = createSession(db, { title: "b" });
+    softDeleteSession(db, a.id);
+    const all = listSessions(db);
+    expect(all.map((s) => s.id)).toEqual([b.id]);
+  });
+
+  it("getSession returns null for soft-deleted session", () => {
+    const db = openDb(":memory:");
+    const s = createSession(db, { title: "x" });
+    softDeleteSession(db, s.id);
+    expect(getSession(db, s.id)).toBeNull();
   });
 });

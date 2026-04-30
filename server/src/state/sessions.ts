@@ -19,8 +19,13 @@ export function createSession(db: Db, opts: { title?: string | null }): Session 
 }
 
 export function getSession(db: Db, id: string): Session | null {
-  const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as Session | undefined;
+  const row = db.prepare("SELECT * FROM sessions WHERE id = ? AND deleted_at IS NULL").get(id) as Session | undefined;
   return row ?? null;
+}
+
+export function softDeleteSession(db: Db, id: string): void {
+  const now = Date.now();
+  db.prepare("UPDATE sessions SET deleted_at = ?, updated_at = ? WHERE id = ?").run(now, now, id);
 }
 
 export type SessionWithSummary = Session & {
@@ -40,7 +45,7 @@ export function updateSummary(db: Db, id: string, summary: string, throughMessag
 }
 
 export function listSessions(db: Db): Session[] {
-  return db.prepare("SELECT * FROM sessions ORDER BY updated_at DESC").all() as Session[];
+  return db.prepare("SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY updated_at DESC").all() as Session[];
 }
 
 export function touchSession(db: Db, id: string): void {

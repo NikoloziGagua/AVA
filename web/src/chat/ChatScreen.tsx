@@ -36,7 +36,6 @@ export function ChatScreen({
       setTitle("New chat");
       return;
     }
-    if (requestedSessionId === sessionId) return;
     fetchSession(requestedSessionId)
       .then((data) => {
         if (cancelled) return;
@@ -52,7 +51,7 @@ export function ChatScreen({
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [requestedSessionId, sessionId]);
+  }, [requestedSessionId]);
 
   const currentRunFinished = events.some(
     (e) => e.runEpoch === runEpoch && (e.kind === "done" || e.kind === "killed" || e.kind === "error"),

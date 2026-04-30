@@ -17,6 +17,7 @@ export interface OrbitScreenProps {
   onOpenChat: (sessionId: string | null) => void;
   onOpenMemory: () => void;
   onOpenRules: () => void;
+  onOpenList: () => void;
   onEnterVoice: () => void;
 }
 
@@ -26,7 +27,7 @@ interface PendingDelete {
 }
 
 export function OrbitScreen({
-  onOpenChat, onOpenMemory, onOpenRules, onEnterVoice,
+  onOpenChat, onOpenMemory, onOpenRules, onOpenList, onEnterVoice,
 }: OrbitScreenProps) {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [paused, setPaused] = useState(false);
@@ -73,9 +74,10 @@ export function OrbitScreen({
   const visibleSessions = sessions.slice(0, MAX_CHAT_NODES);
 
   const tools = [
-    { angleDeg: 180, label: "new", emoji: "+", action: () => onOpenChat(null) },
-    { angleDeg: 300, label: "memory", emoji: "⊕", action: onOpenMemory },
-    { angleDeg: 60, label: "rules", emoji: "⚙", action: onOpenRules },
+    { angleDeg: 315, label: "new", emoji: "+", action: () => onOpenChat(null) },
+    { angleDeg: 45,  label: "list", emoji: "≡", action: onOpenList },
+    { angleDeg: 135, label: "memory", emoji: "⊕", action: onOpenMemory },
+    { angleDeg: 225, label: "rules", emoji: "⚙", action: onOpenRules },
   ];
 
   return (
@@ -93,9 +95,9 @@ export function OrbitScreen({
         }}
       >
         <Pulse layoutId="ava-pulse" state="idle" size={64} />
-        <div className="mt-3 text-center text-[9px] tracking-[0.2em] uppercase text-white/60">
-          hold to speak
-        </div>
+      </div>
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 z-20 pointer-events-none text-[9px] tracking-[0.2em] uppercase text-white/55 whitespace-nowrap" style={{ marginTop: 44 }}>
+        hold to speak
       </div>
 
       <div
@@ -109,14 +111,14 @@ export function OrbitScreen({
         return (
           <div
             key={i}
-            className="absolute left-1/2 top-1/2 z-10"
-            style={{ transform: `translate(${x}px, ${y}px)` }}
+            className="absolute left-1/2 top-1/2 z-10 flex flex-col items-center cursor-pointer"
+            style={{ transform: `translate(${x}px, ${y}px) translate(-50%, -50%)` }}
             onClick={t.action}
           >
-            <div className="w-9 h-9 rounded-full border border-white/15 bg-black/60 text-white flex items-center justify-center cursor-pointer">
+            <div className="w-10 h-10 rounded-full border border-white/15 bg-black/70 backdrop-blur-md text-white flex items-center justify-center text-base hover:border-white/35 hover:bg-black/85 transition-colors">
               {t.emoji}
             </div>
-            <div className="text-center text-[9px] mt-1 text-white/55 uppercase tracking-wider">{t.label}</div>
+            <div className="mt-1.5 text-[9px] text-white/55 uppercase tracking-wider whitespace-nowrap">{t.label}</div>
           </div>
         );
       })}
@@ -133,19 +135,15 @@ export function OrbitScreen({
           rotationDeg: angle,
         });
         return (
-          <div
+          <OrbitNode
             key={s.id}
-            onPointerEnter={() => setPaused(true)}
-            onPointerLeave={() => setPaused(false)}
-          >
-            <OrbitNode
-              x={p.x} y={p.y} zIndex={p.zIndex} opacity={p.opacity}
-              label={s.title ?? "Untitled"}
-              deletable
-              onTap={() => onOpenChat(s.id)}
-              onDelete={() => handleDelete(s)}
-            />
-          </div>
+            x={p.x} y={p.y} zIndex={p.zIndex} opacity={p.opacity}
+            label={s.title ?? "Untitled"}
+            deletable
+            onTap={() => onOpenChat(s.id)}
+            onDelete={() => handleDelete(s)}
+            onHoverChange={(hovered) => setPaused(hovered)}
+          />
         );
       })}
 

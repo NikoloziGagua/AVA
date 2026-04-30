@@ -12,11 +12,12 @@ export interface OrbitNodeProps {
   deletable?: boolean;
   onTap: () => void;
   onDelete?: () => void;
+  onHoverChange?: (hovered: boolean) => void;
 }
 
 export function OrbitNode({
   x, y, zIndex, opacity, label, size = 24,
-  deletable = false, onTap, onDelete,
+  deletable = false, onTap, onDelete, onHoverChange,
 }: OrbitNodeProps) {
   const [armed, setArmed] = useState(false);
   const { progress, handlers } = useLongPress({
@@ -33,18 +34,20 @@ export function OrbitNode({
 
   return (
     <motion.div
-      className="absolute"
+      className="absolute left-1/2 top-1/2"
       style={{
-        left: "50%",
-        top: "50%",
-        transform: `translate(${x}px, ${y}px)`,
+        transform: `translate(${x}px, ${y}px) translate(-50%, -50%)`,
         zIndex,
         opacity,
         touchAction: "manipulation",
         userSelect: "none",
       }}
       onClick={(e) => { e.stopPropagation(); if (!armed) onTap(); }}
-      {...handlers}
+      onPointerEnter={() => onHoverChange?.(true)}
+      onPointerLeave={() => { onHoverChange?.(false); handlers.onPointerLeave(); }}
+      onPointerDown={handlers.onPointerDown}
+      onPointerUp={handlers.onPointerUp}
+      onPointerCancel={handlers.onPointerCancel}
     >
       <div
         className="rounded-full flex items-center justify-center"
@@ -57,8 +60,8 @@ export function OrbitNode({
         }}
       />
       <div
-        className="absolute left-1/2 -translate-x-1/2 mt-2 text-[8px] tracking-wider whitespace-nowrap text-white"
-        style={{ opacity: 0.55, top: size }}
+        className="absolute left-1/2 -translate-x-1/2 mt-2 text-[10px] tracking-wider whitespace-nowrap text-white/70"
+        style={{ top: size + 4, maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis" }}
       >
         {label}
       </div>

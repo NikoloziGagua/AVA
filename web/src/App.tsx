@@ -7,9 +7,11 @@ import { RulesScreen } from "./rules/RulesScreen.js";
 import { MemoryScreen } from "./memory/MemoryScreen.js";
 import { OrbitScreen } from "./orbit/OrbitScreen.js";
 import { VoiceScreen } from "./voice/VoiceScreen.js";
+import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 
 type View =
+  | { name: "splash" }
   | { name: "orbit" }
   | { name: "chat"; sessionId: string | null }
   | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
@@ -18,7 +20,7 @@ type View =
 
 export function App() {
   const [paired, setPaired] = useState<boolean>(!!getToken());
-  const [view, setView] = useState<View>({ name: "orbit" });
+  const [view, setView] = useState<View>({ name: "splash" });
 
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
 
@@ -26,6 +28,16 @@ export function App() {
     <div className="relative w-full h-full bg-black text-white">
       <GlassFilter />
       <AnimatePresence mode="wait">
+        {view.name === "splash" && (
+          <motion.div
+            key="splash"
+            className="absolute inset-0"
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.6 }}
+          >
+            <Splash onDone={() => setView({ name: "orbit" })} />
+          </motion.div>
+        )}
         {view.name === "orbit" && (
           <motion.div
             key="orbit"

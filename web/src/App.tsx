@@ -6,6 +6,7 @@ import { ChatScreen } from "./chat/ChatScreen.js";
 import { RulesScreen } from "./rules/RulesScreen.js";
 import { MemoryEditor } from "./memory/MemoryEditor.js";
 import { OrbitScreen } from "./orbit/OrbitScreen.js";
+import { VoiceScreen } from "./voice/VoiceScreen.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 
 type View =
@@ -63,14 +64,20 @@ export function App() {
         {view.name === "voice" && (
           <motion.div
             key="voice"
-            className="absolute inset-0 bg-black flex items-center justify-center text-white/60"
+            className="absolute inset-0"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
           >
-            voice mode (Phase 4)
-            <button onClick={() => setView({ name: "orbit" })} className="absolute top-4 right-4">✕</button>
+            <VoiceScreen
+              initialSessionId={view.sessionId}
+              onExit={(sid) => {
+                if (view.from === "chat") setView({ name: "chat", sessionId: sid });
+                else setView({ name: "orbit" });
+              }}
+              onSwitchToKeyboard={(sid) => setView({ name: "chat", sessionId: sid })}
+            />
           </motion.div>
         )}
         {view.name === "memory" && (

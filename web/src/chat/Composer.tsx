@@ -80,7 +80,7 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
           onClick={onMicTap}
           className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center"
         >
-          <Pulse layoutId="ava-pulse" state="idle" size={28} />
+          <Pulse state="idle" size={28} />
         </button>
         {busy ? (
           <button aria-label="stop" onClick={onKill} className="shrink-0 w-9 h-9 rounded-md bg-red-500/90 text-white flex items-center justify-center">

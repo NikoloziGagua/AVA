@@ -9,8 +9,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.460.0",
+    "motion": "^11.18.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.6.1",
     "workbox-precaching": "^7.4.0"
   },
   "devDependencies": {

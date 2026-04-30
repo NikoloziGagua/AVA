@@ -4,6 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { loadConfig } from "./config.js";
 import { buildLogger } from "./logs/logger.js";
 import { openDb } from "./state/db.js";
+import { purgeDeletedSessions } from "./state/sessions.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
 import { authRoutes } from "./routes/auth.js";
@@ -33,6 +34,8 @@ const startedAt = Date.now();
 const cfg = loadConfig();
 const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
+const purgedCount = purgeDeletedSessions(db, Date.now() - 24 * 60 * 60 * 1000);
+if (purgedCount > 0) log.info({ purgedCount }, "purged soft-deleted sessions older than 24h");
 const runs = new ActiveRuns();
 const pidfiles = new PidfileRegistry(cfg.pidfileDir);
 

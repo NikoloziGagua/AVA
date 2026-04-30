@@ -1,5 +1,6 @@
 import * as React from "react";
 import { motion } from "motion/react";
+import { useReducedMotion } from "../../lib/useReducedMotion.js";
 
 export type PulseState = "idle" | "listening" | "thinking" | "responding";
 
@@ -25,6 +26,7 @@ function shadowFor(state: PulseState): string {
 }
 
 export function Pulse({ state, size, amplitude = 0, layoutId, className }: PulseProps) {
+  const reduced = useReducedMotion();
   const wrapperStyle: React.CSSProperties = {
     width: size,
     height: size,
@@ -33,6 +35,19 @@ export function Pulse({ state, size, amplitude = 0, layoutId, className }: Pulse
     transition: "box-shadow 400ms ease",
     position: "relative",
   };
+
+  if (reduced) {
+    const bg =
+      state === "responding" ? COLORS_RESPONDING :
+      state === "thinking"   ? "linear-gradient(135deg, rgba(255,255,255,0.2), rgba(255,255,255,0.05))" :
+                                COLORS_IDLE;
+    return (
+      <div
+        className={className}
+        style={{ ...wrapperStyle, backgroundImage: bg }}
+      />
+    );
+  }
 
   return (
     <motion.div

@@ -39,15 +39,21 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-3">
+    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-4">
       {history.map((m) => (
         <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
           {m.role === "user" ? (
-            <div className="max-w-[75%] rounded-2xl rounded-br-sm border border-white/10 bg-white/10 px-3 py-2 text-sm">
+            <div
+              className="max-w-[75%] rounded-2xl rounded-br-md px-3.5 py-2 text-sm text-white/95 border border-white/10"
+              style={{
+                background: "linear-gradient(135deg, rgba(168,85,247,0.18), rgba(59,130,246,0.18))",
+                boxShadow: "0 4px 24px -8px rgba(168,85,247,0.35)",
+              }}
+            >
               {m.text}
             </div>
           ) : (
-            <div className="max-w-[85%] text-sm leading-[1.55] text-white/85 whitespace-pre-wrap">
+            <div className="max-w-[85%] text-[15px] leading-[1.6] text-white/90 whitespace-pre-wrap">
               {m.text}
             </div>
           )}

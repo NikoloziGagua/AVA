@@ -3,7 +3,6 @@ import { api, fetchSession } from "../api.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
-import { PathsBackground } from "../components/ava/PathsBackground.js";
 import { Pulse } from "../components/ava/Pulse.js";
 import { ChevronLeft } from "lucide-react";
 
@@ -78,13 +77,22 @@ export function ChatScreen({
   }
 
   return (
-    <div className="relative flex flex-col h-full">
-      <PathsBackground opacity={0.18} />
-      <header className="relative z-10 flex items-center justify-between px-3 py-2 border-b border-white/8 bg-black/30 backdrop-blur-sm h-14">
-        <button onClick={onOpenSessions} aria-label="back to orbit" className="text-white/70 px-2">
-          <ChevronLeft size={20} />
+    <div
+      className="relative flex flex-col h-full bg-black"
+      style={{
+        backgroundImage:
+          "radial-gradient(ellipse 80% 50% at 50% -10%, rgba(168,85,247,0.07), transparent 60%)",
+      }}
+    >
+      <header className="relative z-10 flex items-center justify-between px-4 py-3 border-b border-white/[0.06] bg-black/40 backdrop-blur-md h-14">
+        <button
+          onClick={onOpenSessions}
+          aria-label="back to orbit"
+          className="w-8 h-8 -ml-2 rounded-full text-white/70 hover:text-white hover:bg-white/5 flex items-center justify-center transition-colors"
+        >
+          <ChevronLeft size={18} />
         </button>
-        <div className="text-sm font-medium truncate max-w-[60%]">{title}</div>
+        <div className="text-sm font-medium truncate max-w-[60%] text-white/90">{title}</div>
         <Pulse state={headerState} size={14} />
       </header>
       <div className="relative z-10 flex-1 flex flex-col">

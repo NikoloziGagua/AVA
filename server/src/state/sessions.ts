@@ -28,6 +28,11 @@ export function softDeleteSession(db: Db, id: string): void {
   db.prepare("UPDATE sessions SET deleted_at = ?, updated_at = ? WHERE id = ?").run(now, now, id);
 }
 
+export function purgeDeletedSessions(db: Db, olderThanMs: number): number {
+  const r = db.prepare("DELETE FROM sessions WHERE deleted_at IS NOT NULL AND deleted_at < ?").run(olderThanMs);
+  return r.changes;
+}
+
 export type SessionWithSummary = Session & {
   summary: string | null;
   summary_through_message_id: number | null;

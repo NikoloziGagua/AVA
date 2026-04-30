@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
-import { createSession, getSession, getSessionFull, listByStatus, listSessions, setStatus, softDeleteSession, touchSession, updateSummary, updateTitle } from "./sessions.js";
+import { createSession, getSession, getSessionFull, listByStatus, listSessions, purgeDeletedSessions, setStatus, softDeleteSession, touchSession, updateSummary, updateTitle } from "./sessions.js";
 
 describe("sessions repo", () => {
   let db: Db;
@@ -121,5 +121,27 @@ describe("soft delete", () => {
     const s = createSession(db, { title: "x" });
     softDeleteSession(db, s.id);
     expect(getSession(db, s.id)).toBeNull();
+  });
+});
+
+describe("purgeDeletedSessions", () => {
+  it("hard-deletes rows whose deleted_at is older than the threshold", () => {
+    const db = openDb(":memory:");
+    const old = createSession(db, { title: "old" });
+    const fresh = createSession(db, { title: "fresh" });
+    db.prepare("UPDATE sessions SET deleted_at = ? WHERE id = ?").run(1000, old.id);
+    db.prepare("UPDATE sessions SET deleted_at = ? WHERE id = ?").run(Date.now(), fresh.id);
+    const removed = purgeDeletedSessions(db, Date.now() - 24 * 60 * 60 * 1000);
+    expect(removed).toBe(1);
+    const row = db.prepare("SELECT * FROM sessions WHERE id = ?").get(old.id);
+    expect(row).toBeUndefined();
+  });
+
+  it("keeps rows with NULL deleted_at", () => {
+    const db = openDb(":memory:");
+    const a = createSession(db, { title: "a" });
+    const removed = purgeDeletedSessions(db, Date.now());
+    expect(removed).toBe(0);
+    expect(db.prepare("SELECT id FROM sessions WHERE id = ?").get(a.id)).toBeDefined();
   });
 });

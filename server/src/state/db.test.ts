@@ -34,3 +34,16 @@ describe("openDb", () => {
     db2.close();
   });
 });
+
+describe("db migrations: sessions.deleted_at", () => {
+  it("creates deleted_at column", () => {
+    const db = openDb(":memory:");
+    const cols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    expect(cols.some((c) => c.name === "deleted_at")).toBe(true);
+  });
+  it("creates idx_sessions_deleted index", () => {
+    const db = openDb(":memory:");
+    const idx = db.prepare("PRAGMA index_list(sessions)").all() as Array<{ name: string }>;
+    expect(idx.some((i) => i.name === "idx_sessions_deleted")).toBe(true);
+  });
+});

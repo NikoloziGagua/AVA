@@ -13,6 +13,8 @@ export function openDb(path: string): Db {
   db.exec(schema);
   tryAddColumn(db, "sessions", "summary", "TEXT");
   tryAddColumn(db, "sessions", "summary_through_message_id", "INTEGER");
+  tryAddColumn(db, "sessions", "deleted_at", "INTEGER");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at)");
   return db;
 }
 

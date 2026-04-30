@@ -134,10 +134,30 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="relative h-full overflow-y-auto bg-black text-white">
-      <header className="sticky top-0 z-10 flex items-center gap-2 px-4 py-3 border-b border-white/8 bg-black/80 backdrop-blur-sm">
-        <button onClick={onClose} aria-label="back" className="text-white/70"><ChevronLeft size={20} /></button>
-        <div className="text-sm font-medium">Rules</div>
+    <div
+      className="relative h-full overflow-y-auto text-white"
+      style={{
+        background:
+          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(59,130,246,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
+      }}
+    >
+      <header
+        className="sticky top-0 z-10 flex items-center gap-2 px-4 py-4 h-16"
+        style={{
+          background: "rgba(0,0,0,0.55)",
+          backdropFilter: "blur(20px) saturate(140%)",
+          WebkitBackdropFilter: "blur(20px) saturate(140%)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+        }}
+      >
+        <button
+          onClick={onClose}
+          aria-label="back"
+          className="w-9 h-9 rounded-full text-white/65 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
+        >
+          <ChevronLeft size={20} />
+        </button>
+        <div className="text-base font-semibold tracking-wide text-white/95">Rules</div>
       </header>
 
       <Section title="Reasoning">

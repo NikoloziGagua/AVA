@@ -80,21 +80,36 @@ export function OrbitNode({
         />
       </div>
 
-      {/* Label — visible on hover with a glass plate so it's readable on any bg */}
-      <motion.div
-        className="absolute left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none text-[10px] text-white/90 tracking-wider"
+      {/* Always-visible quiet label */}
+      <div
+        className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none text-[10px] tracking-[0.05em] transition-opacity duration-200"
         style={{
-          top: size + 8,
-          background: "rgba(15, 15, 20, 0.6)",
+          top: size + 6,
+          color: "rgba(255,255,255,0.55)",
+          textShadow: "0 1px 6px rgba(0,0,0,0.85)",
+          maxWidth: 110,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          opacity: hovered || armed ? 0 : 1,
+        }}
+      >
+        {label}
+      </div>
+      {/* Hover/armed glass tooltip — brighter, plated, full label */}
+      <motion.div
+        className="absolute left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none text-[10px] text-white tracking-wider"
+        style={{
+          top: size + 6,
+          background: "rgba(15, 15, 20, 0.65)",
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
-          border: "1px solid rgba(255,255,255,0.08)",
-          maxWidth: 140,
+          border: "1px solid rgba(255,255,255,0.10)",
+          maxWidth: 180,
           overflow: "hidden",
           textOverflow: "ellipsis",
         }}
-        initial={{ opacity: 0, y: -2 }}
-        animate={{ opacity: hovered || armed ? 1 : 0, y: hovered || armed ? 0 : -2 }}
+        initial={{ opacity: 0, y: -2, scale: 0.95 }}
+        animate={{ opacity: hovered || armed ? 1 : 0, y: hovered || armed ? 0 : -2, scale: hovered || armed ? 1 : 0.95 }}
         transition={{ duration: 0.18 }}
       >
         {label}

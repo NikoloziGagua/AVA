@@ -40,6 +40,15 @@ body {
   background: linear-gradient(135deg, var(--ava-purple), var(--ava-blue), var(--ava-teal));
 }
 
+/* Static dot-grid surface used as a minimalistic background on chat / memory / rules */
+.ava-dotgrid {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
+  background-position: 0 0;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 35%, black 0%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 35%, black 0%, transparent 80%);
+}
+
 /* Aurora — slowly rotating conic gradient, used behind the orb */
 @keyframes aurora-spin {
   to { transform: rotate(360deg); }

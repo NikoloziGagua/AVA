@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-import { motion } from "motion/react";
 import { Pulse } from "../components/ava/Pulse.js";
 import { ShiningText } from "../components/ava/ShiningText.js";
 import { ToolCallChip } from "./ToolCallChip.js";
@@ -39,37 +38,8 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
     if (e?.kind === "thought") { thinkingCaption = e.payload.text.slice(0, 80); break; }
   }
 
-  const isEmpty = history.length === 0 && liveEvents.length === 0;
-
   return (
     <div className="flex-1 overflow-y-auto px-4 py-6 space-y-5">
-      {isEmpty && (
-        <motion.div
-          className="flex flex-col items-center justify-center h-full min-h-[55vh] text-center pointer-events-none"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.5 }}
-        >
-          <motion.div
-            initial={{ opacity: 0, filter: "blur(20px)", y: 8 }}
-            animate={{ opacity: 1, filter: "blur(0px)", y: 0 }}
-            transition={{ duration: 1.0, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
-          >
-            <div className="text-[10px] tracking-[0.45em] uppercase text-white/40 mb-2">I AM</div>
-            <div className="text-7xl sm:text-8xl font-bold tracking-[0.2em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/85 to-white/40">
-              AVA
-            </div>
-          </motion.div>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.6, delay: 0.6 }}
-            className="mt-6 text-sm text-white/45 max-w-xs"
-          >
-            How can I help today? Type a message, tap a chip, or hold the orb to speak.
-          </motion.p>
-        </motion.div>
-      )}
       {history.map((m) => (
         <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
           {m.role === "user" ? (
@@ -77,12 +47,12 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
               className="group relative max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14.5px] text-white/95 overflow-hidden"
               style={{
                 background:
-                  "linear-gradient(135deg, rgba(168,85,247,0.22), rgba(59,130,246,0.22))",
-                border: "1px solid rgba(255,255,255,0.10)",
-                backdropFilter: "blur(14px) saturate(150%)",
-                WebkitBackdropFilter: "blur(14px) saturate(150%)",
+                  "linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04))",
+                border: "1px solid rgba(255,255,255,0.16)",
+                backdropFilter: "blur(18px) saturate(160%)",
+                WebkitBackdropFilter: "blur(18px) saturate(160%)",
                 boxShadow:
-                  "inset 0 1px 0 rgba(255,255,255,0.18), 0 8px 28px -10px rgba(168,85,247,0.45)",
+                  "inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.2), 0 10px 32px -12px rgba(0,0,0,0.6)",
               }}
             >
               <span className="relative">{m.text}</span>

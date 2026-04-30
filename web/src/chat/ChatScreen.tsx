@@ -3,40 +3,40 @@ import { api, fetchSession } from "../api.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
-import { enablePush } from "../push/register.js";
-import { QuickChips } from "./QuickChips.js";
+import { PathsBackground } from "../components/ava/PathsBackground.js";
+import { Pulse } from "../components/ava/Pulse.js";
+import { ChevronLeft } from "lucide-react";
 
-export function ChatScreen({
-  sessionId: requestedSessionId,
-  onOpenSessions,
-  onOpenRules,
-  onOpenMemory,
-}: {
+export interface ChatScreenProps {
   sessionId: string | null;
   onOpenSessions: () => void;
   onOpenRules: () => void;
   onOpenMemory: () => void;
-}) {
+  onEnterVoice?: () => void;
+}
+
+export function ChatScreen({
+  sessionId: requestedSessionId,
+  onOpenSessions,
+  onEnterVoice,
+}: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [runEpoch, setRunEpoch] = useState(0);
   const { events } = useChatStream(sessionId, runEpoch);
-  const [pushState, setPushState] = useState<"idle" | "pending" | "ok" | string>(
-    typeof Notification !== "undefined" && Notification.permission === "granted" ? "ok" : "idle",
-  );
-  const [seed, setSeed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
+  const [seed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
+  const [title, setTitle] = useState<string>("New chat");
 
   useEffect(() => {
     let cancelled = false;
     if (requestedSessionId === null) {
-      // New chat: clear state.
       setSessionId(null);
       setHistory([]);
       setRunEpoch(0);
+      setTitle("New chat");
       return;
     }
     if (requestedSessionId === sessionId) return;
-    // Load the requested session's history.
     fetchSession(requestedSessionId)
       .then((data) => {
         if (cancelled) return;
@@ -48,27 +48,26 @@ export function ChatScreen({
         setHistory(loaded);
         setSessionId(requestedSessionId);
         setRunEpoch(0);
+        setTitle(data.session.title ?? "Untitled");
       })
-      .catch(() => {
-        // best-effort; leave UI as-is
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [requestedSessionId]);
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [requestedSessionId, sessionId]);
 
   const currentRunFinished = events.some(
-    (e) => e.runEpoch === runEpoch && (e.kind === "done" || e.kind === "killed" || e.kind === "error")
+    (e) => e.runEpoch === runEpoch && (e.kind === "done" || e.kind === "killed" || e.kind === "error"),
   );
   const busy = runEpoch > 0 && !currentRunFinished;
 
+  const headerState: "idle" | "thinking" | "responding" =
+    busy
+      ? events.some((e) => e.runEpoch === runEpoch && e.kind === "final")
+        ? "responding"
+        : "thinking"
+      : "idle";
+
   async function send(text: string) {
-    const userMsg: ChatMessage = {
-      role: "user",
-      text,
-      id: `u-${Date.now()}`,
-    };
-    setHistory((prev) => [...prev, userMsg]);
+    setHistory((prev) => [...prev, { role: "user", text, id: `u-${Date.now()}` }]);
     const r = await api.sendMessage(sessionId, text);
     setSessionId(r.sessionId);
     setRunEpoch((n) => n + 1);
@@ -80,45 +79,25 @@ export function ChatScreen({
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <header className="flex items-center justify-between border-b border-neutral-800 p-3">
-        <button
-          onClick={onOpenSessions}
-          aria-label="open sessions"
-          className="text-neutral-400 text-lg px-2"
-        >
-          ☰
+    <div className="relative flex flex-col h-full">
+      <PathsBackground opacity={0.18} />
+      <header className="relative z-10 flex items-center justify-between px-3 py-2 border-b border-white/8 bg-black/30 backdrop-blur-sm h-14">
+        <button onClick={onOpenSessions} aria-label="back to orbit" className="text-white/70 px-2">
+          <ChevronLeft size={20} />
         </button>
-        <div className="text-lg font-semibold">Ava</div>
-        <div className="flex items-center gap-1">
-          {pushState !== "ok" ? (
-            <button
-              disabled={pushState === "pending"}
-              onClick={async () => {
-                setPushState("pending");
-                const r = await enablePush("phone");
-                setPushState(r.ok ? "ok" : r.reason);
-                if (!r.ok) setTimeout(() => setPushState("idle"), 5000);
-              }}
-              className="text-xs text-emerald-400 px-2 disabled:opacity-50"
-            >
-              {pushState === "pending"
-                ? "enabling..."
-                : pushState === "idle"
-                  ? "enable notifications"
-                  : pushState}
-            </button>
-          ) : null}
-          <button onClick={onOpenMemory} aria-label="memory" className="text-neutral-400 text-lg px-2">⊕</button>
-          <button onClick={onOpenRules} aria-label="rules" className="text-neutral-400 text-lg px-2">⚙</button>
-        </div>
+        <div className="text-sm font-medium truncate max-w-[60%]">{title}</div>
+        <Pulse state={headerState} size={14} />
       </header>
-      <MessageList history={history} liveEvents={events} />
-      <QuickChips
-        refreshKey={runEpoch}
-        onTap={(prompt) => setSeed({ text: prompt, version: Date.now() })}
-      />
-      <Composer onSend={send} onKill={kill} busy={busy} seed={seed} />
+      <div className="relative z-10 flex-1 flex flex-col">
+        <MessageList history={history} liveEvents={events} />
+        <Composer
+          onSend={send}
+          onKill={kill}
+          onMicTap={() => onEnterVoice?.()}
+          busy={busy}
+          seed={seed}
+        />
+      </div>
     </div>
   );
 }

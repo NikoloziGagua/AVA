@@ -151,7 +151,17 @@ export function chatRoutes(
       }));
     const latestUserText = latestRow?.content ?? parsed.data.text;
     const promptForAgent = greeting.prefix + summaryHeader + latestUserText;
-    const mode = classifyIntent(parsed.data.text);
+    // Default to "action" mode so every chat turn has the full tool stack
+    // (chrome / shell / filesystem / memory). The intent classifier was too
+    // conservative — casual "look up X on Google" stayed in conversation
+    // mode where chrome isn't available, so Ava reported "I can't access
+    // Google" even though the agent could in principle handle it.
+    // Override via FORCE_INTENT=conversation env var if you want the old
+    // chitchat-fast path back.
+    const intent = classifyIntent(parsed.data.text);
+    const mode: "conversation" | "action" =
+      process.env.FORCE_INTENT === "conversation" ? "conversation" : "action";
+    void intent; // kept for telemetry/future tuning
     const reasoningEffort = agentDeps.provider!.name === "openai"
       ? mapReasoning(getReasoningLevel(db), mode)
       : undefined;

@@ -7,6 +7,7 @@ import {
 } from "../api.js";
 import { getToken } from "../auth/tokens.js";
 import { enablePush } from "../push/register.js";
+import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 
 interface Device { id: string; label: string; created_at: number; revoked_at: number | null; }
 
@@ -142,28 +143,15 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
       <Section title="Reasoning">
         {reason ? (
           <>
-            <div className="grid grid-cols-2 gap-2">
-              {(["fast", "thorough"] as const).map((lvl) => {
-                const active = reason.level === lvl;
-                const disabled = reason.supported === false;
-                return (
-                  <button
-                    key={lvl}
-                    onClick={() => !disabled && setReasoningLevel(lvl)}
-                    disabled={disabled}
-                    className={
-                      "rounded-md py-3 text-xs transition-colors disabled:opacity-40 " +
-                      (active ? "border border-white/50 bg-white/10 text-white" : "border border-white/12 text-white/70 hover:bg-white/5")
-                    }
-                  >
-                    <div className="font-medium">{lvl === "fast" ? "Fast" : "Thorough"}</div>
-                    <div className="text-[10px] text-white/50 mt-1">
-                      {lvl === "fast" ? "instant replies, light reasoning" : "slower, thinks before acting"}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            <SegmentedTabs<"fast" | "thorough">
+              options={[
+                { value: "fast", label: "Fast", hint: "instant · light" },
+                { value: "thorough", label: "Thorough", hint: "slower · deeper" },
+              ]}
+              value={reason.level}
+              onChange={(lvl) => reason.supported !== false && setReasoningLevel(lvl)}
+              layout="full"
+            />
             {reason.supported === false && (
               <div className="text-[10px] text-white/40 mt-2">Available with OpenAI provider only.</div>
             )}

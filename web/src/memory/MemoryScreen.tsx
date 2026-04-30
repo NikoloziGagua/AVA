@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ChevronLeft } from "lucide-react";
 import { fetchMemory, type MemoryView, patchMemoryLine, postMemoryLine } from "../api.js";
+import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 
 const CATEGORIES = ["all", "context", "people", "setup", "skills", "schedule", "preferences"] as const;
 type Filter = typeof CATEGORIES[number];
@@ -87,19 +88,13 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
       </Section>
 
       <Section title={`Observations (${m.observations.lines.length})`}>
-        <div className="flex gap-1.5 overflow-x-auto pb-2 -mx-1 px-1 mb-2">
-          {CATEGORIES.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCat(c)}
-              className={
-                "shrink-0 px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wider " +
-                (c === cat ? "border border-white/50 bg-white/10 text-white" : "border border-white/12 text-white/60")
-              }
-            >
-              {c}
-            </button>
-          ))}
+        <div className="overflow-x-auto pb-2 mb-2 -mx-1 px-1">
+          <SegmentedTabs<Filter>
+            options={CATEGORIES.map((c) => ({ value: c, label: c }))}
+            value={cat}
+            onChange={setCat}
+            layout="auto"
+          />
         </div>
         <div className="space-y-1.5">
           {obs.length === 0 && <div className="text-xs text-white/40">none.</div>}

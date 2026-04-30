@@ -1,8 +1,13 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronLeft } from "lucide-react";
 import {
   fetchRules, createRule, patchRule, deleteRuleApi, type RuleRow,
   fetchReasoning, putReasoning, type ReasoningPref,
+  fetchPinnedChips, createPinnedChip, deletePinnedChip, type ChipOverrideRow,
 } from "../api.js";
+import { getToken } from "../auth/tokens.js";
+
+interface Device { id: string; label: string; created_at: number; revoked_at: number | null; }
 
 export function RulesScreen({ onClose }: { onClose: () => void }) {
   const [rows, setRows] = useState<RuleRow[] | null>(null);
@@ -10,9 +15,13 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
   const [reason, setReason] = useState<ReasoningPref | null>(null);
+  const [chips, setChips] = useState<ChipOverrideRow[]>([]);
+  const [newChipLabel, setNewChipLabel] = useState("");
+  const [newChipPrompt, setNewChipPrompt] = useState("");
+  const [devices, setDevices] = useState<Device[]>([]);
   const pollRef = useRef<number | null>(null);
 
-  async function refresh() {
+  async function refreshRules() {
     try {
       const r = await fetchRules();
       setRows(r);
@@ -28,9 +37,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
               if (pollRef.current != null) window.clearInterval(pollRef.current);
               pollRef.current = null;
             }
-          } catch {
-            // best-effort
-          }
+          } catch { /* best-effort */ }
         }, 2000);
       }
     } catch (e) {
@@ -40,36 +47,13 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     fetchReasoning().then(setReason).catch(() => {});
-    refresh();
+    fetchPinnedChips().then(setChips).catch(() => {});
+    fetchDevices().then(setDevices).catch(() => {});
+    refreshRules();
     return () => {
       if (pollRef.current != null) window.clearInterval(pollRef.current);
     };
   }, []);
-
-  async function add() {
-    const text = draft.trim();
-    if (!text) return;
-    setAdding(true);
-    try {
-      await createRule(text);
-      setDraft("");
-      await refresh();
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setAdding(false);
-    }
-  }
-
-  async function toggle(rule: RuleRow) {
-    await patchRule(rule.id, rule.enabled === 0);
-    await refresh();
-  }
-
-  async function remove(rule: RuleRow) {
-    await deleteRuleApi(rule.id);
-    await refresh();
-  }
 
   async function setReasoningLevel(level: "fast" | "thorough") {
     if (!reason) return;
@@ -78,92 +62,193 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
     catch { fetchReasoning().then(setReason).catch(() => {}); }
   }
 
+  async function addRule() {
+    const text = draft.trim();
+    if (!text) return;
+    setAdding(true);
+    try {
+      await createRule(text);
+      setDraft("");
+      await refreshRules();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function toggleRule(rule: RuleRow) {
+    await patchRule(rule.id, rule.enabled === 0);
+    await refreshRules();
+  }
+
+  async function removeRule(rule: RuleRow) {
+    await deleteRuleApi(rule.id);
+    await refreshRules();
+  }
+
+  async function addChip() {
+    if (!newChipLabel.trim() || !newChipPrompt.trim()) return;
+    const c = await createPinnedChip({ label: newChipLabel.trim(), prompt: newChipPrompt.trim() });
+    setChips((prev) => [...prev, c]);
+    setNewChipLabel("");
+    setNewChipPrompt("");
+  }
+
+  async function removeChip(id: string) {
+    await deletePinnedChip(id);
+    setChips((prev) => prev.filter((c) => c.id !== id));
+  }
+
+  async function revokeDevice(id: string) {
+    const token = getToken() ?? "";
+    await fetch(`/api/auth/devices/${id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${token}` },
+    });
+    setDevices((prev) => prev.filter((d) => d.id !== id));
+  }
+
   return (
-    <div className="h-full flex flex-col bg-neutral-950 text-neutral-100">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-800">
-        <button onClick={onClose} className="text-neutral-400">← back</button>
-        <h1 className="text-base">Autonomy rules</h1>
-        <div className="w-12" />
-      </div>
-      <div className="p-3 border-b border-neutral-800">
-        <div className="text-sm font-semibold mb-2">Reasoning</div>
-        <label className="flex items-start gap-2 mb-2 text-sm">
-          <input
-            type="radio"
-            name="reasoning"
-            disabled={!reason || reason.supported === false}
-            checked={reason?.level === "fast"}
-            onChange={() => setReasoningLevel("fast")}
-            className="mt-1"
-          />
-          <span>
-            <span className="font-medium">Fast</span>
-            <span className="text-neutral-500"> — instant replies, light reasoning on actions</span>
-          </span>
-        </label>
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="radio"
-            name="reasoning"
-            disabled={!reason || reason.supported === false}
-            checked={reason?.level === "thorough"}
-            onChange={() => setReasoningLevel("thorough")}
-            className="mt-1"
-          />
-          <span>
-            <span className="font-medium">Thorough</span>
-            <span className="text-neutral-500"> — slower, thinks more before acting</span>
-          </span>
-        </label>
-        {reason && reason.supported === false && (
-          <div className="text-xs text-neutral-500 mt-2">
-            Available with OpenAI provider only.
-          </div>
+    <div className="relative h-full overflow-y-auto bg-black text-white">
+      <header className="sticky top-0 z-10 flex items-center gap-2 px-4 py-3 border-b border-white/8 bg-black/80 backdrop-blur-sm">
+        <button onClick={onClose} aria-label="back" className="text-white/70"><ChevronLeft size={20} /></button>
+        <div className="text-sm font-medium">Rules</div>
+      </header>
+
+      <Section title="Reasoning">
+        {reason ? (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              {(["fast", "thorough"] as const).map((lvl) => {
+                const active = reason.level === lvl;
+                const disabled = reason.supported === false;
+                return (
+                  <button
+                    key={lvl}
+                    onClick={() => !disabled && setReasoningLevel(lvl)}
+                    disabled={disabled}
+                    className={
+                      "rounded-md py-3 text-xs transition-colors disabled:opacity-40 " +
+                      (active ? "border border-white/50 bg-white/10 text-white" : "border border-white/12 text-white/70 hover:bg-white/5")
+                    }
+                  >
+                    <div className="font-medium">{lvl === "fast" ? "Fast" : "Thorough"}</div>
+                    <div className="text-[10px] text-white/50 mt-1">
+                      {lvl === "fast" ? "instant replies, light reasoning" : "slower, thinks before acting"}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {reason.supported === false && (
+              <div className="text-[10px] text-white/40 mt-2">Available with OpenAI provider only.</div>
+            )}
+          </>
+        ) : (
+          <div className="text-xs text-white/40">Loading…</div>
         )}
-      </div>
-      <div className="p-3 border-b border-neutral-800 space-y-2">
+      </Section>
+
+      <Section title="Autonomy rules">
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           placeholder="e.g. never let shell delete files in C:/work without asking"
-          className="w-full bg-neutral-900 border border-neutral-800 rounded p-2 text-sm h-20"
+          className="w-full bg-transparent border border-white/10 rounded-md px-2 py-1.5 text-xs h-20 placeholder:text-white/35 mb-2"
         />
         <button
-          onClick={add}
+          onClick={addRule}
           disabled={adding || !draft.trim()}
-          className="bg-emerald-600 disabled:opacity-50 text-white text-sm px-3 py-1.5 rounded"
+          className="px-3 py-1 text-xs rounded-md bg-white text-black disabled:opacity-50"
         >
           {adding ? "adding…" : "Add rule"}
         </button>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {err && <div className="p-4 text-red-400 text-sm">error: {err}</div>}
-        {!rows && !err && <div className="p-4 text-neutral-500 text-sm">loading…</div>}
-        {rows?.length === 0 && <div className="p-4 text-neutral-500 text-sm">no rules yet.</div>}
-        {rows?.map((r) => (
-          <div key={r.id} className="px-4 py-3 border-b border-neutral-900 flex items-start gap-3">
-            <input
-              type="checkbox"
-              checked={r.enabled === 1}
-              onChange={() => toggle(r)}
-              className="mt-1"
-              aria-label="enabled"
-            />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm whitespace-pre-wrap break-words">{r.source}</div>
-              <div className="text-xs text-neutral-500 mt-1">
-                {r.status === "pending" && <span className="text-yellow-400">parsing…</span>}
-                {r.status === "active" && <span className="text-emerald-500">active</span>}
-                {r.status === "failed" && <span className="text-red-400">parse failed</span>}
-                <span className="ml-2">{new Date(r.created_at).toLocaleString()}</span>
+        <div className="space-y-1.5 mt-3">
+          {err && <div className="text-xs text-red-400">error: {err}</div>}
+          {!rows && !err && <div className="text-xs text-white/40">loading…</div>}
+          {rows?.length === 0 && <div className="text-xs text-white/40">no rules yet.</div>}
+          {rows?.map((r) => (
+            <div key={r.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-start gap-3 hover:border-white/20">
+              <input
+                type="checkbox"
+                checked={r.enabled === 1}
+                onChange={() => toggleRule(r)}
+                aria-label="enabled"
+                className="mt-0.5 accent-white"
+              />
+              <div className="flex-1 min-w-0">
+                <div className="whitespace-pre-wrap break-words text-white/85">{r.source}</div>
+                <div className="text-[10px] text-white/40 mt-1">
+                  {r.status === "pending" && <span className="text-yellow-400">parsing…</span>}
+                  {r.status === "active" && <span className="text-emerald-400">active</span>}
+                  {r.status === "failed" && <span className="text-red-400">parse failed</span>}
+                  <span className="ml-2">{new Date(r.created_at).toLocaleString()}</span>
+                </div>
               </div>
+              <button onClick={() => removeRule(r)} aria-label="delete" className="text-white/45 hover:text-red-400">×</button>
             </div>
-            <button onClick={() => remove(r)} aria-label="delete" className="text-neutral-500 hover:text-red-400 px-2">
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Pinned chips">
+        <div className="space-y-1.5 mb-2">
+          {chips.length === 0 && <div className="text-xs text-white/40">no pinned chips.</div>}
+          {chips.map((c) => (
+            <div key={c.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-center gap-3 hover:border-white/20">
+              <span className="font-medium">{c.label}</span>
+              <span className="text-white/55 truncate flex-1">{c.prompt}</span>
+              <button className="text-red-400" onClick={() => removeChip(c.id)}>delete</button>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <input
+            value={newChipLabel}
+            onChange={(e) => setNewChipLabel(e.target.value)}
+            placeholder="Label"
+            className="bg-transparent border border-white/10 rounded-md px-2 py-1.5 text-xs placeholder:text-white/35"
+          />
+          <input
+            value={newChipPrompt}
+            onChange={(e) => setNewChipPrompt(e.target.value)}
+            placeholder="Prompt"
+            className="col-span-2 bg-transparent border border-white/10 rounded-md px-2 py-1.5 text-xs placeholder:text-white/35"
+          />
+        </div>
+        <button onClick={addChip} className="mt-2 px-3 py-1 text-xs rounded-md bg-white text-black">Add chip</button>
+      </Section>
+
+      <Section title="Devices">
+        <div className="space-y-1.5">
+          {devices.length === 0 && <div className="text-xs text-white/40">no devices paired.</div>}
+          {devices.map((d) => (
+            <div key={d.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-center gap-3 hover:border-white/20">
+              <span className="font-medium">{d.label}</span>
+              <span className="text-white/45">{new Date(d.created_at).toLocaleDateString()}</span>
+              <button className="ml-auto text-red-400" onClick={() => revokeDevice(d.id)}>revoke</button>
+            </div>
+          ))}
+        </div>
+      </Section>
     </div>
   );
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="border-b border-white/5 px-4 py-3">
+      <div className="text-xs uppercase tracking-wider text-white/85 mb-2">{title}</div>
+      {children}
+    </section>
+  );
+}
+
+async function fetchDevices(): Promise<Device[]> {
+  const token = getToken() ?? "";
+  const r = await fetch("/api/auth/devices", { headers: { authorization: `Bearer ${token}` } });
+  if (!r.ok) return [];
+  const j = (await r.json()) as { devices: Device[] };
+  return j.devices;
 }

@@ -37,6 +37,8 @@ export const api = {
     }),
   kill: (sessionId: string) =>
     request<{ aborted: boolean }>(`/api/chat/${sessionId}/kill`, { method: "POST" }),
+  deleteSession: (sessionId: string) =>
+    request<void>(`/api/sessions/${sessionId}`, { method: "DELETE" }),
 };
 
 export type SessionRow = {

@@ -40,6 +40,40 @@ body {
   background: linear-gradient(135deg, var(--ava-purple), var(--ava-blue), var(--ava-teal));
 }
 
+/* Aurora — slowly rotating conic gradient, used behind the orb */
+@keyframes aurora-spin {
+  to { transform: rotate(360deg); }
+}
+.ava-aurora {
+  position: absolute;
+  inset: -25%;
+  background: conic-gradient(
+    from 0deg at 50% 50%,
+    transparent 0deg,
+    rgba(168, 85, 247, 0.45) 60deg,
+    transparent 130deg,
+    rgba(59, 130, 246, 0.45) 200deg,
+    transparent 280deg,
+    rgba(20, 184, 166, 0.4) 320deg,
+    transparent 360deg
+  );
+  filter: blur(80px);
+  animation: aurora-spin 28s linear infinite;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.ava-aurora-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 48%,
+    rgba(168, 85, 247, 0.18) 0%,
+    rgba(59, 130, 246, 0.08) 24%,
+    transparent 55%
+  );
+  pointer-events: none;
+}
+
 /* Reduce motion: collapse all transitions to opacity fades */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

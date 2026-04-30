@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
+import { motion } from "motion/react";
 import { Plus, List, Brain, Settings2 } from "lucide-react";
 import { Pulse } from "../components/ava/Pulse.js";
-import { SpaceBackground } from "../components/ava/SpaceBackground.js";
-import { CyclingText } from "../components/ava/CyclingText.js";
+import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { computeNodePosition } from "../components/ava/OrbitRing.js";
 import { OrbitNode } from "./OrbitNode.js";
@@ -93,21 +93,29 @@ export function OrbitScreen({
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-black">
-      {/* Aurora layers — slowly rotating conic gradient + soft central glow + stars */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="ava-aurora" />
-      </div>
-      <div className="ava-aurora-glow" />
-      <SpaceBackground particleCount={500} coreRadius={130} tintHue={270} />
+      {/* Dotted surface — three.js wave grid */}
+      <DottedSurface />
+      {/* Soft vignette darkens edges + lifts the orb */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(ellipse 60% 50% at 50% 48%, rgba(0,0,0,0) 0%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.85) 100%)",
+        }}
+      />
 
-      {/* HELLO / I AM / AVA — cycling cinematic wordmark */}
-      <div className="absolute top-[12%] left-1/2 -translate-x-1/2 z-20 pointer-events-none w-full text-center">
-        <CyclingText
-          texts={["HELLO", "I AM", "AVA"]}
-          intervalMs={2200}
-          className="text-5xl sm:text-6xl font-bold tracking-[0.22em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/85 to-white/40"
-        />
-      </div>
+      {/* I AM AVA — static cinematic wordmark with blur reveal */}
+      <motion.div
+        initial={{ opacity: 0, filter: "blur(20px)", y: 8 }}
+        animate={{ opacity: 1, filter: "blur(0px)", y: 0 }}
+        transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1], delay: 0.2 }}
+        className="absolute top-[10%] left-1/2 -translate-x-1/2 z-20 pointer-events-none w-full text-center"
+      >
+        <div className="text-[10px] tracking-[0.45em] uppercase text-white/45 mb-2">I AM</div>
+        <div className="text-6xl sm:text-7xl font-bold tracking-[0.22em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/90 to-white/50">
+          AVA
+        </div>
+      </motion.div>
 
       <div
         className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 cursor-pointer"
@@ -123,8 +131,12 @@ export function OrbitScreen({
       </div>
 
       <div
-        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/10"
-        style={{ width: INNER_RADIUS * 2, height: INNER_RADIUS * 2 }}
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/15"
+        style={{
+          width: INNER_RADIUS * 2,
+          height: INNER_RADIUS * 2,
+          backdropFilter: "blur(2px)",
+        }}
       />
       {tools.map((t, i) => {
         const rad = (t.angleDeg * Math.PI) / 180;
@@ -139,34 +151,39 @@ export function OrbitScreen({
             style={{ transform: `translate(${x}px, ${y}px) translate(-50%, -50%)` }}
             onClick={t.action}
           >
+            {/* Glass pill */}
             <span
-              className="relative w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer"
+              className="relative w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 cursor-pointer overflow-hidden"
               style={{
-                background: "radial-gradient(circle at 30% 25%, rgba(255,255,255,0.08), rgba(0,0,0,0.85) 70%)",
-                border: "1px solid rgba(255,255,255,0.12)",
-                boxShadow: `0 0 0 0 rgba(${t.accent},0)`,
+                background: "linear-gradient(135deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02))",
+                border: "1px solid rgba(255,255,255,0.18)",
+                backdropFilter: "blur(14px) saturate(140%)",
+                WebkitBackdropFilter: "blur(14px) saturate(140%)",
+                boxShadow:
+                  "inset 0 1px 0 rgba(255,255,255,0.15), 0 6px 24px -8px rgba(0,0,0,0.6)",
               }}
             >
-              {/* Hover ring — gradient stroke + glow */}
+              {/* Hover gradient ring */}
               <span
                 aria-hidden="true"
                 className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"
                 style={{
-                  background: `conic-gradient(from 0deg, rgba(${t.accent},0.7), rgba(${t.accent},0.1), rgba(${t.accent},0.7))`,
+                  background: `conic-gradient(from 0deg, rgba(${t.accent},0.85), rgba(${t.accent},0.05), rgba(${t.accent},0.85))`,
                   padding: 1,
                   WebkitMask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
                   WebkitMaskComposite: "xor",
                   maskComposite: "exclude",
                 }}
               />
+              {/* Hover glow */}
               <span
                 aria-hidden="true"
                 className="absolute inset-0 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-                style={{ boxShadow: `0 0 24px rgba(${t.accent},0.55)` }}
+                style={{ boxShadow: `0 0 28px rgba(${t.accent},0.65)` }}
               />
-              <Icon size={18} className="relative text-white/85 group-hover:text-white transition-colors" />
+              <Icon size={18} className="relative text-white/90 group-hover:text-white transition-colors" />
             </span>
-            <span className="mt-2 text-[9px] text-white/50 group-hover:text-white/85 uppercase tracking-[0.18em] whitespace-nowrap transition-colors">
+            <span className="mt-2 text-[9px] text-white/55 group-hover:text-white/90 uppercase tracking-[0.22em] whitespace-nowrap transition-colors">
               {t.label}
             </span>
           </button>

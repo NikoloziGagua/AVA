@@ -6,6 +6,7 @@ import { ChatScreen } from "./chat/ChatScreen.js";
 import { RulesScreen } from "./rules/RulesScreen.js";
 import { MemoryScreen } from "./memory/MemoryScreen.js";
 import { OrbitScreen } from "./orbit/OrbitScreen.js";
+import { ChatListScreen } from "./orbit/ChatListScreen.js";
 import { VoiceScreen } from "./voice/VoiceScreen.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
@@ -16,7 +17,8 @@ type View =
   | { name: "chat"; sessionId: string | null }
   | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
   | { name: "memory" }
-  | { name: "rules" };
+  | { name: "rules" }
+  | { name: "list" };
 
 export function App() {
   const [paired, setPaired] = useState<boolean>(!!getToken());
@@ -51,6 +53,7 @@ export function App() {
               onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
               onOpenMemory={() => setView({ name: "memory" })}
               onOpenRules={() => setView({ name: "rules" })}
+              onOpenList={() => setView({ name: "list" })}
               onEnterVoice={() => setView({ name: "voice", from: "orbit", sessionId: null })}
             />
           </motion.div>
@@ -114,6 +117,21 @@ export function App() {
             transition={{ duration: 0.3, ease: "easeOut" }}
           >
             <RulesScreen onClose={() => setView({ name: "orbit" })} />
+          </motion.div>
+        )}
+        {view.name === "list" && (
+          <motion.div
+            key="list"
+            className="absolute inset-0 bg-black"
+            initial={{ y: "100%" }}
+            animate={{ y: 0 }}
+            exit={{ y: "100%" }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+          >
+            <ChatListScreen
+              onClose={() => setView({ name: "orbit" })}
+              onOpenChat={(sid) => setView({ name: "chat", sessionId: sid })}
+            />
           </motion.div>
         )}
       </AnimatePresence>

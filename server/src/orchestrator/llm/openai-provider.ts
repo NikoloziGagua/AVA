@@ -40,8 +40,8 @@ function toOpenAITools(tools: ToolDefinition[]) {
 
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai" as const;
-  readonly defaultOrchestratorModel = "gpt-5";
-  readonly defaultSideModel = "gpt-5-mini";
+  readonly defaultOrchestratorModel = "gpt-5.5";
+  readonly defaultSideModel = "gpt-5";
   private client: OpenAI;
 
   constructor(opts: { client: OpenAI }) {

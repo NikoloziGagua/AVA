@@ -7,6 +7,7 @@ import { openDb } from "./state/db.js";
 import { createSession, getSession, purgeDeletedSessions } from "./state/sessions.js";
 import { appendMessage } from "./state/messages.js";
 import { runVoiceTurn } from "./agent/voice-turn.js";
+import { buildRealtimeProxy } from "./routes/voice-realtime.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
 import { authRoutes } from "./routes/auth.js";
@@ -152,9 +153,21 @@ async function shutdown(reason: string) {
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
-app.listen(cfg.port, cfg.bindAddr, () => {
+const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
   log.info({ port: cfg.port, bind: cfg.bindAddr }, "ava server listening");
 });
+
+// Realtime voice WebSocket proxy: /api/voice/realtime
+const realtimeProxy = buildRealtimeProxy({
+  db,
+  apiKey: cfg.openaiApiKey,
+  memoryDir: cfg.memoryDir,
+  appendMessage: (m) => { appendMessage(db, m); },
+  getSession: (id) => getSession(db, id),
+  createSession: (opts) => createSession(db, opts),
+  log,
+});
+realtimeProxy.attach(httpServer);
 
 try {
   startSystray({

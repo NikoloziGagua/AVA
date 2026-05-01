@@ -196,8 +196,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     }
   }, [playAudioChunk]);
 
+  const startingRef = useRef(false);
   const start = useCallback(async () => {
-    if (wsRef.current) return;
+    if (wsRef.current || startingRef.current) return; // dedupe StrictMode double-invoke
+    startingRef.current = true;
     setErrorMsg(null);
     setState("connecting");
 
@@ -293,8 +295,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       ws.addEventListener("close", (ev) => {
         // eslint-disable-next-line no-console
         console.warn(`[ava] WS closed: code=${ev.code} reason="${ev.reason || "(none)"}" wasClean=${ev.wasClean}`);
+        startingRef.current = false;
         if (ev.code === 1008 || ev.code === 4401) setErrorMsg("auth failed");
         else if (ev.code === 1011) setErrorMsg(`server error: ${ev.reason || "upstream rejected"}`);
+        else if (ev.reason) setErrorMsg(ev.reason);
         else if (!ev.wasClean) setErrorMsg(`connection dropped (${ev.code})`);
         cleanup();
         setState("idle");

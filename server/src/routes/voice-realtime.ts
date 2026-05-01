@@ -30,8 +30,10 @@ import { validateToken } from "../auth/tokens.js";
 //     - response.audio_transcript.delta / .done
 //     - error
 
-const REALTIME_URL =
-  "wss://api.openai.com/v1/realtime?model=gpt-realtime";
+// `gpt-realtime` is the GA name; older accounts only have the preview alias.
+// Override via REALTIME_MODEL env var if you need to pin a specific snapshot.
+const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-4o-realtime-preview";
+const REALTIME_URL = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`;
 
 export interface RealtimeProxyDeps {
   db: Db;
@@ -145,10 +147,9 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       upstream.send(data as Buffer | string);
     });
 
-    // ─── Upstream → Client + transcript persistence ────────────────────
+    // ─── Upstream → Client + transcript persistence + diagnostic logs ───
     upstream.on("message", (data) => {
       try {
-        // Forward to client first so latency isn't blocked by parsing.
         if (client.readyState === WebSocket.OPEN) {
           client.send(data as Buffer | string);
         }
@@ -157,7 +158,21 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // Best-effort persist; never let a parse error kill the proxy.
       try {
         const text = typeof data === "string" ? data : data.toString("utf8");
-        const evt = JSON.parse(text) as { type?: string; transcript?: string; item_id?: string };
+        const evt = JSON.parse(text) as {
+          type?: string;
+          transcript?: string;
+          item_id?: string;
+          error?: { type?: string; code?: string; message?: string };
+        };
+        // Surface upstream errors and lifecycle events so we can see what
+        // OpenAI is actually saying.
+        if (evt.type === "error") {
+          log.warn(
+            `realtime upstream error event: code=${evt.error?.code} type=${evt.error?.type} message=${evt.error?.message}`,
+          );
+        } else if (evt.type === "session.created" || evt.type === "session.updated") {
+          log.info(`realtime ${evt.type} (model=${REALTIME_MODEL})`);
+        }
         if (evt.type === "conversation.item.input_audio_transcription.completed") {
           const t = (evt.transcript ?? "").trim();
           if (t) deps.appendMessage({ sessionId, role: "user", content: t });
@@ -174,8 +189,17 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
     // ─── Lifecycle ────────────────────────────────────────────────────
     upstream.on("close", (code, reason) => {
-      log.info("realtime upstream closed", code, reason?.toString());
-      try { client.close(code, reason?.toString()); } catch { /* ignore */ }
+      const r = reason?.toString() || "(no reason)";
+      log.info(`realtime upstream closed: code=${code} reason="${r}" model=${REALTIME_MODEL}`);
+      // Forward the close reason to the client so the user sees something
+      // actionable instead of "code=1000".
+      try {
+        client.send(JSON.stringify({
+          type: "error",
+          error: { message: `upstream closed (code=${code}): ${r}` },
+        }));
+      } catch { /* ignore */ }
+      try { client.close(code, r); } catch { /* ignore */ }
     });
     upstream.on("error", (err) => {
       log.error("realtime upstream error:", err.message);

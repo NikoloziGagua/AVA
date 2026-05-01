@@ -45,13 +45,21 @@ await runRecovery({ db, pidfiles, kill: (pid) => killTree(pid) });
 bootstrapMemoryDir({ dir: cfg.memoryDir });
 
 let chromePromise: ReturnType<typeof buildChrome> | null = null;
-function getChrome() {
-  if (!chromePromise) {
-    chromePromise = buildChrome({
-      profileDir: cfg.chromeProfileDir,
-      screenshotDir: cfg.screenshotDir,
-    });
+async function getChrome() {
+  if (chromePromise) {
+    try {
+      const existing = await chromePromise;
+      if (existing.isAlive()) return existing;
+    } catch {
+      // build previously rejected — fall through and rebuild
+    }
+    log.info("chrome window was closed/disconnected — rebuilding");
+    chromePromise = null;
   }
+  chromePromise = buildChrome({
+    profileDir: cfg.chromeProfileDir,
+    screenshotDir: cfg.screenshotDir,
+  });
   return chromePromise;
 }
 // Single-tenant by design: the persistent chromium context is shared across all

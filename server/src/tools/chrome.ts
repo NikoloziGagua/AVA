@@ -31,6 +31,8 @@ export type Chrome = {
     reason?: string;
   }>;
   viewport: () => { width: number; height: number };
+  /** True until the user closes the Chromium window or the underlying browser disconnects. */
+  isAlive: () => boolean;
   close: () => Promise<void>;
 };
 
@@ -47,11 +49,19 @@ export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
     headless: false,
   });
   let page: Page = ctx.pages()[0] ?? (await ctx.newPage());
+  let alive = true;
 
   // Track active page; clicking links that open new tabs should update it.
   ctx.on("page", (p) => {
     page = p;
+    p.on("close", () => {
+      // If this was the only page, mark dead so callers rebuild.
+      if (ctx.pages().length === 0) alive = false;
+    });
   });
+  ctx.on("close", () => { alive = false; });
+  // browser() exists for persistent contexts; use it as an extra disconnect signal.
+  ctx.browser()?.on("disconnected", () => { alive = false; });
 
   return {
     async navigate(url) {
@@ -162,7 +172,11 @@ export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
       const vp = page.viewportSize() ?? { width: 1280, height: 720 };
       return vp;
     },
+    isAlive() {
+      return alive;
+    },
     async close() {
+      alive = false;
       await ctx.close();
     },
   };

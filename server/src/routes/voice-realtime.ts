@@ -110,22 +110,18 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         memoryDir: deps.memoryDir,
         mode: "conversation",
       });
+      // Bare-minimum session.update. We add the persona via instructions and
+      // a sensible voice; everything else (audio formats, server VAD,
+      // transcription) uses gpt-4o-realtime-preview defaults so we don't
+      // get rejected for an unknown field. We layer extras back in once the
+      // connection is verified.
       upstream.send(JSON.stringify({
         type: "session.update",
         session: {
           modalities: ["audio", "text"],
           instructions: system,
-          voice: "ash",
-          input_audio_format: "pcm16",
-          output_audio_format: "pcm16",
+          voice: "alloy",
           input_audio_transcription: { model: "whisper-1" },
-          turn_detection: {
-            type: "server_vad",
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 600,
-            create_response: true,
-          },
         },
       }));
       // Tell the client which session id we landed on.

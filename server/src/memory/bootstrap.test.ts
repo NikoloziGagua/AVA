@@ -37,6 +37,6 @@ describe("bootstrapMemoryDir", () => {
     // The canonical persona text is from spec §3.9. This assertion pins the
     // byte length so accidental edits surface in CI; intentional spec changes
     // require updating this number.
-    expect(bytes).toBe(2423);
+    expect(bytes).toBe(3096);
   });
 });

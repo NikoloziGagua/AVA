@@ -56,7 +56,7 @@ export async function runComputerUse(
   }
 
   const { client, surface } = deps;
-  const maxIterations = deps.maxIterations ?? 10;
+  const maxIterations = deps.maxIterations ?? 25;
   const screenshots: string[] = [];
 
   const initial = await surface.screenshotBytes();
@@ -248,7 +248,7 @@ export async function runComputerUseOpenAI(
     return { ok: false, reason: "task required" };
   }
   const { client, surface } = deps;
-  const maxIterations = deps.maxIterations ?? 12;
+  const maxIterations = deps.maxIterations ?? 25;
   const screenshots: string[] = [];
 
   const initial = await surface.screenshotBytes();

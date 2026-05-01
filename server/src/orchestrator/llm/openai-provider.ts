@@ -40,8 +40,10 @@ function toOpenAITools(tools: ToolDefinition[]) {
 
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai" as const;
-  readonly defaultOrchestratorModel = "gpt-5.5";
-  readonly defaultSideModel = "gpt-5";
+  // gpt-5.5 only runs on /v1/responses; this provider uses chat-completions.
+  // Stay on gpt-5 here until the Responses-API rewrite lands.
+  readonly defaultOrchestratorModel = "gpt-5";
+  readonly defaultSideModel = "gpt-5-mini";
   private client: OpenAI;
 
   constructor(opts: { client: OpenAI }) {

@@ -34,17 +34,35 @@ function makeShellTool(): ToolDef {
   };
 }
 
+// Responses API event shapes (gpt-5.x).
 function openaiTurn1Chunks() {
-  return [{
-    choices: [{
-      delta: { tool_calls: [{ index: 0, id: "c1", type: "function",
-        function: { name: "shell", arguments: '{"command":"ls"}' } }] },
-      finish_reason: "tool_calls",
-    }],
-  }];
+  return [
+    {
+      type: "response.output_item.added",
+      item: { type: "function_call", id: "fc_1", call_id: "c1", name: "shell", arguments: "" },
+    },
+    {
+      type: "response.function_call_arguments.delta",
+      item_id: "fc_1",
+      delta: '{"command":"ls"}',
+    },
+    {
+      type: "response.function_call_arguments.done",
+      item_id: "fc_1",
+      arguments: '{"command":"ls"}',
+    },
+    {
+      type: "response.output_item.done",
+      item: { type: "function_call", id: "fc_1", call_id: "c1", name: "shell", arguments: '{"command":"ls"}' },
+    },
+    { type: "response.completed", response: { status: "completed" } },
+  ];
 }
 function openaiTurn2Chunks() {
-  return [{ choices: [{ delta: { content: "Done." }, finish_reason: "stop" }] }];
+  return [
+    { type: "response.output_text.delta", delta: "Done." },
+    { type: "response.completed", response: { status: "completed" } },
+  ];
 }
 
 function anthropicTurn1Chunks() {
@@ -71,10 +89,10 @@ describe("provider parity (mocked SDKs)", () => {
     // ---- OpenAI run ----
     let oaiTurn = 0;
     const openaiClient = {
-      chat: { completions: { create: vi.fn().mockImplementation(() => {
+      responses: { create: vi.fn().mockImplementation(() => {
         const chunks: object[] = oaiTurn++ === 0 ? openaiTurn1Chunks() : openaiTurn2Chunks();
         return Promise.resolve(asAsync(chunks));
-      }) } },
+      }) },
     } as unknown as ConstructorParameters<typeof OpenAIProvider>[0]["client"];
 
     const events1: AgentEvent[] = [];

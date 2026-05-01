@@ -3,47 +3,69 @@ import type {
   LLMProvider, StreamEvent, StreamInput, CompleteInput, Message, ToolCall, ToolDefinition,
 } from "./types.js";
 
-type OpenAIMessage =
-  | { role: "system"; content: string }
-  | { role: "user"; content: string }
-  | { role: "assistant"; content: string;
-      tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[] }
-  | { role: "tool"; tool_call_id: string; content: string };
+// ─── Responses API shapes ────────────────────────────────────────────────────
+// The OpenAI Responses API uses a different request/response shape than
+// chat-completions. Inputs are an array of "items" rather than messages:
+//   - { role: "user" | "assistant", content: string }      regular text turn
+//   - { type: "function_call", call_id, name, arguments }  prior assistant tool call
+//   - { type: "function_call_output", call_id, output }    prior tool result
+// Tools are flat ({type: "function", name, description, parameters}) instead
+// of the chat-completions nested {function: {...}} shape. Reasoning is
+// configured via reasoning.effort instead of the top-level reasoning_effort.
+//
+// The streaming events differ too — see stream() for the event-type handling.
 
-function toOpenAIMessages(system: string, messages: Message[]): OpenAIMessage[] {
-  const out: OpenAIMessage[] = [{ role: "system", content: system }];
+type ResponsesInputItem =
+  | { role: "user" | "assistant"; content: string }
+  | { type: "function_call"; call_id: string; name: string; arguments: string }
+  | { type: "function_call_output"; call_id: string; output: string };
+
+function toResponsesInput(messages: Message[]): ResponsesInputItem[] {
+  const out: ResponsesInputItem[] = [];
   for (const m of messages) {
-    if (m.role === "user") out.push({ role: "user", content: m.content });
-    else if (m.role === "assistant") {
-      const tc = m.tool_calls?.map((c) => ({
-        id: c.id, type: "function" as const,
-        function: { name: c.name, arguments: JSON.stringify(c.args) },
-      }));
-      out.push({ role: "assistant", content: m.content, ...(tc ? { tool_calls: tc } : {}) });
+    if (m.role === "user") {
+      out.push({ role: "user", content: m.content });
+    } else if (m.role === "assistant") {
+      // Plain assistant text (if any) followed by separate function_call items
+      if (m.content) {
+        out.push({ role: "assistant", content: m.content });
+      }
+      if (m.tool_calls) {
+        for (const c of m.tool_calls) {
+          out.push({
+            type: "function_call",
+            call_id: c.id,
+            name: c.name,
+            arguments: JSON.stringify(c.args),
+          });
+        }
+      }
     } else {
       out.push({
-        role: "tool",
-        tool_call_id: m.content.call_id,
-        content: typeof m.content.output === "string" ? m.content.output : JSON.stringify(m.content.output),
+        type: "function_call_output",
+        call_id: m.content.call_id,
+        output: typeof m.content.output === "string"
+          ? m.content.output
+          : JSON.stringify(m.content.output),
       });
     }
   }
   return out;
 }
 
-function toOpenAITools(tools: ToolDefinition[]) {
+function toResponsesTools(tools: ToolDefinition[]) {
   return tools.map((t) => ({
     type: "function" as const,
-    function: { name: t.name, description: t.description, parameters: t.input_schema },
+    name: t.name,
+    description: t.description,
+    parameters: t.input_schema,
   }));
 }
 
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai" as const;
-  // gpt-5.5 only runs on /v1/responses; this provider uses chat-completions.
-  // Stay on gpt-5 here until the Responses-API rewrite lands.
-  readonly defaultOrchestratorModel = "gpt-5";
-  readonly defaultSideModel = "gpt-5-mini";
+  readonly defaultOrchestratorModel = "gpt-5.5";
+  readonly defaultSideModel = "gpt-5";
   private client: OpenAI;
 
   constructor(opts: { client: OpenAI }) {
@@ -51,15 +73,23 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   async complete(input: CompleteInput): Promise<string> {
-    const r = await this.client.chat.completions.create({
+    // Responses API. SDK typings sometimes lag; cast through unknown.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = (await (this.client as any).responses.create({
       model: input.model,
-      max_completion_tokens: input.maxTokens,
-      messages: [
-        { role: "system", content: input.system },
-        { role: "user", content: input.user },
-      ],
-    });
-    return r.choices[0]?.message?.content ?? "";
+      max_output_tokens: input.maxTokens,
+      instructions: input.system,
+      input: input.user,
+    })) as { output?: Array<{ type: string; content?: Array<{ type: string; text?: string }> }> };
+
+    const messages = (r.output ?? []).filter((o) => o.type === "message");
+    return messages
+      .flatMap((m) =>
+        (m.content ?? [])
+          .filter((c) => c.type === "output_text" && typeof c.text === "string")
+          .map((c) => c.text as string),
+      )
+      .join("");
   }
 
   async *stream(input: StreamInput): AsyncIterable<StreamEvent> {
@@ -67,61 +97,140 @@ export class OpenAIProvider implements LLMProvider {
       yield { kind: "done", stop_reason: "abort" };
       return;
     }
-    const stream = await this.client.chat.completions.create({
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stream = (await (this.client as any).responses.create({
       model: input.model,
       stream: true,
-      messages: toOpenAIMessages(input.system, input.messages),
-      tools: input.tools.length ? toOpenAITools(input.tools) : undefined,
+      instructions: input.system,
+      input: toResponsesInput(input.messages),
+      ...(input.tools.length ? { tools: toResponsesTools(input.tools) } : {}),
       ...(input.reasoningEffort
-        ? { reasoning_effort: input.reasoningEffort }
+        ? { reasoning: { effort: input.reasoningEffort } }
         : {}),
-    } as Parameters<typeof this.client.chat.completions.create>[0]);
-    // Tool calls arrive in deltas keyed by index. Accumulate by index.
-    const partial = new Map<number, { id: string; name: string; argsBuf: string }>();
+    })) as AsyncIterable<ResponsesStreamEvent>;
+
+    // Accumulate function_call argument chunks by item id.
+    const toolCallById = new Map<string, { name: string; callId: string; argsBuf: string }>();
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error" = "end_turn";
+    let sawToolCall = false;
 
     try {
-      for await (const chunk of stream as AsyncIterable<{
-        choices?: { delta?: { content?: string;
-          tool_calls?: { index: number; id?: string; type?: string;
-            function?: { name?: string; arguments?: string } }[] };
-          finish_reason?: string | null }[];
-      }>) {
+      for await (const event of stream) {
         if (input.abort.aborted) {
           stopReason = "abort";
           break;
         }
-        const choice = chunk.choices?.[0];
-        if (!choice) continue;
-        const d = choice.delta;
-        if (d?.content) yield { kind: "delta", text: d.content };
-        if (d?.tool_calls) {
-          for (const tc of d.tool_calls) {
-            const slot = partial.get(tc.index) ?? { id: "", name: "", argsBuf: "" };
-            if (tc.id) slot.id = tc.id;
-            if (tc.function?.name) slot.name = tc.function.name;
-            if (tc.function?.arguments) slot.argsBuf += tc.function.arguments;
-            partial.set(tc.index, slot);
+        const type = event.type;
+
+        if (type === "response.output_text.delta") {
+          if (typeof event.delta === "string") {
+            yield { kind: "delta", text: event.delta };
           }
+          continue;
         }
-        if (choice.finish_reason) {
-          stopReason = choice.finish_reason === "tool_calls" ? "tool_use"
-            : choice.finish_reason === "length" ? "max_tokens"
-            : "end_turn";
+
+        if (type === "response.output_item.added") {
+          const item = event.item;
+          if (item?.type === "function_call") {
+            const itemId = item.id ?? item.call_id ?? "";
+            const callId = item.call_id ?? item.id ?? "";
+            toolCallById.set(itemId, {
+              name: item.name ?? "",
+              callId,
+              argsBuf: item.arguments ?? "",
+            });
+          }
+          continue;
         }
+
+        if (type === "response.function_call_arguments.delta") {
+          const slot = toolCallById.get(event.item_id ?? "");
+          if (slot && typeof event.delta === "string") {
+            slot.argsBuf += event.delta;
+          }
+          continue;
+        }
+
+        if (type === "response.function_call_arguments.done") {
+          const slot = toolCallById.get(event.item_id ?? "");
+          if (slot && typeof event.arguments === "string") {
+            // Prefer the final-arguments string from the server when supplied.
+            slot.argsBuf = event.arguments;
+          }
+          continue;
+        }
+
+        if (type === "response.output_item.done") {
+          const item = event.item;
+          if (item?.type === "function_call") {
+            sawToolCall = true;
+            const itemId = item.id ?? item.call_id ?? "";
+            const slot = toolCallById.get(itemId);
+            const argsStr = slot?.argsBuf || item.arguments || "{}";
+            let parsed: unknown = {};
+            try { parsed = JSON.parse(argsStr || "{}"); }
+            catch { parsed = { _raw: argsStr }; }
+            const callId = slot?.callId || item.call_id || item.id || "";
+            const name = item.name ?? slot?.name ?? "";
+            const call: ToolCall = { id: callId, name, args: parsed };
+            yield { kind: "tool_call", call };
+          }
+          continue;
+        }
+
+        if (type === "response.reasoning_summary_text.delta") {
+          // Surface reasoning summaries as thoughts so the chat UI can render
+          // a "thinking" caption while gpt-5.x is reasoning.
+          if (typeof event.delta === "string") {
+            yield { kind: "thought", text: event.delta };
+          }
+          continue;
+        }
+
+        if (type === "response.completed") {
+          const status = event.response?.status;
+          if (status === "incomplete") {
+            stopReason = "max_tokens";
+          } else {
+            stopReason = sawToolCall ? "tool_use" : "end_turn";
+          }
+          continue;
+        }
+
+        if (type === "response.failed" || type === "error" || type === "response.error") {
+          const msg = event.error?.message ?? event.message ?? "stream error";
+          yield { kind: "done", stop_reason: "error", error: msg };
+          return;
+        }
+        // All other event types (response.created, response.in_progress,
+        // response.output_text.done, response.content_part.*, etc.) are not
+        // material for our agent loop and are intentionally ignored.
       }
     } catch (err) {
       yield { kind: "done", stop_reason: "error", error: err instanceof Error ? err.message : String(err) };
       return;
     }
 
-    for (const [, slot] of [...partial.entries()].sort(([a], [b]) => a - b)) {
-      let parsed: unknown = {};
-      try { parsed = JSON.parse(slot.argsBuf || "{}"); } catch { parsed = { _raw: slot.argsBuf }; }
-      const call: ToolCall = { id: slot.id, name: slot.name, args: parsed };
-      yield { kind: "tool_call", call };
-    }
-
     yield { kind: "done", stop_reason: stopReason };
   }
 }
+
+// ─── Stream event shapes (loose; SDK typings lag the API) ────────────────────
+
+type ResponsesStreamEvent = {
+  type: string;
+  delta?: string;
+  arguments?: string;
+  item_id?: string;
+  item?: {
+    type: string;
+    id?: string;
+    call_id?: string;
+    name?: string;
+    arguments?: string;
+  };
+  response?: { status?: string };
+  error?: { message?: string };
+  message?: string;
+};

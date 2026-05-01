@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Pulse } from "../components/ava/Pulse.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
-import { useVoiceSession } from "./useVoiceSession.js";
+import { useRealtimeVoice } from "./useRealtimeVoice.js";
 import { useMicAmplitude } from "./useMicAmplitude.js";
-import { Mic, Square, Keyboard, MicOff, Pause, X } from "lucide-react";
+import { Mic, Keyboard, MicOff, Pause, X } from "lucide-react";
 
 export interface VoiceScreenProps {
   initialSessionId: string | null;
@@ -19,12 +19,11 @@ export function formatTime(s: number): string {
 }
 
 export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: VoiceScreenProps) {
-  const v = useVoiceSession({ initialSessionId });
-  const [muted, setMuted] = useState(false);
-  const amp = useMicAmplitude(v.state === "listening" && !muted);
+  const v = useRealtimeVoice({ initialSessionId });
+  const amp = useMicAmplitude(v.state === "listening" && !v.muted);
   const [secs, setSecs] = useState(0);
 
-  useEffect(() => { v.startListening(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => { v.start(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
   useEffect(() => {
     if (v.state !== "listening") return;
@@ -34,6 +33,7 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
   useEffect(() => { if (v.state === "idle") setSecs(0); }, [v.state]);
 
   const stateLabel =
+    v.state === "connecting" ? "CONNECTING…" :
     v.state === "listening"  ? `LISTENING · ${formatTime(secs)}` :
     v.state === "thinking"   ? "THINKING…" :
     v.state === "responding" ? "AVA · SPEAKING" :
@@ -79,7 +79,17 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
       />
 
       <div className="absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2">
-        <Pulse layoutId="ava-pulse" state={v.state === "idle" ? "idle" : v.state} size={120} amplitude={amp} />
+        <Pulse
+          layoutId="ava-pulse"
+          state={
+            v.state === "listening" ? "listening"
+            : v.state === "thinking" ? "thinking"
+            : v.state === "responding" ? "responding"
+            : "idle"
+          }
+          size={120}
+          amplitude={amp}
+        />
       </div>
 
       {v.caption && (
@@ -104,43 +114,44 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
 
       <div className="absolute left-0 right-0 bottom-8 flex items-center justify-center gap-5">
         <button
-          aria-label={muted ? "unmute" : "mute"}
-          onClick={() => setMuted((m) => !m)}
-          className="w-12 h-12 rounded-full border border-white/15 bg-white/5 text-white flex items-center justify-center"
+          aria-label={v.muted ? "unmute" : "mute"}
+          onClick={() => v.setMuted(!v.muted)}
+          className="w-12 h-12 rounded-full border border-white/15 bg-white/5 text-white flex items-center justify-center transition-all active:scale-95"
         >
-          {muted ? <MicOff size={18} /> : <Mic size={18} />}
+          {v.muted ? <MicOff size={18} /> : <Mic size={18} />}
         </button>
-        {v.state === "listening" && (
-          <button
-            aria-label="end turn"
-            onClick={v.stopListening}
-            className="w-16 h-16 rounded-full bg-red-500 text-white flex items-center justify-center shadow-[0_0_24px_rgba(239,68,68,0.5)]"
-          >
-            <Square size={20} />
-          </button>
-        )}
-        {v.state === "responding" && (
+        {v.state === "responding" ? (
           <button
             aria-label="interrupt"
-            onClick={v.stopResponding}
-            className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-[0_0_24px_rgba(255,255,255,0.3)]"
+            onClick={v.interrupt}
+            className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-[0_0_24px_rgba(255,255,255,0.3)] active:scale-95 transition-transform"
           >
             <Pause size={20} />
           </button>
-        )}
-        {v.state !== "listening" && v.state !== "responding" && (
-          <button
-            aria-label="start listening"
-            onClick={v.startListening}
-            className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center"
+        ) : (
+          // Realtime uses server-VAD — no end-turn button. The big silver
+          // disk just shows the live state (mute/unmute is the only mic gate).
+          <div
+            aria-hidden="true"
+            className="w-16 h-16 rounded-full flex items-center justify-center"
+            style={{
+              background:
+                "linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04))",
+              border: "1px solid rgba(255,255,255,0.18)",
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
+              boxShadow: v.state === "listening"
+                ? "0 0 24px rgba(255,255,255,0.25)"
+                : undefined,
+            }}
           >
-            <Mic size={20} />
-          </button>
+            <Mic size={20} className="text-white/85" />
+          </div>
         )}
         <button
           aria-label="keyboard"
           onClick={() => onSwitchToKeyboard(v.sessionId)}
-          className="w-12 h-12 rounded-full border border-white/15 bg-white/5 text-white flex items-center justify-center"
+          className="w-12 h-12 rounded-full border border-white/15 bg-white/5 text-white flex items-center justify-center transition-all active:scale-95"
         >
           <Keyboard size={18} />
         </button>

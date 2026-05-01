@@ -150,8 +150,21 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       const delta = evt.delta as string | undefined;
       if (delta) {
         playAudioChunk(delta);
-        setState((s) => (s === "responding" ? s : "responding"));
+        setState((s) => {
+          if (s !== "responding") {
+            // eslint-disable-next-line no-console
+            console.info("[ava] first audio chunk received");
+            return "responding";
+          }
+          return s;
+        });
       }
+      return;
+    }
+    if (t === "response.created") {
+      // Server has started building a response — useful timing marker.
+      // eslint-disable-next-line no-console
+      console.info("[ava] response.created");
       return;
     }
     if (t === "response.audio_transcript.delta") {
@@ -209,6 +222,9 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           // 3. Capture pipeline
           const captureCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
           captureCtxRef.current = captureCtx;
+          // iOS Safari boots AudioContext suspended; explicit resume keeps
+          // the first ~200ms of audio from being dropped.
+          if (captureCtx.state === "suspended") await captureCtx.resume();
           await captureCtx.audioWorklet.addModule(ensureWorkletURL());
 
           const source = captureCtx.createMediaStreamSource(stream);
@@ -226,11 +242,17 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
           source.connect(node);
 
-          // 4. Playback context
+          // 4. Playback context — also wake it up so the first response chunk
+          // doesn't get queued behind a suspended-state delay.
           const playCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
           playCtxRef.current = playCtx;
-          playTimeRef.current = playCtx.currentTime;
+          if (playCtx.state === "suspended") await playCtx.resume();
+          // Schedule first chunk a hair into the future for jitter; subsequent
+          // chunks chain off the previous end.
+          playTimeRef.current = playCtx.currentTime + 0.04;
 
+          // eslint-disable-next-line no-console
+          console.info("[ava] realtime ready: capture + playback contexts up");
           setState("listening");
         } catch (err) {
           setErrorMsg(`audio setup failed: ${err instanceof Error ? err.message : String(err)}`);

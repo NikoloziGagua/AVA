@@ -98,9 +98,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
     let upstreamReady = false;
     const pendingFromClient: RawData[] = [];
+    log.info("realtime: client connected, opening upstream to gpt-realtime");
 
     upstream.on("open", () => {
       upstreamReady = true;
+      log.info("realtime: upstream open, sending session.update");
       // Configure the realtime session on connect.
       const system = buildSystemPrompt({
         memoryDir: deps.memoryDir,

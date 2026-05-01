@@ -30,9 +30,10 @@ import { validateToken } from "../auth/tokens.js";
 //     - response.audio_transcript.delta / .done
 //     - error
 
-// `gpt-realtime` is the GA name; older accounts only have the preview alias.
-// Override via REALTIME_MODEL env var if you need to pin a specific snapshot.
-const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-4o-realtime-preview";
+// gpt-4o-realtime-preview returned server_error on this account — likely a
+// gate on the older preview SKU. The GA gpt-realtime model is enabled where
+// gpt-5.x is, which is what we have. Override via REALTIME_MODEL env var.
+const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime";
 const REALTIME_URL = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`;
 
 export interface RealtimeProxyDeps {

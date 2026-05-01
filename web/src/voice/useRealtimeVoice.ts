@@ -133,11 +133,15 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       return;
     }
     if (t === "input_audio_buffer.speech_started") {
+      // eslint-disable-next-line no-console
+      console.info("[ava] VAD: speech_started — you're being heard");
       setState("listening");
       avaPartialRef.current = "";
       return;
     }
     if (t === "input_audio_buffer.speech_stopped") {
+      // eslint-disable-next-line no-console
+      console.info("[ava] VAD: speech_stopped — generating response");
       setState("thinking");
       return;
     }
@@ -232,12 +236,22 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           const node = new AudioWorkletNode(captureCtx, "ava-pcm16-capture");
           workletNodeRef.current = node;
 
+          let chunkCount = 0;
           node.port.onmessage = (ev) => {
             if (mutedRef.current) return;
             if (ws.readyState !== WebSocket.OPEN) return;
             const buf = ev.data as ArrayBuffer;
             const b64 = arrayBufferToBase64(buf);
             ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio: b64 }));
+            chunkCount++;
+            // ~187 quanta/sec at 24kHz with 128-sample render quantum
+            if (chunkCount === 1) {
+              // eslint-disable-next-line no-console
+              console.info("[ava] mic chunk #1 sent — capture is live");
+            } else if (chunkCount % 200 === 0) {
+              // eslint-disable-next-line no-console
+              console.info(`[ava] mic chunk #${chunkCount} (~${(chunkCount / 187).toFixed(1)}s of audio sent)`);
+            }
           };
 
           source.connect(node);

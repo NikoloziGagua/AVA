@@ -25,7 +25,7 @@ export async function runVoiceTurn(args: {
     messages: history,
     tools: [],
     abort: ac.signal,
-    reasoningEffort: "minimal",
+    reasoningEffort: "none",
   });
 
   let text = "";

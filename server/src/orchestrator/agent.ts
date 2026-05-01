@@ -133,7 +133,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
         model,
         system, messages, tools, abort: abort.signal,
         reasoningEffort: opts.reasoningEffort
-          ?? (mode === "conversation" ? "minimal" : "low"),
+          ?? (mode === "conversation" ? "none" : "low"),
       })) {
         if (ev.kind === "delta") {
           assistantText += ev.text;

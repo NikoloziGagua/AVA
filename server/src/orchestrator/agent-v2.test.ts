@@ -353,6 +353,6 @@ describe("runAgent reasoning passthrough", () => {
         memoryDir: makeMemDir(), provider, tools: [],
       } as never,
     } as never);
-    expect(provider.calls.stream[0]!.reasoningEffort).toBe("minimal");
+    expect(provider.calls.stream[0]!.reasoningEffort).toBe("none");
   });
 });

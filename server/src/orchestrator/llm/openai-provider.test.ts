@@ -181,11 +181,11 @@ describe("OpenAIProvider.stream", () => {
     for await (const _ of p.stream({
       model: "gpt-5.5", system: "",
       messages: [{ role: "user", content: "x" }],
-      tools: [], abort: ac.signal, reasoningEffort: "minimal",
+      tools: [], abort: ac.signal, reasoningEffort: "none",
     })) { /* drain */ }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const args = ((client as any).responses.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(args.reasoning).toEqual({ effort: "minimal" });
+    expect(args.reasoning).toEqual({ effort: "none" });
   });
 
   it("forwards reasoning_summary_text.delta as thought events", async () => {

@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { mapReasoning } from "./reasoning.js";
 
 describe("mapReasoning", () => {
-  it("fast/conversation -> minimal", () => {
-    expect(mapReasoning("fast", "conversation")).toBe("minimal");
+  it("fast/conversation -> none", () => {
+    expect(mapReasoning("fast", "conversation")).toBe("none");
   });
   it("fast/action -> low", () => {
     expect(mapReasoning("fast", "action")).toBe("low");

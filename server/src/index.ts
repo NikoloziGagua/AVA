@@ -98,13 +98,14 @@ const agentDeps = {
 };
 
 const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;
+const openai = cfg.openaiApiKey ? new (await import("openai")).default({ apiKey: cfg.openaiApiKey }) : null;
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
 app.use("/api", healthRoutes(startedAt));
 app.use("/api/auth", authRoutes(db, requireToken(db)));
-app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps, { anthropic }));
+app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps, { anthropic, openai }));
 app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
 app.use("/api/push", pushRoutes(db, requireToken(db), { vapidPublicKey: cfg.vapidPublicKey }));
 app.use("/api/rules", rulesRoutes(db, requireToken(db), { provider, log }));

@@ -1,7 +1,8 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import type { Chrome } from "./chrome.js";
-import { runComputerUse } from "./computer-use.js";
+import { runComputerUse, runComputerUseOpenAI } from "./computer-use.js";
 
 export type ComputerUseToolEvent =
   | { kind: "computer_use.call"; args: unknown }
@@ -13,7 +14,10 @@ export type ComputerUseToolDef = {
 };
 
 export function buildComputerUseTool(opts: {
-  client: Anthropic | null;
+  /** Anthropic client (preferred when both are present, since that loop is more battle-tested). */
+  anthropic: Anthropic | null;
+  /** OpenAI client (used when no Anthropic key is configured). */
+  openai: OpenAI | null;
   chrome: Chrome;
   emit: (e: ComputerUseToolEvent) => void;
 }): ComputerUseToolDef {
@@ -30,23 +34,41 @@ export function buildComputerUseTool(opts: {
     },
     run: async (args) => {
       opts.emit({ kind: "computer_use.call", args });
-      if (!opts.client) {
-        const text = "computer_use unavailable: no Anthropic API key configured";
-        opts.emit({ kind: "computer_use.result", ok: false, result: text });
-        return { ok: false, text };
-      }
       const task = String(args.task ?? "");
-      const r = await runComputerUse(
-        { client: opts.client, surface: opts.chrome },
-        { task },
-      );
-      if (!r.ok) {
-        opts.emit({ kind: "computer_use.result", ok: false, result: r.reason });
-        return { ok: false, text: `error: ${r.reason}` };
+
+      if (opts.anthropic) {
+        const r = await runComputerUse(
+          { client: opts.anthropic, surface: opts.chrome },
+          { task },
+        );
+        if (!r.ok) {
+          opts.emit({ kind: "computer_use.result", ok: false, result: r.reason });
+          return { ok: false, text: `error: ${r.reason}` };
+        }
+        const text = `${r.summary}\n\n[${r.screenshots.length} screenshot(s) saved]`;
+        opts.emit({ kind: "computer_use.result", ok: true, result: text });
+        return { ok: true, text };
       }
-      const text = `${r.summary}\n\n[${r.screenshots.length} screenshot(s) saved]`;
-      opts.emit({ kind: "computer_use.result", ok: true, result: text });
-      return { ok: true, text };
+
+      if (opts.openai) {
+        const r = await runComputerUseOpenAI(
+          { client: opts.openai, surface: opts.chrome },
+          { task },
+        );
+        if (!r.ok) {
+          opts.emit({ kind: "computer_use.result", ok: false, result: r.reason });
+          return { ok: false, text: `error: ${r.reason}` };
+        }
+        const text = `${r.summary}\n\n[${r.screenshots.length} screenshot(s) saved]`;
+        opts.emit({ kind: "computer_use.result", ok: true, result: text });
+        return { ok: true, text };
+      }
+
+      const text =
+        "computer_use unavailable: no Anthropic or OpenAI API key configured. " +
+        "Add ANTHROPIC_API_KEY or OPENAI_API_KEY to the server's .env to enable.";
+      opts.emit({ kind: "computer_use.result", ok: false, result: text });
+      return { ok: false, text };
     },
   };
 }

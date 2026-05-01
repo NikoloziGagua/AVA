@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { nanoid } from "nanoid";
 import type Anthropic from "@anthropic-ai/sdk";
+import type OpenAI from "openai";
 import type { Db } from "../state/db.js";
 import { createSession, getSession, getSessionFull, touchSession, updateTitle } from "../state/sessions.js";
 import { appendMessage, listMessages, listMessagesAfterId } from "../state/messages.js";
@@ -48,7 +49,7 @@ export type AgentDeps = {
   runAgentImpl?: typeof runAgent;
 };
 
-export type Metered = { anthropic: Anthropic | null };
+export type Metered = { anthropic: Anthropic | null; openai: OpenAI | null };
 
 export function chatRoutes(
   db: Db,
@@ -201,9 +202,11 @@ export function chatRoutes(
             ...(buildFilesystemTools({ fs, emit: noop }) as ToolDef[]),
             buildClaudeCodeTool({ cc, emit: noop }) as ToolDef,
             ...(buildChromeTools({ chrome, emit: noop }) as ToolDef[]),
-            // TODO(M4 Phase 4): replace with OpenAI computer_use_preview when provider is openai.
+            // computer_use is provider-agnostic: prefers Anthropic when configured,
+            // falls back to OpenAI computer-use-preview, otherwise reports unavailable.
             buildComputerUseTool({
-              client: provider.name === "anthropic" ? metered.anthropic : null,
+              anthropic: metered.anthropic,
+              openai: metered.openai,
               chrome,
               emit: noop,
             }) as ToolDef,

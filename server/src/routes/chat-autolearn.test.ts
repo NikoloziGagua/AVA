@@ -37,7 +37,7 @@ function setup() {
       getChrome: async () => ({} as any),
       provider, runAgentImpl,
     },
-    { anthropic: null },
+    { anthropic: null, openai: null },
   ));
   return { app, db, memoryDir };
 }

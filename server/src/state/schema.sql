@@ -115,3 +115,18 @@ CREATE TABLE IF NOT EXISTS chip_label_cache (
   PRIMARY KEY (device_id, prompt_hash)
 );
 
+CREATE TABLE IF NOT EXISTS self_improvements (
+  id TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  trigger TEXT NOT NULL,
+  goal TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  branch TEXT,
+  commit_sha TEXT,
+  last_known_good TEXT,
+  diff_summary TEXT,
+  verify_log TEXT,
+  outcome TEXT,
+  error TEXT
+);
+

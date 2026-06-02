@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectCorrection } from "./correction-detector.js";
+import { detectCorrection, formatCorrection } from "./correction-detector.js";
 
 const FIVE_MIN = 5 * 60 * 1000;
 
@@ -68,5 +68,32 @@ describe("detectCorrection", () => {
       priorRole: null, priorAtMs: null, nowMs: 1000,
     });
     expect(r).toBe(false);
+  });
+});
+
+describe("formatCorrection", () => {
+  it("captures the corrected assistant turn AND the user's pushback", () => {
+    const s = formatCorrection({
+      priorAssistant: "running ls now Sir",
+      userText: "no, don't auto-run things",
+    });
+    // The whole point: the stored memory must say WHAT was wrong, not just "no".
+    expect(s).toContain("running ls now Sir");
+    expect(s).toContain("no, don't auto-run things");
+    expect(s.startsWith("(corrected)")).toBe(true);
+  });
+
+  it("falls back to just the user text when there is no prior assistant content", () => {
+    const s = formatCorrection({ priorAssistant: "", userText: "no, don't" });
+    expect(s).toBe("(corrected) no, don't");
+  });
+
+  it("collapses whitespace and caps runaway length", () => {
+    const s = formatCorrection({
+      priorAssistant: "a ".repeat(400),
+      userText: "b ".repeat(400),
+    });
+    expect(s).not.toContain("  "); // no double spaces
+    expect(s.length).toBeLessThan(420);
   });
 });

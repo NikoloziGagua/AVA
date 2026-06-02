@@ -11,16 +11,25 @@ export type ChromeToolDef = {
   run: (args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }>;
 };
 
+type ChromeRun = (chrome: Chrome, args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }>;
+
 export function buildChromeTools(opts: {
-  chrome: Chrome;
+  /**
+   * Lazy accessor for the persistent Chromium context. Chrome only boots when a
+   * chrome_* tool is actually dispatched — defining the tools is free, so a chat
+   * turn that never browses never pays the launch cost. The accessor memoizes
+   * and reuses the live instance, so repeated calls are cheap.
+   */
+  getChrome: () => Promise<Chrome>;
   emit: (e: ChromeToolEvent) => void;
 }): ChromeToolDef[] {
-  const { chrome, emit } = opts;
+  const { getChrome, emit } = opts;
   const wrap =
-    (name: string, run: ChromeToolDef["run"]): ChromeToolDef["run"] =>
+    (name: string, run: ChromeRun): ChromeToolDef["run"] =>
     async (args) => {
       emit({ kind: "chrome.call", tool: name, args });
-      const r = await run(args);
+      const chrome = await getChrome();
+      const r = await run(chrome, args);
       emit({ kind: "chrome.result", tool: name, ok: r.ok, result: r.text });
       return r;
     };
@@ -36,7 +45,7 @@ export function buildChromeTools(opts: {
           required: ["url"],
         },
       },
-      run: wrap("chrome_navigate", async (args) => {
+      run: wrap("chrome_navigate", async (chrome, args) => {
         const r = await chrome.navigate(String(args.url ?? ""));
         return r.ok
           ? { ok: true, text: `loaded: ${r.title ?? ""}` }
@@ -53,7 +62,7 @@ export function buildChromeTools(opts: {
           required: ["selector"],
         },
       },
-      run: wrap("chrome_click", async (args) => {
+      run: wrap("chrome_click", async (chrome, args) => {
         const r = await chrome.click(String(args.selector ?? ""));
         return r.ok ? { ok: true, text: "clicked" } : { ok: false, text: `error: ${r.reason}` };
       }),
@@ -68,7 +77,7 @@ export function buildChromeTools(opts: {
           required: ["selector", "text"],
         },
       },
-      run: wrap("chrome_type", async (args) => {
+      run: wrap("chrome_type", async (chrome, args) => {
         const r = await chrome.type(String(args.selector ?? ""), String(args.text ?? ""));
         return r.ok ? { ok: true, text: "typed" } : { ok: false, text: `error: ${r.reason}` };
       }),
@@ -83,7 +92,7 @@ export function buildChromeTools(opts: {
           required: ["key"],
         },
       },
-      run: wrap("chrome_press_key", async (args) => {
+      run: wrap("chrome_press_key", async (chrome, args) => {
         const r = await chrome.press(String(args.key ?? ""));
         return r.ok ? { ok: true, text: "pressed" } : { ok: false, text: `error: ${r.reason}` };
       }),
@@ -94,7 +103,7 @@ export function buildChromeTools(opts: {
         description: "Return the visible text content of the active page (innerText of body).",
         inputSchema: { type: "object", properties: {}, required: [] },
       },
-      run: wrap("chrome_read_page", async () => {
+      run: wrap("chrome_read_page", async (chrome) => {
         const r = await chrome.readPage();
         if (!r.ok) return { ok: false, text: `error: ${r.reason}` };
         const t = r.text ?? "";
@@ -110,7 +119,7 @@ export function buildChromeTools(opts: {
         description: "Save a PNG screenshot of the active page; returns the file path.",
         inputSchema: { type: "object", properties: {}, required: [] },
       },
-      run: wrap("chrome_screenshot", async () => {
+      run: wrap("chrome_screenshot", async (chrome) => {
         const r = await chrome.screenshot();
         return r.ok
           ? { ok: true, text: `saved: ${r.path}` }
@@ -123,7 +132,7 @@ export function buildChromeTools(opts: {
         description: "List currently open tabs (index/url/title).",
         inputSchema: { type: "object", properties: {}, required: [] },
       },
-      run: wrap("chrome_tabs", async () => {
+      run: wrap("chrome_tabs", async (chrome) => {
         const r = await chrome.tabs();
         if (!r.ok || !r.tabs) return { ok: false, text: "error: tabs unavailable" };
         return {

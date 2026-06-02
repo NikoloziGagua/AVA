@@ -18,7 +18,12 @@ export function buildComputerUseTool(opts: {
   anthropic: Anthropic | null;
   /** OpenAI client (used when no Anthropic key is configured). */
   openai: OpenAI | null;
-  chrome: Chrome;
+  /**
+   * Lazy accessor for the persistent Chromium context. Resolved only after the
+   * provider check passes, so the no-key path never boots a browser and merely
+   * exposing the tool costs nothing.
+   */
+  getChrome: () => Promise<Chrome>;
   emit: (e: ComputerUseToolEvent) => void;
 }): ComputerUseToolDef {
   return {
@@ -37,8 +42,9 @@ export function buildComputerUseTool(opts: {
       const task = String(args.task ?? "");
 
       if (opts.anthropic) {
+        const chrome = await opts.getChrome();
         const r = await runComputerUse(
-          { client: opts.anthropic, surface: opts.chrome },
+          { client: opts.anthropic, surface: chrome },
           { task },
         );
         if (!r.ok) {
@@ -51,8 +57,9 @@ export function buildComputerUseTool(opts: {
       }
 
       if (opts.openai) {
+        const chrome = await opts.getChrome();
         const r = await runComputerUseOpenAI(
-          { client: opts.openai, surface: opts.chrome },
+          { client: opts.openai, surface: chrome },
           { task },
         );
         if (!r.ok) {

@@ -30,7 +30,7 @@ import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
 import { getReasoningLevel } from "../state/reasoning-pref.js";
 import { mapReasoning } from "../orchestrator/reasoning.js";
-import { detectCorrection } from "../orchestrator/correction-detector.js";
+import { detectCorrection, formatCorrection } from "../orchestrator/correction-detector.js";
 import { rememberObservation } from "../memory/remember.js";
 
 const Body = z.object({
@@ -90,12 +90,14 @@ export function chatRoutes(
         nowMs: Date.now(),
       });
       if (corrected) {
+        const priorAssistant = prior?.role === "assistant" ? prior.content : "";
+        const text = formatCorrection({ priorAssistant, userText: parsed.data.text });
         void Promise.resolve().then(() => {
           rememberObservation({
             memoryDir: agentDeps.memoryDir,
             category: "preferences",
             confidence: "low",
-            text: `(corrected) ${parsed.data.text.slice(0, 200)}`,
+            text,
             today: new Date().toISOString().slice(0, 10),
           });
         }).catch(() => {});
@@ -189,9 +191,11 @@ export function chatRoutes(
         // record observations or recall facts mid-conversation.
         const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
         let tools: ToolDef[];
-        let chrome: Chrome | null = null;
         if (mode === "action") {
-          chrome = await agentDeps.getChrome();
+          // Chromium is NOT booted here. The chrome/computer_use builders close
+          // over the lazy getChrome accessor and only launch the browser when a
+          // browsing tool is actually dispatched — so a turn that never browses
+          // (a greeting, a question answered from memory) pays no launch cost.
           const fs = buildFilesystem({ roots: agentDeps.fsRoots });
           const cc = buildClaudeCode({
             pidfiles: agentDeps.pidfiles,
@@ -201,13 +205,13 @@ export function chatRoutes(
             buildShellTool({ signal: abort.signal }),
             ...(buildFilesystemTools({ fs, emit: noop }) as ToolDef[]),
             buildClaudeCodeTool({ cc, emit: noop }) as ToolDef,
-            ...(buildChromeTools({ chrome, emit: noop }) as ToolDef[]),
+            ...(buildChromeTools({ getChrome: agentDeps.getChrome, emit: noop }) as ToolDef[]),
             // computer_use is provider-agnostic: prefers Anthropic when configured,
             // falls back to OpenAI computer-use-preview, otherwise reports unavailable.
             buildComputerUseTool({
               anthropic: metered.anthropic,
               openai: metered.openai,
-              chrome,
+              getChrome: agentDeps.getChrome,
               emit: noop,
             }) as ToolDef,
             ...memoryTools,
@@ -226,7 +230,9 @@ export function chatRoutes(
           mode,
           reasoningEffort,
           deps: {
-            chrome,
+            // The orchestrator never reads chrome directly; tools carry their own
+            // lazy accessor. Kept null so the browser stays unbooted until used.
+            chrome: null,
             pidfiles: agentDeps.pidfiles,
             fsRoots: agentDeps.fsRoots,
             memoryDir: agentDeps.memoryDir,

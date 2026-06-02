@@ -53,7 +53,9 @@ describe("chat auto-learn", () => {
     }).expect(200);
     await new Promise((r) => setTimeout(r, 20));
     const obs = readFileSync(memoryPaths(memoryDir).observations, "utf8");
-    expect(obs).toMatch(/\[\d{4}-\d{2}-\d{2} \/ low \/ preferences\] \(corrected\) no, don't/);
+    // Records WHAT was corrected (the assistant line) plus the pushback, not just "no".
+    expect(obs).toMatch(/\[\d{4}-\d{2}-\d{2} \/ low \/ preferences\] \(corrected\) Ava said: "running ls now Sir"/);
+    expect(obs).toContain("no, don't auto-run things");
   });
 
   it("does not fire when the prior turn is the user", async () => {

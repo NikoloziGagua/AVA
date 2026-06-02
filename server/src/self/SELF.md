@@ -16,8 +16,9 @@ Monorepo (npm workspaces).
 
 ## Server module map (server/src)
 - `orchestrator/` — the agent loop (`agent.ts`), system prompt, LLM providers (`llm/`), intent/greeting/summary helpers, reasoning tier.
-- `tools/` — tools exposed to the agent: `claude_code`, `chrome`, `shell`, `filesystem`, `computer_use`, `memory` (each has an `*-mcp.ts` definition).
+- `tools/` — tools exposed to the agent: `claude_code`, `chrome`, `shell`, `filesystem`, `computer_use`, `memory`, `self_improve` (each has an `*-mcp.ts` definition).
 - `memory/` — durable memory: observations, preferences, projects, personality; secret-scrubbed on write (`store.ts`).
+- `playbooks/` — procedural memory: distil a successful multi-step run into a reusable playbook (`distill.ts`), match a request to one (`match.ts`), capture/recall wired in `routes/chat.ts`.
 - `policy/` — risk classification + approval enforcement for tool calls.
 - `routes/` — Express routes: chat (SSE), sessions, auth, rules, approvals, voice, voice-realtime (WS proxy), memory, reasoning, self.
 - `state/` — better-sqlite3 access; schema in `state/schema.sql` (applied on `openDb`).

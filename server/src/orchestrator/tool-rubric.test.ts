@@ -9,10 +9,17 @@ describe("TOOL_RUBRIC", () => {
     expect(TOOL_RUBRIC).toContain("memory_remember");
     expect(TOOL_RUBRIC).toContain("memory_forget");
     expect(TOOL_RUBRIC).toContain("memory_read");
+    expect(TOOL_RUBRIC).toContain("self_improve");
   });
 
-  it("biases toward conversation-mode (answer + offer over silent escalation)", () => {
-    expect(TOOL_RUBRIC.toLowerCase()).toContain("answer from memory first");
+  it("biases toward acting immediately, not idling in chat", () => {
+    expect(TOOL_RUBRIC.toLowerCase()).toContain("act immediately");
+    expect(TOOL_RUBRIC.toLowerCase()).not.toContain("answer from memory first");
+  });
+
+  it("advertises procedural memory (playbooks) and self-improvement", () => {
+    expect(TOOL_RUBRIC.toLowerCase()).toContain("playbook");
+    expect(TOOL_RUBRIC.toLowerCase()).toContain("my own code");
   });
 
   it("documents the observation line format with date / confidence / category", () => {

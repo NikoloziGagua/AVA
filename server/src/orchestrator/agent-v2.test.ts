@@ -96,6 +96,45 @@ describe("runAgent (v2 loop)", () => {
     expect(events.find((e) => e.kind === "final")?.payload).toEqual({ text: "Done." });
   });
 
+  it("emits a graceful final (not a silent done) when the turn budget is exhausted", async () => {
+    // The model asks for a tool every turn and never concludes, exhausting the
+    // loop cap. Each tool result is substantially different so the stuck-loop
+    // detector doesn't halt first — we want the turn-budget path specifically.
+    let n = 0;
+    const looper: ToolDef = {
+      tool: { name: "shell", description: "shell",
+        inputSchema: { type: "object", properties: { command: { type: "string" } } } as const },
+      // 60 identical chars, but the char rotates each call → consecutive results
+      // differ by ~60 edit distance (> the 50 no-progress threshold).
+      run: vi.fn(async () => ({ text: String.fromCharCode(97 + (n++ % 26)).repeat(60), ok: true })),
+    };
+    const provider = new MockLLMProvider({
+      scripts: Array.from({ length: 60 }, () => [
+        { kind: "tool_call", call: { id: "c", name: "shell", args: { command: "go" } } },
+        { kind: "done", stop_reason: "tool_use" },
+      ]) as never,
+    });
+    const events: AgentEvent[] = [];
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "loop without concluding",
+      abort: new AbortController(),
+      emit: (e: AgentEvent) => events.push(e),
+      runId: "r-loop", sessionId: "s-loop", db,
+      deps: {
+        chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [looper],
+      } as never,
+    } as never);
+    const final = events.find((e) => e.kind === "final");
+    expect(final).toBeDefined();
+    expect((final!.payload as { text: string }).text).toMatch(/step limit/i);
+    // Capped at MAX_AGENT_TURNS (48) tool calls, then a graceful final, then done.
+    expect(events.filter((e) => e.kind === "tool_call").length).toBe(48);
+    expect(events.at(-1)?.kind).toBe("done");
+  });
+
   it("conversation mode hides tools and uses the side model", async () => {
     const tool = makeShellTool();
     const provider = new MockLLMProvider({

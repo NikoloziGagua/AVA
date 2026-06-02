@@ -122,8 +122,13 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     { role: "user", content: prompt },
   ];
   let finalText = "";
+  // Cap the agentic loop. Long research tasks (browsing many pages) are
+  // turn-hungry; 48 gives room while still bounding cost. On exhaustion we emit
+  // a graceful final below rather than ending the run silently.
+  const MAX_AGENT_TURNS = 48;
+  let concluded = false;
 
-  for (let turn = 0; turn < 32; turn++) {
+  for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
     if (abort.signal.aborted) break;
     let assistantText = "";
     const pendingCalls: ToolCall[] = [];
@@ -156,6 +161,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
 
     if (stopReason === "abort" || abort.signal.aborted) {
       emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : { reason: "manual" } });
+      concluded = true;
       break;
     }
 
@@ -164,12 +170,14 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       emit({ kind: "thought", payload: { text: "[response truncated by token limit]" } });
       finalText = assistantText;
       emit({ kind: "final", payload: { text: finalText } });
+      concluded = true;
       break;
     }
 
     if (stopReason === "end_turn" || pendingCalls.length === 0) {
       finalText = assistantText;
       emit({ kind: "final", payload: { text: finalText } });
+      concluded = true;
       break;
     }
 
@@ -212,6 +220,18 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     }
   }
 
+  if (!concluded) {
+    // Turn budget exhausted before the model concluded. Never leave the user
+    // with nothing: emit a final so a response is shown and persisted, and the
+    // run can be picked up again.
+    emit({
+      kind: "final",
+      payload: {
+        text: finalText
+          || "I reached my step limit before finishing this, Sir — I made progress but didn't complete it in one run. Tell me to continue and I'll pick up where I left off.",
+      },
+    });
+  }
   emit({ kind: "done", payload: {} });
 }
 

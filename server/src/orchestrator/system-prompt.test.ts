@@ -91,6 +91,25 @@ describe("buildSystemPrompt (layered)", () => {
     expect(action).toContain(TOOL_RUBRIC);
   });
 
+  it("lists the filesystem roots in action mode so the agent writes to a valid path", () => {
+    writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
+    const out = buildSystemPrompt({
+      memoryDir: dir, mode: "action",
+      fsRoots: ["C:/ai/**", "C:/Users/nikug/Downloads/**"],
+    });
+    expect(out).toContain("# Filesystem access");
+    expect(out).toContain("C:/Users/nikug/Downloads/**");
+    expect(out).toContain("C:/ai/**");
+  });
+
+  it("omits the filesystem roots block in conversation mode and when no roots given", () => {
+    writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
+    const conv = buildSystemPrompt({ memoryDir: dir, mode: "conversation", fsRoots: ["C:/ai/**"] });
+    const none = buildSystemPrompt({ memoryDir: dir, mode: "action" });
+    expect(conv).not.toContain("# Filesystem access");
+    expect(none).not.toContain("# Filesystem access");
+  });
+
   it("conversation-mode prompt is byte-stable across runs (cache safety)", () => {
     writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
     const opts = { memoryDir: dir, mode: "conversation" as const };

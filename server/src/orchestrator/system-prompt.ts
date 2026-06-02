@@ -16,6 +16,12 @@ export type BuildSystemPromptOpts = {
    * cache lane and stays byte-stable within itself.
    */
   mode?: "conversation" | "action";
+  /**
+   * Allowlisted filesystem roots. Rendered (action mode only) so the agent
+   * writes to a path that will actually be accepted instead of guessing one
+   * outside the allowlist. Config-fixed, so it stays byte-stable across turns.
+   */
+  fsRoots?: string[];
 };
 
 function isoToday(): string {
@@ -26,6 +32,18 @@ function block(label: string, body: string): string {
   const trimmed = body.replace(/\s+$/, "");
   if (!trimmed) return "";
   return `# ${label}\n${trimmed}\n`;
+}
+
+function buildFsRootsBlock(roots: string[]): string {
+  const list = roots.map((r) => `- ${r}`).join("\n");
+  return (
+    "# Filesystem access\n" +
+    "I read and write files only within these roots — any path outside them is rejected:\n" +
+    `${list}\n` +
+    "When Sir doesn't say where to put something, I write under one of these (a " +
+    "Downloads folder is best for files he'll open). I do not guess paths outside " +
+    "them, and if a write is rejected I retry under an allowed root rather than giving up.\n"
+  );
 }
 
 export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
@@ -48,7 +66,12 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
   if (memoryIndex.trim()) layers.push(block("Memory index", memoryIndex));
   if (preferences.trim()) layers.push(block("Preferences", preferences));
   if (observations.trim()) layers.push(block("Observations", observations));
-  if (opts.mode !== "conversation") layers.push(TOOL_RUBRIC);
+  if (opts.mode !== "conversation") {
+    layers.push(TOOL_RUBRIC);
+    if (opts.fsRoots && opts.fsRoots.length) {
+      layers.push(buildFsRootsBlock(opts.fsRoots));
+    }
+  }
   if (opts.projectContext && opts.projectContext.trim()) {
     layers.push(block("Project context", opts.projectContext));
   }

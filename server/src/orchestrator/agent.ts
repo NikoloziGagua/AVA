@@ -105,6 +105,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     memoryDir: deps.memoryDir,
     projectContext: initialProjectContext,
     mode,
+    fsRoots: deps.fsRoots,
   });
   let loadedProjectSlug: string | null = initialProject?.slug ?? null;
   const registry = buildToolRegistry({ tools: deps.tools, ctx: { runId } });

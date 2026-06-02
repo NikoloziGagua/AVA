@@ -250,6 +250,14 @@ export function chatRoutes(
         const id = buffer.append({ kind: e.kind, payload: e.payload });
         if (e.kind === "final") {
           appendMessage(db, { sessionId: sid, role: "assistant", content: e.payload.text });
+        } else if (e.kind === "error") {
+          // Surface a run-ending error (LLM quota/timeout, stream failure) in the
+          // transcript instead of leaving the chat silent — the run otherwise
+          // returns with no persisted message and the user sees nothing.
+          appendMessage(db, {
+            sessionId: sid, role: "assistant",
+            content: `That didn't work, Sir — ${e.payload.message}`,
+          });
         }
         return id;
       };

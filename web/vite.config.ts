@@ -25,6 +25,13 @@ export default defineConfig({
     }),
   ],
   server: {
-    proxy: { "/api": "http://localhost:8787" },
+    proxy: {
+      // The realtime voice proxy is a WebSocket upgrade. Vite does NOT forward
+      // upgrades unless the entry is marked ws:true, so without this the voice
+      // socket hangs on "connecting" and the upgrade never reaches :8787.
+      // Must precede the generic "/api" entry so it matches first.
+      "/api/voice/realtime": { target: "ws://localhost:8787", ws: true },
+      "/api": "http://localhost:8787",
+    },
   },
 });

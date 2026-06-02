@@ -33,6 +33,11 @@ import { getReasoningLevel } from "../state/reasoning-pref.js";
 import { mapReasoning } from "../orchestrator/reasoning.js";
 import { detectCorrection, formatCorrection } from "../orchestrator/correction-detector.js";
 import { rememberObservation } from "../memory/remember.js";
+import { maybeCapture } from "../playbooks/capture.js";
+import { matchPlaybook } from "../playbooks/match.js";
+import { loadPlaybookIndex, readPlaybook } from "../playbooks/store.js";
+import { bumpUse } from "../playbooks/mutate.js";
+import type { RunStep } from "../playbooks/distill.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -155,7 +160,6 @@ export function chatRoutes(
         content: m.content,
       }));
     const latestUserText = latestRow?.content ?? parsed.data.text;
-    const promptForAgent = greeting.prefix + summaryHeader + latestUserText;
     // Default to "action" mode so every chat turn has the full tool stack
     // (chrome / shell / filesystem / memory). The intent classifier was too
     // conservative — casual "look up X on Google" stayed in conversation
@@ -167,6 +171,29 @@ export function chatRoutes(
     const mode: "conversation" | "action" =
       process.env.FORCE_INTENT === "conversation" ? "conversation" : "action";
     void intent; // kept for telemetry/future tuning
+
+    // Recall: in action mode with saved playbooks, ask the side model to match
+    // this request to a known playbook and inject its steps + a stakes rubric.
+    // Chitchat (conversation mode) and a first-ever empty index never pay for it.
+    let playbookPrefix = "";
+    if (mode === "action" && agentDeps.provider) {
+      const index = loadPlaybookIndex(agentDeps.memoryDir);
+      const slug = index.length
+        ? await matchPlaybook({ prompt: parsed.data.text, index, provider: agentDeps.provider })
+        : null;
+      if (slug) {
+        const pb = readPlaybook(agentDeps.memoryDir, slug);
+        if (pb) {
+          bumpUse(agentDeps.memoryDir, slug, new Date().toISOString().slice(0, 10));
+          const rubric = pb.stakes === "consequential"
+            ? "This is a known consequential task — follow these steps efficiently, but verify the result before reporting done."
+            : "This is a known routine task — follow these steps efficiently; no recheck needed.";
+          playbookPrefix = `[PLAYBOOK — ${pb.slug}]\n${rubric}\n${pb.steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n`;
+        }
+      }
+    }
+
+    const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix + latestUserText;
     const reasoningEffort = agentDeps.provider!.name === "openai"
       ? mapReasoning(getReasoningLevel(db), mode)
       : undefined;
@@ -174,7 +201,29 @@ export function chatRoutes(
     void (async () => {
       const sid = sessionId!;
       const runId = nanoid(12);
+      // Collect the run's tool steps so a successful >=2-tool run can be
+      // distilled into a reusable playbook (best-effort, fire-and-forget).
+      const runSteps: RunStep[] = [];
       const emit = (e: AgentEvent) => {
+        if (e.kind === "tool_call") {
+          runSteps.push({ tool: e.payload.tool, args: e.payload.args, ok: true });
+        } else if (e.kind === "tool_result") {
+          const s = runSteps[runSteps.length - 1];
+          if (s && s.tool === e.payload.tool) s.ok = e.payload.ok;
+        } else if (e.kind === "final") {
+          const prov = agentDeps.provider;
+          if (prov) {
+            void maybeCapture({
+              memoryDir: agentDeps.memoryDir,
+              provider: prov,
+              goal: parsed.data.text,
+              steps: runSteps,
+              outcome: e.payload.text,
+              succeeded: true,
+              today: new Date().toISOString().slice(0, 10),
+            });
+          }
+        }
         const id = buffer.append({ kind: e.kind, payload: e.payload });
         if (e.kind === "final") {
           appendMessage(db, { sessionId: sid, role: "assistant", content: e.payload.text });

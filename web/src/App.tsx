@@ -5,6 +5,7 @@ import { PairingScreen } from "./auth/PairingScreen.js";
 import { ChatScreen } from "./chat/ChatScreen.js";
 import { RulesScreen } from "./rules/RulesScreen.js";
 import { MemoryScreen } from "./memory/MemoryScreen.js";
+import { SelfScreen } from "./self/SelfScreen.js";
 import { OrbitScreen } from "./orbit/OrbitScreen.js";
 import { ChatListScreen } from "./orbit/ChatListScreen.js";
 import { VoiceScreen } from "./voice/VoiceScreen.js";
@@ -18,6 +19,7 @@ type View =
   | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
   | { name: "memory" }
   | { name: "rules" }
+  | { name: "self" }
   | { name: "list" };
 
 export function App() {
@@ -54,6 +56,7 @@ export function App() {
               onOpenMemory={() => setView({ name: "memory" })}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenList={() => setView({ name: "list" })}
+              onOpenSelf={() => setView({ name: "self" })}
               onEnterVoice={() => setView({ name: "voice", from: "orbit", sessionId: null })}
             />
           </motion.div>
@@ -118,6 +121,18 @@ export function App() {
             transition={{ duration: 0.3, ease: "easeOut" }}
           >
             <RulesScreen onClose={() => setView({ name: "orbit" })} />
+          </motion.div>
+        )}
+        {view.name === "self" && (
+          <motion.div
+            key="self"
+            className="absolute inset-0 bg-black"
+            initial={{ y: "100%" }}
+            animate={{ y: 0 }}
+            exit={{ y: "100%" }}
+            transition={{ duration: 0.3, ease: "easeOut" }}
+          >
+            <SelfScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
         )}
         {view.name === "list" && (

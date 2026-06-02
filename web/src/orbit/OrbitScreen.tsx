@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import { motion } from "motion/react";
-import { Plus, List, Brain, Settings2 } from "lucide-react";
+import { Plus, List, Brain, Settings2, Sparkles } from "lucide-react";
 import { Pulse } from "../components/ava/Pulse.js";
 import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { HoverHalo } from "../components/ava/HoverHalo.js";
@@ -30,6 +30,7 @@ export interface OrbitScreenProps {
   onOpenMemory: () => void;
   onOpenRules: () => void;
   onOpenList: () => void;
+  onOpenSelf: () => void;
   onEnterVoice: () => void;
 }
 
@@ -39,7 +40,7 @@ interface PendingDelete {
 }
 
 export function OrbitScreen({
-  onOpenChat, onOpenMemory, onOpenRules, onOpenList, onEnterVoice,
+  onOpenChat, onOpenMemory, onOpenRules, onOpenList, onOpenSelf, onEnterVoice,
 }: OrbitScreenProps) {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [paused, setPaused] = useState(false);
@@ -86,10 +87,11 @@ export function OrbitScreen({
   const visibleSessions = sessions.slice(0, MAX_CHAT_NODES);
 
   const tools: ToolNode[] = [
-    { angleDeg: 315, label: "new",    Icon: Plus,       accent: "248,250,252",  action: () => onOpenChat(null) },
-    { angleDeg: 45,  label: "list",   Icon: List,       accent: "248,250,252",  action: onOpenList },
-    { angleDeg: 135, label: "memory", Icon: Brain,      accent: "248,250,252",  action: onOpenMemory },
-    { angleDeg: 225, label: "rules",  Icon: Settings2,  accent: "248,250,252",  action: onOpenRules },
+    { angleDeg: 270, label: "new",    Icon: Plus,       accent: "248,250,252",  action: () => onOpenChat(null) },
+    { angleDeg: 342, label: "list",   Icon: List,       accent: "248,250,252",  action: onOpenList },
+    { angleDeg: 54,  label: "memory", Icon: Brain,      accent: "248,250,252",  action: onOpenMemory },
+    { angleDeg: 126, label: "rules",  Icon: Settings2,  accent: "248,250,252",  action: onOpenRules },
+    { angleDeg: 198, label: "self",   Icon: Sparkles,   accent: "248,250,252",  action: onOpenSelf },
   ];
 
   const [hoveredTool, setHoveredTool] = useState<number | null>(null);

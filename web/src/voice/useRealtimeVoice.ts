@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
+import { classifyRealtimeEvent } from "./realtime-events.js";
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
 const SAMPLE_RATE = 24000;
@@ -124,36 +125,27 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   }, []);
 
   const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
-    const t = evt.type;
-    if (!t) return;
-
-    if (t === "ava.session") {
-      const sid = evt.sessionId as string | undefined;
-      if (sid) setSessionId(sid);
-      return;
-    }
-    if (t === "input_audio_buffer.speech_started") {
-      // eslint-disable-next-line no-console
-      console.info("[ava] VAD: speech_started — you're being heard");
-      setState("listening");
-      avaPartialRef.current = "";
-      return;
-    }
-    if (t === "input_audio_buffer.speech_stopped") {
-      // eslint-disable-next-line no-console
-      console.info("[ava] VAD: speech_stopped — generating response");
-      setState("thinking");
-      return;
-    }
-    if (t === "conversation.item.input_audio_transcription.completed") {
-      const transcript = (evt.transcript as string | undefined) ?? "";
-      if (transcript) setCaption({ who: "you", text: transcript });
-      return;
-    }
-    if (t === "response.audio.delta") {
-      const delta = evt.delta as string | undefined;
-      if (delta) {
-        playAudioChunk(delta);
+    const action = classifyRealtimeEvent(evt);
+    switch (action.kind) {
+      case "session":
+        setSessionId(action.sessionId);
+        return;
+      case "speech_started":
+        // eslint-disable-next-line no-console
+        console.info("[ava] VAD: speech_started — you're being heard");
+        setState("listening");
+        avaPartialRef.current = "";
+        return;
+      case "speech_stopped":
+        // eslint-disable-next-line no-console
+        console.info("[ava] VAD: speech_stopped — generating response");
+        setState("thinking");
+        return;
+      case "user_transcript":
+        setCaption({ who: "you", text: action.text });
+        return;
+      case "audio":
+        playAudioChunk(action.b64);
         setState((s) => {
           if (s !== "responding") {
             // eslint-disable-next-line no-console
@@ -162,37 +154,29 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           }
           return s;
         });
+        return;
+      case "response_created":
+        // eslint-disable-next-line no-console
+        console.info("[ava] response.created");
+        return;
+      case "ava_transcript_delta":
+        avaPartialRef.current += action.text;
+        setCaption({ who: "ava", text: avaPartialRef.current });
+        return;
+      case "ava_transcript_done": {
+        const transcript = action.text || avaPartialRef.current;
+        if (transcript) setCaption({ who: "ava", text: transcript });
+        return;
       }
-      return;
-    }
-    if (t === "response.created") {
-      // Server has started building a response — useful timing marker.
-      // eslint-disable-next-line no-console
-      console.info("[ava] response.created");
-      return;
-    }
-    if (t === "response.audio_transcript.delta") {
-      const delta = (evt.delta as string | undefined) ?? "";
-      avaPartialRef.current += delta;
-      setCaption({ who: "ava", text: avaPartialRef.current });
-      return;
-    }
-    if (t === "response.audio_transcript.done") {
-      const transcript = (evt.transcript as string | undefined) ?? avaPartialRef.current;
-      if (transcript) setCaption({ who: "ava", text: transcript });
-      return;
-    }
-    if (t === "response.done") {
-      // Back to listening for the next user turn.
-      setState("listening");
-      avaPartialRef.current = "";
-      return;
-    }
-    if (t === "error") {
-      const message = (evt.error as { message?: string } | undefined)?.message
-        ?? (evt.message as string | undefined)
-        ?? "realtime error";
-      setErrorMsg(message);
+      case "response_done":
+        setState("listening");
+        avaPartialRef.current = "";
+        return;
+      case "error":
+        setErrorMsg(action.message);
+        return;
+      case "ignore":
+        return;
     }
   }, [playAudioChunk]);
 

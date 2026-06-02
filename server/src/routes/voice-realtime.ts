@@ -36,6 +36,70 @@ import { validateToken } from "../auth/tokens.js";
 const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime";
 const REALTIME_URL = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`;
 
+/**
+ * GA `gpt-realtime` session.update payload.
+ *
+ * The GA model uses a NESTED audio schema and `output_modalities` — NOT the
+ * beta-flat shape (top-level `modalities` / `voice` / `input_audio_transcription`),
+ * which the GA model rejects as unknown parameters. Sending the beta shape was
+ * the silent `session.update` failure that closed the socket. Verified against
+ * the OpenAI Realtime GA docs (audio.input.format = { type:"audio/pcm", rate }).
+ */
+export function buildRealtimeSessionUpdate(instructions: string) {
+  return {
+    type: "session.update",
+    session: {
+      type: "realtime",
+      instructions,
+      output_modalities: ["audio"],
+      audio: {
+        input: {
+          format: { type: "audio/pcm", rate: 24000 },
+          turn_detection: { type: "server_vad" },
+          transcription: { model: "whisper-1" },
+        },
+        output: {
+          format: { type: "audio/pcm", rate: 24000 },
+          voice: "alloy",
+        },
+      },
+    },
+  };
+}
+
+/**
+ * Map a realtime server event to a durable message, or null if it isn't a
+ * transcript event. Accepts both the GA name (`response.output_audio_transcript.done`)
+ * and the legacy beta name (`response.audio_transcript.done`) so transcript
+ * persistence can't silently break across an API rename.
+ */
+export function persistTranscriptEvent(
+  evt: { type?: string; transcript?: string },
+): { role: "user" | "assistant"; content: string } | null {
+  const type = evt.type ?? "";
+  const content = (evt.transcript ?? "").trim();
+  if (!content) return null;
+  if (type === "conversation.item.input_audio_transcription.completed") {
+    return { role: "user", content };
+  }
+  if (type === "response.output_audio_transcript.done" || type === "response.audio_transcript.done") {
+    return { role: "assistant", content };
+  }
+  return null;
+}
+
+/**
+ * Forward a WS frame preserving its text/binary kind. `ws` delivers incoming
+ * frames to listeners as Buffers, and `send(buffer)` defaults to a BINARY
+ * frame. But the OpenAI realtime protocol is JSON text in both directions
+ * ("binary frames are not supported"), and the browser client drops any
+ * non-string message — so re-framing text as binary silently breaks the audio
+ * stream both ways. Passing the original `isBinary` keeps text as text.
+ */
+export function forwardFrame(target: Pick<WebSocket, "send">, data: RawData, isBinary: boolean): void {
+  target.send(data, { binary: isBinary });
+}
+
 export interface RealtimeProxyDeps {
   db: Db;
   apiKey: string | null;
@@ -92,15 +156,18 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       ? requestedSessionId
       : deps.createSession({ title: null }).id;
 
+    // No `OpenAI-Beta: realtime=v1` header: that selects the beta protocol, and
+    // we're now speaking the GA session schema over the GA `/v1/realtime` path.
+    // Mixing the beta header with a GA-shaped session.update is incoherent and a
+    // likely source of the rejection.
     const upstream = new WebSocket(REALTIME_URL, {
       headers: {
         Authorization: `Bearer ${deps.apiKey}`,
-        "OpenAI-Beta": "realtime=v1",
       },
     });
 
     let upstreamReady = false;
-    const pendingFromClient: RawData[] = [];
+    const pendingFromClient: Array<{ data: RawData; isBinary: boolean }> = [];
     log.info("realtime: client connected, opening upstream to gpt-realtime");
 
     upstream.on("open", () => {
@@ -111,44 +178,34 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         memoryDir: deps.memoryDir,
         mode: "conversation",
       });
-      // Bare-minimum session.update. We add the persona via instructions and
-      // a sensible voice; everything else (audio formats, server VAD,
-      // transcription) uses gpt-4o-realtime-preview defaults so we don't
-      // get rejected for an unknown field. We layer extras back in once the
-      // connection is verified.
-      upstream.send(JSON.stringify({
-        type: "session.update",
-        session: {
-          modalities: ["audio", "text"],
-          instructions: system,
-          voice: "alloy",
-          input_audio_transcription: { model: "whisper-1" },
-        },
-      }));
+      upstream.send(JSON.stringify(buildRealtimeSessionUpdate(system)));
       // Tell the client which session id we landed on.
       try {
         client.send(JSON.stringify({ type: "ava.session", sessionId }));
       } catch { /* ignore */ }
-      // Drain anything the client sent before upstream was ready.
-      for (const buf of pendingFromClient) upstream.send(buf);
+      // Drain anything the client sent before upstream was ready, preserving
+      // each frame's text/binary kind.
+      for (const f of pendingFromClient) forwardFrame(upstream, f.data, f.isBinary);
       pendingFromClient.length = 0;
     });
 
     // ─── Client → Upstream ─────────────────────────────────────────────
-    client.on("message", (data) => {
+    client.on("message", (data, isBinary) => {
       if (!upstreamReady) {
-        pendingFromClient.push(data);
+        pendingFromClient.push({ data, isBinary });
         return;
       }
-      // Forward client events verbatim (input_audio_buffer.append, etc).
-      upstream.send(data as Buffer | string);
+      // Forward client events preserving text framing — the mic audio is
+      // base64 inside a JSON text event, and OpenAI rejects binary frames.
+      forwardFrame(upstream, data, isBinary);
     });
 
     // ─── Upstream → Client + transcript persistence + diagnostic logs ───
-    upstream.on("message", (data) => {
+    upstream.on("message", (data, isBinary) => {
       try {
         if (client.readyState === WebSocket.OPEN) {
-          client.send(data as Buffer | string);
+          // Preserve text framing: the browser client drops non-string messages.
+          forwardFrame(client, data, isBinary);
         }
       } catch { /* client probably closed */ }
 
@@ -170,14 +227,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         } else if (evt.type === "session.created" || evt.type === "session.updated") {
           log.info(`realtime ${evt.type} (model=${REALTIME_MODEL})`);
         }
-        if (evt.type === "conversation.item.input_audio_transcription.completed") {
-          const t = (evt.transcript ?? "").trim();
-          if (t) deps.appendMessage({ sessionId, role: "user", content: t });
-        }
-        if (evt.type === "response.audio_transcript.done") {
-          const t = (evt.transcript ?? "").trim();
-          if (t) deps.appendMessage({ sessionId, role: "assistant", content: t });
-        }
+        const persist = persistTranscriptEvent(evt);
+        if (persist) deps.appendMessage({ sessionId, ...persist });
       } catch {
         // Audio chunks etc. arrive as strings but we only persist on the
         // small JSON events; binary or non-JSON gets ignored here.

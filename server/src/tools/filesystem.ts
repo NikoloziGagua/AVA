@@ -1,4 +1,5 @@
 import { promises as fsp } from "node:fs";
+import { dirname } from "node:path";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 
 export type FsResult<T> =
@@ -37,6 +38,11 @@ export function buildFilesystem(cfg: FilesystemConfig): Filesystem {
       const dec = check(path);
       if (!dec.ok) return { ok: false, reason: dec.reason };
       try {
+        // Create missing parent dirs so a write to a not-yet-existing folder
+        // succeeds in one step. The allowlist already confirmed `path` is inside
+        // a root, and we only ever mkdir ancestors of `path`, so nothing is
+        // created outside the allowed tree.
+        await fsp.mkdir(dirname(path), { recursive: true });
         await fsp.writeFile(path, content, "utf8");
         return { ok: true };
       } catch (e) {

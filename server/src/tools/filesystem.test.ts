@@ -42,6 +42,14 @@ describe("filesystem tool", () => {
     expect(readFileSync(p, "utf8")).toBe("data");
   });
 
+  it("write creates missing parent directories", async () => {
+    const p = join(root, "nested", "deep", "out.txt");
+    expect(existsSync(join(root, "nested"))).toBe(false);
+    const r = await fs.write(p, "data");
+    expect(r.ok).toBe(true);
+    expect(readFileSync(p, "utf8")).toBe("data");
+  });
+
   it("write hard-blocks .env even when allowlisted", async () => {
     const p = join(root, "test.env");
     const r = await fs.write(p, "x");

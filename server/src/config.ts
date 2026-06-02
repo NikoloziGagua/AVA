@@ -15,6 +15,7 @@ export type Config = {
   logsDir: string;
   memoryDir: string;
   fsRoots: string[];
+  repoRoot: string;
   anthropicApiKey: string | null;
   openaiApiKey: string | null;
   llmProvider: "openai" | "anthropic";
@@ -76,6 +77,7 @@ export function loadConfig(): Config {
     logsDir,
     memoryDir,
     fsRoots,
+    repoRoot: resolve(process.env.AVA_REPO_ROOT ?? resolve(process.cwd(), "..")),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? null,
     openaiApiKey: process.env.OPENAI_API_KEY ?? null,
     llmProvider,

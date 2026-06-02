@@ -18,7 +18,9 @@ export function selfRoutes(db: Db, auth: RequestHandler, deps: SelfRouteDeps): R
   });
   r.get("/", auth, (_req, res) => { res.json({ intents: listIntents(db) }); });
   r.post("/:id/revert", auth, (req, res) => {
-    const row = getIntent(db, req.params.id);
+    const id = req.params.id;
+    if (typeof id !== "string") { res.status(400).json({ error: "bad_request" }); return; }
+    const row = getIntent(db, id);
     if (!row?.last_known_good) { res.status(404).json({ error: "no_known_good" }); return; }
     deps.revert(row.id);
     updateIntent(db, row.id, { status: "rolled_back", outcome: "manual revert requested" });

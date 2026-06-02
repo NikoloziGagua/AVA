@@ -25,6 +25,7 @@ import { buildClaudeCode } from "../tools/claude-code.js";
 import { buildClaudeCodeTool } from "../tools/claude-code-mcp.js";
 import { buildChromeTools } from "../tools/chrome-mcp.js";
 import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
+import { buildSelfImproveTool } from "../tools/self-improve-mcp.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
@@ -45,6 +46,7 @@ export type AgentDeps = {
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
   provider: LLMProvider | null;
+  queueSelfImprove?: (goal: string) => string;
   /** Optional override; lets tests substitute a fake agent loop. Defaults to runAgent. */
   runAgentImpl?: typeof runAgent;
 };
@@ -214,6 +216,7 @@ export function chatRoutes(
               getChrome: agentDeps.getChrome,
               emit: noop,
             }) as ToolDef,
+            ...(agentDeps.queueSelfImprove ? [buildSelfImproveTool({ queue: agentDeps.queueSelfImprove })] : []),
             ...memoryTools,
           ];
         } else {

@@ -62,6 +62,21 @@ function toResponsesTools(tools: ToolDefinition[]) {
   }));
 }
 
+// Map our internal effort vocabulary onto the values the OpenAI Responses API
+// actually accepts. gpt-5 supports only minimal | low | medium | high, so our
+// "none" (least reasoning) floors to "minimal" and "xhigh" caps to "high".
+// Passing "none" raw returns a 400 ("Unsupported value: 'none'") — which is
+// silent death for any caller that swallows errors (e.g. playbook capture).
+function toOpenAIEffort(
+  effort: "none" | "low" | "medium" | "high" | "xhigh",
+): "minimal" | "low" | "medium" | "high" {
+  switch (effort) {
+    case "none": return "minimal";
+    case "xhigh": return "high";
+    default: return effort;
+  }
+}
+
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai" as const;
   readonly defaultOrchestratorModel = "gpt-5.5";
@@ -106,7 +121,7 @@ export class OpenAIProvider implements LLMProvider {
       input: toResponsesInput(input.messages),
       ...(input.tools.length ? { tools: toResponsesTools(input.tools) } : {}),
       ...(input.reasoningEffort
-        ? { reasoning: { effort: input.reasoningEffort } }
+        ? { reasoning: { effort: toOpenAIEffort(input.reasoningEffort) } }
         : {}),
     })) as AsyncIterable<ResponsesStreamEvent>;
 

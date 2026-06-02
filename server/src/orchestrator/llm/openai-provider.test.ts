@@ -172,20 +172,31 @@ describe("OpenAIProvider.stream", () => {
     ]);
   });
 
-  it("maps reasoningEffort to reasoning.effort", async () => {
-    const client = fakeOpenAIStream([
-      { type: "response.completed", response: { status: "completed" } },
-    ]);
-    const p = new OpenAIProvider({ client });
-    const ac = new AbortController();
-    for await (const _ of p.stream({
-      model: "gpt-5.5", system: "",
-      messages: [{ role: "user", content: "x" }],
-      tools: [], abort: ac.signal, reasoningEffort: "none",
-    })) { /* drain */ }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const args = ((client as any).responses.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
-    expect(args.reasoning).toEqual({ effort: "none" });
+  it("maps reasoningEffort onto OpenAI's accepted enum (none -> minimal)", async () => {
+    // OpenAI's gpt-5 only accepts minimal|low|medium|high. Passing our internal
+    // "none" raw returns a 400, so the provider must floor it to "minimal".
+    const cases: Array<[("none" | "low" | "medium" | "high" | "xhigh"), string]> = [
+      ["none", "minimal"],
+      ["low", "low"],
+      ["medium", "medium"],
+      ["high", "high"],
+      ["xhigh", "high"],
+    ];
+    for (const [input, expected] of cases) {
+      const client = fakeOpenAIStream([
+        { type: "response.completed", response: { status: "completed" } },
+      ]);
+      const p = new OpenAIProvider({ client });
+      const ac = new AbortController();
+      for await (const _ of p.stream({
+        model: "gpt-5.5", system: "",
+        messages: [{ role: "user", content: "x" }],
+        tools: [], abort: ac.signal, reasoningEffort: input,
+      })) { /* drain */ }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const args = ((client as any).responses.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+      expect(args.reasoning).toEqual({ effort: expected });
+    }
   });
 
   it("forwards reasoning_summary_text.delta as thought events", async () => {

@@ -44,6 +44,11 @@ const Body = z.object({
   text: z.string().min(1).max(10_000),
 });
 
+// Upper bound on how long pre-run playbook recall may block a turn. Recall is a
+// best-effort optimization; past this it is skipped and the agent runs without
+// the playbook hint. Normal side-model matches return in ~1-2s.
+const PLAYBOOK_MATCH_TIMEOUT_MS = 8_000;
+
 export type AgentDeps = {
   pidfiles: PidfileRegistry;
   fsRoots: string[];
@@ -175,21 +180,39 @@ export function chatRoutes(
     // Recall: in action mode with saved playbooks, ask the side model to match
     // this request to a known playbook and inject its steps + a stakes rubric.
     // Chitchat (conversation mode) and a first-ever empty index never pay for it.
+    //
+    // Recall is a best-effort OPTIMIZATION: it must never break or stall a turn.
+    // The match is wrapped in try/catch and bounded by a timeout so a slow or
+    // failing side-model call (e.g. an LLM request timeout) degrades to "no
+    // playbook injected" and the agent still runs.
     let playbookPrefix = "";
     if (mode === "action" && agentDeps.provider) {
-      const index = loadPlaybookIndex(agentDeps.memoryDir);
-      const slug = index.length
-        ? await matchPlaybook({ prompt: parsed.data.text, index, provider: agentDeps.provider })
-        : null;
-      if (slug) {
-        const pb = readPlaybook(agentDeps.memoryDir, slug);
-        if (pb) {
-          bumpUse(agentDeps.memoryDir, slug, new Date().toISOString().slice(0, 10));
-          const rubric = pb.stakes === "consequential"
-            ? "This is a known consequential task — follow these steps efficiently, but verify the result before reporting done."
-            : "This is a known routine task — follow these steps efficiently; no recheck needed.";
-          playbookPrefix = `[PLAYBOOK — ${pb.slug}]\n${rubric}\n${pb.steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n`;
+      try {
+        const index = loadPlaybookIndex(agentDeps.memoryDir);
+        if (index.length) {
+          const matchAbort = new AbortController();
+          const timer = setTimeout(() => matchAbort.abort(), PLAYBOOK_MATCH_TIMEOUT_MS);
+          let slug: string | null;
+          try {
+            slug = await matchPlaybook({
+              prompt: parsed.data.text, index, provider: agentDeps.provider, abort: matchAbort.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
+          if (slug) {
+            const pb = readPlaybook(agentDeps.memoryDir, slug);
+            if (pb) {
+              bumpUse(agentDeps.memoryDir, slug, new Date().toISOString().slice(0, 10));
+              const rubric = pb.stakes === "consequential"
+                ? "This is a known consequential task — follow these steps efficiently, but verify the result before reporting done."
+                : "This is a known routine task — follow these steps efficiently; no recheck needed.";
+              playbookPrefix = `[PLAYBOOK — ${pb.slug}]\n${rubric}\n${pb.steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n`;
+            }
+          }
         }
+      } catch (err) {
+        console.warn("[playbooks] recall match skipped:", err instanceof Error ? err.message : err);
       }
     }
 

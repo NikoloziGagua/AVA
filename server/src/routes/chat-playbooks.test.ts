@@ -8,14 +8,15 @@ import { openDb } from "../state/db.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { chatRoutes } from "./chat.js";
 import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
-import { listPlaybooks } from "../playbooks/store.js";
+import type { LLMProvider } from "../orchestrator/llm/types.js";
+import { listPlaybooks, writePlaybook } from "../playbooks/store.js";
 
-function setup() {
+function setup(over: { provider?: LLMProvider } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ava-pbwire-"));
   const memoryDir = mkdtempSync(join(tmpdir(), "ava-pbwire-mem-"));
   const db = openDb(join(dir, "x.db"));
   db.prepare("INSERT INTO device_tokens (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)").run("d", "h", "t", Date.now());
-  const provider = new MockLLMProvider({
+  const provider = over.provider ?? new MockLLMProvider({
     scripts: [[{ kind: "delta", text: JSON.stringify({ trigger: "do thing", keywords: ["thing"], steps: ["a", "b"] }) }, { kind: "done", stop_reason: "end_turn" }]],
   });
   // Fake agent loop: emit two tool calls + a final so the collector sees a >=2-tool success.
@@ -40,5 +41,18 @@ describe("chat playbook capture", () => {
     await request(app).post("/api/chat").send({ text: "do the thing on my pc" }).expect(200);
     await new Promise((r) => setTimeout(r, 50));
     expect(listPlaybooks(memoryDir).length).toBe(1);
+  });
+
+  it("survives a recall-match failure (best-effort, never breaks the turn)", async () => {
+    // A provider with no scripts throws on stream — simulating the LLM timeout
+    // that previously escaped the route handler and hung the turn.
+    const bad = new MockLLMProvider({ scripts: [] });
+    const { app, memoryDir } = setup({ provider: bad });
+    // Seed a playbook so the recall path actually runs the (failing) matcher.
+    writePlaybook(memoryDir, {
+      slug: "seeded", trigger: "seeded task", keywords: [], created: "2026-06-02",
+      last_used: "2026-06-02", uses: 1, stakes: "routine", steps: ["a", "b"],
+    });
+    await request(app).post("/api/chat").send({ text: "do the seeded task" }).expect(200);
   });
 });

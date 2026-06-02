@@ -123,7 +123,7 @@ export class OpenAIProvider implements LLMProvider {
       ...(input.reasoningEffort
         ? { reasoning: { effort: toOpenAIEffort(input.reasoningEffort) } }
         : {}),
-    })) as AsyncIterable<ResponsesStreamEvent>;
+    }, { signal: input.abort })) as AsyncIterable<ResponsesStreamEvent>;
 
     // Accumulate function_call argument chunks by item id.
     const toolCallById = new Map<string, { name: string; callId: string; argsBuf: string }>();

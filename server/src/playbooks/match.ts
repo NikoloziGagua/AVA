@@ -2,6 +2,8 @@ import type { LLMProvider } from "../orchestrator/llm/types.js";
 
 export async function matchPlaybook(o: {
   prompt: string; index: { slug: string; trigger: string }[]; provider: LLMProvider;
+  /** Optional cancellation — lets the caller bound how long recall may block. */
+  abort?: AbortSignal;
 }): Promise<string | null> {
   if (o.index.length === 0) return null;
   const system =
@@ -12,7 +14,7 @@ export async function matchPlaybook(o: {
   let text = "";
   for await (const ev of o.provider.stream({
     model: o.provider.defaultSideModel, system, messages: [{ role: "user", content: user }],
-    tools: [], abort: new AbortController().signal, reasoningEffort: "none",
+    tools: [], abort: o.abort ?? new AbortController().signal, reasoningEffort: "none",
   })) {
     if (ev.kind === "delta") text += ev.text;
   }

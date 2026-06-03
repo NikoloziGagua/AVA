@@ -130,7 +130,16 @@ function buildImproverDeps(): ImproverDeps {
     headSha: () => headSha(cfg.repoRoot),
     commitWorktree: (cwd, msg) => {
       execFileSync("git", ["add", "-A"], { cwd });
-      execFileSync("git", ["commit", "-m", msg], { cwd });
+      // A no-op implement (the worker reported success but changed nothing) leaves
+      // an empty index — surface that plainly instead of a cryptic git failure.
+      const staged = execFileSync("git", ["status", "--porcelain"], { cwd }).toString().trim();
+      if (!staged) throw new Error("implement produced no changes — the worker reported success but edited nothing");
+      try {
+        execFileSync("git", ["commit", "-m", msg], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+      } catch (e) {
+        const stderr = (e as { stderr?: Buffer }).stderr?.toString().trim();
+        throw new Error(`git commit failed: ${stderr || (e instanceof Error ? e.message : String(e))}`);
+      }
       return execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
     },
     swapTo: (sha) => swapTo(cfg.repoRoot, sha),

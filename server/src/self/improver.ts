@@ -30,6 +30,9 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     updateIntent(db, id, { status: "implementing" }); deps.emit({ intentId: id, step: "implementing" });
     wt = deps.addWorktree(id);
     const impl = await deps.implement(brief, wt.path);
+    // Record what the worker was told and what it produced, so a no-op or a bad
+    // edit is diagnosable from the intent instead of vanishing.
+    updateIntent(db, id, { diff_summary: `BRIEF:\n${brief}\n\nWORKER:\n${impl.output ?? ""}`.slice(0, 4000) });
     if (!impl.ok) throw new Error(`implement failed: ${impl.output.slice(0, 500)}`);
 
     updateIntent(db, id, { status: "verifying" }); deps.emit({ intentId: id, step: "verifying" });

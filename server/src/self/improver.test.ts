@@ -33,4 +33,26 @@ describe("runImprovement", () => {
     expect(getIntent(d, id)!.status).toBe("failed");
     expect(getIntent(d, id)!.error).toContain("tests failed");
   });
+
+  it("records the brief and worker output for diagnosis", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    await runImprovement(d, id, deps({
+      reflect: async () => "CHANGE: add a log line",
+      implement: async () => ({ ok: true, output: "edited index.ts" }),
+    }));
+    const ds = getIntent(d, id)!.diff_summary ?? "";
+    expect(ds).toContain("add a log line");
+    expect(ds).toContain("edited index.ts");
+  });
+
+  it("a no-op commit surfaces as a clear failure", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    await runImprovement(d, id, deps({
+      commitWorktree: () => { throw new Error("implement produced no changes — the worker reported success but edited nothing"); },
+    }));
+    expect(getIntent(d, id)!.status).toBe("failed");
+    expect(getIntent(d, id)!.error).toContain("produced no changes");
+  });
 });

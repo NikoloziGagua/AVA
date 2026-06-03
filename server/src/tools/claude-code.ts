@@ -23,15 +23,22 @@ export type ClaudeCodeConfig = {
 const DANGEROUS_FLAG = /--dangerously-skip-permissions/i;
 const MAX_OUTPUT = 16_384;
 
+/**
+ * Default CLI args for the worker. `-p` is non-interactive print mode, so there
+ * is no human to approve tool use; `--permission-mode acceptEdits` auto-approves
+ * FILE EDITS (Edit/Write) only — without it the worker can't change any code and
+ * silently no-ops. This is NOT the hard-blocked `--dangerously-skip-permissions`:
+ * it doesn't bypass other permissions (bash, etc.).
+ */
+export function defaultClaudeArgs(prompt: string, _cwd: string, model?: string): string[] {
+  const args = ["-p", prompt, "--permission-mode", "acceptEdits"];
+  if (model) args.push("--model", model);
+  return args;
+}
+
 export function buildClaudeCode(cfg: ClaudeCodeConfig): ClaudeCode {
   const claudeBinary = cfg.claudeBinary ?? "claude";
-  const buildArgs =
-    cfg.claudeArgs ??
-    ((prompt: string, _cwd: string, model?: string) => {
-      const args = ["-p", prompt];
-      if (model) args.push("--model", model);
-      return args;
-    });
+  const buildArgs = cfg.claudeArgs ?? defaultClaudeArgs;
 
   return {
     async run({ prompt, cwd, runId, model }) {

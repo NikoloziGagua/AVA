@@ -2,9 +2,21 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildClaudeCode } from "./claude-code.js";
+import { buildClaudeCode, defaultClaudeArgs } from "./claude-code.js";
 import { PidfileRegistry } from "../process/pidfile.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
+
+describe("defaultClaudeArgs", () => {
+  it("runs non-interactively and auto-accepts file edits so the worker can edit code", () => {
+    const args = defaultClaudeArgs("do X", "/cwd");
+    expect(args).toContain("-p");
+    expect(args.join(" ")).toContain("--permission-mode acceptEdits");
+    expect(args.join(" ")).not.toContain("dangerously-skip-permissions");
+  });
+  it("passes the model through when given", () => {
+    expect(defaultClaudeArgs("p", "/c", "sonnet")).toEqual(["-p", "p", "--permission-mode", "acceptEdits", "--model", "sonnet"]);
+  });
+});
 
 describe("claude_code tool", () => {
   let root: string;

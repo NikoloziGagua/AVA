@@ -62,6 +62,18 @@
   50%      { border-radius: 56% 44% 42% 58% / 44% 56% 50% 50%; }
 }
 
+/* Home: drifting nebula glow (pairs above the three.js DottedSurface). */
+@keyframes nebula-drift {
+  0%   { transform: translate(0, 0); }
+  100% { transform: translate(16px, -16px); }
+}
+
+/* Chat: light-rain streaks falling. End values match RainBackground's
+   background-size so each layer loops seamlessly. */
+@keyframes rain-fall {
+  to { background-position-y: 360px, 300px, 420px, 340px, 380px, 320px; }
+}
+
 html, body, #root {
   height: 100%;
   background: var(--ava-bg);

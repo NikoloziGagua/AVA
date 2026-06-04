@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { Pulse } from "../components/ava/Pulse.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { useRealtimeVoice } from "./useRealtimeVoice.js";
 import { useMicAmplitude } from "./useMicAmplitude.js";
 import { Mic, Keyboard, MicOff, Pause, X } from "lucide-react";
+import { gsap, shouldReduceMotion, useGSAP } from "../lib/gsap.js";
 
 export interface VoiceScreenProps {
   initialSessionId: string | null;
@@ -22,6 +23,7 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
   const v = useRealtimeVoice({ initialSessionId });
   const amp = useMicAmplitude(v.state === "listening" && !v.muted);
   const [secs, setSecs] = useState(0);
+  const scope = useRef<HTMLDivElement>(null);
 
   useEffect(() => { v.start(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
@@ -30,55 +32,84 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
     const id = setInterval(() => setSecs((s) => s + 1), 1000);
     return () => clearInterval(id);
   }, [v.state]);
-  useEffect(() => { if (v.state === "idle") setSecs(0); }, [v.state]);
+
+  useEffect(() => {
+    if (v.state === "idle") setSecs(0);
+  }, [v.state]);
+
+  useGSAP(() => {
+    if (!scope.current || shouldReduceMotion()) return;
+    gsap.fromTo(
+      ".voice-reveal",
+      { autoAlpha: 0, y: 16, filter: "blur(12px)" },
+      { autoAlpha: 1, y: 0, filter: "blur(0px)", duration: 0.72, stagger: 0.06, ease: "power3.out" },
+    );
+    gsap.fromTo(
+      ".voice-rule",
+      { scaleX: 0, transformOrigin: "center" },
+      { scaleX: 1, duration: 0.9, ease: "power3.out" },
+    );
+  }, { scope });
 
   const stateLabel =
-    v.state === "connecting" ? "CONNECTING…" :
-    v.state === "listening"  ? `LISTENING · ${formatTime(secs)}` :
-    v.state === "thinking"   ? "THINKING…" :
-    v.state === "responding" ? "AVA · SPEAKING" :
-                                "READY";
+    v.state === "connecting" ? "CONNECTING..." :
+    v.state === "listening" ? `LISTENING / ${formatTime(secs)}` :
+    v.state === "thinking" ? "THINKING..." :
+    v.state === "responding" ? "AVA / SPEAKING" :
+    "READY";
 
   const tintColor =
-    v.state === "responding" ? "#0b1a2e" :
-    v.state === "thinking"   ? "#1a1a1a" :
-    v.state === "listening"  ? "#1a0b2e" :
-                                "#0a0a14";
+    v.state === "responding" ? "rgba(93,124,255,0.16)" :
+    v.state === "thinking" ? "rgba(216,189,131,0.14)" :
+    v.state === "listening" ? "rgba(71,214,167,0.13)" :
+    "rgba(247,239,226,0.06)";
 
   return (
     <div
-      className="relative w-full h-full overflow-hidden bg-black"
+      ref={scope}
+      className="ava-luxe-screen"
       style={{
-        backgroundImage: `radial-gradient(circle at 50% 42%, ${tintColor} 0%, #000 70%)`,
-        transition: "background-image 600ms cubic-bezier(0.22,1,0.36,1)",
+        background:
+          `radial-gradient(circle at 50% 42%, ${tintColor} 0%, rgba(0,0,0,0) 42%), `
+          + "linear-gradient(115deg, rgba(216,189,131,0.10), transparent 36%), "
+          + "linear-gradient(245deg, rgba(71,214,167,0.08), transparent 42%), #040404",
+        transition: "background 600ms cubic-bezier(0.22,1,0.36,1)",
       }}
     >
-      <div className="absolute top-5 left-5 text-[9px] tracking-[0.2em] uppercase text-white/50">{stateLabel}</div>
+      <div className="voice-reveal absolute left-5 top-5 z-20">
+        <div className="ava-kicker mb-2">voice atelier</div>
+        <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--ava-fg-muted)]">{stateLabel}</div>
+      </div>
       <button
         onClick={() => onExit(v.sessionId)}
         aria-label="exit"
-        className="absolute top-5 right-5 w-8 h-8 rounded-full border border-white/15 bg-white/5 text-white/70 flex items-center justify-center"
+        className="ava-icon-button voice-reveal absolute right-5 top-5 z-20"
       >
         <X size={14} />
       </button>
 
+      <div className="voice-reveal pointer-events-none absolute inset-x-8 top-[15%] z-10 text-center">
+        <div className="voice-rule mx-auto mb-5 h-px max-w-[420px] bg-gradient-to-r from-transparent via-[var(--ava-champagne)] to-transparent" />
+        <div className="ava-metal-wordmark text-5xl font-semibold tracking-[0.2em] sm:text-7xl">AVA</div>
+      </div>
+
       <motion.div
-        className="absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2 w-[280px] h-[280px] rounded-full border border-white/10"
+        className="voice-reveal absolute left-1/2 top-[44%] h-[300px] w-[300px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[rgba(216,189,131,0.13)] sm:h-[360px] sm:w-[360px]"
         animate={{ scale: v.state === "listening" ? 1 + amp * 0.15 : 1 }}
         transition={{ duration: 0.15 }}
       />
       <motion.div
-        className="absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2 w-[220px] h-[220px] rounded-full border border-white/15"
+        className="voice-reveal absolute left-1/2 top-[44%] h-[230px] w-[230px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[rgba(247,239,226,0.14)] sm:h-[270px] sm:w-[270px]"
         animate={{ scale: v.state === "listening" ? 1 + amp * 0.25 : 1 }}
         transition={{ duration: 0.12 }}
       />
       <motion.div
-        className="absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2 w-[160px] h-[160px] rounded-full border border-white/25"
+        className="voice-reveal absolute left-1/2 top-[44%] h-[164px] w-[164px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[rgba(71,214,167,0.24)] sm:h-[190px] sm:w-[190px]"
         animate={{ scale: v.state === "listening" ? 1 + amp * 0.4 : 1 }}
         transition={{ duration: 0.1 }}
       />
 
-      <div className="absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2">
+      <div className="voice-reveal absolute left-1/2 top-[44%] -translate-x-1/2 -translate-y-1/2">
         <Pulse
           layoutId="ava-pulse"
           state={
@@ -97,27 +128,27 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
           key={`${v.caption.who}-${v.caption.text}`}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="absolute left-0 right-0 bottom-[170px] px-6 text-center"
+          className="absolute bottom-[170px] left-0 right-0 z-20 px-6 text-center"
         >
-          <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-2">{v.caption.who === "you" ? "you" : "ava"}</div>
-          <div className="text-sm text-white/90 leading-snug max-w-[280px] mx-auto">{v.caption.text}</div>
+          <div className="ava-kicker mb-2">{v.caption.who === "you" ? "you" : "ava"}</div>
+          <div className="mx-auto max-w-[320px] text-sm leading-snug text-[var(--ava-ink)]">{v.caption.text}</div>
         </motion.div>
       )}
 
       {v.pendingApproval && (
-        <div className="absolute left-1/2 -translate-x-1/2 bottom-[230px] w-[300px] rounded-2xl border border-white/15 bg-white/5 backdrop-blur-md p-4 text-center">
-          <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-1">approval needed</div>
-          <div className="text-sm text-white/90 leading-snug mb-3">{v.pendingApproval.summary}</div>
+        <div className="ava-glass-panel absolute bottom-[230px] left-1/2 z-30 w-[300px] -translate-x-1/2 p-4 text-center">
+          <div className="ava-section-label">approval needed</div>
+          <div className="mb-3 text-sm leading-snug text-[var(--ava-ink)]">{v.pendingApproval.summary}</div>
           <div className="flex items-center justify-center gap-3">
             <button
               onClick={v.deny}
-              className="px-4 py-2 rounded-full border border-white/15 bg-white/5 text-white/80 text-xs active:scale-95"
+              className="ava-secondary-button px-4 py-2 text-xs"
             >
               Deny
             </button>
             <button
               onClick={v.approve}
-              className="px-4 py-2 rounded-full bg-white text-black text-xs font-medium active:scale-95"
+              className="ava-primary-button px-4 py-2 text-xs font-medium"
             >
               Approve
             </button>
@@ -126,18 +157,18 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
       )}
 
       {v.errorMsg && (
-        <div className="absolute left-1/2 -translate-x-1/2 top-20 w-72">
+        <div className="absolute left-1/2 top-20 z-40 w-72 -translate-x-1/2">
           <Alert variant="destructive" close onClose={() => onExit(v.sessionId)}>
             <AlertDescription>{v.errorMsg}</AlertDescription>
           </Alert>
         </div>
       )}
 
-      <div className="absolute left-0 right-0 bottom-8 flex items-center justify-center gap-5">
+      <div className="voice-reveal absolute bottom-8 left-0 right-0 z-20 flex items-center justify-center gap-5">
         <button
           aria-label={v.muted ? "unmute" : "mute"}
           onClick={() => v.setMuted(!v.muted)}
-          className="w-12 h-12 rounded-full border border-white/15 bg-white/5 text-white flex items-center justify-center transition-all active:scale-95"
+          className="ava-icon-button h-12 w-12"
         >
           {v.muted ? <MicOff size={18} /> : <Mic size={18} />}
         </button>
@@ -145,34 +176,32 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
           <button
             aria-label="interrupt"
             onClick={v.interrupt}
-            className="w-16 h-16 rounded-full bg-white text-black flex items-center justify-center shadow-[0_0_24px_rgba(255,255,255,0.3)] active:scale-95 transition-transform"
+            className="ava-primary-button flex h-16 w-16 items-center justify-center rounded-full active:scale-95"
           >
             <Pause size={20} />
           </button>
         ) : (
-          // Realtime uses server-VAD — no end-turn button. The big silver
-          // disk just shows the live state (mute/unmute is the only mic gate).
           <div
             aria-hidden="true"
-            className="w-16 h-16 rounded-full flex items-center justify-center"
+            className="flex h-16 w-16 items-center justify-center rounded-full"
             style={{
               background:
-                "linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04))",
-              border: "1px solid rgba(255,255,255,0.18)",
+                "linear-gradient(135deg, rgba(247,239,226,0.18), rgba(216,189,131,0.06))",
+              border: "1px solid rgba(216,189,131,0.22)",
               backdropFilter: "blur(14px)",
               WebkitBackdropFilter: "blur(14px)",
               boxShadow: v.state === "listening"
-                ? "0 0 24px rgba(255,255,255,0.25)"
+                ? "0 0 24px rgba(71,214,167,0.25)"
                 : undefined,
             }}
           >
-            <Mic size={20} className="text-white/85" />
+            <Mic size={20} className="text-[var(--ava-ink)] opacity-85" />
           </div>
         )}
         <button
           aria-label="keyboard"
           onClick={() => onSwitchToKeyboard(v.sessionId)}
-          className="w-12 h-12 rounded-full border border-white/15 bg-white/5 text-white flex items-center justify-center transition-all active:scale-95"
+          className="ava-icon-button h-12 w-12"
         >
           <Keyboard size={18} />
         </button>

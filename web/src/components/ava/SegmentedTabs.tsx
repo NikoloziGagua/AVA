@@ -38,14 +38,14 @@ export function SegmentedTabs<T extends string>({
     <div
       ref={containerRef}
       className={
-        "relative inline-flex rounded-full border border-white/10 bg-white/5 p-1 " +
+        "relative inline-flex rounded-[8px] border border-[var(--ava-border)] bg-[rgba(247,239,226,0.055)] p-1 " +
         (layout === "full" ? "w-full" : "w-fit") + " " +
         (className ?? "")
       }
     >
       {cursor && (
         <motion.div
-          className="absolute top-1 bottom-1 rounded-full bg-white/12 border border-white/20"
+          className="absolute top-1 bottom-1 rounded-[6px] border border-[rgba(216,189,131,0.26)] bg-[rgba(216,189,131,0.14)]"
           animate={{ left: cursor.left, width: cursor.width }}
           transition={{ type: "spring", stiffness: 400, damping: 32 }}
         />
@@ -60,12 +60,12 @@ export function SegmentedTabs<T extends string>({
             className={
               "relative z-10 px-3 py-1.5 text-xs uppercase tracking-wider transition-colors " +
               (layout === "full" ? "flex-1" : "") + " " +
-              (active ? "text-white" : "text-white/55 hover:text-white/80")
+              (active ? "text-[var(--ava-ink)]" : "text-[var(--ava-fg-muted)] hover:text-[var(--ava-ink)]")
             }
           >
             <span className="block">{opt.label}</span>
             {opt.hint && (
-              <span className="block text-[9px] normal-case tracking-normal mt-0.5 text-white/45">
+              <span className="mt-0.5 block text-[9px] normal-case tracking-normal text-[var(--ava-fg-faint)]">
                 {opt.hint}
               </span>
             )}

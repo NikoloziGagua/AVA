@@ -6,6 +6,7 @@ import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
 import { Pulse } from "../components/ava/Pulse.js";
 import { ChevronLeft, List, Brain, Settings2 } from "lucide-react";
+import { useGsapReveal } from "../lib/useGsapReveal.js";
 
 export interface ChatScreenProps {
   sessionId: string | null;
@@ -24,6 +25,7 @@ export function ChatScreen({
   onOpenList,
   onEnterVoice,
 }: ChatScreenProps) {
+  const shellRef = useGsapReveal([requestedSessionId ?? "new"]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [runEpoch, setRunEpoch] = useState(0);
@@ -120,26 +122,17 @@ export function ChatScreen({
 
   return (
     <div
-      className="relative flex flex-col h-full text-white"
-      style={{
-        background:
-          "radial-gradient(ellipse 90% 60% at 50% -5%, rgba(168,85,247,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px) 0 0 / 28px 28px, #000",
-      }}
+      ref={shellRef}
+      className="ava-luxe-screen relative flex flex-col text-white"
     >
-      {/* Bigger glass navbar */}
       <header
-        className="relative z-10 flex items-center gap-2 px-3 h-[72px]"
-        style={{
-          background: "rgba(0,0,0,0.55)",
-          backdropFilter: "blur(24px) saturate(160%)",
-          WebkitBackdropFilter: "blur(24px) saturate(160%)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-        }}
+        data-gsap-reveal
+        className="ava-luxe-header relative"
       >
         <button
           onClick={onOpenSessions}
           aria-label="back to orbit"
-          className="w-10 h-10 rounded-full text-white/70 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
+          className="ava-icon-button shrink-0"
         >
           <ChevronLeft size={20} />
         </button>
@@ -151,7 +144,7 @@ export function ChatScreen({
               <motion.div
                 key="navbar-ava"
                 layoutId="chat-ava-wordmark"
-                className="font-bold tracking-[0.22em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/90 to-white/55"
+                className="ava-metal-wordmark font-semibold tracking-[0.22em]"
                 style={{ fontSize: 18 }}
                 transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
               >
@@ -163,29 +156,21 @@ export function ChatScreen({
             <div className="flex flex-col min-w-0">
               <div className="flex items-center gap-1.5">
                 <Pulse state={headerState} size={9} />
-                <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">
+                <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--ava-fg-faint)]">
                   {headerState === "thinking" ? "thinking" : headerState === "responding" ? "responding" : "ready"}
                 </div>
               </div>
-              <div className="text-[12px] truncate text-white/70">{title}</div>
+              <div className="text-[12px] truncate text-[var(--ava-fg-muted)]">{title}</div>
             </div>
           )}
         </div>
 
-        <nav
-          className="flex items-center gap-1 rounded-full p-1"
-          style={{
-            background: "rgba(255,255,255,0.04)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            backdropFilter: "blur(14px)",
-            WebkitBackdropFilter: "blur(14px)",
-          }}
-        >
+        <nav className="ava-mini-nav">
           {onOpenList && (
             <button
               onClick={onOpenList}
               aria-label="all chats"
-              className="w-9 h-9 rounded-full text-white/60 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
+              className="ava-icon-button"
             >
               <List size={16} />
             </button>
@@ -193,14 +178,14 @@ export function ChatScreen({
           <button
             onClick={onOpenMemory}
             aria-label="memory"
-            className="w-9 h-9 rounded-full text-white/60 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
+            className="ava-icon-button"
           >
             <Brain size={16} />
           </button>
           <button
             onClick={onOpenRules}
             aria-label="rules"
-            className="w-9 h-9 rounded-full text-white/60 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
+            className="ava-icon-button"
           >
             <Settings2 size={16} />
           </button>
@@ -212,7 +197,8 @@ export function ChatScreen({
           {isEmpty && (
             <motion.div
               key="empty-ava"
-              className="absolute inset-x-0 top-[14%] flex flex-col items-center pointer-events-none z-10"
+              data-gsap-reveal
+              className="absolute inset-x-0 top-[14%] flex flex-col items-center pointer-events-none z-10 px-6"
               exit={{ opacity: 0 }}
               transition={{ duration: 0.4 }}
             >
@@ -220,13 +206,13 @@ export function ChatScreen({
                 initial={{ opacity: 0, filter: "blur(20px)", y: 8 }}
                 animate={{ opacity: 1, filter: "blur(0px)", y: 0 }}
                 transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
-                className="text-[10px] tracking-[0.45em] uppercase text-white/40 mb-3"
+                className="ava-kicker mb-3"
               >
-                I AM
+                private line
               </motion.div>
               <motion.div
                 layoutId="chat-ava-wordmark"
-                className="font-bold tracking-[0.20em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/85 to-white/40"
+                className="ava-metal-wordmark font-semibold tracking-[0.20em]"
                 style={{ fontSize: 96 }}
                 transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
               >
@@ -236,9 +222,9 @@ export function ChatScreen({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.6, delay: 0.6 }}
-                className="mt-6 text-sm text-white/45 max-w-xs text-center px-6"
+                className="mt-6 max-w-xs text-center text-sm leading-6 text-[var(--ava-fg-muted)]"
               >
-                How can I help today? Type a message, tap a chip, or hold the orb to speak.
+                Ready for signal, context, and decisions.
               </motion.p>
             </motion.div>
           )}

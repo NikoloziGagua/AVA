@@ -4,6 +4,7 @@ import { ShiningText } from "../components/ava/ShiningText.js";
 import { ToolCallChip } from "./ToolCallChip.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { StreamEvent } from "./useChatStream.js";
+import { gsap, shouldReduceMotion, useGSAP } from "../lib/gsap.js";
 
 export type ChatMessage =
   | { role: "user"; text: string; id: string }
@@ -15,10 +16,24 @@ export interface MessageListProps {
 }
 
 export function MessageList({ history, liveEvents }: MessageListProps) {
+  const listRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [history.length, liveEvents.length]);
+
+  useGSAP(() => {
+    if (!listRef.current || shouldReduceMotion()) return;
+    const rows = listRef.current.querySelectorAll<HTMLElement>("[data-message-row]");
+    const last = rows[rows.length - 1];
+    if (!last) return;
+    gsap.fromTo(
+      last,
+      { autoAlpha: 0, y: 12, filter: "blur(8px)" },
+      { autoAlpha: 1, y: 0, filter: "blur(0px)", duration: 0.38, ease: "power2.out" },
+    );
+  }, { scope: listRef, dependencies: [history.length, liveEvents.length] });
 
   const resolved = new Map<string, "approved" | "denied" | "expired">();
   for (const e of liveEvents) {
@@ -31,47 +46,27 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
   const lastFinal = [...liveEvents].reverse().find((e) => e.kind === "final");
   const isThinking = liveEvents.length > 0 && !lastFinal && !hasTerminal;
 
-  let thinkingCaption = "thinking…";
+  let thinkingCaption = "thinking...";
   for (let i = liveEvents.length - 1; i >= 0; i--) {
     const e = liveEvents[i];
-    if (e?.kind === "tool_call") { thinkingCaption = `running ${e.payload.tool}…`; break; }
+    if (e?.kind === "tool_call") { thinkingCaption = `running ${e.payload.tool}...`; break; }
     if (e?.kind === "thought") { thinkingCaption = e.payload.text.slice(0, 80); break; }
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-5">
+    <div ref={listRef} className="ava-luxe-scroll flex-1 space-y-5 px-4 py-6">
       {history.map((m) => (
-        <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+        <div
+          key={m.id}
+          data-message-row
+          className={m.role === "user" ? "flex justify-end" : "flex justify-start"}
+        >
           {m.role === "user" ? (
-            <div
-              className="group relative max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14.5px] text-white/95 overflow-hidden"
-              style={{
-                background:
-                  "linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04))",
-                border: "1px solid rgba(255,255,255,0.16)",
-                backdropFilter: "blur(18px) saturate(160%)",
-                WebkitBackdropFilter: "blur(18px) saturate(160%)",
-                boxShadow:
-                  "inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.2), 0 10px 32px -12px rgba(0,0,0,0.6)",
-              }}
-            >
+            <div className="ava-user-bubble group relative max-w-[78%] overflow-hidden px-4 py-2.5 text-[14.5px] text-[var(--ava-ink)]">
               <span className="relative">{m.text}</span>
             </div>
           ) : (
-            <div className="flex items-start gap-3 max-w-[88%]">
-              <div className="shrink-0 mt-1.5">
-                <Pulse state="idle" size={10} />
-              </div>
-              <div
-                className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
-                }}
-              >
-                {m.text}
-              </div>
-            </div>
+            <AssistantMessage text={m.text} state="idle" />
           )}
         </div>
       ))}
@@ -80,14 +75,15 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
         const key = `${e.runEpoch}-${e.id}`;
         if (e.kind === "approval_required") {
           return (
-            <ApprovalCard
-              key={key}
-              id={e.payload.id}
-              tool={e.payload.tool}
-              args={e.payload.args}
-              summary={e.payload.summary}
-              resolvedStatus={resolved.get(e.payload.id) ?? null}
-            />
+            <div key={key} data-message-row>
+              <ApprovalCard
+                id={e.payload.id}
+                tool={e.payload.tool}
+                args={e.payload.args}
+                summary={e.payload.summary}
+                resolvedStatus={resolved.get(e.payload.id) ?? null}
+              />
+            </div>
           );
         }
         if (e.kind === "tool_call") {
@@ -100,18 +96,18 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
           return <ToolCallChip key={key} tool={e.payload.tool} ok={e.payload.ok} result={e.payload.result} />;
         }
         if (e.kind === "thought") {
-          return null; // thoughts surface via thinkingCaption, not rendered as message
+          return null;
         }
         if (e.kind === "error") {
-          return <div key={key} className="text-sm text-red-400">error: {e.payload.message}</div>;
+          return <div key={key} data-message-row className="text-sm text-red-400">error: {e.payload.message}</div>;
         }
         if (e.kind === "killed") {
-          return <div key={key} className="text-sm text-amber-400">stopped.</div>;
+          return <div key={key} data-message-row className="text-sm text-[var(--ava-gold)]">stopped.</div>;
         }
         if (e.kind === "gap") {
           return (
-            <div key={key} className="text-xs text-amber-500">
-              ⚠ missed {e.payload.to - e.payload.from + 1} events — see Sessions for the full trace.
+            <div key={key} data-message-row className="text-xs text-[var(--ava-gold)]">
+              warning: missed {e.payload.to - e.payload.from + 1} events. See Sessions for the full trace.
             </div>
           );
         }
@@ -119,32 +115,32 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
       })}
 
       {lastFinal && (
-        <div className="flex justify-start" data-testid="final-message">
-          <div className="flex items-start gap-3 max-w-[88%]">
-            <div className="shrink-0 mt-1.5">
-              <Pulse state="responding" size={10} />
-            </div>
-            <div
-              className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
-              style={{
-                backgroundImage:
-                  "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
-              }}
-            >
-              {lastFinal.payload.text}
-            </div>
-          </div>
+        <div className="flex justify-start" data-message-row data-testid="final-message">
+          <AssistantMessage text={lastFinal.payload.text} state="responding" />
         </div>
       )}
 
       {isThinking && (
-        <div className="flex items-center gap-2 text-white/60">
+        <div className="flex items-center gap-2 text-[var(--ava-fg-muted)]" data-message-row>
           <Pulse state="thinking" size={14} />
           <ShiningText text={thinkingCaption} className="text-xs" />
         </div>
       )}
 
       <div ref={endRef} />
+    </div>
+  );
+}
+
+function AssistantMessage({ text, state }: { text: string; state: "idle" | "responding" }) {
+  return (
+    <div className="flex max-w-[88%] items-start gap-3">
+      <div className="mt-1.5 shrink-0">
+        <Pulse state={state} size={10} />
+      </div>
+      <div className="ava-assistant-copy whitespace-pre-wrap text-[15px] leading-[1.65]">
+        {text}
+      </div>
     </div>
   );
 }

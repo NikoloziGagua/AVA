@@ -3,6 +3,7 @@ import { fetchSuggestedChips, type SuggestedChip } from "../api.js";
 import { Textarea } from "../components/ui/textarea.js";
 import { Pulse } from "../components/ava/Pulse.js";
 import { ArrowUp, Square } from "lucide-react";
+import { gsap, shouldReduceMotion, useGSAP } from "../lib/gsap.js";
 
 export interface ComposerProps {
   onSend: (text: string) => void;
@@ -16,6 +17,7 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
   const [text, setText] = useState("");
   const [chips, setChips] = useState<SuggestedChip[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const scope = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchSuggestedChips().then(setChips).catch(() => {});
@@ -36,6 +38,15 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
     ta.style.height = `${next}px`;
   }, [text]);
 
+  useGSAP(() => {
+    if (!scope.current || shouldReduceMotion()) return;
+    gsap.fromTo(
+      ".composer-reveal",
+      { autoAlpha: 0, y: 10, filter: "blur(8px)" },
+      { autoAlpha: 1, y: 0, filter: "blur(0px)", duration: 0.46, stagger: 0.035, ease: "power2.out" },
+    );
+  }, { scope, dependencies: [chips.length] });
+
   function submit() {
     const t = text.trim();
     if (!t || busy) return;
@@ -45,57 +56,38 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
   }
 
   return (
-    <div className="sticky bottom-0 px-3 pb-3 pt-2 bg-gradient-to-t from-black via-black/85 to-transparent">
+    <div ref={scope} className="sticky bottom-0 z-20 px-3 pb-3 pt-2 bg-gradient-to-t from-black via-black/90 to-transparent">
       {chips.length > 0 && (
-        <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 mb-1">
+        <div className="-mx-1 mb-1 flex gap-2 overflow-x-auto px-1 pb-2">
           {chips.map((c) => (
             <button
               key={c.id}
               onClick={() => setText(c.prompt)}
               title={c.prompt}
-              className="group relative shrink-0 px-3.5 py-2 rounded-full text-xs text-white/70 hover:text-white transition-colors overflow-hidden"
-              style={{
-                background: "linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.015))",
-                border: "1px solid rgba(255,255,255,0.10)",
-                backdropFilter: "blur(14px) saturate(140%)",
-                WebkitBackdropFilter: "blur(14px) saturate(140%)",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10)",
-              }}
+              className="composer-reveal ava-chip group relative shrink-0 overflow-hidden px-3.5 py-2 text-xs"
             >
               <span className="relative z-10">{c.label}</span>
-              {/* Hover gradient sheen */}
               <span
                 aria-hidden="true"
-                className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                className="absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
                 style={{
                   background:
-                    "linear-gradient(135deg, rgba(168,85,247,0.18), rgba(59,130,246,0.18))",
+                    "linear-gradient(135deg, rgba(216,189,131,0.16), rgba(93,124,255,0.12))",
                 }}
               />
-              {/* Hover bottom underline */}
               <span
                 aria-hidden="true"
-                className="absolute left-3 right-3 bottom-0 h-px scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-300"
+                className="absolute bottom-0 left-3 right-3 h-px origin-left scale-x-0 transition-transform duration-300 group-hover:scale-x-100"
                 style={{
                   background:
-                    "linear-gradient(90deg, transparent, rgba(248,250,252,0.7), transparent)",
+                    "linear-gradient(90deg, transparent, rgba(216,189,131,0.78), transparent)",
                 }}
               />
             </button>
           ))}
         </div>
       )}
-      <div
-        className="relative rounded-2xl flex items-end gap-2 p-2 overflow-hidden"
-        style={{
-          background: "linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01))",
-          border: "1px solid rgba(255,255,255,0.08)",
-          backdropFilter: "blur(20px) saturate(160%)",
-          WebkitBackdropFilter: "blur(20px) saturate(160%)",
-          boxShadow:
-            "inset 0 1px 0 rgba(255,255,255,0.10), 0 12px 40px -12px rgba(0,0,0,0.7)",
-        }}
-      >
+      <div className="composer-reveal ava-composer-shell relative flex items-end gap-2 overflow-hidden rounded-[8px] p-2">
         <Textarea
           ref={taRef}
           value={text}
@@ -107,13 +99,13 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
               submit();
             }
           }}
-          placeholder="Message Ava…"
-          className="resize-none min-h-[48px] max-h-[150px] border-none bg-transparent focus-visible:ring-0 text-white/90 placeholder:text-white/30"
+          placeholder="Message Ava..."
+          className="min-h-[48px] max-h-[150px] resize-none border-none bg-transparent text-[var(--ava-ink)] placeholder:text-[var(--ava-fg-faint)] focus-visible:ring-0"
         />
         <button
           aria-label="voice"
           onClick={onMicTap}
-          className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-transform active:scale-90"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-transform active:scale-90"
         >
           <Pulse state="idle" size={28} />
         </button>
@@ -121,7 +113,7 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
           <button
             aria-label="stop"
             onClick={onKill}
-            className="shrink-0 w-10 h-10 rounded-xl bg-red-500/90 hover:bg-red-500 text-white flex items-center justify-center transition-all active:scale-95 shadow-[0_0_18px_rgba(239,68,68,0.5)]"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-red-500/90 text-white shadow-[0_0_18px_rgba(239,68,68,0.5)] transition-all hover:bg-red-500 active:scale-95"
           >
             <Square size={14} />
           </button>
@@ -130,14 +122,14 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
             aria-label="send"
             onClick={submit}
             disabled={!text.trim()}
-            className="shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
             style={{
               background: text.trim()
-                ? "linear-gradient(135deg, #ffffff, #e2e8f0)"
-                : "rgba(255,255,255,0.06)",
-              color: text.trim() ? "#0a0a0b" : "rgba(255,255,255,0.4)",
+                ? "linear-gradient(135deg, #fffaf0, #d8bd83)"
+                : "rgba(247,239,226,0.06)",
+              color: text.trim() ? "#0a0a0b" : "rgba(247,239,226,0.42)",
               boxShadow: text.trim()
-                ? "0 0 20px rgba(255,255,255,0.25), inset 0 1px 0 rgba(255,255,255,0.5)"
+                ? "0 0 20px rgba(216,189,131,0.26), inset 0 1px 0 rgba(255,255,255,0.5)"
                 : undefined,
             }}
           >

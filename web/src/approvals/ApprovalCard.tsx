@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ShieldAlert } from "lucide-react";
 import { approveApproval, denyApproval } from "../api.js";
 
 export function ApprovalCard({
@@ -22,11 +23,11 @@ export function ApprovalCard({
       resolvedStatus === "approved" ? "Approved" :
       resolvedStatus === "denied" ? "Denied" : "Expired";
     const cls =
-      resolvedStatus === "approved" ? "text-emerald-400" :
-      resolvedStatus === "denied" ? "text-red-400" : "text-neutral-500";
+      resolvedStatus === "approved" ? "text-[var(--ava-jade)]" :
+      resolvedStatus === "denied" ? "text-red-400" : "text-[var(--ava-fg-faint)]";
     return (
-      <div data-testid="approval-card-resolved" data-status={resolvedStatus} className={`text-xs ${cls} font-mono`}>
-        {label} · {tool} · {new Date().toLocaleTimeString()}
+      <div data-testid="approval-card-resolved" data-status={resolvedStatus} className={`font-mono text-xs ${cls}`}>
+        {label} / {tool} / {new Date().toLocaleTimeString()}
       </div>
     );
   }
@@ -41,29 +42,27 @@ export function ApprovalCard({
       setErr(String(e));
       setBusy(false);
     }
-    // Don't clear busy on success — the card will be replaced by the resolved-state version once
-    // the SSE approval_resolved event arrives.
   }
 
   return (
-    <div data-testid="approval-card" className="border border-amber-500 rounded-lg bg-amber-900/30 p-3 my-2 max-w-[90%]">
-      <div className="flex items-center gap-2 text-sm font-semibold text-amber-200">
-        <span>⚠</span>
+    <div data-testid="approval-card" className="ava-glass-panel my-2 max-w-[90%] p-3">
+      <div className="flex items-center gap-2 text-sm font-semibold text-[var(--ava-gold)]">
+        <ShieldAlert size={16} />
         <span>Ava wants to: {summary}</span>
       </div>
-      <div className="text-xs text-amber-100/70 font-mono mt-2">
+      <div className="mt-2 font-mono text-xs text-[var(--ava-fg-muted)]">
         Tool: {tool}
       </div>
-      <pre className="text-xs text-amber-100/70 font-mono mt-1 whitespace-pre-wrap break-words bg-black/30 p-2 rounded">
+      <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-[var(--ava-border)] bg-black/35 p-2 font-mono text-xs text-[var(--ava-fg-muted)]">
         {JSON.stringify(args, null, 2)}
       </pre>
-      {err && <div className="text-xs text-red-400 mt-2">{err}</div>}
-      <div className="flex gap-2 mt-3">
+      {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
+      <div className="mt-3 flex gap-2">
         <button
           data-testid="approval-deny"
           onClick={() => act("deny")}
           disabled={busy}
-          className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-sm px-3 py-1.5 rounded text-white"
+          className="ava-secondary-button px-3 py-1.5 text-sm disabled:opacity-50"
         >
           Deny
         </button>
@@ -71,7 +70,7 @@ export function ApprovalCard({
           data-testid="approval-approve"
           onClick={() => act("approve")}
           disabled={busy}
-          className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm px-3 py-1.5 rounded text-white"
+          className="ava-primary-button px-3 py-1.5 text-sm disabled:opacity-50"
         >
           Approve
         </button>

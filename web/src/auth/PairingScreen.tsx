@@ -4,6 +4,7 @@ import { api } from "../api.js";
 import { setToken } from "./tokens.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { PathsBackground } from "../components/ava/PathsBackground.js";
+import { useGsapReveal } from "../lib/useGsapReveal.js";
 
 const LEN = 6;
 
@@ -13,6 +14,7 @@ export function PairingScreen({ onPaired }: { onPaired: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [shakeKey, setShakeKey] = useState(0);
+  const shellRef = useGsapReveal([error, busy]);
 
   function setChar(i: number, ch: string) {
     const filtered = ch.replace(/[^A-Za-z0-9]/g, "").slice(-1).toUpperCase();
@@ -46,20 +48,24 @@ export function PairingScreen({ onPaired }: { onPaired: () => void }) {
   }
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-black">
-      <PathsBackground opacity={1} />
-      <div className="relative z-10 flex flex-col items-center justify-center h-full p-6 text-white">
-        <h1 className="text-5xl font-bold tracking-tighter mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
-          Ava
-        </h1>
-        <p className="text-white/55 text-xs mb-8 text-center max-w-[260px]">
-          Pair this device. Get the code from the Ava systray icon on your PC.
-        </p>
+    <div ref={shellRef} className="ava-luxe-screen">
+      <div className="absolute inset-0 opacity-35">
+        <PathsBackground opacity={1} />
+      </div>
+      <div className="relative z-10 flex h-full flex-col items-center justify-center p-6 text-white">
+        <div data-gsap-reveal className="mb-8 text-center">
+          <div className="ava-kicker mb-3">secure pairing</div>
+          <h1 className="ava-metal-wordmark text-6xl font-semibold tracking-[0.16em]">AVA</h1>
+          <p className="mx-auto mt-5 max-w-[280px] text-xs leading-6 text-[var(--ava-fg-muted)]">
+            Pair this device with the code from Ava on your PC.
+          </p>
+        </div>
         <motion.div
           key={shakeKey}
           animate={shakeKey > 0 ? { x: [0, -10, 10, -8, 0] } : { x: 0 }}
           transition={{ duration: 0.25 }}
-          className="flex gap-2 mb-4"
+          className="mb-4 flex gap-2"
+          data-gsap-reveal
         >
           {chars.map((c, i) => (
             <input
@@ -88,31 +94,33 @@ export function PairingScreen({ onPaired }: { onPaired: () => void }) {
               inputMode="text"
               autoCapitalize="characters"
               className={
-                "w-10 h-12 text-center text-lg font-mono bg-black/60 backdrop-blur-md rounded-md outline-none focus:border-white/50 transition-colors " +
-                (error ? "border border-red-500" : "border border-white/15")
+                "ava-luxe-field h-12 w-10 text-center font-mono text-lg " +
+                (error ? "border-red-500" : "")
               }
             />
           ))}
         </motion.div>
         {error && (
-          <div className="w-72 mb-3">
+          <div className="mb-3 w-72">
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           </div>
         )}
         <input
+          data-gsap-reveal
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Device label"
-          className="w-72 bg-black/60 backdrop-blur-md border border-white/12 rounded-md px-3 py-2 text-sm mb-3 placeholder:text-white/35"
+          className="ava-luxe-field mb-3 w-72 px-3 py-2 text-sm"
         />
         <button
+          data-gsap-reveal
           onClick={submit}
           disabled={busy}
-          className="w-72 bg-white text-black rounded-md py-2.5 text-sm font-medium disabled:opacity-50"
+          className="ava-primary-button w-72 py-2.5 text-sm font-medium disabled:opacity-50"
         >
-          {busy ? "Pairing…" : "Submit"}
+          {busy ? "Pairing..." : "Submit"}
         </button>
       </div>
     </div>

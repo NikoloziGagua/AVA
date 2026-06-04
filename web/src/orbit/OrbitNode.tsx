@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
 import { useState } from "react";
+import { X } from "lucide-react";
 import { useLongPress } from "./useLongPress.js";
 import { HoverHalo } from "../components/ava/HoverHalo.js";
 
@@ -27,13 +28,12 @@ export function OrbitNode({
     onTrigger: () => { if (deletable) setArmed(true); },
   });
 
-  // Long-press fills the rim red over 500ms
   const armedRed = armed || progress > 0.05;
   const rimAlpha = 0.18 + progress * 0.6;
 
   return (
     <motion.div
-      className="absolute left-1/2 top-1/2"
+      className="orbit-node absolute left-1/2 top-1/2"
       style={{
         transform: `translate(${x}px, ${y}px) translate(-50%, -50%)`,
         zIndex,
@@ -48,44 +48,42 @@ export function OrbitNode({
       onPointerUp={handlers.onPointerUp}
       onPointerCancel={handlers.onPointerCancel}
     >
-      {/* Glass dot */}
       <div
-        className="relative rounded-full flex items-center justify-center cursor-pointer"
+        className="relative flex cursor-pointer items-center justify-center rounded-full"
         style={{
           width: size,
           height: size,
           background: armedRed
             ? `rgba(239, 68, 68, ${rimAlpha})`
-            : "linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04))",
+            : "linear-gradient(135deg, rgba(247,239,226,0.18), rgba(216,189,131,0.05))",
           border: armedRed
             ? `1px solid rgba(239,68,68,${0.3 + progress * 0.7})`
-            : "1px solid rgba(255,255,255,0.18)",
+            : "1px solid rgba(216,189,131,0.24)",
           backdropFilter: "blur(12px) saturate(140%)",
           WebkitBackdropFilter: "blur(12px) saturate(140%)",
           boxShadow: armed
             ? "0 0 22px rgba(239,68,68,0.6)"
             : hovered
-            ? "0 0 18px rgba(255,255,255,0.35), inset 0 1px 0 rgba(255,255,255,0.3)"
+            ? "0 0 18px rgba(216,189,131,0.38), inset 0 1px 0 rgba(255,255,255,0.26)"
             : "inset 0 1px 0 rgba(255,255,255,0.15), 0 4px 14px -4px rgba(0,0,0,0.5)",
           transition: "box-shadow 200ms, background 120ms",
         }}
       >
-        {!armedRed && <HoverHalo hovered={hovered} accent="248,250,252" idleDurationS={8} hoverDurationS={2} />}
+        {!armedRed && <HoverHalo hovered={hovered} accent="216,189,131" idleDurationS={8} hoverDurationS={2} />}
         <span
-          className="block w-1.5 h-1.5 rounded-full"
+          className="block h-1.5 w-1.5 rounded-full"
           style={{
-            background: armedRed ? "#fff" : "linear-gradient(135deg, #f8fafc, #cbd5e1)",
-            boxShadow: armedRed ? undefined : "0 0 8px rgba(255,255,255,0.6)",
+            background: armedRed ? "#fff" : "linear-gradient(135deg, #fffaf0, #d8bd83)",
+            boxShadow: armedRed ? undefined : "0 0 8px rgba(216,189,131,0.65)",
           }}
         />
       </div>
 
-      {/* Always-visible quiet label */}
       <div
-        className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none text-[10px] tracking-[0.05em] transition-opacity duration-200"
+        className="pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] tracking-[0.05em] transition-opacity duration-200"
         style={{
           top: size + 6,
-          color: "rgba(255,255,255,0.55)",
+          color: "rgba(247,239,226,0.55)",
           textShadow: "0 1px 6px rgba(0,0,0,0.85)",
           maxWidth: 110,
           overflow: "hidden",
@@ -95,15 +93,14 @@ export function OrbitNode({
       >
         {label}
       </div>
-      {/* Hover/armed glass tooltip — brighter, plated, full label */}
       <motion.div
-        className="absolute left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-md whitespace-nowrap pointer-events-none text-[10px] text-white tracking-wider"
+        className="pointer-events-none absolute left-1/2 -translate-x-1/2 whitespace-nowrap rounded-[8px] px-2.5 py-1 text-[10px] tracking-wider text-[var(--ava-ink)]"
         style={{
           top: size + 6,
-          background: "rgba(15, 15, 20, 0.65)",
+          background: "rgba(15, 14, 11, 0.72)",
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
-          border: "1px solid rgba(255,255,255,0.10)",
+          border: "1px solid rgba(216,189,131,0.18)",
           maxWidth: 180,
           overflow: "hidden",
           textOverflow: "ellipsis",
@@ -119,9 +116,9 @@ export function OrbitNode({
         <button
           aria-label="confirm delete"
           onClick={(e) => { e.stopPropagation(); setArmed(false); onDelete?.(); }}
-          className="absolute -right-3 -top-3 w-6 h-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center shadow-[0_0_14px_rgba(239,68,68,0.7)]"
+          className="absolute -right-3 -top-3 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-white shadow-[0_0_14px_rgba(239,68,68,0.7)]"
         >
-          ✕
+          <X size={12} />
         </button>
       )}
     </motion.div>

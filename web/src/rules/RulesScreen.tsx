@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft } from "lucide-react";
+import { Bell, ChevronLeft, Smartphone, Trash2 } from "lucide-react";
 import {
   fetchRules, createRule, patchRule, deleteRuleApi, type RuleRow,
   fetchReasoning, putReasoning, type ReasoningPref,
@@ -8,6 +8,7 @@ import {
 import { getToken } from "../auth/tokens.js";
 import { enablePush } from "../push/register.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
+import { useGsapReveal } from "../lib/useGsapReveal.js";
 
 interface Device { id: string; label: string; created_at: number; revoked_at: number | null; }
 
@@ -26,6 +27,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
   const [pushStatus, setPushStatus] = useState<PushStatus>("unknown");
   const [pushError, setPushError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  const shellRef = useGsapReveal([rows?.length ?? 0, chips.length, devices.length, pushStatus]);
 
   async function refreshRules() {
     try {
@@ -134,175 +136,170 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div
-      className="relative h-full overflow-y-auto text-white"
-      style={{
-        background:
-          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(59,130,246,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
-      }}
-    >
-      <header
-        className="sticky top-0 z-10 flex items-center gap-2 px-4 py-4 h-16"
-        style={{
-          background: "rgba(0,0,0,0.55)",
-          backdropFilter: "blur(20px) saturate(140%)",
-          WebkitBackdropFilter: "blur(20px) saturate(140%)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-        }}
-      >
+    <div ref={shellRef} className="ava-luxe-screen ava-luxe-scroll text-white">
+      <header data-gsap-reveal className="ava-luxe-header">
         <button
           onClick={onClose}
           aria-label="back"
-          className="w-9 h-9 rounded-full text-white/65 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
+          className="ava-icon-button shrink-0"
         >
           <ChevronLeft size={20} />
         </button>
-        <div className="text-base font-semibold tracking-wide text-white/95">Rules</div>
+        <div>
+          <div className="ava-kicker mb-1">governance</div>
+          <div className="ava-luxe-title text-sm">Rules</div>
+        </div>
       </header>
 
-      <Section title="Reasoning">
-        {reason ? (
-          <>
-            <SegmentedTabs<"fast" | "thorough">
-              options={[
-                { value: "fast", label: "Fast", hint: "instant · light" },
-                { value: "thorough", label: "Thorough", hint: "slower · deeper" },
-              ]}
-              value={reason.level}
-              onChange={(lvl) => reason.supported !== false && setReasoningLevel(lvl)}
-              layout="full"
-            />
-            {reason.supported === false && (
-              <div className="text-[10px] text-white/40 mt-2">Available with OpenAI provider only.</div>
-            )}
-          </>
-        ) : (
-          <div className="text-xs text-white/40">Loading…</div>
-        )}
-      </Section>
-
-      <Section title="Autonomy rules">
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="e.g. never let shell delete files in C:/work without asking"
-          className="w-full bg-transparent border border-white/10 rounded-md px-2 py-1.5 text-xs h-20 placeholder:text-white/35 mb-2"
-        />
-        <button
-          onClick={addRule}
-          disabled={adding || !draft.trim()}
-          className="px-3 py-1 text-xs rounded-md bg-white text-black disabled:opacity-50"
-        >
-          {adding ? "adding…" : "Add rule"}
-        </button>
-        <div className="space-y-1.5 mt-3">
-          {err && <div className="text-xs text-red-400">error: {err}</div>}
-          {!rows && !err && <div className="text-xs text-white/40">loading…</div>}
-          {rows?.length === 0 && <div className="text-xs text-white/40">no rules yet.</div>}
-          {rows?.map((r) => (
-            <div key={r.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-start gap-3 hover:border-white/20">
-              <input
-                type="checkbox"
-                checked={r.enabled === 1}
-                onChange={() => toggleRule(r)}
-                aria-label="enabled"
-                className="mt-0.5 accent-white"
+      <main className="relative z-10 space-y-3 p-4">
+        <Section title="Reasoning">
+          {reason ? (
+            <>
+              <SegmentedTabs<"fast" | "thorough">
+                options={[
+                  { value: "fast", label: "Fast", hint: "instant / light" },
+                  { value: "thorough", label: "Thorough", hint: "slower / deeper" },
+                ]}
+                value={reason.level}
+                onChange={(lvl) => reason.supported !== false && setReasoningLevel(lvl)}
+                layout="full"
               />
-              <div className="flex-1 min-w-0">
-                <div className="whitespace-pre-wrap break-words text-white/85">{r.source}</div>
-                <div className="text-[10px] text-white/40 mt-1">
-                  {r.status === "pending" && <span className="text-yellow-400">parsing…</span>}
-                  {r.status === "active" && <span className="text-emerald-400">active</span>}
-                  {r.status === "failed" && <span className="text-red-400">parse failed</span>}
-                  <span className="ml-2">{new Date(r.created_at).toLocaleString()}</span>
+              {reason.supported === false && (
+                <div className="mt-2 text-[10px] text-[var(--ava-fg-faint)]">Available with OpenAI provider only.</div>
+              )}
+            </>
+          ) : (
+            <div className="text-xs text-[var(--ava-fg-faint)]">Loading...</div>
+          )}
+        </Section>
+
+        <Section title="Autonomy rules">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="e.g. never let shell delete files in C:/work without asking"
+            className="ava-luxe-field mb-2 h-20 w-full px-2 py-1.5 text-xs"
+          />
+          <button
+            onClick={addRule}
+            disabled={adding || !draft.trim()}
+            className="ava-primary-button px-3 py-1 text-xs disabled:opacity-50"
+          >
+            {adding ? "adding..." : "Add rule"}
+          </button>
+          <div className="mt-3 space-y-2">
+            {err && <div className="text-xs text-red-400">error: {err}</div>}
+            {!rows && !err && <div className="text-xs text-[var(--ava-fg-faint)]">loading...</div>}
+            {rows?.length === 0 && <div className="text-xs text-[var(--ava-fg-faint)]">no rules yet.</div>}
+            {rows?.map((r) => (
+              <div key={r.id} className="ava-luxe-row flex items-start gap-3 px-3 py-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={r.enabled === 1}
+                  onChange={() => toggleRule(r)}
+                  aria-label="enabled"
+                  className="mt-0.5"
+                  style={{ accentColor: "var(--ava-champagne)" }}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="whitespace-pre-wrap break-words text-[var(--ava-fg)]">{r.source}</div>
+                  <div className="mt-1 text-[10px] text-[var(--ava-fg-faint)]">
+                    {r.status === "pending" && <span className="text-[var(--ava-gold)]">parsing...</span>}
+                    {r.status === "active" && <span className="text-[var(--ava-jade)]">active</span>}
+                    {r.status === "failed" && <span className="text-red-400">parse failed</span>}
+                    <span className="ml-2">{new Date(r.created_at).toLocaleString()}</span>
+                  </div>
                 </div>
+                <button onClick={() => removeRule(r)} aria-label="delete" className="text-[var(--ava-fg-faint)] hover:text-red-400">
+                  <Trash2 size={14} />
+                </button>
               </div>
-              <button onClick={() => removeRule(r)} aria-label="delete" className="text-white/45 hover:text-red-400">×</button>
-            </div>
-          ))}
-        </div>
-      </Section>
-
-      <Section title="Pinned chips">
-        <div className="space-y-1.5 mb-2">
-          {chips.length === 0 && <div className="text-xs text-white/40">no pinned chips.</div>}
-          {chips.map((c) => (
-            <div key={c.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-center gap-3 hover:border-white/20">
-              <span className="font-medium">{c.label}</span>
-              <span className="text-white/55 truncate flex-1">{c.prompt}</span>
-              <button className="text-red-400" onClick={() => removeChip(c.id)}>delete</button>
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          <input
-            value={newChipLabel}
-            onChange={(e) => setNewChipLabel(e.target.value)}
-            placeholder="Label"
-            className="bg-transparent border border-white/10 rounded-md px-2 py-1.5 text-xs placeholder:text-white/35"
-          />
-          <input
-            value={newChipPrompt}
-            onChange={(e) => setNewChipPrompt(e.target.value)}
-            placeholder="Prompt"
-            className="col-span-2 bg-transparent border border-white/10 rounded-md px-2 py-1.5 text-xs placeholder:text-white/35"
-          />
-        </div>
-        <button onClick={addChip} className="mt-2 px-3 py-1 text-xs rounded-md bg-white text-black">Add chip</button>
-      </Section>
-
-      <Section title="Notifications">
-        {pushStatus === "unsupported" && (
-          <div className="text-xs text-white/40">Push notifications aren't supported in this browser.</div>
-        )}
-        {pushStatus === "granted" && (
-          <div className="flex items-center gap-2 text-xs text-emerald-300">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            Enabled — Ava can send approval prompts to this device.
+            ))}
           </div>
-        )}
-        {pushStatus === "denied" && (
-          <div className="text-xs text-white/40">
-            Browser blocked notifications. Re-enable in your browser site settings, then reload.
+        </Section>
+
+        <Section title="Pinned chips">
+          <div className="mb-2 space-y-2">
+            {chips.length === 0 && <div className="text-xs text-[var(--ava-fg-faint)]">no pinned chips.</div>}
+            {chips.map((c) => (
+              <div key={c.id} className="ava-luxe-row flex items-center gap-3 px-3 py-2 text-xs">
+                <span className="font-medium text-[var(--ava-ink)]">{c.label}</span>
+                <span className="flex-1 truncate text-[var(--ava-fg-muted)]">{c.prompt}</span>
+                <button className="text-red-400" onClick={() => removeChip(c.id)}>delete</button>
+              </div>
+            ))}
           </div>
-        )}
-        {(pushStatus === "default" || pushStatus === "error" || pushStatus === "unknown") && (
+          <div className="grid grid-cols-3 gap-2">
+            <input
+              value={newChipLabel}
+              onChange={(e) => setNewChipLabel(e.target.value)}
+              placeholder="Label"
+              className="ava-luxe-field px-2 py-1.5 text-xs"
+            />
+            <input
+              value={newChipPrompt}
+              onChange={(e) => setNewChipPrompt(e.target.value)}
+              placeholder="Prompt"
+              className="ava-luxe-field col-span-2 px-2 py-1.5 text-xs"
+            />
+          </div>
+          <button onClick={addChip} className="ava-primary-button mt-2 px-3 py-1 text-xs">Add chip</button>
+        </Section>
+
+        <Section title="Notifications">
+          {pushStatus === "unsupported" && (
+            <div className="text-xs text-[var(--ava-fg-faint)]">Push notifications are not supported in this browser.</div>
+          )}
+          {pushStatus === "granted" && (
+            <div className="flex items-center gap-2 text-xs text-[var(--ava-jade)]">
+              <Bell size={14} />
+              Enabled. Ava can send approval prompts to this device.
+            </div>
+          )}
+          {pushStatus === "denied" && (
+            <div className="text-xs text-[var(--ava-fg-faint)]">
+              Browser blocked notifications. Re-enable in your browser site settings, then reload.
+            </div>
+          )}
+          {(pushStatus === "default" || pushStatus === "error" || pushStatus === "unknown") && (
+            <div className="space-y-2">
+              <div className="text-xs text-[var(--ava-fg-muted)]">Get push prompts when Ava needs your approval, even when the app is closed.</div>
+              <button
+                onClick={turnOnPush}
+                className="ava-primary-button px-3 py-1.5 text-xs"
+              >
+                Enable notifications
+              </button>
+              {pushError && <div className="text-xs text-red-400">{pushError}</div>}
+            </div>
+          )}
+          {pushStatus === "pending" && (
+            <div className="text-xs text-[var(--ava-fg-muted)]">Asking permission...</div>
+          )}
+        </Section>
+
+        <Section title="Devices">
           <div className="space-y-2">
-            <div className="text-xs text-white/55">Get push prompts when Ava needs your approval — even when the app is closed.</div>
-            <button
-              onClick={turnOnPush}
-              className="px-3 py-1.5 text-xs rounded-md bg-white text-black"
-            >
-              Enable notifications
-            </button>
-            {pushError && <div className="text-xs text-red-400">{pushError}</div>}
+            {devices.length === 0 && <div className="text-xs text-[var(--ava-fg-faint)]">no devices paired.</div>}
+            {devices.map((d) => (
+              <div key={d.id} className="ava-luxe-row flex items-center gap-3 px-3 py-2 text-xs">
+                <Smartphone size={14} className="text-[var(--ava-champagne)]" />
+                <span className="font-medium text-[var(--ava-ink)]">{d.label}</span>
+                <span className="text-[var(--ava-fg-faint)]">{new Date(d.created_at).toLocaleDateString()}</span>
+                <button className="ml-auto text-red-400" onClick={() => revokeDevice(d.id)}>revoke</button>
+              </div>
+            ))}
           </div>
-        )}
-        {pushStatus === "pending" && (
-          <div className="text-xs text-white/55">Asking permission…</div>
-        )}
-      </Section>
-
-      <Section title="Devices">
-        <div className="space-y-1.5">
-          {devices.length === 0 && <div className="text-xs text-white/40">no devices paired.</div>}
-          {devices.map((d) => (
-            <div key={d.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-center gap-3 hover:border-white/20">
-              <span className="font-medium">{d.label}</span>
-              <span className="text-white/45">{new Date(d.created_at).toLocaleDateString()}</span>
-              <button className="ml-auto text-red-400" onClick={() => revokeDevice(d.id)}>revoke</button>
-            </div>
-          ))}
-        </div>
-      </Section>
+        </Section>
+      </main>
     </div>
   );
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="border-b border-white/5 px-4 py-3">
-      <div className="text-xs uppercase tracking-wider text-white/85 mb-2">{title}</div>
+    <section data-gsap-reveal className="ava-luxe-section">
+      <div className="ava-section-label">{title}</div>
       {children}
     </section>
   );

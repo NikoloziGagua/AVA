@@ -42,6 +42,9 @@ import type { RunStep } from "../playbooks/distill.js";
 const Body = z.object({
   sessionId: z.string().nullish(),
   text: z.string().min(1).max(10_000),
+  // Voice turns ask for minimal reasoning so spoken replies come back fast.
+  // Capability is unchanged — the full tool stack still runs.
+  voice: z.boolean().optional(),
 });
 
 // Upper bound on how long pre-run playbook recall may block a turn. Recall is a
@@ -165,17 +168,19 @@ export function chatRoutes(
         content: m.content,
       }));
     const latestUserText = latestRow?.content ?? parsed.data.text;
-    // Default to "action" mode so every chat turn has the full tool stack
-    // (chrome / shell / filesystem / memory). The intent classifier was too
-    // conservative — casual "look up X on Google" stayed in conversation
-    // mode where chrome isn't available, so Ava reported "I can't access
-    // Google" even though the agent could in principle handle it.
-    // Override via FORCE_INTENT=conversation env var if you want the old
-    // chitchat-fast path back.
+    // TEXT defaults to "action" mode so every typed turn has the full tool stack
+    // (the classifier was too conservative — casual "look up X" stayed in
+    // conversation mode and Ava said "I can't access Google"). VOICE, however,
+    // needs to be fast: a spoken "hi Ava" must not pay for the big orchestrator
+    // model + whole tool prompt + playbook recall. So for voice we trust the
+    // classifier — greetings/chitchat take the fast side-model conversation path,
+    // and only genuine action requests spin up the full agent.
+    // Override via FORCE_INTENT=conversation to force the chitchat path for text.
     const intent = classifyIntent(parsed.data.text);
     const mode: "conversation" | "action" =
-      process.env.FORCE_INTENT === "conversation" ? "conversation" : "action";
-    void intent; // kept for telemetry/future tuning
+      process.env.FORCE_INTENT === "conversation" ? "conversation"
+        : parsed.data.voice ? intent
+          : "action";
 
     // Recall: in action mode with saved playbooks, ask the side model to match
     // this request to a known playbook and inject its steps + a stakes rubric.
@@ -186,7 +191,7 @@ export function chatRoutes(
     // failing side-model call (e.g. an LLM request timeout) degrades to "no
     // playbook injected" and the agent still runs.
     let playbookPrefix = "";
-    if (mode === "action" && agentDeps.provider) {
+    if (mode === "action" && agentDeps.provider && !parsed.data.voice) {
       try {
         const index = loadPlaybookIndex(agentDeps.memoryDir);
         if (index.length) {
@@ -218,7 +223,7 @@ export function chatRoutes(
 
     const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix + latestUserText;
     const reasoningEffort = agentDeps.provider!.name === "openai"
-      ? mapReasoning(getReasoningLevel(db), mode)
+      ? (parsed.data.voice ? "none" : mapReasoning(getReasoningLevel(db), mode))
       : undefined;
 
     void (async () => {

@@ -27,8 +27,9 @@ const ACTION_PATTERNS: RegExp[] = [
   /(?:^|\s)\/(?:home|usr|opt|var|etc|tmp|root|bin|sbin|mnt|srv)\//i,
   /(?:^|\s)\.{1,2}\/\S+/,
 
-  // Imperative + article + object — covers most action-style asks.
-  new RegExp(`\\b(run|execute|launch|spawn|build|compile|deploy|install|kill|stop|start|restart|terminate|read|write|create|edit|modify|delete|remove|list|show|cat|tail|head|grep)\\s+${ARTICLE}\\s+\\S+`, "i"),
+  // Imperative + article + object — covers most action-style asks (incl. common
+  // spoken commands like "open my downloads", "play some music", "search the web").
+  new RegExp(`\\b(run|execute|launch|spawn|build|compile|deploy|install|kill|stop|start|restart|terminate|read|write|create|edit|modify|delete|remove|list|show|cat|tail|head|grep|open|find|search|download|save|send|play|close|move|copy|rename|fetch|pull|push)\\s+${ARTICLE}\\s+\\S+`, "i"),
 
   // Imperative + recognized technical noun (article-less variants).
   /\b(run|execute|build|compile|test)\s+(tests?|server|build|app|project|script|migrations?|spec|specs|suite|lint|linter|formatter)\b/i,

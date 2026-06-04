@@ -30,10 +30,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ code, label }),
     }),
-  sendMessage: (sessionId: string | null, text: string) =>
+  sendMessage: (sessionId: string | null, text: string, opts?: { voice?: boolean }) =>
     request<{ sessionId: string }>("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ sessionId, text }),
+      body: JSON.stringify({ sessionId, text, voice: opts?.voice }),
     }),
   kill: (sessionId: string) =>
     request<{ aborted: boolean }>(`/api/chat/${sessionId}/kill`, { method: "POST" }),

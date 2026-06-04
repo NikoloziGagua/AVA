@@ -122,9 +122,17 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   useEffect(() => { modeRef.current = mode; }, [mode]);
   useEffect(() => { pttHeldRef.current = pttHeld; }, [pttHeld]);
 
+  // Sequential TTS queue: clips are generated + played in order, so we can speak
+  // an instant ack and stream the reply sentence-by-sentence instead of waiting
+  // for the whole answer plus one big TTS at the end.
+  const speakQueueRef = useRef<string[]>([]);
+  const speakBusyRef = useRef(false);
+
   const stopAgentStream = useCallback(() => {
     try { esRef.current?.close(); } catch { /* */ }
     esRef.current = null;
+    speakQueueRef.current = [];
+    speakBusyRef.current = false;
     try { ttsRef.current?.pause(); } catch { /* */ }
     ttsRef.current = null;
   }, []);
@@ -149,29 +157,46 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     wsRef.current = null;
   }, [stopAgentStream]);
 
-  // Speak Ava's final reply via server TTS. Playback finishing returns us to
-  // listening so the conversation flows hands-free.
-  const speak = useCallback(async (text: string) => {
+  // Drain the speak queue: for each text, generate TTS and play it to completion
+  // before the next, so ack + streamed sentences play in order without overlap.
+  const speakWorker = useCallback(async () => {
+    if (speakBusyRef.current) return;
+    speakBusyRef.current = true;
+    setState("responding");
     const token = getToken() ?? "";
-    try {
-      const resp = await fetch("/api/speak", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ text }),
-      });
-      if (!resp.ok) { setState("listening"); return; }
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const el = new Audio(url);
-      ttsRef.current = el;
-      setState("responding");
-      el.onended = () => { URL.revokeObjectURL(url); if (ttsRef.current === el) ttsRef.current = null; setState("listening"); };
-      el.onerror = () => { URL.revokeObjectURL(url); setState("listening"); };
-      await el.play().catch(() => setState("listening"));
-    } catch {
-      setState("listening");
+    while (speakQueueRef.current.length > 0) {
+      const text = speakQueueRef.current.shift()!;
+      try {
+        const resp = await fetch("/api/speak", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify({ text }),
+        });
+        if (resp.ok) {
+          const url = URL.createObjectURL(await resp.blob());
+          await new Promise<void>((resolve) => {
+            const el = new Audio(url);
+            ttsRef.current = el;
+            const done = () => { URL.revokeObjectURL(url); if (ttsRef.current === el) ttsRef.current = null; resolve(); };
+            el.onended = done;
+            el.onerror = done;
+            void el.play().catch(done);
+          });
+        }
+      } catch { /* skip this clip */ }
     }
+    speakBusyRef.current = false;
+    if (stateRef.current === "responding") setState("listening");
   }, []);
+
+  // Queue a phrase to be spoken. Worker is re-entrant-safe: a running drain
+  // picks up new items; a fresh enqueue restarts it if idle.
+  const enqueueSpeak = useCallback((text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    speakQueueRef.current.push(t);
+    void speakWorker();
+  }, [speakWorker]);
 
   // Route an ACCEPTED transcript through the exact same backend path as a typed
   // message: POST /api/chat → full tool-using agent → SSE stream of the run. We
@@ -182,9 +207,15 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     setState("thinking");
 
     void (async () => {
+      // Per-turn streaming state.
+      let replyText = "";
+      let firstSpoken = "";
+      let acked = false;
       let sid: string;
       try {
-        const r = await api.sendMessage(sessionIdRef.current, text);
+        // voice:true → minimal reasoning on the server for a faster spoken reply
+        // (full tool stack is unchanged).
+        const r = await api.sendMessage(sessionIdRef.current, text, { voice: true });
         sid = r.sessionId;
       } catch (err) {
         setErrorMsg(err instanceof Error ? err.message : "send failed");
@@ -201,6 +232,21 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         try {
           const p = JSON.parse((e as MessageEvent).data) as { tool: string };
           setCaption({ who: "ava", text: `…${p.tool}` });
+          // Fix 1: the moment Ava starts doing something, say "on it" so the
+          // wait isn't dead air. Fires once, ahead of the spoken reply.
+          if (!acked) { acked = true; enqueueSpeak("On it, Sir."); }
+        } catch { /* ignore */ }
+      });
+      es.addEventListener("thought", (e) => {
+        // Fix 4: stream the reply — speak the first complete sentence as soon as
+        // it forms instead of waiting for the whole answer.
+        try {
+          const p = JSON.parse((e as MessageEvent).data) as { text: string };
+          replyText += p.text;
+          if (!firstSpoken) {
+            const m = /^[\s\S]*?[.!?](\s|$)/.exec(replyText);
+            if (m && m[0].trim().length >= 10) { firstSpoken = m[0]; enqueueSpeak(firstSpoken); }
+          }
         } catch { /* ignore */ }
       });
       es.addEventListener("approval_required", (e) => {
@@ -219,7 +265,12 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         try {
           const p = JSON.parse((e as MessageEvent).data) as { text: string };
           setCaption({ who: "ava", text: p.text });
-          void speak(p.text);
+          // Speak whatever streaming hasn't already said: the rest after the
+          // first sentence, or the whole reply if nothing streamed.
+          const remainder = firstSpoken && p.text.startsWith(firstSpoken)
+            ? p.text.slice(firstSpoken.length)
+            : p.text;
+          enqueueSpeak(remainder);
         } catch { /* ignore */ }
       });
       es.addEventListener("error", (e) => {
@@ -239,7 +290,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       es.addEventListener("done", finish);
       es.addEventListener("killed", finish);
     })();
-  }, [speak, stopAgentStream]);
+  }, [enqueueSpeak, stopAgentStream]);
 
   const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
     const intent = realtimeActionToIntent(classifyRealtimeEvent(evt));

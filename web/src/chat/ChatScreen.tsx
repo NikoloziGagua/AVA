@@ -203,7 +203,7 @@ export function ChatScreen({
           {!isEmpty && (
             <div className="flex flex-col min-w-0">
               <div className="flex items-center gap-1.5">
-                <Orb state={executing ? "working" : headerState} size={14} />
+                <Orb state={executing ? "working" : headerState} size={14} flipId="ava-orb" />
                 <div className="hud text-[10px]" style={{ color: executing ? "var(--ac-exec)" : "rgba(255,255,255,0.45)" }}>
                   {executing
                     ? `EXECUTING · ${runningTool ?? ""}`

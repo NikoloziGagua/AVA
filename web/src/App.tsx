@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { Flip } from "./lib/gsap.js";
+import { useReducedMotion } from "./lib/useReducedMotion.js";
 import { getToken } from "./auth/tokens.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
 import { ChatScreen } from "./chat/ChatScreen.js";
@@ -25,6 +27,27 @@ type View =
 export function App() {
   const [paired, setPaired] = useState<boolean>(!!getToken());
   const [view, setView] = useState<View>({ name: "splash" });
+
+  // GSAP Flip: the orb (shared `flipId="ava-orb"`) flies between surfaces —
+  // splash → home hero → chat header avatar → voice hero — instead of cutting.
+  // Best-effort: matches the single orb carrying the flip id across the DOM swap;
+  // if it's absent (panels) or motion is reduced, it simply doesn't animate.
+  const reduced = useReducedMotion();
+  const flipStateRef = useRef<ReturnType<typeof Flip.getState> | null>(null);
+  useLayoutEffect(() => {
+    if (reduced) return;
+    const orb = document.querySelector("[data-flip-id='ava-orb']");
+    if (!orb) {
+      flipStateRef.current = null;
+      return;
+    }
+    if (flipStateRef.current) {
+      try {
+        Flip.from(flipStateRef.current, { duration: 0.55, ease: "power2.inOut", absolute: true, scale: true });
+      } catch { /* degrade to no animation */ }
+    }
+    flipStateRef.current = Flip.getState(orb);
+  }, [view.name, reduced]);
 
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
 

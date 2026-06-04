@@ -46,7 +46,6 @@ import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
 import { runImprovement, type ImproverDeps } from "./self/improver.js";
 import { createIntent, getIntent } from "./self/intents.js";
-import { getClaudeSession, markClaudeSessionStarted } from "./self/claude-session.js";
 import { selfRoutes } from "./routes/self.js";
 
 const startedAt = Date.now();
@@ -124,11 +123,11 @@ function buildImproverDeps(): ImproverDeps {
     addWorktree: (id) => addWorktree(cfg.repoRoot, id),
     removeWorktree: (wt) => removeWorktree(cfg.repoRoot, wt),
     implement: async (brief, cwd) => {
-      // Persistent chat: every self-improve reuses Ava's one Claude session, so
-      // Claude carries context across improvements instead of starting fresh.
-      const session = getClaudeSession(cfg.memoryDir);
-      const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12), session });
-      if (r.ok) markClaudeSessionStarted(cfg.memoryDir);
+      // The edit worker runs in a throwaway worktree (a new directory each run),
+      // and Claude sessions are directory-scoped — so this step does NOT use the
+      // persistent session (resuming it from a different worktree fails). Ava's
+      // persistent chat lives in the stable-cwd advisory/planning conversation.
+      const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12) });
       return r.ok ? { ok: true, output: r.output } : { ok: false, output: r.reason };
     },
     verify: (cwd) => verify({ cwd, run: selfRunner, bootSmoke }),

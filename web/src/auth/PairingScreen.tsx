@@ -52,7 +52,7 @@ export function PairingScreen({ onPaired }: { onPaired: () => void }) {
         <h1 className="text-5xl font-bold tracking-tighter mb-2 bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
           Ava
         </h1>
-        <p className="text-white/55 text-xs mb-8 text-center max-w-[260px]">
+        <p className="hud text-white/45 text-[10px] mb-8 text-center max-w-[260px] leading-relaxed">
           Pair this device. Get the code from the Ava systray icon on your PC.
         </p>
         <motion.div
@@ -88,7 +88,7 @@ export function PairingScreen({ onPaired }: { onPaired: () => void }) {
               inputMode="text"
               autoCapitalize="characters"
               className={
-                "w-10 h-12 text-center text-lg font-mono bg-black/60 backdrop-blur-md rounded-md outline-none focus:border-white/50 transition-colors " +
+                "w-10 h-12 text-center text-lg font-mono bg-black/60 backdrop-blur-md rounded-md outline-none focus:border-[var(--ac)] transition-colors " +
                 (error ? "border border-red-500" : "border border-white/15")
               }
             />
@@ -105,12 +105,13 @@ export function PairingScreen({ onPaired }: { onPaired: () => void }) {
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="Device label"
-          className="w-72 bg-black/60 backdrop-blur-md border border-white/12 rounded-md px-3 py-2 text-sm mb-3 placeholder:text-white/35"
+          className="w-72 bg-black/60 backdrop-blur-md border border-white/12 rounded-md px-3 py-2 text-sm mb-3 placeholder:text-white/35 focus:border-[var(--ac)] outline-none transition-colors"
         />
         <button
           onClick={submit}
           disabled={busy}
-          className="w-72 bg-white text-black rounded-md py-2.5 text-sm font-medium disabled:opacity-50"
+          className="w-72 rounded-md py-2.5 text-sm font-medium disabled:opacity-50"
+          style={{ background: "var(--ac)", color: "#04222a" }}
         >
           {busy ? "Pairing…" : "Submit"}
         </button>

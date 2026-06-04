@@ -30,7 +30,7 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
       className="relative h-full overflow-y-auto text-white"
       style={{
         background:
-          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(168,85,247,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
+          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(92,242,255,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
       }}
     >
       <header
@@ -39,7 +39,7 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
           background: "rgba(0,0,0,0.55)",
           backdropFilter: "blur(20px) saturate(140%)",
           WebkitBackdropFilter: "blur(20px) saturate(140%)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          borderBottom: "1px solid rgba(92,242,255,0.16)",
         }}
       >
         <button
@@ -49,7 +49,7 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
         >
           <ChevronLeft size={20} />
         </button>
-        <div className="text-base font-semibold tracking-wide text-white/95">Memory</div>
+        <div className="hud text-[13px] text-white/95">Memory</div>
       </header>
 
       <Section
@@ -99,7 +99,8 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
                 setNewPref("");
                 await load();
               }}
-              className="px-3 text-xs rounded-md bg-white text-black"
+              className="px-3 text-xs rounded-md"
+              style={{ background: "var(--ac)", color: "#04222a" }}
             >
               Add
             </button>
@@ -167,7 +168,7 @@ function Section({ title, right, onClickHeader, children }: {
   return (
     <section className="border-b border-white/5 px-4 py-3">
       <header
-        className={"flex items-center justify-between text-white/85 text-xs uppercase tracking-wider mb-2 " + (onClickHeader ? "cursor-pointer" : "")}
+        className={"hud flex items-center justify-between text-white/55 text-xs mb-2 " + (onClickHeader ? "cursor-pointer" : "")}
         onClick={onClickHeader}
       >
         <span>{title}</span>
@@ -193,13 +194,13 @@ function PreferenceRow({ line, onEdit, onDelete }: {
           onChange={(e) => setDraft(e.target.value)}
           className="flex-1 bg-transparent border border-white/15 rounded-md px-2 py-1.5 text-xs"
         />
-        <button onClick={async () => { setEditing(false); await onEdit(draft); }} className="text-xs px-2 rounded bg-white text-black">save</button>
+        <button onClick={async () => { setEditing(false); await onEdit(draft); }} className="text-xs px-2 rounded" style={{ background: "var(--ac)", color: "#04222a" }}>save</button>
         <button onClick={() => { setEditing(false); setDraft(line); }} className="text-xs px-2 rounded text-white/60">cancel</button>
       </div>
     );
   }
   return (
-    <div className="group relative border border-white/8 rounded-md px-3 py-2 text-xs text-white/85 hover:border-white/20">
+    <div className="group relative border border-white/8 rounded-md px-3 py-2 text-xs text-white/85 hover:border-[rgba(92,242,255,0.3)] transition-colors">
       {line}
       <span className="absolute right-2 top-1.5 hidden group-hover:flex gap-2 text-[10px] text-white/60">
         <button onClick={() => setEditing(true)}>edit</button>
@@ -232,7 +233,7 @@ function ObservationRow({ line, onEdit, onDelete }: {
           className="flex-1 bg-transparent border border-white/15 rounded-md px-2 py-1.5 text-xs"
         />
         <div className="flex flex-col gap-1">
-          <button onClick={async () => { setEditing(false); await onEdit(draft); }} className="text-xs px-2 py-1 rounded bg-white text-black">save</button>
+          <button onClick={async () => { setEditing(false); await onEdit(draft); }} className="text-xs px-2 py-1 rounded" style={{ background: "var(--ac)", color: "#04222a" }}>save</button>
           <button onClick={() => { setEditing(false); setDraft(line.raw); }} className="text-xs px-2 py-1 rounded text-white/60">cancel</button>
         </div>
       </div>
@@ -240,7 +241,7 @@ function ObservationRow({ line, onEdit, onDelete }: {
   }
 
   return (
-    <div className="group flex items-start gap-2 border border-white/8 rounded-md px-3 py-2 text-xs text-white/85 hover:border-white/20">
+    <div className="group flex items-start gap-2 border border-white/8 rounded-md px-3 py-2 text-xs text-white/85 hover:border-[rgba(92,242,255,0.3)] transition-colors">
       <span className="inline-block w-1.5 h-1.5 rounded-full mt-1.5 shrink-0" style={{ background: color }} />
       <div className="flex-1">
         <div>{line.text}</div>

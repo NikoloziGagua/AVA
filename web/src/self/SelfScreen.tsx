@@ -10,7 +10,7 @@ export function SelfScreen({ onClose }: { onClose: () => void }) {
       className="relative h-full overflow-y-auto text-white"
       style={{
         background:
-          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(59,130,246,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
+          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(92,242,255,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
       }}
     >
       <header
@@ -19,7 +19,7 @@ export function SelfScreen({ onClose }: { onClose: () => void }) {
           background: "rgba(0,0,0,0.55)",
           backdropFilter: "blur(20px) saturate(140%)",
           WebkitBackdropFilter: "blur(20px) saturate(140%)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          borderBottom: "1px solid rgba(92,242,255,0.16)",
         }}
       >
         <button
@@ -29,23 +29,23 @@ export function SelfScreen({ onClose }: { onClose: () => void }) {
         >
           <ChevronLeft size={20} />
         </button>
-        <div className="text-base font-semibold tracking-wide text-white/95">Self-improvement</div>
+        <div className="hud text-[13px] text-white/95">Self-improvement</div>
       </header>
 
       <section className="border-b border-white/5 px-4 py-3">
-        <div className="text-xs uppercase tracking-wider text-white/85 mb-2">Controls</div>
+        <div className="hud text-xs text-white/55 mb-2">Controls</div>
         <div className="flex gap-3">
           <button
             onClick={() => setPaused(!paused)}
             aria-pressed={paused}
-            className="px-3 py-1.5 text-xs rounded-md border border-white/15 text-white/85 hover:border-white/30 active:scale-95 transition-all"
+            className="px-3 py-1.5 text-xs rounded-md border border-white/15 text-white/85 hover:border-[rgba(92,242,255,0.4)] active:scale-95 transition-all"
           >
             {paused ? "Resume" : "Pause"}
           </button>
           <button
             onClick={revertLast}
             disabled={!canRevert}
-            className="px-3 py-1.5 text-xs rounded-md border border-white/15 text-white/85 hover:border-white/30 active:scale-95 transition-all disabled:opacity-40"
+            className="px-3 py-1.5 text-xs rounded-md border border-white/15 text-white/85 hover:border-[rgba(92,242,255,0.4)] active:scale-95 transition-all disabled:opacity-40"
           >
             Revert last
           </button>
@@ -58,7 +58,7 @@ export function SelfScreen({ onClose }: { onClose: () => void }) {
       </section>
 
       <section className="px-4 py-3">
-        <div className="text-xs uppercase tracking-wider text-white/85 mb-2">Journal</div>
+        <div className="hud text-xs text-white/55 mb-2">Journal</div>
         <ul className="space-y-1.5">
           {intents.length === 0 && (
             <li className="text-xs text-white/40">no self-improvements yet.</li>
@@ -66,7 +66,7 @@ export function SelfScreen({ onClose }: { onClose: () => void }) {
           {intents.map((i) => (
             <li
               key={i.id}
-              className="border border-white/8 rounded-md px-3 py-2 hover:border-white/20"
+              className="border border-white/8 rounded-md px-3 py-2 hover:border-[rgba(92,242,255,0.3)] transition-colors"
             >
               <div className="text-sm text-white/85">{i.goal}</div>
               <div className="text-[10px] uppercase tracking-widest text-white/40 mt-1">

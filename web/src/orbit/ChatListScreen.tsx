@@ -54,14 +54,20 @@ export function ChatListScreen({ onClose, onOpenChat }: ChatListScreenProps) {
   }
 
   return (
-    <div className="relative h-full overflow-y-auto bg-black text-white">
-      <header className="sticky top-0 z-10 flex items-center gap-2 px-4 py-3 border-b border-white/8 bg-black/80 backdrop-blur-sm">
+    <div
+      className="relative h-full overflow-y-auto text-white"
+      style={{
+        background:
+          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(92,242,255,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
+      }}
+    >
+      <header className="sticky top-0 z-10 flex items-center gap-2 px-4 py-3 bg-black/80 backdrop-blur-sm" style={{ borderBottom: "1px solid rgba(92,242,255,0.16)" }}>
         <button onClick={onClose} aria-label="back" className="text-white/70"><ChevronLeft size={20} /></button>
-        <div className="text-sm font-medium">All chats</div>
+        <div className="hud text-[13px] text-white/95">All chats</div>
         <button
           onClick={() => onOpenChat(null)}
           aria-label="new chat"
-          className="ml-auto w-8 h-8 rounded-full border border-white/15 bg-white/5 text-white flex items-center justify-center hover:bg-white/10"
+          className="ml-auto w-8 h-8 rounded-full border border-[rgba(92,242,255,0.3)] bg-white/5 text-white flex items-center justify-center hover:bg-white/10 hover:border-[rgba(92,242,255,0.5)] transition-colors"
         >
           <Plus size={14} />
         </button>
@@ -75,7 +81,7 @@ export function ChatListScreen({ onClose, onOpenChat }: ChatListScreenProps) {
         {sessions.map((s) => (
           <div
             key={s.id}
-            className="group flex items-center gap-3 border border-white/8 rounded-md px-3 py-2.5 text-xs hover:border-white/20 hover:bg-white/3 cursor-pointer"
+            className="group flex items-center gap-3 border border-white/8 rounded-md px-3 py-2.5 text-xs hover:border-[rgba(92,242,255,0.3)] hover:bg-white/3 cursor-pointer transition-colors"
             onClick={() => onOpenChat(s.id)}
           >
             <div className="flex-1 min-w-0">

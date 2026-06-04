@@ -138,7 +138,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
       className="relative h-full overflow-y-auto text-white"
       style={{
         background:
-          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(59,130,246,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
+          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(92,242,255,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
       }}
     >
       <header
@@ -147,7 +147,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
           background: "rgba(0,0,0,0.55)",
           backdropFilter: "blur(20px) saturate(140%)",
           WebkitBackdropFilter: "blur(20px) saturate(140%)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          borderBottom: "1px solid rgba(92,242,255,0.16)",
         }}
       >
         <button
@@ -157,7 +157,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
         >
           <ChevronLeft size={20} />
         </button>
-        <div className="text-base font-semibold tracking-wide text-white/95">Rules</div>
+        <div className="hud text-[13px] text-white/95">Rules</div>
       </header>
 
       <Section title="Reasoning">
@@ -191,7 +191,8 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
         <button
           onClick={addRule}
           disabled={adding || !draft.trim()}
-          className="px-3 py-1 text-xs rounded-md bg-white text-black disabled:opacity-50"
+          className="px-3 py-1 text-xs rounded-md disabled:opacity-50"
+          style={{ background: "var(--ac)", color: "#04222a" }}
         >
           {adding ? "adding…" : "Add rule"}
         </button>
@@ -200,7 +201,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
           {!rows && !err && <div className="text-xs text-white/40">loading…</div>}
           {rows?.length === 0 && <div className="text-xs text-white/40">no rules yet.</div>}
           {rows?.map((r) => (
-            <div key={r.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-start gap-3 hover:border-white/20">
+            <div key={r.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-start gap-3 hover:border-[rgba(92,242,255,0.3)] transition-colors">
               <input
                 type="checkbox"
                 checked={r.enabled === 1}
@@ -227,7 +228,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
         <div className="space-y-1.5 mb-2">
           {chips.length === 0 && <div className="text-xs text-white/40">no pinned chips.</div>}
           {chips.map((c) => (
-            <div key={c.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-center gap-3 hover:border-white/20">
+            <div key={c.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-center gap-3 hover:border-[rgba(92,242,255,0.3)] transition-colors">
               <span className="font-medium">{c.label}</span>
               <span className="text-white/55 truncate flex-1">{c.prompt}</span>
               <button className="text-red-400" onClick={() => removeChip(c.id)}>delete</button>
@@ -248,7 +249,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
             className="col-span-2 bg-transparent border border-white/10 rounded-md px-2 py-1.5 text-xs placeholder:text-white/35"
           />
         </div>
-        <button onClick={addChip} className="mt-2 px-3 py-1 text-xs rounded-md bg-white text-black">Add chip</button>
+        <button onClick={addChip} className="mt-2 px-3 py-1 text-xs rounded-md" style={{ background: "var(--ac)", color: "#04222a" }}>Add chip</button>
       </Section>
 
       <Section title="Notifications">
@@ -271,7 +272,8 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
             <div className="text-xs text-white/55">Get push prompts when Ava needs your approval — even when the app is closed.</div>
             <button
               onClick={turnOnPush}
-              className="px-3 py-1.5 text-xs rounded-md bg-white text-black"
+              className="px-3 py-1.5 text-xs rounded-md"
+              style={{ background: "var(--ac)", color: "#04222a" }}
             >
               Enable notifications
             </button>
@@ -287,7 +289,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
         <div className="space-y-1.5">
           {devices.length === 0 && <div className="text-xs text-white/40">no devices paired.</div>}
           {devices.map((d) => (
-            <div key={d.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-center gap-3 hover:border-white/20">
+            <div key={d.id} className="border border-white/8 rounded-md px-3 py-2 text-xs flex items-center gap-3 hover:border-[rgba(92,242,255,0.3)] transition-colors">
               <span className="font-medium">{d.label}</span>
               <span className="text-white/45">{new Date(d.created_at).toLocaleDateString()}</span>
               <button className="ml-auto text-red-400" onClick={() => revokeDevice(d.id)}>revoke</button>
@@ -302,7 +304,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="border-b border-white/5 px-4 py-3">
-      <div className="text-xs uppercase tracking-wider text-white/85 mb-2">{title}</div>
+      <div className="hud text-xs text-white/55 mb-2">{title}</div>
       {children}
     </section>
   );

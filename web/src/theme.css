@@ -54,6 +54,14 @@
   );
 }
 
+/* Liquid blob morph for the Orb core (GSAP handles rotation; this handles the
+   organic edge wobble — kept in CSS because multi-value border-radius tweening
+   is finicky in GSAP). Disabled under reduced motion via the component. */
+@keyframes orb-morph {
+  0%, 100% { border-radius: 46% 54% 58% 42% / 50% 44% 56% 50%; }
+  50%      { border-radius: 56% 44% 42% 58% / 44% 56% 50% 50%; }
+}
+
 html, body, #root {
   height: 100%;
   background: var(--ava-bg);

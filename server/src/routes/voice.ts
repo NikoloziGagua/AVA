@@ -17,13 +17,6 @@ const ALLOWED_MIMES = new Set([
 export type VoiceRoutesDeps = {
   clients: VoiceClients;
   requireToken: RequestHandler;
-  /** When provided, enables /voice/turn endpoint. */
-  voiceTurn?: {
-    getSession: (id: string) => { id: string } | null;
-    createSession: (opts: { title: string | null }) => { id: string };
-    appendMessage: (m: { sessionId: string; role: "user" | "assistant"; content: string }) => void;
-    runTurn: (input: { sessionId: string; userText: string }) => Promise<string>;
-  };
 };
 
 export function voiceRoutes(deps: VoiceRoutesDeps): ExpressRouter {
@@ -79,54 +72,12 @@ export function voiceRoutes(deps: VoiceRoutesDeps): ExpressRouter {
     }
   });
 
-  router.post("/voice/turn", deps.requireToken, upload.single("audio"), async (req, res) => {
-    if (!deps.clients) return res.status(503).json({ error: "OPENAI_API_KEY not configured" });
-    if (!deps.voiceTurn) return res.status(503).json({ error: "voice turn not configured" });
-    const file = req.file;
-    if (!file) return res.status(400).json({ error: "missing audio file" });
-
-    const sessionIdRaw = req.query.sessionId;
-    let sessionId: string | null =
-      typeof sessionIdRaw === "string" && sessionIdRaw ? sessionIdRaw : null;
-
-    try {
-      const blob = new Blob([new Uint8Array(file.buffer)], { type: file.mimetype });
-      const f = await toFile(blob, file.originalname || "audio.webm", { type: file.mimetype });
-      const tr = await deps.clients.openai.audio.transcriptions.create({
-        file: f,
-        model: "gpt-4o-transcribe",
-      });
-      const userText = tr.text.trim();
-      if (!userText) return res.status(400).json({ error: "empty transcript" });
-
-      const existing = sessionId ? deps.voiceTurn.getSession(sessionId) : null;
-      if (!existing) {
-        sessionId = deps.voiceTurn.createSession({ title: userText.slice(0, 60) }).id;
-      }
-      deps.voiceTurn.appendMessage({ sessionId: sessionId!, role: "user", content: userText });
-
-      const replyText = await deps.voiceTurn.runTurn({ sessionId: sessionId!, userText });
-      deps.voiceTurn.appendMessage({ sessionId: sessionId!, role: "assistant", content: replyText });
-
-      const speech = await deps.clients.openai.audio.speech.create({
-        model: "gpt-4o-mini-tts",
-        voice: "nova",
-        input: replyText,
-      });
-      const audioBuf = Buffer.from(await speech.arrayBuffer());
-
-      return res.json({
-        sessionId,
-        userText,
-        assistantText: replyText,
-        audio: audioBuf.toString("base64"),
-        audioMime: "audio/mpeg",
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return res.status(502).json({ error: `voice turn failed: ${msg}` });
-    }
-  });
+  // NOTE: there is intentionally no agent/conversation endpoint here. Voice
+  // turns route through the SAME tool-using agent as typed chat: the realtime
+  // WS proxy (routes/voice-realtime.ts) gates transcripts and the browser
+  // submits accepted text to POST /api/chat. These routes are STT/TTS
+  // primitives only — they never generate a conversational reply, so there is
+  // no toolless voice path to drift out of sync with text chat.
 
   return router;
 }

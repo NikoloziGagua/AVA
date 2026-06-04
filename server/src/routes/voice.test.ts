@@ -12,35 +12,6 @@ function setup(clients: VoiceClients) {
   return app;
 }
 
-function setupWithVoiceTurn(opts: {
-  clients: VoiceClients;
-  reply: string;
-  initialSession?: { id: string };
-}) {
-  const app = express();
-  app.use(express.json());
-  const auth = (_req: any, _res: any, next: any) => next();
-  const persisted: Array<{ sessionId: string; role: "user" | "assistant"; content: string }> = [];
-  let mintedId: string | null = null;
-  const sessions: Record<string, { id: string }> = {};
-  if (opts.initialSession) sessions[opts.initialSession.id] = opts.initialSession;
-  app.use("/api", voiceRoutes({
-    clients: opts.clients,
-    requireToken: auth,
-    voiceTurn: {
-      getSession: (id) => sessions[id] ?? null,
-      createSession: ({ title: _title }) => {
-        mintedId = `s_${Date.now()}`;
-        sessions[mintedId] = { id: mintedId };
-        return { id: mintedId };
-      },
-      appendMessage: (m) => { persisted.push(m); },
-      runTurn: async () => opts.reply,
-    },
-  }));
-  return { app, persisted, mintedIdRef: () => mintedId };
-}
-
 function mockClients(overrides: {
   transcribe?: ReturnType<typeof vi.fn>;
   speak?: ReturnType<typeof vi.fn>;
@@ -139,72 +110,16 @@ describe("voiceRoutes /api/speak", () => {
   });
 });
 
-describe("voiceRoutes /api/voice/turn", () => {
-  it("returns 400 when audio file is missing", async () => {
-    const { app } = setupWithVoiceTurn({
-      clients: mockClients({}),
-      reply: "hi",
-    });
-    await request(app).post("/api/voice/turn").expect(400);
-  });
-
-  it("returns 503 when voiceTurn is not configured", async () => {
+describe("voiceRoutes exposes NO toolless conversation endpoint", () => {
+  // Regression guard: the old /api/voice/turn ran a conversation-only, toolless
+  // model. It was deleted so voice can never silently diverge from the
+  // tool-using /api/chat agent. If someone re-adds a reply endpoint here, this
+  // fails and forces them to reconsider.
+  it("does not register /api/voice/turn", async () => {
     const app = setup(mockClients({}));
     const res = await request(app)
       .post("/api/voice/turn")
-      .attach("audio", Buffer.from([0, 1, 2]), { filename: "a.webm", contentType: "audio/webm" });
-    expect(res.status).toBe(503);
-  });
-
-  it("persists user + assistant transcripts and returns audio", async () => {
-    const transcribe = vi.fn().mockResolvedValue({ text: "where do i live" });
-    const speak = vi.fn().mockResolvedValue({
-      arrayBuffer: async () => new Uint8Array([7, 8, 9]).buffer,
-    });
-    const { app, persisted, mintedIdRef } = setupWithVoiceTurn({
-      clients: mockClients({ transcribe, speak }),
-      reply: "you live in ireland.",
-    });
-    const res = await request(app)
-      .post("/api/voice/turn")
-      .attach("audio", Buffer.from([0, 1, 2]), { filename: "x.webm", contentType: "audio/webm" })
-      .expect(200);
-    expect(res.body.userText).toBe("where do i live");
-    expect(res.body.assistantText).toBe("you live in ireland.");
-    expect(res.body.audioMime).toBe("audio/mpeg");
-    expect(typeof res.body.audio).toBe("string");
-    expect(res.body.sessionId).toBe(mintedIdRef());
-    expect(persisted.map((p) => p.role)).toEqual(["user", "assistant"]);
-    expect(persisted.map((p) => p.content)).toEqual([
-      "where do i live",
-      "you live in ireland.",
-    ]);
-  });
-
-  it("reuses an existing sessionId when provided", async () => {
-    const transcribe = vi.fn().mockResolvedValue({ text: "hi" });
-    const { app, persisted } = setupWithVoiceTurn({
-      clients: mockClients({ transcribe }),
-      reply: "hello",
-      initialSession: { id: "existing-123" },
-    });
-    const res = await request(app)
-      .post("/api/voice/turn?sessionId=existing-123")
-      .attach("audio", Buffer.from([0, 1, 2]), { filename: "x.webm", contentType: "audio/webm" })
-      .expect(200);
-    expect(res.body.sessionId).toBe("existing-123");
-    expect(persisted.every((p) => p.sessionId === "existing-123")).toBe(true);
-  });
-
-  it("returns 400 when transcript is empty whitespace", async () => {
-    const transcribe = vi.fn().mockResolvedValue({ text: "   " });
-    const { app } = setupWithVoiceTurn({
-      clients: mockClients({ transcribe }),
-      reply: "won't get here",
-    });
-    await request(app)
-      .post("/api/voice/turn")
-      .attach("audio", Buffer.from([0, 1, 2]), { filename: "x.webm", contentType: "audio/webm" })
-      .expect(400);
+      .attach("audio", Buffer.from([0, 1, 2]), { filename: "x.webm", contentType: "audio/webm" });
+    expect(res.status).toBe(404);
   });
 });

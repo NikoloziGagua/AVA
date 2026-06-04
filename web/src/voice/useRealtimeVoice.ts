@@ -1,10 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
-import { classifyRealtimeEvent } from "./realtime-events.js";
+import { classifyRealtimeEvent, type RealtimeAction } from "./realtime-events.js";
 import { api, approveApproval, denyApproval } from "../api.js";
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
 const SAMPLE_RATE = 24000;
+
+// What the voice client does with a (already gated) realtime event. The only
+// path that produces a reply is `agent_turn` → POST /api/chat (the full
+// tool-using agent) + TTS. Realtime audio / assistant-transcript / response
+// events map to `ignore`: the realtime model is transcribe-only and never
+// speaks, so there is no toolless voice-model reply path on the client either.
+export type VoiceIntent =
+  | { kind: "agent_turn"; text: string }
+  | { kind: "session"; sessionId: string }
+  | { kind: "error"; message: string }
+  | { kind: "ignore" };
+
+export function realtimeActionToIntent(action: RealtimeAction): VoiceIntent {
+  switch (action.kind) {
+    case "session":
+      return action.sessionId ? { kind: "session", sessionId: action.sessionId } : { kind: "ignore" };
+    case "user_transcript":
+      return { kind: "agent_turn", text: action.text };
+    case "error":
+      return { kind: "error", message: action.message };
+    default:
+      // speech_started/stopped, audio, response_*, ava_transcript_* → ignore.
+      return { kind: "ignore" };
+  }
+}
 
 export type RealtimeState = "idle" | "connecting" | "listening" | "thinking" | "responding";
 
@@ -68,6 +93,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  // Endpointing mode. "vad" (default): hands-free server VAD. "ptt": forward mic
+  // only while the talk button is held — same gate + /api/chat path, just a
+  // narrower window for when audio is sent. Good for noisy rooms.
+  const [mode, setMode] = useState<"vad" | "ptt">("vad");
+  const [pttHeld, setPttHeld] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const captureCtxRef = useRef<AudioContext | null>(null);
@@ -75,6 +105,8 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const mutedRef = useRef(false);
+  const modeRef = useRef<"vad" | "ptt">("vad");
+  const pttHeldRef = useRef(false);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
   const esRef = useRef<EventSource | null>(null);
@@ -87,6 +119,8 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   useEffect(() => { mutedRef.current = muted; }, [muted]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   useEffect(() => { stateRef.current = state; }, [state]);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
+  useEffect(() => { pttHeldRef.current = pttHeld; }, [pttHeld]);
 
   const stopAgentStream = useCallback(() => {
     try { esRef.current?.close(); } catch { /* */ }
@@ -208,30 +242,20 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   }, [speak, stopAgentStream]);
 
   const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
-    const action = classifyRealtimeEvent(evt);
-    switch (action.kind) {
+    const intent = realtimeActionToIntent(classifyRealtimeEvent(evt));
+    switch (intent.kind) {
       case "session":
-        if (action.sessionId) setSessionId(action.sessionId);
+        setSessionId(intent.sessionId);
         return;
-      case "speech_started":
-        // eslint-disable-next-line no-console
-        console.info("[ava] VAD: speech_started — you're being heard");
-        // Don't yank UI out of thinking/responding on a stray VAD blip.
-        setState((s) => (s === "listening" ? "listening" : s));
-        return;
-      case "speech_stopped":
-        return;
-      case "user_transcript":
+      case "agent_turn":
         // Server already gated this transcript — it's real speech. Route it
-        // through the agent. (Silence/noise never produces this event.)
-        runAgentTurn(action.text);
+        // through the SAME agent as text. (Silence/noise never gets here.)
+        runAgentTurn(intent.text);
         return;
       case "error":
-        setErrorMsg(action.message);
+        setErrorMsg(intent.message);
         return;
-      // Realtime audio / assistant-transcript events no longer fire — the
-      // session is transcribe-only (create_response:false). Ignore them.
-      default:
+      case "ignore":
         return;
     }
   }, [runAgentTurn]);

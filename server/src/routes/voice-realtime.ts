@@ -6,6 +6,7 @@ import {
   gateTranscript,
   loadTranscriptGateConfig,
   type TranscriptGateConfig,
+  type TranscriptGateReason,
 } from "../voice/transcript-gate.js";
 
 // ─── OpenAI Realtime API: TRANSCRIBE-ONLY proxy ──────────────────────────────
@@ -147,6 +148,54 @@ export function speechDurationMs(
   if (startMs == null) return null;
   if (typeof evt.audio_end_ms === "number") return Math.max(0, evt.audio_end_ms - startMs);
   return null;
+}
+
+export interface ForwardDecision {
+  /** Forward this frame to the browser? */
+  forward: boolean;
+  /** Was this a finished input-transcription event (vs. any other upstream event)? */
+  isTranscript: boolean;
+  /** For transcript events: did it pass the gate? */
+  accept: boolean;
+  reason: TranscriptGateReason | "not_transcript";
+  text: string;
+  speechMs: number | null;
+}
+
+/**
+ * The single decision point for whether an upstream realtime event reaches the
+ * browser. Non-transcript events pass through untouched. A finished transcript
+ * is run through the gate: a rejected transcript is NOT forwarded, so the client
+ * never emits a user turn and never calls /api/chat — i.e. silence and whisper
+ * hallucinations can never become a real conversation turn.
+ */
+export function decideTranscriptForward(
+  evt: {
+    type?: string;
+    transcript?: string;
+    audio_end_ms?: number;
+    logprobs?: Array<{ logprob?: number }> | null;
+  },
+  speechStartMs: number | null,
+  gateConfig: TranscriptGateConfig,
+): ForwardDecision {
+  const tr = readTranscriptionCompleted(evt);
+  if (!tr) {
+    return { forward: true, isTranscript: false, accept: false, reason: "not_transcript", text: "", speechMs: null };
+  }
+  const speechMs = speechDurationMs(speechStartMs, evt);
+  const verdict = gateTranscript(
+    { text: tr.text, speechMs, avgLogprob: tr.avgLogprob },
+    gateConfig,
+  );
+  return {
+    forward: verdict.accept,
+    isTranscript: true,
+    accept: verdict.accept,
+    reason: verdict.reason,
+    text: verdict.text,
+    speechMs,
+  };
 }
 
 /**
@@ -303,21 +352,20 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
       // Gate finished transcripts: a rejected one is dropped here and NEVER
       // reaches the browser, so silence/noise produces no user turn at all.
-      const tr = evt ? readTranscriptionCompleted(evt) : null;
-      if (tr) {
-        const speechMs = evt ? speechDurationMs(speechStartMs, evt) : null;
-        speechStartMs = null;
-        const verdict = gateTranscript(
-          { text: tr.text, speechMs, avgLogprob: tr.avgLogprob },
-          gateConfig,
-        );
-        if (!verdict.accept) {
+      const decision = evt
+        ? decideTranscriptForward(evt, speechStartMs, gateConfig)
+        : null;
+      if (decision?.isTranscript) {
+        speechStartMs = null; // consume the in-flight utterance's timing
+        // Log the reason code only — never the raw audio. Transcript text is
+        // short and useful for tuning; audio append frames are never logged.
+        if (!decision.forward) {
           log.info(
-            `realtime: dropped transcript (${verdict.reason}) speechMs=${speechMs ?? "?"} text=${JSON.stringify(tr.text)}`,
+            `realtime: dropped transcript reason=${decision.reason} speechMs=${decision.speechMs ?? "?"} text=${JSON.stringify(decision.text)}`,
           );
-          return; // do not forward — no phantom turn
+          return; // do not forward — no phantom turn, no /api/chat call
         }
-        log.info(`realtime: accepted transcript text=${JSON.stringify(verdict.text)}`);
+        log.info(`realtime: accepted transcript text=${JSON.stringify(decision.text)}`);
         // fall through to forward the (accepted) transcript verbatim
       }
 

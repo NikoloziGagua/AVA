@@ -5,8 +5,15 @@ import {
   DEFAULT_REALTIME_VAD,
   readTranscriptionCompleted,
   speechDurationMs,
+  decideTranscriptForward,
   forwardFrame,
 } from "./voice-realtime.js";
+import { DEFAULT_TRANSCRIPT_GATE } from "../voice/transcript-gate.js";
+
+const TRANSCRIPT_TYPE = "conversation.item.input_audio_transcription.completed";
+function transcriptEvt(transcript: string, extra: Record<string, unknown> = {}) {
+  return { type: TRANSCRIPT_TYPE, transcript, ...extra };
+}
 
 describe("buildRealtimeSessionUpdate (transcribe-only GA schema)", () => {
   it("emits the GA nested session shape configured for transcription only", () => {
@@ -106,6 +113,56 @@ describe("speechDurationMs", () => {
   it("returns null when timing is unavailable", () => {
     expect(speechDurationMs(null, { audio_end_ms: 1600 })).toBeNull();
     expect(speechDurationMs(1000, {})).toBeNull();
+  });
+});
+
+describe("decideTranscriptForward — the silence/hallucination chokepoint", () => {
+  const gate = DEFAULT_TRANSCRIPT_GATE;
+
+  it("passes non-transcript events through untouched", () => {
+    const d = decideTranscriptForward({ type: "response.created" }, null, gate);
+    expect(d.isTranscript).toBe(false);
+    expect(d.forward).toBe(true);
+    expect(d.reason).toBe("not_transcript");
+  });
+
+  it("does NOT forward an empty transcript (silence)", () => {
+    const d = decideTranscriptForward(transcriptEvt(""), 1000, gate);
+    expect(d.isTranscript).toBe(true);
+    expect(d.forward).toBe(false);
+    expect(d.reason).toBe("empty");
+  });
+
+  it("does NOT forward known whisper silence hallucinations", () => {
+    for (const phrase of ["you", "Thank you.", "Thanks for watching", "Okay.", "..."]) {
+      const d = decideTranscriptForward(transcriptEvt(phrase), 1000, gate);
+      expect(d.forward, `expected "${phrase}" dropped`).toBe(false);
+      expect(d.reason).toBe("hallucination_phrase");
+    }
+  });
+
+  it("does NOT forward a transcript from a too-brief speech blip", () => {
+    // speech_started at 1000ms, audio_end at 1080ms => 80ms < minSpeechMs
+    const d = decideTranscriptForward(
+      transcriptEvt("open chrome", { audio_end_ms: 1080 }),
+      1000,
+      gate,
+    );
+    expect(d.forward).toBe(false);
+    expect(d.reason).toBe("too_brief");
+    expect(d.speechMs).toBe(80);
+  });
+
+  it("DOES forward a real spoken command (the /api/chat path)", () => {
+    const d = decideTranscriptForward(
+      transcriptEvt("open chrome and search my downloads", { audio_end_ms: 2000 }),
+      1000,
+      gate,
+    );
+    expect(d.isTranscript).toBe(true);
+    expect(d.forward).toBe(true);
+    expect(d.accept).toBe(true);
+    expect(d.text).toBe("open chrome and search my downloads");
   });
 });
 

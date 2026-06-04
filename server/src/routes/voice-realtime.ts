@@ -210,6 +210,23 @@ export function toolResultFrames(callId: string, output: string): string[] {
   ];
 }
 
+// ─── Client-bound control frames (Ava-specific, not OpenAI events) ───────────
+//
+// The browser needs to know which mode the proxy is in: in HYBRID the realtime
+// model speaks (client must play audio + must NOT re-route transcripts to
+// /api/chat), in transcribe-only it stays text and the client owns the reply.
+// We tell it on connect via the session hello frame's `mode`.
+
+/** The first frame the client receives: its session id and the proxy's mode. */
+export function sessionHelloFrame(sessionId: string | null, hybrid: boolean): string {
+  return JSON.stringify({ type: "ava.session", sessionId, mode: hybrid ? "hybrid" : "transcribe" });
+}
+
+/** Sent (hybrid) when do_on_computer starts so the UI shows progress, not dead air. */
+export function actionStartedFrame(task: string): string {
+  return JSON.stringify({ type: "ava.action", task });
+}
+
 /**
  * If `evt` is a finished user input-transcription event, pull out the transcript
  * plus any confidence signals the transcriber attached; otherwise return null.
@@ -409,9 +426,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           )
         : buildRealtimeSessionUpdate(system, vadConfig);
       upstream.send(JSON.stringify(sessionUpdate));
-      // Echo the client's current session id back.
+      // Echo the client's current session id back, and tell it the proxy mode so
+      // it knows whether to play audio (hybrid) or own the reply (transcribe).
       try {
-        client.send(JSON.stringify({ type: "ava.session", sessionId }));
+        client.send(sessionHelloFrame(sessionId, hybrid));
       } catch { /* ignore */ }
       // Drain anything the client sent before upstream was ready, preserving
       // each frame's text/binary kind.
@@ -469,11 +487,14 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         if (call && call.name === "do_on_computer" && deps.runAction) {
           const task = String((call.args as { task?: unknown }).task ?? "");
           log.info(`realtime: do_on_computer task=${JSON.stringify(task)}`);
+          // Tell the client an action started so it can show progress instead of
+          // dead air while the (possibly multi-second) agent run executes.
+          try { client.send(actionStartedFrame(task)); } catch { /* */ }
           void (async () => {
             try {
               const r = await deps.runAction!(sessionId, task);
               sessionId = r.sessionId ?? sessionId;
-              try { client.send(JSON.stringify({ type: "ava.session", sessionId })); } catch { /* */ }
+              try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
               for (const f of toolResultFrames(call.callId, r.text || "Done.")) upstream.send(f);
             } catch (e) {
               const msg = e instanceof Error ? e.message : String(e);

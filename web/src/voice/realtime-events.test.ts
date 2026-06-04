@@ -34,6 +34,21 @@ describe("classifyRealtimeEvent", () => {
       .toEqual({ kind: "error", message: "boom" });
   });
 
+  it("carries the proxy mode on the session hello (hybrid vs transcribe)", () => {
+    expect(classifyRealtimeEvent({ type: "ava.session", sessionId: "s1", mode: "hybrid" }))
+      .toEqual({ kind: "session", sessionId: "s1", mode: "hybrid" });
+    expect(classifyRealtimeEvent({ type: "ava.session", sessionId: "s1", mode: "transcribe" }))
+      .toEqual({ kind: "session", sessionId: "s1", mode: "transcribe" });
+    // An unknown mode value is dropped (treated as no mode).
+    expect(classifyRealtimeEvent({ type: "ava.session", sessionId: "s1", mode: "weird" }))
+      .toEqual({ kind: "session", sessionId: "s1", mode: undefined });
+  });
+
+  it("recognizes the hybrid action-started frame", () => {
+    expect(classifyRealtimeEvent({ type: "ava.action", task: "open downloads" }))
+      .toEqual({ kind: "action_started", task: "open downloads" });
+  });
+
   it("ignores unknown events and missing types", () => {
     expect(classifyRealtimeEvent({ type: "something.else" })).toEqual({ kind: "ignore" });
     expect(classifyRealtimeEvent({})).toEqual({ kind: "ignore" });

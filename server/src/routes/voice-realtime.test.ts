@@ -5,6 +5,8 @@ import {
   DO_ON_COMPUTER_TOOL,
   readToolCall,
   toolResultFrames,
+  sessionHelloFrame,
+  actionStartedFrame,
   loadRealtimeVadConfig,
   DEFAULT_REALTIME_VAD,
   readTranscriptionCompleted,
@@ -49,6 +51,15 @@ describe("hybrid voice (speak + do_on_computer)", () => {
   it("the action tool is named/described for actions only", () => {
     expect(DO_ON_COMPUTER_TOOL.name).toBe("do_on_computer");
     expect(DO_ON_COMPUTER_TOOL.parameters.required).toContain("task");
+  });
+
+  it("sessionHelloFrame tells the client the proxy mode so it knows who replies", () => {
+    expect(JSON.parse(sessionHelloFrame("s1", true))).toEqual({ type: "ava.session", sessionId: "s1", mode: "hybrid" });
+    expect(JSON.parse(sessionHelloFrame(null, false))).toEqual({ type: "ava.session", sessionId: null, mode: "transcribe" });
+  });
+
+  it("actionStartedFrame carries the task for an in-progress caption", () => {
+    expect(JSON.parse(actionStartedFrame("open downloads"))).toEqual({ type: "ava.action", task: "open downloads" });
   });
 });
 

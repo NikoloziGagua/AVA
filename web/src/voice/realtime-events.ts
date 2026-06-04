@@ -9,10 +9,11 @@
 // connected. Handling both names makes playback resilient to the rename.
 
 export type RealtimeAction =
-  | { kind: "session"; sessionId: string }
+  | { kind: "session"; sessionId: string; mode?: "hybrid" | "transcribe" }
   | { kind: "speech_started" }
   | { kind: "speech_stopped" }
   | { kind: "user_transcript"; text: string }
+  | { kind: "action_started"; task: string }
   | { kind: "audio"; b64: string }
   | { kind: "response_created" }
   | { kind: "ava_transcript_delta"; text: string }
@@ -28,7 +29,12 @@ export function classifyRealtimeEvent(evt: { type?: string;[k: string]: unknown 
   switch (t) {
     case "ava.session": {
       const sid = evt.sessionId as string | undefined;
-      return sid ? { kind: "session", sessionId: sid } : { kind: "ignore" };
+      const mode = evt.mode === "hybrid" || evt.mode === "transcribe" ? evt.mode : undefined;
+      return sid ? { kind: "session", sessionId: sid, mode } : { kind: "ignore" };
+    }
+    case "ava.action": {
+      const task = (evt.task as string | undefined) ?? "";
+      return { kind: "action_started", task };
     }
     case "input_audio_buffer.speech_started":
       return { kind: "speech_started" };

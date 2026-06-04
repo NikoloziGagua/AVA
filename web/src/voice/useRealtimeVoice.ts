@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
 import { classifyRealtimeEvent, type RealtimeAction } from "./realtime-events.js";
+import { PcmStreamPlayer } from "./realtime-audio.js";
 import { api, approveApproval, denyApproval } from "../api.js";
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
@@ -27,6 +28,50 @@ export function realtimeActionToIntent(action: RealtimeAction): VoiceIntent {
       return { kind: "error", message: action.message };
     default:
       // speech_started/stopped, audio, response_*, ava_transcript_* → ignore.
+      return { kind: "ignore" };
+  }
+}
+
+// HYBRID mode: the realtime model speaks directly (ChatGPT-fast), so the client
+// PLAYS its audio + shows captions and must NOT re-route the transcript to
+// /api/chat (the server already drove the model to reply, and routes any actual
+// action through the do_on_computer tool). This pure map turns a realtime action
+// into the side effect the hook performs; the stateful turn-taking lives in the
+// hook.
+export type HybridEffect =
+  | { kind: "session"; sessionId: string }
+  | { kind: "caption_user"; text: string }
+  | { kind: "working"; task: string }
+  | { kind: "play_audio"; b64: string }
+  | { kind: "ava_delta"; text: string }
+  | { kind: "ava_done"; text: string }
+  | { kind: "thinking" }
+  | { kind: "gen_done" }
+  | { kind: "error"; message: string }
+  | { kind: "ignore" };
+
+export function realtimeActionToHybridEffect(action: RealtimeAction): HybridEffect {
+  switch (action.kind) {
+    case "session":
+      return action.sessionId ? { kind: "session", sessionId: action.sessionId } : { kind: "ignore" };
+    case "user_transcript":
+      return { kind: "caption_user", text: action.text };
+    case "action_started":
+      return { kind: "working", task: action.task };
+    case "audio":
+      return { kind: "play_audio", b64: action.b64 };
+    case "ava_transcript_delta":
+      return { kind: "ava_delta", text: action.text };
+    case "ava_transcript_done":
+      return { kind: "ava_done", text: action.text };
+    case "response_created":
+      return { kind: "thinking" };
+    case "response_done":
+      return { kind: "gen_done" };
+    case "error":
+      return { kind: "error", message: action.message };
+    default:
+      // speech_started / speech_stopped → ignore (mic gating owns turn-taking).
       return { kind: "ignore" };
   }
 }
@@ -124,9 +169,19 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
   // Sequential TTS queue: clips are generated + played in order, so we can speak
   // an instant ack and stream the reply sentence-by-sentence instead of waiting
-  // for the whole answer plus one big TTS at the end.
+  // for the whole answer plus one big TTS at the end. (Transcribe-only path.)
   const speakQueueRef = useRef<string[]>([]);
   const speakBusyRef = useRef(false);
+
+  // HYBRID path: the proxy says `mode: "hybrid"` in its session hello when the
+  // realtime model speaks directly. Then we play its PCM audio and DON'T route
+  // transcripts to /api/chat. These refs drive that path; they stay inert in
+  // transcribe-only mode.
+  const hybridRef = useRef(false);
+  const playerRef = useRef<PcmStreamPlayer | null>(null);
+  const avaCaptionRef = useRef("");      // accumulates Ava's streamed transcript
+  const genDoneRef = useRef(false);      // response.done seen for the current turn
+  const actionPendingRef = useRef(false); // do_on_computer running (suppress early "listening")
 
   const stopAgentStream = useCallback(() => {
     try { esRef.current?.close(); } catch { /* */ }
@@ -152,6 +207,13 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     captureCtxRef.current = null;
 
     stopAgentStream();
+
+    try { playerRef.current?.close(); } catch { /* */ }
+    playerRef.current = null;
+    hybridRef.current = false;
+    avaCaptionRef.current = "";
+    genDoneRef.current = false;
+    actionPendingRef.current = false;
 
     try { wsRef.current?.close(); } catch { /* */ }
     wsRef.current = null;
@@ -292,24 +354,106 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     })();
   }, [enqueueSpeak, stopAgentStream]);
 
-  const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
-    const intent = realtimeActionToIntent(classifyRealtimeEvent(evt));
-    switch (intent.kind) {
+  // Lazily build the PCM player; its onEnded ends the turn once generation is
+  // also complete (response.done seen) so the mic only reopens after Ava has
+  // actually finished speaking.
+  const ensurePlayer = useCallback(() => {
+    if (!playerRef.current) {
+      const p = new PcmStreamPlayer();
+      p.onEnded = () => {
+        if (genDoneRef.current && stateRef.current === "responding") {
+          actionPendingRef.current = false;
+          setState("listening");
+        }
+      };
+      playerRef.current = p;
+    }
+    return playerRef.current;
+  }, []);
+
+  // HYBRID turn-taking. The realtime model speaks; we play its audio + caption
+  // it and never call /api/chat (the do_on_computer tool does any real work on
+  // the server). State flips to thinking/responding so the mic stops forwarding
+  // — that's the echo guard — and back to listening only when Ava's audio drains.
+  const handleHybridAction = useCallback((action: RealtimeAction) => {
+    const eff = realtimeActionToHybridEffect(action);
+    switch (eff.kind) {
       case "session":
-        setSessionId(intent.sessionId);
+        setSessionId(eff.sessionId);
         return;
+      case "caption_user":
+        // A fresh user turn: reset per-turn accumulators.
+        actionPendingRef.current = false;
+        avaCaptionRef.current = "";
+        setCaption({ who: "you", text: eff.text });
+        return;
+      case "working":
+        // do_on_computer is running on the server — show progress, keep the mic
+        // closed, and don't let the tool-call response's done flip us to idle.
+        actionPendingRef.current = true;
+        setCaption({ who: "ava", text: eff.task ? `…${eff.task}` : "…working on it" });
+        setState("thinking");
+        return;
+      case "thinking":
+        genDoneRef.current = false;
+        avaCaptionRef.current = "";
+        setState("thinking");
+        return;
+      case "play_audio":
+        genDoneRef.current = false;
+        setState("responding");
+        ensurePlayer().enqueue(eff.b64);
+        return;
+      case "ava_delta":
+        avaCaptionRef.current += eff.text;
+        setCaption({ who: "ava", text: avaCaptionRef.current });
+        return;
+      case "ava_done":
+        if (eff.text) setCaption({ who: "ava", text: eff.text });
+        avaCaptionRef.current = "";
+        return;
+      case "gen_done":
+        genDoneRef.current = true;
+        // The tool-call response also emits done (no audio) — ignore that one;
+        // the real reply's audio + onEnded ends the turn. Only a no-audio,
+        // no-action turn ends here directly.
+        if (!actionPendingRef.current && !playerRef.current?.playing) setState("listening");
+        return;
+      case "error":
+        setErrorMsg(eff.message);
+        return;
+      case "ignore":
+        return;
+    }
+  }, [ensurePlayer]);
+
+  const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
+    const action = classifyRealtimeEvent(evt);
+    // The session hello carries the proxy mode; latch it before branching so the
+    // very first non-session frame is handled by the right path.
+    if (action.kind === "session") {
+      if (action.mode) hybridRef.current = action.mode === "hybrid";
+      if (action.sessionId) setSessionId(action.sessionId);
+      return;
+    }
+    if (hybridRef.current) {
+      handleHybridAction(action);
+      return;
+    }
+    // Transcribe-only (default): the realtime model is silent; an accepted
+    // transcript is routed through the SAME tool-using agent as typed text.
+    const intent = realtimeActionToIntent(action);
+    switch (intent.kind) {
       case "agent_turn":
-        // Server already gated this transcript — it's real speech. Route it
-        // through the SAME agent as text. (Silence/noise never gets here.)
         runAgentTurn(intent.text);
         return;
       case "error":
         setErrorMsg(intent.message);
         return;
-      case "ignore":
+      default:
         return;
     }
-  }, [runAgentTurn]);
+  }, [handleHybridAction, runAgentTurn]);
 
   const startingRef = useRef(false);
   const start = useCallback(async () => {
@@ -369,7 +513,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           source.connect(node);
 
           // eslint-disable-next-line no-console
-          console.info("[ava] realtime ready: capture context up (transcribe-only)");
+          console.info("[ava] realtime ready: capture context up");
           setState("listening");
         } catch (err) {
           setErrorMsg(`audio setup failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -424,6 +568,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     const sid = sessionIdRef.current;
     if (sid) void api.kill(sid).catch(() => {});
     stopAgentStream();
+    // Hybrid: cut the model's spoken audio immediately and end the turn.
+    try { playerRef.current?.interrupt(); } catch { /* */ }
+    genDoneRef.current = false;
+    actionPendingRef.current = false;
+    avaCaptionRef.current = "";
     setState("listening");
   }, [stopAgentStream]);
 

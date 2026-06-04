@@ -12,6 +12,7 @@ import { purgeDeletedSessions } from "./state/sessions.js";
 import { buildRealtimeProxy } from "./routes/voice-realtime.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
+import { issueToken } from "./auth/tokens.js";
 import { authRoutes } from "./routes/auth.js";
 import { chatRoutes } from "./routes/chat.js";
 import { healthRoutes } from "./routes/health.js";
@@ -244,14 +245,65 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
   log.info({ port: cfg.port, bind: cfg.bindAddr }, "ava server listening");
 });
 
-// Realtime voice WebSocket proxy: /api/voice/realtime
+// Hybrid voice action handoff: the realtime model's do_on_computer tool runs the
+// REAL /api/chat agent (full tools), reusing the exact text path. We call it over
+// loopback with a dedicated internal token and read the run's final reply off the
+// SSE stream so the realtime model can speak it.
+const hybridVoice = !!process.env.REALTIME_HYBRID;
+const voiceInternalToken = hybridVoice ? issueToken(db, { label: "voice-internal" }).secret : "";
+async function runVoiceAction(sessionId: string | null, task: string): Promise<{ text: string; sessionId: string | null }> {
+  const base = `http://127.0.0.1:${cfg.port}`;
+  const auth = { authorization: `Bearer ${voiceInternalToken}` };
+  try {
+    const post = await fetch(`${base}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth },
+      body: JSON.stringify({ sessionId, text: task }),
+    });
+    const started = (await post.json()) as { sessionId?: string };
+    const sid = started.sessionId ?? sessionId;
+    if (!sid) return { text: "I couldn't start that, Sir.", sessionId };
+    const res = await fetch(`${base}/api/chat/${sid}/stream`, { headers: auth });
+    const reader = res.body?.getReader();
+    if (!reader) return { text: "Done.", sessionId: sid };
+    const decoder = new TextDecoder();
+    let buf = "", curEvent = "", finalText = "", stop = false;
+    while (!stop) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) curEvent = line.slice(6).trim();
+        else if (line.startsWith("data:")) {
+          const data = line.slice(5).trim();
+          if (curEvent === "final") { try { finalText = (JSON.parse(data) as { text: string }).text; } catch { /* */ } stop = true; }
+          else if (curEvent === "error") { try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ } stop = true; }
+          else if (curEvent === "killed") stop = true;
+        }
+      }
+    }
+    try { await reader.cancel(); } catch { /* */ }
+    return { text: finalText || "Done.", sessionId: sid };
+  } catch (e) {
+    return { text: `That didn't work, Sir — ${e instanceof Error ? e.message : String(e)}`, sessionId };
+  }
+}
+
+// Realtime voice WebSocket proxy: /api/voice/realtime. HYBRID (model speaks +
+// do_on_computer routes to the full agent) is OPT-IN via REALTIME_HYBRID — the
+// matching client audio path must be live too, so until then the default stays
+// the working transcribe-only path. (hybridVoice declared above with the token.)
 const realtimeProxy = buildRealtimeProxy({
   db,
   apiKey: cfg.openaiApiKey,
   memoryDir: cfg.memoryDir,
+  ...(hybridVoice ? { runAction: runVoiceAction, voice: process.env.REALTIME_VOICE || "alloy" } : {}),
   log,
 });
 realtimeProxy.attach(httpServer);
+if (hybridVoice) log.info("realtime voice: HYBRID mode enabled (REALTIME_HYBRID)");
 
 try {
   startSystray({

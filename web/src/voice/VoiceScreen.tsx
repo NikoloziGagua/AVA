@@ -104,6 +104,27 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         </motion.div>
       )}
 
+      {v.pendingApproval && (
+        <div className="absolute left-1/2 -translate-x-1/2 bottom-[230px] w-[300px] rounded-2xl border border-white/15 bg-white/5 backdrop-blur-md p-4 text-center">
+          <div className="text-[9px] uppercase tracking-[0.2em] text-white/40 mb-1">approval needed</div>
+          <div className="text-sm text-white/90 leading-snug mb-3">{v.pendingApproval.summary}</div>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={v.deny}
+              className="px-4 py-2 rounded-full border border-white/15 bg-white/5 text-white/80 text-xs active:scale-95"
+            >
+              Deny
+            </button>
+            <button
+              onClick={v.approve}
+              className="px-4 py-2 rounded-full bg-white text-black text-xs font-medium active:scale-95"
+            >
+              Approve
+            </button>
+          </div>
+        </div>
+      )}
+
       {v.errorMsg && (
         <div className="absolute left-1/2 -translate-x-1/2 top-20 w-72">
           <Alert variant="destructive" close onClose={() => onExit(v.sessionId)}>

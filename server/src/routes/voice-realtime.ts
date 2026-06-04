@@ -1,33 +1,34 @@
 import { WebSocketServer, WebSocket, type RawData } from "ws";
-import type { IncomingMessage } from "node:http";
 import type { Db } from "../state/db.js";
 import { buildSystemPrompt } from "../orchestrator/system-prompt.js";
 import { validateToken } from "../auth/tokens.js";
+import {
+  gateTranscript,
+  loadTranscriptGateConfig,
+  type TranscriptGateConfig,
+} from "../voice/transcript-gate.js";
 
-// ─── OpenAI Realtime API event shapes ────────────────────────────────────────
+// ─── OpenAI Realtime API: TRANSCRIBE-ONLY proxy ──────────────────────────────
 //
-// The Realtime API uses a JSON event protocol over a single WebSocket. Our
-// proxy is mostly a pipe — we relay client↔upstream events verbatim — but we
-// also intercept a few event types to:
-//   1. Inject our system prompt + voice + audio format on session.update
-//   2. Persist the user's transcribed turn (input_audio_transcription.completed)
-//   3. Persist Ava's transcribed reply (response.audio_transcript.done)
+// This proxy used to run the realtime model speech-to-speech: it generated the
+// audio reply itself, with no tools. That made voice (a) hallucinate replies to
+// silence and (b) far less capable than text chat, which routes through the
+// full tool-using agent.
 //
-// Event types we care about (full list in OpenAI docs):
-//   client → server:
-//     - session.update          (we send this on connect)
-//     - input_audio_buffer.append   (raw audio chunks from mic)
-//     - input_audio_buffer.commit
-//     - response.create
-//     - conversation.item.create    (text-only injects, tool outputs)
-//   server → client:
+// It is now a transcription service only:
+//   - `create_response: false` — the realtime model NEVER speaks. We use it
+//     purely for low-latency server-VAD endpointing + speech-to-text.
+//   - Every finished transcript is run through `gateTranscript` so silence /
+//     noise hallucinations ("you", "Thank you.") are dropped server-side and
+//     never reach the client.
+//   - Accepted transcripts are forwarded to the browser, which submits them to
+//     the SAME `POST /api/chat` agent path that typed messages use (full tool
+//     stack, approvals, playbooks) and speaks the reply via TTS.
+//
+// Event types we care about (server → client):
 //     - session.created / session.updated
 //     - input_audio_buffer.speech_started / .speech_stopped (server VAD)
-//     - conversation.item.created
-//     - conversation.item.input_audio_transcription.completed
-//     - response.created / .done
-//     - response.audio.delta / .done
-//     - response.audio_transcript.delta / .done
+//     - conversation.item.input_audio_transcription.completed  (gated here)
 //     - error
 
 // gpt-4o-realtime-preview returned server_error on this account — likely a
@@ -36,31 +37,79 @@ import { validateToken } from "../auth/tokens.js";
 const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime";
 const REALTIME_URL = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`;
 
+export interface RealtimeVadConfig {
+  /** Transcription model. gpt-4o-transcribe hallucinates far less than whisper-1. */
+  transcribeModel: string;
+  /** server_vad energy threshold 0..1 — higher ignores more background noise. */
+  threshold: number;
+  /** Audio kept before speech onset, ms. */
+  prefixPaddingMs: number;
+  /** Trailing silence that ends an utterance, ms (min silence duration). */
+  silenceMs: number;
+}
+
+export const DEFAULT_REALTIME_VAD: RealtimeVadConfig = {
+  transcribeModel: "gpt-4o-transcribe",
+  threshold: 0.6,
+  prefixPaddingMs: 300,
+  silenceMs: 600,
+};
+
+/** Build VAD config from env overrides (REALTIME_TRANSCRIBE_MODEL, REALTIME_VAD_*). */
+export function loadRealtimeVadConfig(
+  env: Record<string, string | undefined> = process.env,
+): RealtimeVadConfig {
+  const num = (key: string, fallback: number): number => {
+    const raw = env[key];
+    if (raw == null || raw.trim() === "") return fallback;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  return {
+    transcribeModel: env.REALTIME_TRANSCRIBE_MODEL || DEFAULT_REALTIME_VAD.transcribeModel,
+    threshold: num("REALTIME_VAD_THRESHOLD", DEFAULT_REALTIME_VAD.threshold),
+    prefixPaddingMs: num("REALTIME_VAD_PREFIX_PADDING_MS", DEFAULT_REALTIME_VAD.prefixPaddingMs),
+    silenceMs: num("REALTIME_VAD_SILENCE_MS", DEFAULT_REALTIME_VAD.silenceMs),
+  };
+}
+
 /**
- * GA `gpt-realtime` session.update payload.
+ * GA `gpt-realtime` session.update payload, configured for TRANSCRIBE-ONLY use.
  *
- * The GA model uses a NESTED audio schema and `output_modalities` — NOT the
- * beta-flat shape (top-level `modalities` / `voice` / `input_audio_transcription`),
- * which the GA model rejects as unknown parameters. Sending the beta shape was
- * the silent `session.update` failure that closed the socket. Verified against
- * the OpenAI Realtime GA docs (audio.input.format = { type:"audio/pcm", rate }).
+ * Key points:
+ *   - `output_modalities: ["text"]` and `turn_detection.create_response: false`
+ *     ensure the realtime model produces no audio/auto-reply — we only want its
+ *     VAD + transcription. (No `audio.output` block is needed without audio out.)
+ *   - VAD `threshold` / `prefix_padding_ms` / `silence_duration_ms` are tuned to
+ *     ignore background noise and require a real trailing pause to end a turn.
+ *   - The GA model uses the NESTED audio schema (not the beta-flat
+ *     `modalities`/`voice`/`input_audio_transcription` fields, which it rejects).
  */
-export function buildRealtimeSessionUpdate(instructions: string) {
+export function buildRealtimeSessionUpdate(
+  instructions: string,
+  vad: RealtimeVadConfig = DEFAULT_REALTIME_VAD,
+) {
   return {
     type: "session.update",
     session: {
       type: "realtime",
       instructions,
-      output_modalities: ["audio"],
+      output_modalities: ["text"],
       audio: {
         input: {
           format: { type: "audio/pcm", rate: 24000 },
-          turn_detection: { type: "server_vad" },
-          transcription: { model: "whisper-1" },
-        },
-        output: {
-          format: { type: "audio/pcm", rate: 24000 },
-          voice: "alloy",
+          turn_detection: {
+            type: "server_vad",
+            threshold: vad.threshold,
+            prefix_padding_ms: vad.prefixPaddingMs,
+            silence_duration_ms: vad.silenceMs,
+            // The realtime model must not answer — voice replies come from the
+            // text agent over /api/chat. This is the core "no auto-reply to
+            // silence" guarantee on the upstream side.
+            create_response: false,
+            interrupt_response: false,
+          },
+          transcription: { model: vad.transcribeModel },
         },
       },
     },
@@ -68,23 +117,35 @@ export function buildRealtimeSessionUpdate(instructions: string) {
 }
 
 /**
- * Map a realtime server event to a durable message, or null if it isn't a
- * transcript event. Accepts both the GA name (`response.output_audio_transcript.done`)
- * and the legacy beta name (`response.audio_transcript.done`) so transcript
- * persistence can't silently break across an API rename.
+ * If `evt` is a finished user input-transcription event, pull out the transcript
+ * plus any confidence signals the transcriber attached; otherwise return null.
+ *
+ * gpt-4o-transcribe may include per-segment `logprobs`; we average them so the
+ * gate can reject very-low-confidence garbage. whisper-1 typically omits them,
+ * in which case the gate falls back to its text/duration heuristics.
  */
-export function persistTranscriptEvent(
-  evt: { type?: string; transcript?: string },
-): { role: "user" | "assistant"; content: string } | null {
-  const type = evt.type ?? "";
-  const content = (evt.transcript ?? "").trim();
-  if (!content) return null;
-  if (type === "conversation.item.input_audio_transcription.completed") {
-    return { role: "user", content };
+export function readTranscriptionCompleted(
+  evt: { type?: string; transcript?: string; logprobs?: Array<{ logprob?: number }> | null },
+): { text: string; avgLogprob: number | null } | null {
+  if (evt.type !== "conversation.item.input_audio_transcription.completed") return null;
+  const text = evt.transcript ?? "";
+  let avgLogprob: number | null = null;
+  if (Array.isArray(evt.logprobs) && evt.logprobs.length > 0) {
+    const vals = evt.logprobs
+      .map((l) => (typeof l?.logprob === "number" ? l.logprob : null))
+      .filter((v): v is number => v != null);
+    if (vals.length > 0) avgLogprob = vals.reduce((a, b) => a + b, 0) / vals.length;
   }
-  if (type === "response.output_audio_transcript.done" || type === "response.audio_transcript.done") {
-    return { role: "assistant", content };
-  }
+  return { text, avgLogprob };
+}
+
+/** Compute speech-segment duration (ms) from a VAD speech_stopped event. */
+export function speechDurationMs(
+  startMs: number | null,
+  evt: { audio_end_ms?: number },
+): number | null {
+  if (startMs == null) return null;
+  if (typeof evt.audio_end_ms === "number") return Math.max(0, evt.audio_end_ms - startMs);
   return null;
 }
 
@@ -104,9 +165,10 @@ export interface RealtimeProxyDeps {
   db: Db;
   apiKey: string | null;
   memoryDir: string;
-  appendMessage: (m: { sessionId: string; role: "user" | "assistant"; content: string }) => void;
-  getSession: (id: string) => { id: string } | null;
-  createSession: (opts: { title: string | null }) => { id: string };
+  /** Optional override for the transcript gate (tests). Defaults to env config. */
+  gateConfig?: TranscriptGateConfig;
+  /** Optional override for VAD/transcription config (tests). Defaults to env. */
+  vadConfig?: RealtimeVadConfig;
   log?: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 }
 
@@ -121,6 +183,8 @@ const PATH = "/api/voice/realtime";
 
 export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
   const log = deps.log ?? { info: () => {}, warn: () => {}, error: () => {} };
+  const gateConfig = deps.gateConfig ?? loadTranscriptGateConfig();
+  const vadConfig = deps.vadConfig ?? loadRealtimeVadConfig();
   const wss = new WebSocketServer({ noServer: true });
 
   function handleUpgrade(httpServer: import("node:http").Server) {
@@ -152,9 +216,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
   }
 
   async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string) {
-    let sessionId = requestedSessionId && deps.getSession(requestedSessionId)
-      ? requestedSessionId
-      : deps.createSession({ title: null }).id;
+    // The proxy no longer owns the conversation — it neither creates nor
+    // persists sessions. The browser submits accepted transcripts to
+    // /api/chat, which creates/titles the session and persists both turns.
+    // We just echo the client's current session id back so it has continuity.
+    const sessionId = requestedSessionId;
 
     // No `OpenAI-Beta: realtime=v1` header: that selects the beta protocol, and
     // we're now speaking the GA session schema over the GA `/v1/realtime` path.
@@ -167,19 +233,22 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     });
 
     let upstreamReady = false;
+    // VAD onset timestamp of the in-flight utterance, used to measure speech
+    // duration so the gate can drop sub-threshold blips.
+    let speechStartMs: number | null = null;
     const pendingFromClient: Array<{ data: RawData; isBinary: boolean }> = [];
-    log.info("realtime: client connected, opening upstream to gpt-realtime");
+    log.info("realtime: client connected, opening upstream to gpt-realtime (transcribe-only)");
 
     upstream.on("open", () => {
       upstreamReady = true;
-      log.info("realtime: upstream open, sending session.update");
+      log.info("realtime: upstream open, sending transcribe-only session.update");
       // Configure the realtime session on connect.
       const system = buildSystemPrompt({
         memoryDir: deps.memoryDir,
         mode: "conversation",
       });
-      upstream.send(JSON.stringify(buildRealtimeSessionUpdate(system)));
-      // Tell the client which session id we landed on.
+      upstream.send(JSON.stringify(buildRealtimeSessionUpdate(system, vadConfig)));
+      // Echo the client's current session id back.
       try {
         client.send(JSON.stringify({ type: "ava.session", sessionId }));
       } catch { /* ignore */ }
@@ -200,39 +269,63 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       forwardFrame(upstream, data, isBinary);
     });
 
-    // ─── Upstream → Client + transcript persistence + diagnostic logs ───
+    // ─── Upstream → Client (with transcript gating + diagnostics) ───────
     upstream.on("message", (data, isBinary) => {
-      try {
-        if (client.readyState === WebSocket.OPEN) {
-          // Preserve text framing: the browser client drops non-string messages.
-          forwardFrame(client, data, isBinary);
-        }
-      } catch { /* client probably closed */ }
-
-      // Best-effort persist; never let a parse error kill the proxy.
+      let evt:
+        | {
+            type?: string;
+            transcript?: string;
+            audio_start_ms?: number;
+            audio_end_ms?: number;
+            logprobs?: Array<{ logprob?: number }> | null;
+            error?: { type?: string; code?: string; message?: string };
+          }
+        | null = null;
       try {
         const text = typeof data === "string" ? data : data.toString("utf8");
-        const evt = JSON.parse(text) as {
-          type?: string;
-          transcript?: string;
-          item_id?: string;
-          error?: { type?: string; code?: string; message?: string };
-        };
-        // Surface upstream errors and lifecycle events so we can see what
-        // OpenAI is actually saying.
-        if (evt.type === "error") {
+        evt = JSON.parse(text);
+      } catch {
+        evt = null; // non-JSON/binary frame
+      }
+
+      // Track VAD timing + surface lifecycle/errors. Never throw out of here.
+      if (evt) {
+        if (evt.type === "input_audio_buffer.speech_started") {
+          speechStartMs = typeof evt.audio_start_ms === "number" ? evt.audio_start_ms : 0;
+        } else if (evt.type === "error") {
           log.warn(
             `realtime upstream error event: code=${evt.error?.code} type=${evt.error?.type} message=${evt.error?.message}`,
           );
         } else if (evt.type === "session.created" || evt.type === "session.updated") {
           log.info(`realtime ${evt.type} (model=${REALTIME_MODEL})`);
         }
-        const persist = persistTranscriptEvent(evt);
-        if (persist) deps.appendMessage({ sessionId, ...persist });
-      } catch {
-        // Audio chunks etc. arrive as strings but we only persist on the
-        // small JSON events; binary or non-JSON gets ignored here.
       }
+
+      // Gate finished transcripts: a rejected one is dropped here and NEVER
+      // reaches the browser, so silence/noise produces no user turn at all.
+      const tr = evt ? readTranscriptionCompleted(evt) : null;
+      if (tr) {
+        const speechMs = evt ? speechDurationMs(speechStartMs, evt) : null;
+        speechStartMs = null;
+        const verdict = gateTranscript(
+          { text: tr.text, speechMs, avgLogprob: tr.avgLogprob },
+          gateConfig,
+        );
+        if (!verdict.accept) {
+          log.info(
+            `realtime: dropped transcript (${verdict.reason}) speechMs=${speechMs ?? "?"} text=${JSON.stringify(tr.text)}`,
+          );
+          return; // do not forward — no phantom turn
+        }
+        log.info(`realtime: accepted transcript text=${JSON.stringify(verdict.text)}`);
+        // fall through to forward the (accepted) transcript verbatim
+      }
+
+      // Forward everything else (and accepted transcripts) verbatim, preserving
+      // text framing — the browser drops non-string messages.
+      try {
+        if (client.readyState === WebSocket.OPEN) forwardFrame(client, data, isBinary);
+      } catch { /* client probably closed */ }
     });
 
     // ─── Lifecycle ────────────────────────────────────────────────────

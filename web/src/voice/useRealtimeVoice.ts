@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
 import { classifyRealtimeEvent } from "./realtime-events.js";
+import { api, approveApproval, denyApproval } from "../api.js";
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
 const SAMPLE_RATE = 24000;
@@ -10,6 +11,12 @@ export type RealtimeState = "idle" | "connecting" | "listening" | "thinking" | "
 export interface RealtimeCaption {
   who: "you" | "ava";
   text: string;
+}
+
+export interface PendingApproval {
+  id: string;
+  tool: string;
+  summary: string;
 }
 
 // AudioWorklet processor source — registered as a Blob URL at module scope so
@@ -54,33 +61,39 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(s);
 }
 
-function base64ToArrayBuffer(b64: string): ArrayBuffer {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes.buffer;
-}
-
 export function useRealtimeVoice({ initialSessionId }: { initialSessionId: string | null }) {
   const [state, setState] = useState<RealtimeState>("idle");
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [caption, setCaption] = useState<RealtimeCaption | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const captureCtxRef = useRef<AudioContext | null>(null);
-  const playCtxRef = useRef<AudioContext | null>(null);
-  const playTimeRef = useRef<number>(0);
   const streamRef = useRef<MediaStream | null>(null);
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const mutedRef = useRef(false);
   const sessionIdRef = useRef<string | null>(initialSessionId);
-  const avaPartialRef = useRef("");
+  // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
+  const esRef = useRef<EventSource | null>(null);
+  const ttsRef = useRef<HTMLAudioElement | null>(null);
+  // Mic capture is only forwarded upstream while we're actively listening — so
+  // Ava's own TTS reply (played on the speakers) can't be re-heard and
+  // transcribed into a phantom turn.
+  const stateRef = useRef<RealtimeState>("idle");
 
   useEffect(() => { mutedRef.current = muted; }, [muted]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { stateRef.current = state; }, [state]);
+
+  const stopAgentStream = useCallback(() => {
+    try { esRef.current?.close(); } catch { /* */ }
+    esRef.current = null;
+    try { ttsRef.current?.pause(); } catch { /* */ }
+    ttsRef.current = null;
+  }, []);
 
   const cleanup = useCallback(() => {
     try { workletNodeRef.current?.port.close(); } catch { /* */ }
@@ -96,89 +109,132 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     try { captureCtxRef.current?.close(); } catch { /* */ }
     captureCtxRef.current = null;
 
-    try { playCtxRef.current?.close(); } catch { /* */ }
-    playCtxRef.current = null;
-    playTimeRef.current = 0;
+    stopAgentStream();
 
     try { wsRef.current?.close(); } catch { /* */ }
     wsRef.current = null;
+  }, [stopAgentStream]);
+
+  // Speak Ava's final reply via server TTS. Playback finishing returns us to
+  // listening so the conversation flows hands-free.
+  const speak = useCallback(async (text: string) => {
+    const token = getToken() ?? "";
+    try {
+      const resp = await fetch("/api/speak", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) { setState("listening"); return; }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const el = new Audio(url);
+      ttsRef.current = el;
+      setState("responding");
+      el.onended = () => { URL.revokeObjectURL(url); if (ttsRef.current === el) ttsRef.current = null; setState("listening"); };
+      el.onerror = () => { URL.revokeObjectURL(url); setState("listening"); };
+      await el.play().catch(() => setState("listening"));
+    } catch {
+      setState("listening");
+    }
   }, []);
 
-  const playAudioChunk = useCallback((b64: string) => {
-    const ctx = playCtxRef.current;
-    if (!ctx) return;
-    const buf = base64ToArrayBuffer(b64);
-    const i16 = new Int16Array(buf);
-    const f32 = new Float32Array(i16.length);
-    for (let i = 0; i < i16.length; i++) f32[i] = i16[i]! / 32768;
+  // Route an ACCEPTED transcript through the exact same backend path as a typed
+  // message: POST /api/chat → full tool-using agent → SSE stream of the run. We
+  // adopt the session id the server returns and speak the final reply.
+  const runAgentTurn = useCallback((text: string) => {
+    stopAgentStream();
+    setCaption({ who: "you", text });
+    setState("thinking");
 
-    const audioBuffer = ctx.createBuffer(1, f32.length, SAMPLE_RATE);
-    audioBuffer.copyToChannel(f32, 0);
+    void (async () => {
+      let sid: string;
+      try {
+        const r = await api.sendMessage(sessionIdRef.current, text);
+        sid = r.sessionId;
+      } catch (err) {
+        setErrorMsg(err instanceof Error ? err.message : "send failed");
+        setState("listening");
+        return;
+      }
+      setSessionId(sid);
 
-    const src = ctx.createBufferSource();
-    src.buffer = audioBuffer;
-    src.connect(ctx.destination);
+      const token = getToken() ?? "";
+      const es = new EventSource(`/api/chat/${sid}/stream?t=${encodeURIComponent(token)}`);
+      esRef.current = es;
 
-    const startAt = Math.max(playTimeRef.current, ctx.currentTime + 0.02);
-    src.start(startAt);
-    playTimeRef.current = startAt + audioBuffer.duration;
-  }, []);
+      es.addEventListener("tool_call", (e) => {
+        try {
+          const p = JSON.parse((e as MessageEvent).data) as { tool: string };
+          setCaption({ who: "ava", text: `…${p.tool}` });
+        } catch { /* ignore */ }
+      });
+      es.addEventListener("approval_required", (e) => {
+        try {
+          const p = JSON.parse((e as MessageEvent).data) as { id: string; tool: string; summary: string };
+          setPendingApproval({ id: p.id, tool: p.tool, summary: p.summary });
+        } catch { /* ignore */ }
+      });
+      es.addEventListener("approval_resolved", (e) => {
+        try {
+          const p = JSON.parse((e as MessageEvent).data) as { id: string };
+          setPendingApproval((cur) => (cur && cur.id === p.id ? null : cur));
+        } catch { /* ignore */ }
+      });
+      es.addEventListener("final", (e) => {
+        try {
+          const p = JSON.parse((e as MessageEvent).data) as { text: string };
+          setCaption({ who: "ava", text: p.text });
+          void speak(p.text);
+        } catch { /* ignore */ }
+      });
+      es.addEventListener("error", (e) => {
+        // Two error sources land here: the SSE transport, and the agent's own
+        // run-ending error event. Only the latter carries data.
+        const data = (e as MessageEvent).data;
+        if (data) {
+          try {
+            const p = JSON.parse(data) as { message: string };
+            setErrorMsg(p.message);
+          } catch { /* ignore */ }
+          stopAgentStream();
+          setState("listening");
+        }
+      });
+      const finish = () => { stopAgentStream(); if (stateRef.current === "thinking") setState("listening"); };
+      es.addEventListener("done", finish);
+      es.addEventListener("killed", finish);
+    })();
+  }, [speak, stopAgentStream]);
 
   const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
     const action = classifyRealtimeEvent(evt);
     switch (action.kind) {
       case "session":
-        setSessionId(action.sessionId);
+        if (action.sessionId) setSessionId(action.sessionId);
         return;
       case "speech_started":
         // eslint-disable-next-line no-console
         console.info("[ava] VAD: speech_started — you're being heard");
-        setState("listening");
-        avaPartialRef.current = "";
+        // Don't yank UI out of thinking/responding on a stray VAD blip.
+        setState((s) => (s === "listening" ? "listening" : s));
         return;
       case "speech_stopped":
-        // eslint-disable-next-line no-console
-        console.info("[ava] VAD: speech_stopped — generating response");
-        setState("thinking");
         return;
       case "user_transcript":
-        setCaption({ who: "you", text: action.text });
-        return;
-      case "audio":
-        playAudioChunk(action.b64);
-        setState((s) => {
-          if (s !== "responding") {
-            // eslint-disable-next-line no-console
-            console.info("[ava] first audio chunk received");
-            return "responding";
-          }
-          return s;
-        });
-        return;
-      case "response_created":
-        // eslint-disable-next-line no-console
-        console.info("[ava] response.created");
-        return;
-      case "ava_transcript_delta":
-        avaPartialRef.current += action.text;
-        setCaption({ who: "ava", text: avaPartialRef.current });
-        return;
-      case "ava_transcript_done": {
-        const transcript = action.text || avaPartialRef.current;
-        if (transcript) setCaption({ who: "ava", text: transcript });
-        return;
-      }
-      case "response_done":
-        setState("listening");
-        avaPartialRef.current = "";
+        // Server already gated this transcript — it's real speech. Route it
+        // through the agent. (Silence/noise never produces this event.)
+        runAgentTurn(action.text);
         return;
       case "error":
         setErrorMsg(action.message);
         return;
-      case "ignore":
+      // Realtime audio / assistant-transcript events no longer fire — the
+      // session is transcribe-only (create_response:false). Ignore them.
+      default:
         return;
     }
-  }, [playAudioChunk]);
+  }, [runAgentTurn]);
 
   const startingRef = useRef(false);
   const start = useCallback(async () => {
@@ -222,37 +278,23 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           const node = new AudioWorkletNode(captureCtx, "ava-pcm16-capture");
           workletNodeRef.current = node;
 
-          let chunkCount = 0;
           node.port.onmessage = (ev) => {
             if (mutedRef.current) return;
+            // Only forward mic audio while actually listening. During thinking/
+            // responding the mic stays "open" for barge-in detection but we drop
+            // the chunks so Ava's TTS reply isn't transcribed back as a phantom
+            // user turn.
+            if (stateRef.current !== "listening") return;
             if (ws.readyState !== WebSocket.OPEN) return;
             const buf = ev.data as ArrayBuffer;
             const b64 = arrayBufferToBase64(buf);
             ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio: b64 }));
-            chunkCount++;
-            // ~187 quanta/sec at 24kHz with 128-sample render quantum
-            if (chunkCount === 1) {
-              // eslint-disable-next-line no-console
-              console.info("[ava] mic chunk #1 sent — capture is live");
-            } else if (chunkCount % 200 === 0) {
-              // eslint-disable-next-line no-console
-              console.info(`[ava] mic chunk #${chunkCount} (~${(chunkCount / 187).toFixed(1)}s of audio sent)`);
-            }
           };
 
           source.connect(node);
 
-          // 4. Playback context — also wake it up so the first response chunk
-          // doesn't get queued behind a suspended-state delay.
-          const playCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-          playCtxRef.current = playCtx;
-          if (playCtx.state === "suspended") await playCtx.resume();
-          // Schedule first chunk a hair into the future for jitter; subsequent
-          // chunks chain off the previous end.
-          playTimeRef.current = playCtx.currentTime + 0.04;
-
           // eslint-disable-next-line no-console
-          console.info("[ava] realtime ready: capture + playback contexts up");
+          console.info("[ava] realtime ready: capture context up (transcribe-only)");
           setState("listening");
         } catch (err) {
           setErrorMsg(`audio setup failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -301,14 +343,27 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     setCaption(null);
   }, [cleanup]);
 
+  // Barge-in: stop Ava speaking / abort the in-flight agent run and return to
+  // listening. Kills the server-side run too so tools don't keep executing.
   const interrupt = useCallback(() => {
-    const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      try { ws.send(JSON.stringify({ type: "response.cancel" })); } catch { /* */ }
-    }
-    // Also drop any queued audio so playback stops immediately.
-    playTimeRef.current = playCtxRef.current?.currentTime ?? 0;
+    const sid = sessionIdRef.current;
+    if (sid) void api.kill(sid).catch(() => {});
+    stopAgentStream();
     setState("listening");
+  }, [stopAgentStream]);
+
+  const approve = useCallback(() => {
+    setPendingApproval((cur) => {
+      if (cur) void approveApproval(cur.id).catch(() => {});
+      return null;
+    });
+  }, []);
+
+  const deny = useCallback(() => {
+    setPendingApproval((cur) => {
+      if (cur) void denyApproval(cur.id).catch(() => {});
+      return null;
+    });
   }, []);
 
   useEffect(() => () => { cleanup(); }, [cleanup]);
@@ -320,12 +375,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     errorMsg,
     muted,
     setMuted,
+    pendingApproval,
+    approve,
+    deny,
     start,
     stop,
     interrupt,
-    // Aliases so existing VoiceScreen using useVoiceSession's API can swap in.
-    startListening: start,
-    stopListening: interrupt,
-    stopResponding: interrupt,
   };
 }

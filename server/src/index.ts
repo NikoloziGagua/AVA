@@ -8,9 +8,7 @@ import { nanoid } from "nanoid";
 import { loadConfig } from "./config.js";
 import { buildLogger } from "./logs/logger.js";
 import { openDb } from "./state/db.js";
-import { createSession, getSession, purgeDeletedSessions } from "./state/sessions.js";
-import { appendMessage } from "./state/messages.js";
-import { runVoiceTurn } from "./agent/voice-turn.js";
+import { purgeDeletedSessions } from "./state/sessions.js";
 import { buildRealtimeProxy } from "./routes/voice-realtime.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
@@ -212,16 +210,11 @@ app.use("/api/self", selfRoutes(db, requireToken(db), {
 }));
 
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });
+// STT (/transcribe) + TTS (/speak) primitives only. Voice conversations route
+// through POST /api/chat (the full tool-using agent) via the realtime WS proxy.
 app.use("/api", voiceRoutes({
   clients: voiceClients,
   requireToken: requireToken(db),
-  voiceTurn: provider ? {
-    getSession: (id) => getSession(db, id),
-    createSession: (opts) => createSession(db, opts),
-    appendMessage: (m) => { appendMessage(db, m); },
-    runTurn: ({ sessionId, userText }) =>
-      runVoiceTurn({ db, provider, memoryDir: cfg.memoryDir, sessionId, userText }),
-  } : undefined,
 }));
 
 app.use("/", statusRoutes({ db, runs, startedAt }));
@@ -256,9 +249,6 @@ const realtimeProxy = buildRealtimeProxy({
   db,
   apiKey: cfg.openaiApiKey,
   memoryDir: cfg.memoryDir,
-  appendMessage: (m) => { appendMessage(db, m); },
-  getSession: (id) => getSession(db, id),
-  createSession: (opts) => createSession(db, opts),
   log,
 });
 realtimeProxy.attach(httpServer);

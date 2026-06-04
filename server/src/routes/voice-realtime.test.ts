@@ -1,21 +1,48 @@
 import { describe, it, expect } from "vitest";
-import { buildRealtimeSessionUpdate, persistTranscriptEvent, forwardFrame } from "./voice-realtime.js";
+import {
+  buildRealtimeSessionUpdate,
+  loadRealtimeVadConfig,
+  DEFAULT_REALTIME_VAD,
+  readTranscriptionCompleted,
+  speechDurationMs,
+  forwardFrame,
+} from "./voice-realtime.js";
 
-describe("buildRealtimeSessionUpdate (GA gpt-realtime schema)", () => {
-  it("emits the GA nested session shape", () => {
+describe("buildRealtimeSessionUpdate (transcribe-only GA schema)", () => {
+  it("emits the GA nested session shape configured for transcription only", () => {
     const u = buildRealtimeSessionUpdate("be nice");
     expect(u.type).toBe("session.update");
     const s = u.session as Record<string, any>;
     expect(s.type).toBe("realtime");
     expect(s.instructions).toBe("be nice");
-    expect(s.output_modalities).toEqual(["audio"]);
+    // text-only output + no audio.output block => the realtime model never speaks
+    expect(s.output_modalities).toEqual(["text"]);
+    expect(s.audio.output).toBeUndefined();
     expect(s.audio.input.format).toEqual({ type: "audio/pcm", rate: 24000 });
-    expect(s.audio.input.turn_detection.type).toBe("server_vad");
+    expect(s.audio.input.transcription.model).toBe(DEFAULT_REALTIME_VAD.transcribeModel);
+  });
+
+  it("tunes server VAD and disables auto-response (no reply to silence)", () => {
+    const s = buildRealtimeSessionUpdate("x").session as Record<string, any>;
+    const td = s.audio.input.turn_detection;
+    expect(td.type).toBe("server_vad");
+    expect(td.create_response).toBe(false);
+    expect(td.interrupt_response).toBe(false);
+    expect(td.threshold).toBe(DEFAULT_REALTIME_VAD.threshold);
+    expect(td.prefix_padding_ms).toBe(DEFAULT_REALTIME_VAD.prefixPaddingMs);
+    expect(td.silence_duration_ms).toBe(DEFAULT_REALTIME_VAD.silenceMs);
+  });
+
+  it("honors a supplied VAD config", () => {
+    const s = buildRealtimeSessionUpdate("x", {
+      transcribeModel: "whisper-1",
+      threshold: 0.8,
+      prefixPaddingMs: 100,
+      silenceMs: 900,
+    }).session as Record<string, any>;
     expect(s.audio.input.transcription.model).toBe("whisper-1");
-    expect(s.audio.output.voice).toBe("alloy");
-    // GA requires an explicit output rate — omitting it fails session.update
-    // with "Missing required parameter: 'session.audio.output.format.rate'".
-    expect(s.audio.output.format).toEqual({ type: "audio/pcm", rate: 24000 });
+    expect(s.audio.input.turn_detection.threshold).toBe(0.8);
+    expect(s.audio.input.turn_detection.silence_duration_ms).toBe(900);
   });
 
   it("does NOT send the beta-shape fields that gpt-realtime rejects", () => {
@@ -26,29 +53,59 @@ describe("buildRealtimeSessionUpdate (GA gpt-realtime schema)", () => {
   });
 });
 
-describe("persistTranscriptEvent", () => {
-  it("maps the GA assistant transcript-done event", () => {
-    expect(
-      persistTranscriptEvent({ type: "response.output_audio_transcript.done", transcript: "hello" }),
-    ).toEqual({ role: "assistant", content: "hello" });
+describe("loadRealtimeVadConfig", () => {
+  it("falls back to defaults with an empty environment", () => {
+    expect(loadRealtimeVadConfig({})).toEqual(DEFAULT_REALTIME_VAD);
   });
 
-  it("still maps the legacy beta assistant transcript event", () => {
-    expect(
-      persistTranscriptEvent({ type: "response.audio_transcript.done", transcript: "hi" }),
-    ).toEqual({ role: "assistant", content: "hi" });
+  it("applies env overrides", () => {
+    const cfg = loadRealtimeVadConfig({
+      REALTIME_TRANSCRIBE_MODEL: "whisper-1",
+      REALTIME_VAD_THRESHOLD: "0.75",
+      REALTIME_VAD_PREFIX_PADDING_MS: "250",
+      REALTIME_VAD_SILENCE_MS: "800",
+    });
+    expect(cfg.transcribeModel).toBe("whisper-1");
+    expect(cfg.threshold).toBe(0.75);
+    expect(cfg.prefixPaddingMs).toBe(250);
+    expect(cfg.silenceMs).toBe(800);
+  });
+});
+
+describe("readTranscriptionCompleted", () => {
+  it("extracts the transcript from a completed input-transcription event", () => {
+    const r = readTranscriptionCompleted({
+      type: "conversation.item.input_audio_transcription.completed",
+      transcript: "open chrome",
+    });
+    expect(r).toEqual({ text: "open chrome", avgLogprob: null });
   });
 
-  it("maps the user input-transcription event", () => {
-    expect(
-      persistTranscriptEvent({ type: "conversation.item.input_audio_transcription.completed", transcript: "yo" }),
-    ).toEqual({ role: "user", content: "yo" });
+  it("averages logprobs when present", () => {
+    const r = readTranscriptionCompleted({
+      type: "conversation.item.input_audio_transcription.completed",
+      transcript: "hi",
+      logprobs: [{ logprob: -0.2 }, { logprob: -0.4 }],
+    });
+    expect(r?.avgLogprob).toBeCloseTo(-0.3, 5);
   });
 
-  it("ignores unrelated events and blank transcripts", () => {
-    expect(persistTranscriptEvent({ type: "response.output_audio.delta", transcript: "" })).toBeNull();
-    expect(persistTranscriptEvent({ type: "response.output_audio_transcript.done", transcript: "   " })).toBeNull();
-    expect(persistTranscriptEvent({ type: "session.updated" })).toBeNull();
+  it("returns null for non-transcription events", () => {
+    expect(readTranscriptionCompleted({ type: "response.created" })).toBeNull();
+    expect(readTranscriptionCompleted({ type: "input_audio_buffer.speech_started" })).toBeNull();
+  });
+});
+
+describe("speechDurationMs", () => {
+  it("computes duration from start + audio_end_ms", () => {
+    expect(speechDurationMs(1000, { audio_end_ms: 1600 })).toBe(600);
+  });
+  it("clamps negatives to zero", () => {
+    expect(speechDurationMs(2000, { audio_end_ms: 1000 })).toBe(0);
+  });
+  it("returns null when timing is unavailable", () => {
+    expect(speechDurationMs(null, { audio_end_ms: 1600 })).toBeNull();
+    expect(speechDurationMs(1000, {})).toBeNull();
   });
 });
 
@@ -56,8 +113,6 @@ describe("forwardFrame", () => {
   it("preserves a text frame as text — OpenAI rejects binary frames", () => {
     const calls: Array<{ data: unknown; opts: unknown }> = [];
     const target = { send: (data: unknown, opts?: unknown) => { calls.push({ data, opts }); } };
-    // ws delivers a browser text frame as a Buffer; forwarding it without the
-    // text flag re-frames it as binary, which OpenAI refuses.
     const payload = Buffer.from('{"type":"input_audio_buffer.append"}');
     forwardFrame(target as never, payload, false);
     expect(calls[0]!.data).toBe(payload);

@@ -13,17 +13,17 @@ export interface PulseProps {
 }
 
 const COLORS_IDLE =
-  "linear-gradient(135deg, #fffaf0 0%, #d8bd83 28%, #5d7cff 52%, #47d6a7 76%, #fffaf0 100%)";
+  "linear-gradient(135deg, #f8fafc 0%, #cbd5e1 25%, #64748b 50%, #cbd5e1 75%, #f8fafc 100%)";
 const COLORS_RESPONDING =
-  "linear-gradient(135deg, #fffaf0 0%, #ffffff 30%, #d8bd83 50%, #ffffff 70%, #5d7cff 100%)";
-const SHIMMER = "linear-gradient(110deg, #6f6043 35%, #fffaf0 50%, #1f2a62 65%)";
+  "linear-gradient(135deg, #e5e7eb 0%, #ffffff 30%, #94a3b8 50%, #ffffff 70%, #e5e7eb 100%)";
+const SHIMMER = "linear-gradient(110deg, #475569 35%, #f8fafc 50%, #475569 65%)";
 
 function shadowFor(state: PulseState): string {
   switch (state) {
-    case "listening": return "0 0 80px rgba(71,214,167,0.38), 0 0 30px rgba(216,189,131,0.28)";
-    case "responding": return "0 0 100px rgba(93,124,255,0.42), 0 0 35px rgba(216,189,131,0.36)";
-    case "thinking": return "0 0 60px rgba(216,189,131,0.24)";
-    default: return "0 0 40px rgba(216,189,131,0.36), 0 0 14px rgba(93,124,255,0.22)";
+    case "listening": return "0 0 80px rgba(241,245,249,0.55), 0 0 30px rgba(255,255,255,0.4)";
+    case "responding": return "0 0 100px rgba(248,250,252,0.65), 0 0 35px rgba(255,255,255,0.5)";
+    case "thinking": return "0 0 60px rgba(255,255,255,0.25)";
+    default: return "0 0 40px rgba(226,232,240,0.45), 0 0 14px rgba(255,255,255,0.3)";
   }
 }
 

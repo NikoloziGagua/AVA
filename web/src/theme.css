@@ -1,40 +1,28 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: dark;
+  /* Color tokens */
+  --ava-bg: #000;
+  --ava-fg: rgba(255, 255, 255, 0.85);
+  --ava-fg-muted: rgba(255, 255, 255, 0.5);
+  --ava-border: rgba(255, 255, 255, 0.08);
+  --ava-purple: #a855f7;
+  --ava-blue: #3b82f6;
+  --ava-teal: #14b8a6;
 
-  --ava-bg: #050505;
-  --ava-ink: #f7efe2;
-  --ava-fg: rgba(247, 239, 226, 0.9);
-  --ava-fg-muted: rgba(247, 239, 226, 0.56);
-  --ava-fg-faint: rgba(247, 239, 226, 0.34);
-  --ava-border: rgba(217, 191, 140, 0.18);
-  --ava-border-strong: rgba(247, 239, 226, 0.24);
-  --ava-surface: rgba(18, 18, 16, 0.72);
-  --ava-surface-soft: rgba(247, 239, 226, 0.055);
-  --ava-champagne: #d8bd83;
-  --ava-gold: #f5dc98;
-  --ava-cobalt: #5d7cff;
-  --ava-jade: #47d6a7;
-  --ava-merlot: #a8435f;
-  --ava-steel: #9ca3af;
-  --ava-purple: #8b6edb;
-  --ava-blue: var(--ava-cobalt);
-  --ava-teal: var(--ava-jade);
+  /* Confidence pills */
+  --conf-high: #10b981;
+  --conf-med: #eab308;
+  --conf-low: rgba(255, 255, 255, 0.5);
 
-  --conf-high: var(--ava-jade);
-  --conf-med: var(--ava-gold);
-  --conf-low: rgba(247, 239, 226, 0.5);
-
+  /* Motion tokens */
   --motion-fast: 200ms;
   --motion-screen: 300ms;
   --motion-cinematic: 600ms;
   --ease-cinematic: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-html,
-body,
-#root {
+html, body, #root {
   height: 100%;
   background: var(--ava-bg);
   color: var(--ava-fg);
@@ -47,48 +35,35 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-button,
-input,
-textarea {
-  font: inherit;
-}
-
-button {
-  -webkit-tap-highlight-color: transparent;
-}
-
-::selection {
-  background: rgba(216, 189, 131, 0.34);
-  color: #fff8ea;
-}
-
+/* Gradient pulse class — use as bg for the orb */
 .ava-gradient {
-  background: linear-gradient(135deg, var(--ava-champagne), var(--ava-cobalt), var(--ava-jade));
+  background: linear-gradient(135deg, var(--ava-purple), var(--ava-blue), var(--ava-teal));
 }
 
+/* Static dot-grid surface used as a minimalistic background on chat / memory / rules */
 .ava-dotgrid {
-  background-image: radial-gradient(circle, rgba(247, 239, 226, 0.08) 1px, transparent 1px);
-  background-size: 32px 32px;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
   background-position: 0 0;
   mask-image: radial-gradient(ellipse 80% 60% at 50% 35%, black 0%, transparent 80%);
   -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 35%, black 0%, transparent 80%);
 }
 
+/* Aurora — slowly rotating conic gradient, used behind the orb */
 @keyframes aurora-spin {
   to { transform: rotate(360deg); }
 }
-
 .ava-aurora {
   position: absolute;
   inset: -25%;
   background: conic-gradient(
     from 0deg at 50% 50%,
     transparent 0deg,
-    rgba(216, 189, 131, 0.35) 60deg,
+    rgba(168, 85, 247, 0.45) 60deg,
     transparent 130deg,
-    rgba(93, 124, 255, 0.32) 200deg,
+    rgba(59, 130, 246, 0.45) 200deg,
     transparent 280deg,
-    rgba(71, 214, 167, 0.28) 320deg,
+    rgba(20, 184, 166, 0.4) 320deg,
     transparent 360deg
   );
   filter: blur(80px);
@@ -96,278 +71,21 @@ button {
   pointer-events: none;
   opacity: 0.85;
 }
-
 .ava-aurora-glow {
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, rgba(216, 189, 131, 0.12), transparent 58%);
+  background: radial-gradient(
+    circle at 50% 48%,
+    rgba(168, 85, 247, 0.18) 0%,
+    rgba(59, 130, 246, 0.08) 24%,
+    transparent 55%
+  );
   pointer-events: none;
 }
 
-.ava-app-shell,
-.ava-luxe-screen {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  background:
-    linear-gradient(115deg, rgba(216, 189, 131, 0.11) 0%, transparent 36%),
-    linear-gradient(245deg, rgba(71, 214, 167, 0.08) 0%, transparent 42%),
-    linear-gradient(180deg, #090907 0%, #020202 46%, #070706 100%);
-  color: var(--ava-fg);
-  isolation: isolate;
-}
-
-.ava-luxe-screen {
-  overflow: hidden;
-}
-
-.ava-luxe-screen::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(rgba(247, 239, 226, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(247, 239, 226, 0.035) 1px, transparent 1px),
-    repeating-linear-gradient(110deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 16px);
-  background-size: 72px 72px, 72px 72px, 100% 100%;
-  mask-image: linear-gradient(to bottom, rgba(0,0,0,0.85), rgba(0,0,0,0.24) 62%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0.85), rgba(0,0,0,0.24) 62%, transparent 100%);
-}
-
-.ava-luxe-screen::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(180deg, rgba(0,0,0,0.02) 0%, rgba(0,0,0,0.55) 100%),
-    linear-gradient(90deg, rgba(0,0,0,0.72) 0%, transparent 18%, transparent 82%, rgba(0,0,0,0.72) 100%);
-}
-
-.ava-luxe-scroll {
-  overflow-y: auto;
-}
-
-.ava-luxe-scroll::-webkit-scrollbar {
-  width: 9px;
-}
-
-.ava-luxe-scroll::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, rgba(216, 189, 131, 0.42), rgba(93, 124, 255, 0.28));
-  border: 3px solid rgba(0,0,0,0.5);
-  border-radius: 999px;
-}
-
-.ava-luxe-header {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-height: 68px;
-  padding: 0.875rem 1rem;
-  border-bottom: 1px solid var(--ava-border);
-  background:
-    linear-gradient(180deg, rgba(12, 12, 10, 0.88), rgba(12, 12, 10, 0.62));
-  backdrop-filter: blur(24px) saturate(150%);
-  -webkit-backdrop-filter: blur(24px) saturate(150%);
-}
-
-.ava-luxe-title {
-  font-weight: 650;
-  color: var(--ava-ink);
-  letter-spacing: 0.08em;
-}
-
-.ava-kicker {
-  font-size: 10px;
-  line-height: 1;
-  letter-spacing: 0.34em;
-  text-transform: uppercase;
-  color: var(--ava-champagne);
-}
-
-.ava-metal-wordmark {
-  color: transparent;
-  background-image: linear-gradient(180deg, #fffaf0 0%, #d8bd83 44%, #8b7b59 100%);
-  background-clip: text;
-  -webkit-background-clip: text;
-  text-shadow: 0 14px 46px rgba(216, 189, 131, 0.12);
-}
-
-.ava-glass-panel,
-.ava-luxe-section,
-.ava-luxe-row,
-.ava-composer-shell {
-  border: 1px solid var(--ava-border);
-  background:
-    linear-gradient(135deg, rgba(247, 239, 226, 0.105), rgba(247, 239, 226, 0.025)),
-    rgba(10, 10, 9, 0.72);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.12),
-    0 18px 52px -30px rgba(0,0,0,0.92);
-  backdrop-filter: blur(22px) saturate(148%);
-  -webkit-backdrop-filter: blur(22px) saturate(148%);
-}
-
-.ava-glass-panel,
-.ava-luxe-section,
-.ava-luxe-row {
-  border-radius: 8px;
-}
-
-.ava-luxe-section {
-  padding: 1rem;
-}
-
-.ava-section-label {
-  margin-bottom: 0.65rem;
-  font-size: 10px;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--ava-fg-muted);
-}
-
-.ava-luxe-row {
-  transition: border-color var(--motion-fast), background var(--motion-fast), transform var(--motion-fast);
-}
-
-.ava-luxe-row:hover {
-  border-color: rgba(216, 189, 131, 0.36);
-  background:
-    linear-gradient(135deg, rgba(216, 189, 131, 0.11), rgba(93, 124, 255, 0.04)),
-    rgba(10, 10, 9, 0.76);
-  transform: translateY(-1px);
-}
-
-.ava-icon-button {
-  width: 40px;
-  height: 40px;
-  border-radius: 999px;
-  border: 1px solid var(--ava-border);
-  background: rgba(247, 239, 226, 0.06);
-  color: rgba(247, 239, 226, 0.72);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: border-color var(--motion-fast), color var(--motion-fast), background var(--motion-fast), transform var(--motion-fast);
-}
-
-.ava-icon-button:hover {
-  border-color: rgba(216, 189, 131, 0.38);
-  background: rgba(216, 189, 131, 0.11);
-  color: var(--ava-ink);
-}
-
-.ava-icon-button:active {
-  transform: scale(0.95);
-}
-
-.ava-primary-button,
-.ava-secondary-button,
-.ava-chip {
-  min-height: 34px;
-  border-radius: 8px;
-  transition: transform var(--motion-fast), border-color var(--motion-fast), background var(--motion-fast), color var(--motion-fast);
-}
-
-.ava-primary-button {
-  border: 1px solid rgba(255, 250, 240, 0.52);
-  background: linear-gradient(135deg, #fffaf0, #d8bd83 52%, #8b7b59);
-  color: #090806;
-  box-shadow: 0 16px 42px -22px rgba(216, 189, 131, 0.8);
-}
-
-.ava-secondary-button,
-.ava-chip {
-  border: 1px solid var(--ava-border);
-  background: rgba(247, 239, 226, 0.06);
-  color: var(--ava-fg);
-}
-
-.ava-primary-button:hover,
-.ava-secondary-button:hover,
-.ava-chip:hover {
-  transform: translateY(-1px);
-}
-
-.ava-primary-button:active,
-.ava-secondary-button:active,
-.ava-chip:active {
-  transform: scale(0.97);
-}
-
-.ava-chip {
-  color: var(--ava-fg-muted);
-  white-space: nowrap;
-}
-
-.ava-chip:hover {
-  color: var(--ava-ink);
-  border-color: rgba(216, 189, 131, 0.36);
-  background: linear-gradient(135deg, rgba(216, 189, 131, 0.14), rgba(93, 124, 255, 0.06));
-}
-
-.ava-luxe-field {
-  border: 1px solid var(--ava-border);
-  border-radius: 8px;
-  background: rgba(0,0,0,0.22);
-  color: var(--ava-ink);
-  outline: none;
-  transition: border-color var(--motion-fast), background var(--motion-fast), box-shadow var(--motion-fast);
-}
-
-.ava-luxe-field::placeholder {
-  color: rgba(247, 239, 226, 0.34);
-}
-
-.ava-luxe-field:focus {
-  border-color: rgba(216, 189, 131, 0.58);
-  background: rgba(0,0,0,0.32);
-  box-shadow: 0 0 0 3px rgba(216, 189, 131, 0.12);
-}
-
-.ava-mini-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  border: 1px solid var(--ava-border);
-  border-radius: 999px;
-  padding: 0.25rem;
-  background: rgba(247, 239, 226, 0.045);
-}
-
-.ava-orbit-ring {
-  border: 1px solid rgba(216, 189, 131, 0.22);
-  box-shadow:
-    inset 0 0 22px rgba(216, 189, 131, 0.06),
-    0 0 70px rgba(93, 124, 255, 0.07);
-}
-
-.ava-user-bubble {
-  border-radius: 18px 18px 6px 18px;
-  border: 1px solid rgba(216, 189, 131, 0.25);
-  background:
-    linear-gradient(135deg, rgba(216, 189, 131, 0.22), rgba(93, 124, 255, 0.09)),
-    rgba(16, 16, 14, 0.86);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.15),
-    0 18px 38px -28px rgba(216, 189, 131, 0.74);
-}
-
-.ava-assistant-copy {
-  color: var(--ava-fg);
-  text-shadow: 0 12px 42px rgba(216, 189, 131, 0.08);
-}
-
+/* Reduce motion: collapse all transitions to opacity fades */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

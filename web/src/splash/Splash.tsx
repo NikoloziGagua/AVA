@@ -1,48 +1,45 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
+import { motion } from "motion/react";
 import { PathsBackground } from "../components/ava/PathsBackground.js";
-import { gsap, shouldReduceMotion, useGSAP } from "../lib/gsap.js";
 
 export function Splash({ onDone }: { onDone: () => void }) {
-  const scope = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
-    const id = setTimeout(onDone, 1800);
+    const id = setTimeout(onDone, 1500);
     return () => clearTimeout(id);
   }, [onDone]);
 
-  useGSAP(() => {
-    if (!scope.current || shouldReduceMotion()) return;
-
-    const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
-    tl.from(".splash-rule", { scaleX: 0, transformOrigin: "center", duration: 0.9 })
-      .from(".splash-kicker", { autoAlpha: 0, y: 10, filter: "blur(10px)", duration: 0.55 }, "-=0.45")
-      .from(".splash-letter", { autoAlpha: 0, yPercent: 80, rotateX: -45, stagger: 0.08, duration: 0.72 }, "-=0.2")
-      .from(".splash-caption", { autoAlpha: 0, y: 12, filter: "blur(8px)", duration: 0.56 }, "-=0.22")
-      .to(".splash-crest", { scale: 0.86, autoAlpha: 0, filter: "blur(16px)", duration: 0.55, delay: 0.25 });
-  }, { scope });
+  const letters = "Ava".split("");
 
   return (
-    <div ref={scope} className="ava-luxe-screen">
-      <div className="absolute inset-0 opacity-35">
+    <div className="relative w-full h-full overflow-hidden bg-black">
+      <motion.div
+        initial={{ opacity: 1 }}
+        animate={{ opacity: 0.15 }}
+        transition={{ delay: 1.2, duration: 0.4 }}
+        className="absolute inset-0"
+      >
         <PathsBackground opacity={1} />
-      </div>
-      <div className="absolute inset-x-8 top-1/2 z-10 -translate-y-1/2">
-        <div className="splash-crest mx-auto flex max-w-[520px] flex-col items-center text-center">
-          <div className="splash-rule mb-8 h-px w-full bg-gradient-to-r from-transparent via-[var(--ava-champagne)] to-transparent" />
-          <div className="splash-kicker ava-kicker mb-5">private atelier</div>
-          <h1 className="ava-metal-wordmark text-[76px] font-semibold leading-none sm:text-[112px]">
-            {"Ava".split("").map((ch) => (
-              <span key={ch} className="splash-letter inline-block">
-                {ch}
-              </span>
-            ))}
-          </h1>
-          <p className="splash-caption mt-6 max-w-[310px] text-xs leading-6 text-[var(--ava-fg-muted)]">
-            Executive intelligence, tuned for your desktop.
-          </p>
-          <div className="splash-rule mt-8 h-px w-full bg-gradient-to-r from-transparent via-[var(--ava-cobalt)] to-transparent" />
-        </div>
-      </div>
+      </motion.div>
+      <motion.div
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+        initial={{ scale: 1 }}
+        animate={{ scale: 0.4 }}
+        transition={{ delay: 1.2, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+      >
+        <h1 className="text-7xl font-bold tracking-tighter bg-clip-text text-transparent bg-gradient-to-r from-white to-white/70">
+          {letters.map((ch, i) => (
+            <motion.span
+              key={i}
+              initial={{ y: 100, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: i * 0.08, type: "spring", stiffness: 150, damping: 25 }}
+              className="inline-block"
+            >
+              {ch}
+            </motion.span>
+          ))}
+        </h1>
+      </motion.div>
     </div>
   );
 }

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { motion } from "motion/react";
-import { ChevronDown, ChevronRight, Terminal } from "lucide-react";
 
 export interface ToolCallChipProps {
   tool: string;
@@ -12,25 +11,21 @@ export interface ToolCallChipProps {
 export function ToolCallChip({ tool, argSummary, result, ok }: ToolCallChipProps) {
   const [open, setOpen] = useState(false);
   const summary = argSummary ?? "";
-  const Chevron = open ? ChevronDown : ChevronRight;
-
   return (
-    <motion.div layout className="my-1" data-message-row>
+    <motion.div layout className="my-1">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="ava-chip inline-flex items-center gap-1.5 px-2.5 py-1 font-mono text-[10px]"
+        className="font-mono text-[10px] px-2 py-1 rounded-md border border-white/10 text-white/60 hover:text-white/85 hover:border-white/20"
       >
-        <Chevron size={12} />
-        <Terminal size={12} />
-        <span>{tool}</span>
-        {summary ? <span className="text-[var(--ava-fg-faint)]">/ {summary}</span> : null}
+        {open ? "▾" : "▸"} {tool}
+        {summary ? ` · ${summary}` : ""}
       </button>
       {open && (
         <motion.pre
           layout
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: "auto" }}
-          className="mt-1 ml-3 whitespace-pre-wrap border-l border-[var(--ava-border)] pl-2 font-mono text-[10px] text-[var(--ava-fg-muted)]"
+          className="mt-1 ml-3 text-[10px] font-mono whitespace-pre-wrap text-white/70 border-l border-white/10 pl-2"
         >
           {ok === false ? "ERROR: " : ""}{result ?? "(no result)"}
         </motion.pre>

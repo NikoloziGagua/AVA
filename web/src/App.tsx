@@ -29,7 +29,7 @@ export function App() {
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
 
   return (
-    <div className="ava-app-shell text-white">
+    <div className="relative w-full h-full bg-black text-white">
       <GlassFilter />
       <AnimatePresence mode="wait">
         {view.name === "splash" && (
@@ -102,7 +102,7 @@ export function App() {
         {view.name === "memory" && (
           <motion.div
             key="memory"
-            className="absolute inset-0"
+            className="absolute inset-0 bg-black"
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
@@ -114,7 +114,7 @@ export function App() {
         {view.name === "rules" && (
           <motion.div
             key="rules"
-            className="absolute inset-0"
+            className="absolute inset-0 bg-black"
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
@@ -126,7 +126,7 @@ export function App() {
         {view.name === "self" && (
           <motion.div
             key="self"
-            className="absolute inset-0"
+            className="absolute inset-0 bg-black"
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
@@ -138,7 +138,7 @@ export function App() {
         {view.name === "list" && (
           <motion.div
             key="list"
-            className="absolute inset-0"
+            className="absolute inset-0 bg-black"
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}

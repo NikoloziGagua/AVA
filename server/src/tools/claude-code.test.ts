@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildClaudeCode, defaultClaudeArgs, workerEnv } from "./claude-code.js";
+import { buildClaudeCode, defaultClaudeArgs, workerEnv, sessionArgs } from "./claude-code.js";
 import { PidfileRegistry } from "../process/pidfile.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 
@@ -25,6 +25,16 @@ describe("workerEnv", () => {
     expect(e.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(e.PATH).toBe("/usr/bin");
     expect(e.FOO).toBe("bar");
+  });
+});
+
+describe("sessionArgs", () => {
+  it("creates the session on first use (--session-id), resumes it after (--resume)", () => {
+    expect(sessionArgs({ id: "abc", resume: false })).toEqual(["--session-id", "abc"]);
+    expect(sessionArgs({ id: "abc", resume: true })).toEqual(["--resume", "abc"]);
+  });
+  it("adds nothing when there's no session", () => {
+    expect(sessionArgs(undefined)).toEqual([]);
   });
 });
 

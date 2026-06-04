@@ -3,7 +3,12 @@ import type { PidfileRegistry } from "../process/pidfile.js";
 import type { AllowDecision } from "../security/path-allowlist.js";
 import { scrubSecrets } from "../security/scrub.js";
 
-export type ClaudeCodeRunArgs = { prompt: string; cwd: string; runId: string; model?: string };
+export type ClaudeCodeRunArgs = {
+  prompt: string; cwd: string; runId: string; model?: string;
+  /** Persistent conversation. Create it (`--session-id`) on first use, then
+   *  `--resume` it so Ava and Claude keep one ongoing chat across calls. */
+  session?: { id: string; resume: boolean };
+};
 export type ClaudeCodeResult =
   | { ok: true; output: string; exitCode: number }
   | { ok: false; reason: string };
@@ -51,19 +56,29 @@ export function workerEnv(parentEnv: NodeJS.ProcessEnv = process.env): NodeJS.Pr
   return env;
 }
 
+/**
+ * CLI flags for a persistent conversation. First use pins the UUID with
+ * `--session-id`; afterwards `--resume` reopens the same chat so context carries
+ * across calls (verified: a codeword seeded in one call is recalled in the next).
+ */
+export function sessionArgs(session?: { id: string; resume: boolean }): string[] {
+  if (!session) return [];
+  return [session.resume ? "--resume" : "--session-id", session.id];
+}
+
 export function buildClaudeCode(cfg: ClaudeCodeConfig): ClaudeCode {
   const claudeBinary = cfg.claudeBinary ?? "claude";
   const buildArgs = cfg.claudeArgs ?? defaultClaudeArgs;
 
   return {
-    async run({ prompt, cwd, runId, model }) {
+    async run({ prompt, cwd, runId, model, session }) {
       if (DANGEROUS_FLAG.test(prompt)) {
         return { ok: false, reason: "prompt contains --dangerously-skip-permissions (hard-blocked)" };
       }
       const cwdDecision = cfg.check(cwd);
       if (!cwdDecision.ok) return { ok: false, reason: cwdDecision.reason };
 
-      const args = buildArgs(prompt, cwd, model);
+      const args = [...buildArgs(prompt, cwd, model), ...sessionArgs(session)];
       // env: workerEnv strips the API key so claude uses the user's subscription.
       // stdin "ignore": claude -p otherwise waits ~3s for stdin that never comes.
       const child = spawn(claudeBinary, args, {

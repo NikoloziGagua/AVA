@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildClaudeCode, defaultClaudeArgs } from "./claude-code.js";
+import { buildClaudeCode, defaultClaudeArgs, workerEnv } from "./claude-code.js";
 import { PidfileRegistry } from "../process/pidfile.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 
@@ -15,6 +15,16 @@ describe("defaultClaudeArgs", () => {
   });
   it("passes the model through when given", () => {
     expect(defaultClaudeArgs("p", "/c", "sonnet")).toEqual(["-p", "p", "--permission-mode", "acceptEdits", "--model", "sonnet"]);
+  });
+});
+
+describe("workerEnv", () => {
+  it("strips API-key overrides so the worker uses the subscription login", () => {
+    const e = workerEnv({ ANTHROPIC_API_KEY: "sk-x", ANTHROPIC_AUTH_TOKEN: "t", PATH: "/usr/bin", FOO: "bar" });
+    expect(e.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(e.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(e.PATH).toBe("/usr/bin");
+    expect(e.FOO).toBe("bar");
   });
 });
 

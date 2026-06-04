@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { api, fetchSession } from "../api.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
@@ -9,6 +9,8 @@ import { ChevronLeft, List, Brain, Settings2 } from "lucide-react";
 
 export interface ChatScreenProps {
   sessionId: string | null;
+  /** When opening a fresh chat from the home command bar: auto-send this once. */
+  initialText?: string;
   onOpenSessions: () => void;
   onOpenRules: () => void;
   onOpenMemory: () => void;
@@ -18,6 +20,7 @@ export interface ChatScreenProps {
 
 export function ChatScreen({
   sessionId: requestedSessionId,
+  initialText,
   onOpenSessions,
   onOpenRules,
   onOpenMemory,
@@ -112,6 +115,19 @@ export function ChatScreen({
     setSessionId(r.sessionId);
     setRunEpoch((n) => n + 1);
   }
+
+  // Command bar on home opens a fresh chat with text to send — fire it exactly
+  // once, only for a brand-new session.
+  const autoSentRef = useRef(false);
+  useEffect(() => {
+    if (autoSentRef.current) return;
+    const seedText = initialText?.trim();
+    if (requestedSessionId === null && seedText) {
+      autoSentRef.current = true;
+      void send(seedText);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedSessionId, initialText]);
 
   async function kill() {
     if (!sessionId) return;

@@ -15,7 +15,7 @@ import { GlassFilter } from "./components/ava/GlassFilter.js";
 type View =
   | { name: "splash" }
   | { name: "orbit" }
-  | { name: "chat"; sessionId: string | null }
+  | { name: "chat"; sessionId: string | null; initialText?: string }
   | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
   | { name: "memory" }
   | { name: "rules" }
@@ -53,6 +53,7 @@ export function App() {
           >
             <OrbitScreen
               onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
+              onCommand={(text) => setView({ name: "chat", sessionId: null, initialText: text })}
               onOpenMemory={() => setView({ name: "memory" })}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenList={() => setView({ name: "list" })}
@@ -72,6 +73,7 @@ export function App() {
           >
             <ChatScreen
               sessionId={view.sessionId}
+              initialText={view.initialText}
               onOpenSessions={() => setView({ name: "orbit" })}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenMemory={() => setView({ name: "memory" })}

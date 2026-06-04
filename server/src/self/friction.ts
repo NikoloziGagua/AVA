@@ -70,6 +70,20 @@ export function listOpenMistakes(memoryDir: string): Mistake[] {
     .sort((a, b) => (b.severity - a.severity) || (b.count - a.count) || b.last_seen.localeCompare(a.last_seen));
 }
 
+/** Format a mistake as a goal + evidence for Claude. A reopened mistake tells
+ *  Claude the prior fix didn't hold, so it digs deeper. */
+export function mistakeToGoal(m: Mistake): string {
+  const recur = m.reopened
+    ? " IMPORTANT: this RECURRED after a previous fix — the earlier attempt did not hold, so find and fix the real root cause this time."
+    : "";
+  return (
+    `Fix a real problem the owner hit with Ava (surface: ${m.surface}).${recur}\n` +
+    `Problem: ${m.summary}\n` +
+    `Evidence: ${m.detail}\n` +
+    `Fix the root cause with a minimal change, and keep all existing tests passing.`
+  );
+}
+
 /** Mark a mistake fixed by a given commit. Recurrence later will reopen it. */
 export function resolveMistake(memoryDir: string, id: string, commit: string, today?: string): void {
   const list = load(memoryDir);

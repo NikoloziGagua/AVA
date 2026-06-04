@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { recordMistake, listOpenMistakes, resolveMistake, type Surface } from "./friction.js";
+import { recordMistake, listOpenMistakes, resolveMistake, mistakeToGoal, type Surface } from "./friction.js";
 
 function dir() { return mkdtempSync(join(tmpdir(), "ava-fric-")); }
 const m = (over: Partial<{ surface: Surface; summary: string; detail: string; severity: number; today: string }> = {}) => ({
@@ -55,5 +55,17 @@ describe("friction ledger", () => {
     const r = recordMistake(d, m());
     resolveMistake(d, r.id, "deadbeef");
     expect(listOpenMistakes(d).length).toBe(0);
+  });
+
+  it("mistakeToGoal carries the evidence and flags recurrence only when reopened", () => {
+    const fresh = recordMistake(d, m());
+    const g1 = mistakeToGoal(fresh);
+    expect(g1).toContain("voice hallucinates on silence");
+    expect(g1).toContain("transcribed 'thank you'");
+    expect(g1).not.toContain("RECURRED");
+
+    resolveMistake(d, fresh.id, "c1");
+    const reopened = recordMistake(d, m({ today: "2026-06-06" }));
+    expect(mistakeToGoal(reopened)).toContain("RECURRED");
   });
 });

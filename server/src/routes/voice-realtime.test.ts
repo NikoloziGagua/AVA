@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
   buildRealtimeSessionUpdate,
+  buildHybridSessionUpdate,
+  DO_ON_COMPUTER_TOOL,
+  readToolCall,
+  toolResultFrames,
   loadRealtimeVadConfig,
   DEFAULT_REALTIME_VAD,
   readTranscriptionCompleted,
@@ -9,6 +13,44 @@ import {
   forwardFrame,
 } from "./voice-realtime.js";
 import { DEFAULT_TRANSCRIPT_GATE } from "../voice/transcript-gate.js";
+
+describe("hybrid voice (speak + do_on_computer)", () => {
+  it("session.update enables audio out, the tool, and keeps create_response false (gate controls replies)", () => {
+    const u = buildHybridSessionUpdate("be ava", DEFAULT_REALTIME_VAD, "alloy") as {
+      session: {
+        output_modalities: string[];
+        tools: Array<{ name: string }>;
+        audio: { input: { turn_detection: { create_response: boolean } }; output: { voice: string } };
+      };
+    };
+    expect(u.session.output_modalities).toContain("audio");
+    expect(u.session.tools.map((t) => t.name)).toContain("do_on_computer");
+    expect(u.session.audio.input.turn_detection.create_response).toBe(false);
+    expect(u.session.audio.output.voice).toBe("alloy");
+  });
+
+  it("readToolCall parses a completed do_on_computer function call", () => {
+    const evt = { type: "response.output_item.done", item: { type: "function_call", call_id: "c1", name: "do_on_computer", arguments: '{"task":"open downloads"}' } };
+    expect(readToolCall(evt)).toEqual({ callId: "c1", name: "do_on_computer", args: { task: "open downloads" } });
+  });
+
+  it("readToolCall returns null for non-tool events and tolerates bad JSON", () => {
+    expect(readToolCall({ type: "response.output_audio.delta" })).toBeNull();
+    const bad = { type: "response.output_item.done", item: { type: "function_call", call_id: "c", name: "do_on_computer", arguments: "{not json" } };
+    expect(readToolCall(bad)).toEqual({ callId: "c", name: "do_on_computer", args: {} });
+  });
+
+  it("toolResultFrames returns a function_call_output then a response.create", () => {
+    const [out, resp] = toolResultFrames("c1", "opened it").map((s) => JSON.parse(s));
+    expect(out).toMatchObject({ type: "conversation.item.create", item: { type: "function_call_output", call_id: "c1", output: "opened it" } });
+    expect(resp).toEqual({ type: "response.create" });
+  });
+
+  it("the action tool is named/described for actions only", () => {
+    expect(DO_ON_COMPUTER_TOOL.name).toBe("do_on_computer");
+    expect(DO_ON_COMPUTER_TOOL.parameters.required).toContain("task");
+  });
+});
 
 const TRANSCRIPT_TYPE = "conversation.item.input_audio_transcription.completed";
 function transcriptEvt(transcript: string, extra: Record<string, unknown> = {}) {

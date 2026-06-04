@@ -117,6 +117,99 @@ export function buildRealtimeSessionUpdate(
   };
 }
 
+// ─── Hybrid (speech-to-speech + one action tool) ─────────────────────────────
+//
+// To match ChatGPT-style latency for conversation while keeping full
+// capability, the realtime model SPEAKS directly (low latency) and is given a
+// single tool, `do_on_computer`. For chitchat it just replies; when the owner
+// asks for an action it calls the tool, the proxy runs the real /api/chat agent
+// (full tools), and feeds the result back so the model speaks it. Silence
+// hallucination stays gated by the same VAD tuning + input-transcript gate.
+
+export const DO_ON_COMPUTER_TOOL = {
+  type: "function" as const,
+  name: "do_on_computer",
+  description:
+    "Perform an action on the owner's computer (open/find files, run commands, browse the web, " +
+    "control apps, remember things, etc.). Use this whenever the owner asks you to DO something " +
+    "rather than just chat. Pass a clear, complete task description in `task`. Do not attempt the " +
+    "action yourself in conversation — always call this tool for actions.",
+  parameters: {
+    type: "object",
+    properties: { task: { type: "string", description: "What to do, in plain language." } },
+    required: ["task"],
+  },
+};
+
+/**
+ * Hybrid session.update: the realtime model speaks (audio out) AND can call
+ * `do_on_computer`. VAD is tuned the same as transcribe-only so it won't answer
+ * silence. Transcription stays on so we still get captions + can persist turns.
+ */
+export function buildHybridSessionUpdate(
+  instructions: string,
+  vad: RealtimeVadConfig = DEFAULT_REALTIME_VAD,
+  voice = "alloy",
+) {
+  return {
+    type: "session.update",
+    session: {
+      type: "realtime",
+      instructions,
+      output_modalities: ["audio"],
+      tools: [DO_ON_COMPUTER_TOOL],
+      tool_choice: "auto",
+      audio: {
+        input: {
+          format: { type: "audio/pcm", rate: 24000 },
+          turn_detection: {
+            type: "server_vad",
+            threshold: vad.threshold,
+            prefix_padding_ms: vad.prefixPaddingMs,
+            silence_duration_ms: vad.silenceMs,
+            // Still false: the model does NOT auto-reply. The proxy sends
+            // `response.create` only AFTER the transcript passes the gate, so a
+            // silence/noise blip can never trigger a spoken reply. The model
+            // then speaks directly (fast) or calls do_on_computer.
+            create_response: false,
+            interrupt_response: false,
+          },
+          transcription: { model: vad.transcribeModel },
+        },
+        output: {
+          format: { type: "audio/pcm", rate: 24000 },
+          voice,
+        },
+      },
+    },
+  };
+}
+
+/**
+ * If `evt` is a completed realtime function call (the model invoking a tool),
+ * return its call id / name / parsed args; otherwise null. Handles the GA
+ * `response.output_item.done` (item.type === "function_call") shape.
+ */
+export function readToolCall(
+  evt: { type?: string; item?: { type?: string; call_id?: string; id?: string; name?: string; arguments?: string } },
+): { callId: string; name: string; args: Record<string, unknown> } | null {
+  if (evt.type !== "response.output_item.done") return null;
+  const item = evt.item;
+  if (!item || item.type !== "function_call") return null;
+  const callId = item.call_id ?? item.id ?? "";
+  let args: Record<string, unknown> = {};
+  try { args = item.arguments ? (JSON.parse(item.arguments) as Record<string, unknown>) : {}; } catch { args = {}; }
+  return { callId, name: item.name ?? "", args };
+}
+
+/** Build the upstream frames that return a tool result and ask the model to speak it. */
+export function toolResultFrames(callId: string, output: string): string[] {
+  return [
+    JSON.stringify({ type: "conversation.item.create", item: { type: "function_call_output", call_id: callId, output } }),
+    JSON.stringify({ type: "response.create" }),
+  ];
+}
+
 /**
  * If `evt` is a finished user input-transcription event, pull out the transcript
  * plus any confidence signals the transcriber attached; otherwise return null.
@@ -218,6 +311,15 @@ export interface RealtimeProxyDeps {
   gateConfig?: TranscriptGateConfig;
   /** Optional override for VAD/transcription config (tests). Defaults to env. */
   vadConfig?: RealtimeVadConfig;
+  /**
+   * When provided, the proxy runs in HYBRID mode: the realtime model speaks
+   * directly (fast conversation) and gets the do_on_computer tool; a tool call
+   * runs this — the full /api/chat agent — and the result is spoken back. When
+   * absent, the proxy stays transcribe-only (model never speaks).
+   */
+  runAction?: (sessionId: string | null, task: string) => Promise<{ text: string; sessionId: string | null }>;
+  /** Voice for the realtime model's spoken output (hybrid mode). */
+  voice?: string;
   log?: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 }
 
@@ -265,11 +367,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
   }
 
   async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string) {
-    // The proxy no longer owns the conversation — it neither creates nor
-    // persists sessions. The browser submits accepted transcripts to
-    // /api/chat, which creates/titles the session and persists both turns.
-    // We just echo the client's current session id back so it has continuity.
-    const sessionId = requestedSessionId;
+    const hybrid = !!deps.runAction;
+    // In hybrid mode the proxy owns the action handoff; the session id is tracked
+    // here and may be (re)assigned when an action turn creates one.
+    let sessionId = requestedSessionId;
 
     // No `OpenAI-Beta: realtime=v1` header: that selects the beta protocol, and
     // we're now speaking the GA session schema over the GA `/v1/realtime` path.
@@ -290,13 +391,24 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
     upstream.on("open", () => {
       upstreamReady = true;
-      log.info("realtime: upstream open, sending transcribe-only session.update");
+      log.info(`realtime: upstream open, sending ${hybrid ? "hybrid (speak+tool)" : "transcribe-only"} session.update`);
       // Configure the realtime session on connect.
       const system = buildSystemPrompt({
         memoryDir: deps.memoryDir,
         mode: "conversation",
       });
-      upstream.send(JSON.stringify(buildRealtimeSessionUpdate(system, vadConfig)));
+      const sessionUpdate = hybrid
+        ? buildHybridSessionUpdate(
+            system +
+              "\n\n[VOICE] You are speaking aloud — keep replies short and natural. When the owner " +
+              "asks you to DO something on the computer (open/find files, run commands, browse, " +
+              "control apps, remember something), CALL do_on_computer with a clear task, then speak " +
+              "the result it returns. For everything else, just reply directly in your own voice.",
+            vadConfig,
+            deps.voice ?? "alloy",
+          )
+        : buildRealtimeSessionUpdate(system, vadConfig);
+      upstream.send(JSON.stringify(sessionUpdate));
       // Echo the client's current session id back.
       try {
         client.send(JSON.stringify({ type: "ava.session", sessionId }));
@@ -350,6 +462,28 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         }
       }
 
+      // Hybrid: the model called do_on_computer → run the real /api/chat agent
+      // and feed the result back so the model speaks it.
+      if (hybrid && evt) {
+        const call = readToolCall(evt);
+        if (call && call.name === "do_on_computer" && deps.runAction) {
+          const task = String((call.args as { task?: unknown }).task ?? "");
+          log.info(`realtime: do_on_computer task=${JSON.stringify(task)}`);
+          void (async () => {
+            try {
+              const r = await deps.runAction!(sessionId, task);
+              sessionId = r.sessionId ?? sessionId;
+              try { client.send(JSON.stringify({ type: "ava.session", sessionId })); } catch { /* */ }
+              for (const f of toolResultFrames(call.callId, r.text || "Done.")) upstream.send(f);
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              for (const f of toolResultFrames(call.callId, `That didn't work, Sir — ${msg}`)) upstream.send(f);
+            }
+          })();
+          return; // don't forward the raw function_call item to the client
+        }
+      }
+
       // Gate finished transcripts: a rejected one is dropped here and NEVER
       // reaches the browser, so silence/noise produces no user turn at all.
       const decision = evt
@@ -366,6 +500,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           return; // do not forward — no phantom turn, no /api/chat call
         }
         log.info(`realtime: accepted transcript text=${JSON.stringify(decision.text)}`);
+        if (hybrid) {
+          // Model didn't auto-reply (create_response:false). Now that the
+          // transcript passed the gate, ask it to respond — speak or call a tool.
+          try { upstream.send(JSON.stringify({ type: "response.create" })); } catch { /* */ }
+        }
         // fall through to forward the (accepted) transcript verbatim
       }
 

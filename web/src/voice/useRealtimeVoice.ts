@@ -462,9 +462,17 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   }, [handleHybridAction, runAgentTurn]);
 
   const startingRef = useRef(false);
+  // Auto-reconnect on a transient abnormal close (e.g. 1006, or upstream 1011),
+  // so a brief OpenAI-realtime blip self-heals instead of dead-ending on
+  // "connection dropped". Capped at 2, reset on a healthy connect, and never
+  // fired after an intentional stop / unmount.
+  const reconnectRef = useRef(0);
+  const intentionalStopRef = useRef(false);
+  const startRef = useRef<() => void>(() => {});
   const start = useCallback(async () => {
     if (wsRef.current || startingRef.current) return; // dedupe StrictMode double-invoke
     startingRef.current = true;
+    intentionalStopRef.current = false;
     setErrorMsg(null);
     setState("connecting");
 
@@ -520,6 +528,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
           // eslint-disable-next-line no-console
           console.info("[ava] realtime ready: capture context up");
+          reconnectRef.current = 0; // healthy connection — refill the retry budget
           setState("listening");
         } catch (err) {
           setErrorMsg(`audio setup failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -547,7 +556,18 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         // eslint-disable-next-line no-console
         console.warn(`[ava] WS closed: code=${ev.code} reason="${ev.reason || "(none)"}" wasClean=${ev.wasClean}`);
         startingRef.current = false;
-        if (ev.code === 1008 || ev.code === 4401) setErrorMsg("auth failed");
+        const authFail = ev.code === 1008 || ev.code === 4401;
+        const transient = !authFail && (ev.code === 1006 || ev.code === 1011 || !ev.wasClean);
+        if (!intentionalStopRef.current && transient && reconnectRef.current < 2) {
+          reconnectRef.current += 1;
+          // eslint-disable-next-line no-console
+          console.warn(`[ava] voice dropped (${ev.code}) — reconnecting (attempt ${reconnectRef.current}/2)`);
+          cleanup();
+          setState("connecting");
+          window.setTimeout(() => { if (!intentionalStopRef.current) startRef.current(); }, 800);
+          return;
+        }
+        if (authFail) setErrorMsg("auth failed");
         else if (ev.code === 1011) setErrorMsg(`server error: ${ev.reason || "upstream rejected"}`);
         else if (ev.reason) setErrorMsg(ev.reason);
         else if (!ev.wasClean) setErrorMsg(`connection dropped (${ev.code})`);
@@ -561,8 +581,12 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       setState("idle");
     }
   }, [cleanup, handleServerEvent]);
+  // Keep a stable handle to the latest start() for the reconnect timer.
+  useEffect(() => { startRef.current = () => { void start(); }; }, [start]);
 
   const stop = useCallback(() => {
+    intentionalStopRef.current = true;
+    reconnectRef.current = 0;
     cleanup();
     setState("idle");
     setCaption(null);
@@ -596,7 +620,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     });
   }, []);
 
-  useEffect(() => () => { cleanup(); }, [cleanup]);
+  useEffect(() => () => { intentionalStopRef.current = true; cleanup(); }, [cleanup]);
 
   return {
     state,

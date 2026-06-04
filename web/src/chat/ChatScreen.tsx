@@ -4,7 +4,10 @@ import { api, fetchSession } from "../api.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
-import { Pulse } from "../components/ava/Pulse.js";
+import { Orb } from "../components/ava/Orb.js";
+import { RainBackground } from "../components/ava/RainBackground.js";
+import { ActivityPanel } from "./ActivityPanel.js";
+import { deriveSteps, isExecuting, currentTool } from "./activity-steps.js";
 import { ChevronLeft, List, Brain, Settings2 } from "lucide-react";
 
 export interface ChatScreenProps {
@@ -109,6 +112,33 @@ export function ChatScreen({
     return true;
   });
 
+  // Activity / working-mode derivation from the live stream.
+  const steps = deriveSteps(liveEvents);
+  const executing = isExecuting(liveEvents);
+  const runningTool = currentTool(liveEvents);
+
+  const [activityCollapsed, setActivityCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("ava.activityCollapsed") === "1"; } catch { return false; }
+  });
+  function toggleActivity() {
+    setActivityCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem("ava.activityCollapsed", next ? "1" : "0"); } catch { /* ignore */ }
+      return next;
+    });
+  }
+  // Auto-expand the panel the moment a run starts doing things.
+  const wasExecutingRef = useRef(false);
+  useEffect(() => {
+    if (executing && !wasExecutingRef.current) setActivityCollapsed(false);
+    wasExecutingRef.current = executing;
+  }, [executing]);
+
+  function retryLast() {
+    const lastUser = [...history].reverse().find((m) => m.role === "user");
+    if (lastUser) void send(lastUser.text);
+  }
+
   async function send(text: string) {
     setHistory((prev) => [...prev, { role: "user", text, id: `u-${Date.now()}` }]);
     const r = await api.sendMessage(sessionId, text);
@@ -135,13 +165,8 @@ export function ChatScreen({
   }
 
   return (
-    <div
-      className="relative flex flex-col h-full text-white"
-      style={{
-        background:
-          "radial-gradient(ellipse 90% 60% at 50% -5%, rgba(168,85,247,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px) 0 0 / 28px 28px, #000",
-      }}
-    >
+    <div className="relative flex h-full flex-col bg-black text-white">
+      <RainBackground charged={executing} />
       {/* Bigger glass navbar */}
       <header
         className="relative z-10 flex items-center gap-2 px-3 h-[72px]"
@@ -178,9 +203,11 @@ export function ChatScreen({
           {!isEmpty && (
             <div className="flex flex-col min-w-0">
               <div className="flex items-center gap-1.5">
-                <Pulse state={headerState} size={9} />
-                <div className="text-[11px] uppercase tracking-[0.18em] text-white/45">
-                  {headerState === "thinking" ? "thinking" : headerState === "responding" ? "responding" : "ready"}
+                <Orb state={executing ? "working" : headerState} size={14} />
+                <div className="hud text-[10px]" style={{ color: executing ? "var(--ac-exec)" : "rgba(255,255,255,0.45)" }}>
+                  {executing
+                    ? `EXECUTING · ${runningTool ?? ""}`
+                    : headerState === "thinking" ? "THINKING" : headerState === "responding" ? "RESPONDING" : "READY"}
                 </div>
               </div>
               <div className="text-[12px] truncate text-white/70">{title}</div>
@@ -222,7 +249,7 @@ export function ChatScreen({
           </button>
         </nav>
       </header>
-      <div className="relative z-10 flex-1 flex flex-col">
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col">
         {/* Empty-state AVA — sits in the message area, morphs into the navbar wordmark when first message arrives */}
         <AnimatePresence>
           {isEmpty && (
@@ -260,7 +287,19 @@ export function ChatScreen({
           )}
         </AnimatePresence>
 
-        <MessageList history={history} liveEvents={liveEvents} />
+        <div className="flex min-h-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <MessageList history={history} liveEvents={liveEvents} onRetry={retryLast} />
+          </div>
+          {steps.length > 0 && (
+            <ActivityPanel
+              steps={steps}
+              collapsed={activityCollapsed}
+              onToggle={toggleActivity}
+              executing={executing}
+            />
+          )}
+        </div>
         <Composer
           onSend={send}
           onKill={kill}

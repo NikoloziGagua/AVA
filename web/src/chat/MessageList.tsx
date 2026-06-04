@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
-import { Pulse } from "../components/ava/Pulse.js";
+import { Orb } from "../components/ava/Orb.js";
 import { ShiningText } from "../components/ava/ShiningText.js";
 import { ToolCallChip } from "./ToolCallChip.js";
+import { MessageActions } from "./MessageActions.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { StreamEvent } from "./useChatStream.js";
 
@@ -12,9 +13,11 @@ export type ChatMessage =
 export interface MessageListProps {
   history: ChatMessage[];
   liveEvents: StreamEvent[];
+  /** Re-run the last turn (wired to the action row's Retry). */
+  onRetry?: () => void;
 }
 
-export function MessageList({ history, liveEvents }: MessageListProps) {
+export function MessageList({ history, liveEvents, onRetry }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -59,17 +62,20 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
             </div>
           ) : (
             <div className="flex items-start gap-3 max-w-[88%]">
-              <div className="shrink-0 mt-1.5">
-                <Pulse state="idle" size={10} />
+              <div className="shrink-0 mt-1">
+                <Orb state="idle" size={22} />
               </div>
-              <div
-                className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
-                }}
-              >
-                {m.text}
+              <div className="flex flex-col gap-2">
+                <div
+                  className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
+                  style={{
+                    backgroundImage:
+                      "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
+                  }}
+                >
+                  {m.text}
+                </div>
+                <MessageActions text={m.text} onRetry={onRetry} />
               </div>
             </div>
           )}
@@ -121,17 +127,20 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
       {lastFinal && (
         <div className="flex justify-start" data-testid="final-message">
           <div className="flex items-start gap-3 max-w-[88%]">
-            <div className="shrink-0 mt-1.5">
-              <Pulse state="responding" size={10} />
+            <div className="shrink-0 mt-1">
+              <Orb state="responding" size={22} />
             </div>
-            <div
-              className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
-              style={{
-                backgroundImage:
-                  "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
-              }}
-            >
-              {lastFinal.payload.text}
+            <div className="flex flex-col gap-2">
+              <div
+                className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
+                style={{
+                  backgroundImage:
+                    "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
+                }}
+              >
+                {lastFinal.payload.text}
+              </div>
+              <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
             </div>
           </div>
         </div>
@@ -139,7 +148,7 @@ export function MessageList({ history, liveEvents }: MessageListProps) {
 
       {isThinking && (
         <div className="flex items-center gap-2 text-white/60">
-          <Pulse state="thinking" size={14} />
+          <Orb state="thinking" size={18} />
           <ShiningText text={thinkingCaption} className="text-xs" />
         </div>
       )}

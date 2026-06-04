@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchSuggestedChips, type SuggestedChip } from "../api.js";
 import { Textarea } from "../components/ui/textarea.js";
-import { Pulse } from "../components/ava/Pulse.js";
+import { Orb } from "../components/ava/Orb.js";
 import { ArrowUp, Square } from "lucide-react";
 
 export interface ComposerProps {
@@ -113,9 +113,10 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
         <button
           aria-label="voice"
           onClick={onMicTap}
+          title="Voice mode"
           className="shrink-0 w-10 h-10 rounded-full flex items-center justify-center transition-transform active:scale-90"
         >
-          <Pulse state="idle" size={28} />
+          <Orb state="idle" size={28} />
         </button>
         {busy ? (
           <button

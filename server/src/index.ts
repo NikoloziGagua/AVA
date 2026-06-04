@@ -1,3 +1,4 @@
+import "./net-tuning.js"; // MUST be first: happy-eyeballs for IPv6-only/NAT64 networks
 import express from "express";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawn } from "node:child_process";

@@ -382,10 +382,16 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         setSessionId(eff.sessionId);
         return;
       case "caption_user":
-        // A fresh user turn: reset per-turn accumulators.
+        // A fresh, gate-accepted user turn. Reset per-turn accumulators and go
+        // to "thinking" right away (matches the transcribe path) so the mic
+        // stops forwarding before Ava starts speaking — closes the echo window.
+        // The server already sent response.create, so a response is guaranteed;
+        // response.created/audio/done + onEnded carry us back to listening.
         actionPendingRef.current = false;
         avaCaptionRef.current = "";
+        genDoneRef.current = false;
         setCaption({ who: "you", text: eff.text });
+        setState("thinking");
         return;
       case "working":
         // do_on_computer is running on the server — show progress, keep the mic

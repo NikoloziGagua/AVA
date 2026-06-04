@@ -20,6 +20,38 @@
   --motion-screen: 300ms;
   --motion-cinematic: 600ms;
   --ease-cinematic: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* ── Premium remodel palette (cyan command-deck) ──────────────────────── */
+  --ac: #5cf2ff;          /* cyan accent — the lead */
+  --ac-live: #39ffb0;     /* live / success */
+  --ac-exec: #ffd479;     /* executing */
+  --ac-stop: #ff6b6b;     /* stop / destructive */
+  --glass: rgba(12, 15, 22, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --font-mono: ui-monospace, Menlo, monospace;
+}
+
+/* Monospace HUD label — status lines, step lists, chips, small captions. */
+.hud {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+/* Frosted glass surface used by panels, nav, composer, cards. */
+.glass {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+/* Liquid mercury fill — the Orb core and mini-avatars. */
+.mercury {
+  background: conic-gradient(
+    from 180deg,
+    #eaf6fa, #9fc6d4, #4f7e8c, #d6eef4, #7ba8b6, #f0fbff, #86b3c0, #eaf6fa
+  );
 }
 
 html, body, #root {

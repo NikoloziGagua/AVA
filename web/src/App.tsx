@@ -35,7 +35,14 @@ export function App() {
   const reduced = useReducedMotion();
   const flipStateRef = useRef<ReturnType<typeof Flip.getState> | null>(null);
   useLayoutEffect(() => {
-    if (reduced) return;
+    // Only Flip between surfaces that actually own the orb. Panels (memory /
+    // rules / self / list) have no orb, so running Flip during those transitions
+    // would hijack the *exiting* home orb. Reduced motion: skip entirely.
+    const VIEWS_WITH_ORB = ["splash", "orbit", "chat", "voice"];
+    if (reduced || !VIEWS_WITH_ORB.includes(view.name)) {
+      flipStateRef.current = null;
+      return;
+    }
     const orb = document.querySelector("[data-flip-id='ava-orb']");
     if (!orb) {
       flipStateRef.current = null;
@@ -46,7 +53,7 @@ export function App() {
         Flip.from(flipStateRef.current, { duration: 0.55, ease: "power2.inOut", absolute: true, scale: true });
       } catch { /* degrade to no animation */ }
     }
-    flipStateRef.current = Flip.getState(orb);
+    try { flipStateRef.current = Flip.getState(orb); } catch { flipStateRef.current = null; }
   }, [view.name, reduced]);
 
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
@@ -54,7 +61,11 @@ export function App() {
   return (
     <div className="relative w-full h-full bg-black text-white">
       <GlassFilter />
-      <AnimatePresence mode="wait">
+      {/* No mode="wait": the home/voice screens have infinite CSS animations
+          (nebula drift, orb morph) that never "finish", so mode="wait" would
+          wait forever for exit-complete and never mount the next view (panels
+          appeared dead/black). Default concurrent mode cross-fades cleanly. */}
+      <AnimatePresence>
         {view.name === "splash" && (
           <motion.div
             key="splash"

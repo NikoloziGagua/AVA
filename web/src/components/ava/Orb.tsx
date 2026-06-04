@@ -24,10 +24,15 @@ export function Orb({ size = 120, state = "idle", amplitude = 0, flipId, classNa
   const reduced = useReducedMotion();
   const m = orbMotion(state, amplitude);
   const listening = state === "listening";
+  // Only the large hero orbs (home/voice) animate. Small avatars (chat header,
+  // every message avatar, composer — ~14–28px) render as a STATIC mercury disc:
+  // a long chat would otherwise spin up ~20 infinite GSAP timelines + morphing
+  // conic-gradient repaints and choke the main thread.
+  const animate = !reduced && size >= 40;
 
   useGSAP(
     () => {
-      if (reduced) return;
+      if (!animate) return;
       gsap.to("[data-orb-core]", { rotation: 360, repeat: -1, ease: "none", duration: m.spin });
       gsap.to("[data-orb-rim]", { opacity: m.rimOpacity, duration: 0.6, ease: "power2.out" });
       gsap.fromTo(
@@ -43,7 +48,7 @@ export function Orb({ size = 120, state = "idle", amplitude = 0, flipId, classNa
         );
       }
     },
-    { scope, dependencies: [state, reduced, m.spin, m.rimOpacity, listening] },
+    { scope, dependencies: [state, reduced, animate, m.spin, m.rimOpacity, listening] },
   );
 
   return (
@@ -53,7 +58,7 @@ export function Orb({ size = 120, state = "idle", amplitude = 0, flipId, classNa
       data-flip-id={flipId}
       style={{ position: "relative", width: size, height: size }}
     >
-      {listening &&
+      {animate && listening &&
         [0, 1, 2].map((i) => (
           <span
             key={i}
@@ -84,7 +89,7 @@ export function Orb({ size = 120, state = "idle", amplitude = 0, flipId, classNa
           inset: 0,
           borderRadius: "50%",
           boxShadow: `0 0 ${size * 0.4}px rgba(92,242,255,0.4), inset 0 0 ${size * 0.2}px rgba(255,255,255,0.5)`,
-          animation: reduced ? undefined : `orb-morph ${m.morph}s ease-in-out infinite`,
+          animation: animate ? `orb-morph ${m.morph}s ease-in-out infinite` : undefined,
         }}
       >
         <span

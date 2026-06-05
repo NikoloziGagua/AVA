@@ -16,10 +16,16 @@ export type ImproverDeps = {
   emit: (e: { intentId: string; step: string; ok?: boolean }) => void;
 };
 
-let inFlight = false; // single-flight lock
+let inFlight = false; // single-flight lock — one improvement mutates the tree at a time
+const pending: string[] = []; // intents waiting their turn (FIFO), drained on completion
 
 export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Promise<void> {
-  if (inFlight) { updateIntent(db, id, { status: "failed", error: "another improvement is in progress" }); return; }
+  if (inFlight) {
+    // A concurrent request must NOT fail — queue it and run it when the slot frees.
+    // The intent keeps its "queued" status, so it stays visible to self_improve_status.
+    if (!pending.includes(id)) { pending.push(id); deps.emit({ intentId: id, step: "queued" }); }
+    return;
+  }
   inFlight = true;
   const intent = getIntent(db, id)!;
   let wt: { path: string; branch: string } | null = null;
@@ -56,5 +62,8 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
   } finally {
     if (wt) deps.removeWorktree(wt);
     inFlight = false;
+    // Hand the slot to the next waiting intent, if any.
+    const next = pending.shift();
+    if (next) void runImprovement(db, next, deps);
   }
 }

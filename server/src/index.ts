@@ -45,7 +45,7 @@ import { verify } from "./self/verify.js";
 import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
 import { runImprovement, type ImproverDeps } from "./self/improver.js";
-import { createIntent, getIntent } from "./self/intents.js";
+import { createIntent, getIntent, listIntents } from "./self/intents.js";
 import { selfRoutes } from "./routes/self.js";
 
 const startedAt = Date.now();
@@ -186,6 +186,13 @@ const agentDeps = {
   pushDeliver,
   provider,  // LLMProvider | null
   queueSelfImprove,
+  // Lets Ava report the live state of each self-improvement task (queued →
+  // reflecting → implementing → verifying → swapped/failed/rolled_back).
+  listSelfImprovements: () =>
+    listIntents(db).map((r) => ({
+      id: r.id, goal: r.goal, status: r.status, trigger: r.trigger,
+      error: r.error, outcome: r.outcome, created_at: r.created_at,
+    })),
 };
 
 const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;

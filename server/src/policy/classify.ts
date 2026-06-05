@@ -69,6 +69,13 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (tool === "computer_use") return { tier: "medium", reason: "computer_use is GUI scripting" };
 
+  // Desktop capture writes only inside the Downloads/Ava/screenshots dir (the tool
+  // rejects any other output path), so it is a low-risk local write — available
+  // without a high-risk gate, but not silent/read-only since it captures the screen.
+  if (tool === "take_screenshot") {
+    return { tier: "low", reason: "desktop screenshot saved inside Downloads/Ava/screenshots" };
+  }
+
   if (tool === "memory_remember" || tool === "memory_forget") {
     return { tier: "low", reason: "memory mutation stays inside the local memory dir" };
   }

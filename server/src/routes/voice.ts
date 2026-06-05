@@ -3,6 +3,7 @@ import multer from "multer";
 import { toFile } from "openai";
 import type { VoiceClients } from "../tools/voice-clients.js";
 import { formatSpeechText } from "../voice/speechText.js";
+import { resolveSpeechRate } from "../voice/voiceConfig.js";
 
 const ALLOWED_MIMES = new Set([
   "audio/webm",
@@ -65,6 +66,8 @@ export function voiceRoutes(deps: VoiceRoutesDeps): ExpressRouter {
         model: "gpt-4o-mini-tts",
         voice: voice as "alloy" | "ash" | "ballad" | "coral" | "echo" | "fable" | "onyx" | "nova" | "sage" | "shimmer" | "verse",
         input: formatSpeechText(text),
+        // Faster default delivery per Sir's preference; a caller may override.
+        speed: resolveSpeechRate(req.body?.speed),
       });
       res.setHeader("Content-Type", "audio/mpeg");
       const buf = Buffer.from(await r.arrayBuffer());

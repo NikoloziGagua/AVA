@@ -10,6 +10,7 @@ import {
 } from "../voice/transcript-gate.js";
 import { getReasoningLevel, type ReasoningLevel } from "../state/reasoning-pref.js";
 import { formatSpeechText } from "../voice/speechText.js";
+import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
 
 // ─── OpenAI Realtime API: TRANSCRIBE-ONLY proxy ──────────────────────────────
 //
@@ -191,6 +192,8 @@ export function buildHybridSessionUpdate(
         output: {
           format: { type: "audio/pcm", rate: 24000 },
           voice,
+          // Faster spoken delivery per Sir's preference (centralized default).
+          speed: DEFAULT_SPEECH_RATE,
         },
       },
     },

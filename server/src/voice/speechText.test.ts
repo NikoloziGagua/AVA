@@ -45,4 +45,20 @@ describe("formatSpeechText", () => {
   it("trims surrounding whitespace", () => {
     expect(formatSpeechText("  Yes, Sir.  ")).toBe("Yes Sir.");
   });
+
+  it("leaves no comma pause-boundary adjacent to Sir for the TTS engine to read", () => {
+    // A comma touching "Sir" is exactly what makes TTS insert a long pause /
+    // standalone delayed chunk around the word. After formatting, none remain.
+    for (const input of [
+      "Yes, Sir, right away.",
+      "Of course, Sir.",
+      "Sir, the build passed.",
+      "Working on it, Sir — one moment.",
+    ]) {
+      const out = formatSpeechText(input);
+      expect(out).not.toMatch(/\bSir\b\s*,/);
+      expect(out).not.toMatch(/,\s*\bSir\b/);
+      expect(out).toContain("Sir");
+    }
+  });
 });

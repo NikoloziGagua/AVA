@@ -38,6 +38,6 @@ describe("bootstrapMemoryDir", () => {
     // Jarvis register: warm + dry wit, friendly "Sir", concise (act-first +
     // honesty intact). This assertion pins the byte length so accidental edits
     // surface in CI; intentional changes require updating this number.
-    expect(bytes).toBe(3003);
+    expect(bytes).toBe(3905);
   });
 });

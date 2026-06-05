@@ -34,10 +34,10 @@ describe("bootstrapMemoryDir", () => {
 
   it("PERSONALITY_MD byte length is pinned (drift detection)", () => {
     const bytes = Buffer.byteLength(PERSONALITY_MD, "utf8");
-    // The canonical persona text is from spec §3.9, revised 2026-06-02 to an
-    // act-first, capability-aware self-model. This assertion pins the byte
-    // length so accidental edits surface in CI; intentional changes require
-    // updating this number.
-    expect(bytes).toBe(3823);
+    // The canonical persona text is from spec §3.9, revised 2026-06-05 to a
+    // warm, funny, friend-not-assistant voice (act-first + honesty intact). This
+    // assertion pins the byte length so accidental edits surface in CI;
+    // intentional changes require updating this number.
+    expect(bytes).toBe(3227);
   });
 });

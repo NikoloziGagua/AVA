@@ -75,3 +75,38 @@ export function shouldForwardMic(opts: {
 export function shouldInterruptForNewTurn(state: string): boolean {
   return state === "responding" || state === "thinking";
 }
+
+/**
+ * Whether the voice turn should hand the mic back to "listening" (reopen).
+ *
+ * Two callers:
+ *   - the fast end-of-turn settle (requireGenDone=true): reopen only once Ava's
+ *     generation is done AND her audio has drained — precise, no mid-reply clip.
+ *   - a longer SAFETY FALLBACK (requireGenDone=false): reopen even if the
+ *     realtime "response.done" never arrived, as long as no audio is playing and
+ *     no action is running. This is what keeps hands-free from dying forever when
+ *     the done-handshake is missed (the reported regression).
+ */
+export function shouldReopenListening(opts: {
+  state: string;
+  actionPending: boolean;
+  playing: boolean;
+  genDone: boolean;
+  requireGenDone: boolean;
+}): boolean {
+  if (opts.actionPending) return false;          // do_on_computer still running
+  if (opts.playing) return false;                // Ava is still speaking
+  if (opts.state !== "responding" && opts.state !== "thinking") return false;
+  if (opts.requireGenDone && !opts.genDone) return false;
+  return true;
+}
+
+// OpenAI rejects a committed input buffer under 100ms of audio. PCM16 mono at
+// 24kHz → 100ms = 2400 samples × 2 bytes = 4800 bytes. The push-to-talk commit
+// guards on this so a too-quick tap never sends an empty/sub-100ms buffer
+// ("Error committing input audio buffer: buffer too small … 0.00ms").
+export const MIN_COMMIT_BYTES = 4800;
+
+export function hasEnoughAudio(bytes: number): boolean {
+  return bytes >= MIN_COMMIT_BYTES;
+}

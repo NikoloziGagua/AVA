@@ -5,6 +5,9 @@ import {
   saveVoiceInputMode,
   shouldForwardMic,
   shouldInterruptForNewTurn,
+  shouldReopenListening,
+  hasEnoughAudio,
+  MIN_COMMIT_BYTES,
   DEFAULT_VOICE_INPUT_MODE,
 } from "./voiceInputMode.js";
 
@@ -57,5 +60,52 @@ describe("shouldInterruptForNewTurn", () => {
     expect(shouldInterruptForNewTurn("listening")).toBe(false);
     expect(shouldInterruptForNewTurn("idle")).toBe(false);
     expect(shouldInterruptForNewTurn("connecting")).toBe(false);
+  });
+});
+
+describe("shouldReopenListening — the hands-free recovery rule", () => {
+  const base = { state: "responding", actionPending: false, playing: false, genDone: true, requireGenDone: true };
+
+  it("fast path: reopens when generation is done and audio has drained", () => {
+    expect(shouldReopenListening(base)).toBe(true);
+  });
+
+  it("fast path: does NOT reopen if response.done hasn't arrived", () => {
+    expect(shouldReopenListening({ ...base, genDone: false })).toBe(false);
+  });
+
+  it("FALLBACK: reopens even without response.done (the missed-handshake bug)", () => {
+    // This is the fix — hands-free recovers even if gen_done never came.
+    expect(shouldReopenListening({ ...base, genDone: false, requireGenDone: false })).toBe(true);
+  });
+
+  it("never reopens while audio is still playing (no mid-reply cutoff)", () => {
+    expect(shouldReopenListening({ ...base, playing: true })).toBe(false);
+    expect(shouldReopenListening({ ...base, playing: true, requireGenDone: false })).toBe(false);
+  });
+
+  it("never reopens while a do_on_computer action is running", () => {
+    expect(shouldReopenListening({ ...base, actionPending: true })).toBe(false);
+    expect(shouldReopenListening({ ...base, actionPending: true, requireGenDone: false })).toBe(false);
+  });
+
+  it("only reopens from responding/thinking, never from listening/idle", () => {
+    expect(shouldReopenListening({ ...base, state: "listening" })).toBe(false);
+    expect(shouldReopenListening({ ...base, state: "idle" })).toBe(false);
+    expect(shouldReopenListening({ ...base, state: "thinking" })).toBe(true);
+  });
+});
+
+describe("hasEnoughAudio — the empty-commit guard", () => {
+  it("100ms of PCM16@24kHz is the floor (4800 bytes)", () => {
+    expect(MIN_COMMIT_BYTES).toBe(4800);
+  });
+  it("rejects an empty or too-short buffer (the '0.00ms' error)", () => {
+    expect(hasEnoughAudio(0)).toBe(false);
+    expect(hasEnoughAudio(4799)).toBe(false);
+  });
+  it("accepts a buffer at or over the floor", () => {
+    expect(hasEnoughAudio(4800)).toBe(true);
+    expect(hasEnoughAudio(48000)).toBe(true);
   });
 });

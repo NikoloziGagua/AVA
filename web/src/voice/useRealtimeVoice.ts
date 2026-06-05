@@ -8,12 +8,20 @@ import {
   saveVoiceInputMode,
   shouldForwardMic,
   shouldInterruptForNewTurn,
+  shouldReopenListening,
+  hasEnoughAudio,
 } from "./voiceInputMode.js";
 import { shouldToggleOnEnter } from "./pushToTalk.js";
 import { api, approveApproval, denyApproval } from "../api.js";
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
 const SAMPLE_RATE = 24000;
+
+// Hands-free safety net: if Ava's "response.done" handshake is ever missed, the
+// fast (genDone-gated) reopen never fires and the mic stays shut forever. This
+// longer fallback reopens "listening" once she's been silent + idle this long,
+// regardless of the missed event. Generous so a real reply is never clipped.
+const REOPEN_FALLBACK_MS = 4000;
 
 // What the voice client does with a (already gated) realtime event. The only
 // path that produces a reply is `agent_turn` → POST /api/chat (the full
@@ -218,6 +226,8 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const genDoneRef = useRef(false);      // response.done seen for the current turn
   const actionPendingRef = useRef(false); // do_on_computer running (suppress early "listening")
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // end-of-turn debounce
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // hands-free recovery (Fix 1)
+  const pttBytesRef = useRef(0); // bytes forwarded in the current push-to-talk turn (Fix 3)
 
   const stopAgentStream = useCallback(() => {
     try { esRef.current?.close(); } catch { /* */ }
@@ -251,6 +261,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     genDoneRef.current = false;
     actionPendingRef.current = false;
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
+    if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
 
     try { wsRef.current?.close(); } catch { /* */ }
     wsRef.current = null;
@@ -393,6 +404,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
   const clearSettle = useCallback(() => {
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
+    if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
   }, []);
   // Debounced end-of-turn: only reopen the mic once Ava's audio has been silent
   // for a beat AND generation is done. A brief gap between audio chunks (network
@@ -400,17 +412,31 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   // so Ava no longer cuts herself off mid-sentence by re-hearing her own tail.
   const scheduleListen = useCallback(() => {
     clearSettle();
+    // Fast path: reopen promptly once generation is done AND audio has drained.
     settleTimerRef.current = setTimeout(() => {
       settleTimerRef.current = null;
-      if (
-        genDoneRef.current &&
-        !actionPendingRef.current &&
-        !playerRef.current?.playing &&
-        (stateRef.current === "responding" || stateRef.current === "thinking")
-      ) {
-        setState("listening");
-      }
+      if (shouldReopenListening({
+        state: stateRef.current,
+        actionPending: actionPendingRef.current,
+        playing: !!playerRef.current?.playing,
+        genDone: genDoneRef.current,
+        requireGenDone: true,
+      })) setState("listening");
     }, 350);
+    // Safety fallback (Fix 1): recover hands-free even if response.done was
+    // missed — reopen once Ava's been silent + idle for REOPEN_FALLBACK_MS. New
+    // audio cancels both timers (clearSettle in play_audio), so a real reply is
+    // never clipped.
+    fallbackTimerRef.current = setTimeout(() => {
+      fallbackTimerRef.current = null;
+      if (shouldReopenListening({
+        state: stateRef.current,
+        actionPending: actionPendingRef.current,
+        playing: !!playerRef.current?.playing,
+        genDone: genDoneRef.current,
+        requireGenDone: false,
+      })) setState("listening");
+    }, REOPEN_FALLBACK_MS);
   }, [clearSettle]);
 
   // Lazily build the PCM player; its onEnded schedules the (debounced) end-of-turn
@@ -588,6 +614,9 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
             })) return;
             if (ws.readyState !== WebSocket.OPEN) return;
             const buf = ev.data as ArrayBuffer;
+            // Fix 3: track how much real audio this push-to-talk turn forwarded,
+            // so finishPtt can refuse to commit an empty/too-short buffer.
+            if (inputModeRef.current === "enter_push_to_talk") pttBytesRef.current += buf.byteLength;
             const b64 = arrayBufferToBase64(buf);
             ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio: b64 }));
           };
@@ -675,6 +704,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     // Hybrid: cut the model's spoken audio immediately and end the turn.
     try { playerRef.current?.interrupt(); } catch { /* */ }
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
+    if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
     genDoneRef.current = false;
     actionPendingRef.current = false;
     avaCaptionRef.current = "";
@@ -689,6 +719,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     if (inputModeRef.current !== "enter_push_to_talk") return;
     if (capturingRef.current) return;
     if (shouldInterruptForNewTurn(stateRef.current)) interrupt();
+    // Fix 2: flip the ref the mic gate reads NOW, not a React render later — else
+    // the first audio chunks are dropped and the turn commits empty.
+    capturingRef.current = true;
+    pttBytesRef.current = 0; // Fix 3: fresh byte count for this turn
     for (const t of streamRef.current?.getAudioTracks() ?? []) t.enabled = true;
     setCapturing(true);
     setState("listening");
@@ -701,6 +735,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const finishPtt = useCallback(() => {
     if (inputModeRef.current !== "enter_push_to_talk") return;
     if (!capturingRef.current) return;
+    // Fix 3: a too-quick tap captured nothing — don't commit an empty buffer (the
+    // server rejects it: "buffer too small … 0.00ms"). Keep the turn open so the
+    // owner can simply keep talking and press Enter again.
+    if (!hasEnoughAudio(pttBytesRef.current)) return;
+    capturingRef.current = false; // Fix 2: stop forwarding immediately
     setCapturing(false);
     for (const t of streamRef.current?.getAudioTracks() ?? []) t.enabled = false;
     const ws = wsRef.current;

@@ -414,6 +414,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     // VAD onset timestamp of the in-flight utterance, used to measure speech
     // duration so the gate can drop sub-threshold blips.
     let speechStartMs: number | null = null;
+    // True while Ava is mid-response (between response.created and response.done).
+    // A transcript that lands during this window is almost always a hallucination
+    // / echo, and starting a new response would cut Ava off — so we ignore it.
+    let responseActive = false;
     const pendingFromClient: Array<{ data: RawData; isBinary: boolean }> = [];
     log.info("realtime: client connected, opening upstream to gpt-realtime (transcribe-only)");
 
@@ -484,6 +488,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       if (evt) {
         if (evt.type === "input_audio_buffer.speech_started") {
           speechStartMs = typeof evt.audio_start_ms === "number" ? evt.audio_start_ms : 0;
+        } else if (evt.type === "response.created") {
+          responseActive = true;
+        } else if (evt.type === "response.done") {
+          responseActive = false;
         } else if (evt.type === "error") {
           log.warn(
             `realtime upstream error event: code=${evt.error?.code} type=${evt.error?.type} message=${evt.error?.message}`,
@@ -533,10 +541,19 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           );
           return; // do not forward — no phantom turn, no /api/chat call
         }
+        if (hybrid && responseActive) {
+          // Ava is still speaking. A transcript now is almost always a
+          // hallucination / echo / noise — starting a new response would cut her
+          // off mid-sentence (the reported bug). Drop it: no interrupt, and no
+          // phantom "you" caption on the client.
+          log.info(`realtime: ignored transcript while Ava is speaking (no interrupt): ${JSON.stringify(decision.text)}`);
+          return;
+        }
         log.info(`realtime: accepted transcript text=${JSON.stringify(decision.text)}`);
         if (hybrid) {
           // Model didn't auto-reply (create_response:false). Now that the
           // transcript passed the gate, ask it to respond — speak or call a tool.
+          responseActive = true; // optimistic; confirmed by response.created
           try { upstream.send(JSON.stringify({ type: "response.create" })); } catch { /* */ }
         }
         // fall through to forward the (accepted) transcript verbatim

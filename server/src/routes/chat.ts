@@ -26,6 +26,7 @@ import { buildClaudeCodeTool } from "../tools/claude-code-mcp.js";
 import { buildChromeTools } from "../tools/chrome-mcp.js";
 import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
 import { buildScreenshotTool } from "../tools/screenshot/screenshot-mcp.js";
+import { buildReadLogsTool } from "../tools/activity-log-mcp.js";
 import { buildSelfImproveTool, buildSelfImproveStatusTool, type IntentStatusSummary } from "../tools/self-improve-mcp.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
@@ -62,6 +63,7 @@ export type AgentDeps = {
   provider: LLMProvider | null;
   queueSelfImprove?: (goal: string) => string;
   listSelfImprovements?: () => IntentStatusSummary[];
+  logsDir?: string;
   /** Optional override; lets tests substitute a fake agent loop. Defaults to runAgent. */
   runAgentImpl?: typeof runAgent;
 };
@@ -313,6 +315,7 @@ export function chatRoutes(
             buildScreenshotTool({ emit: noop }) as ToolDef,
             ...(agentDeps.queueSelfImprove ? [buildSelfImproveTool({ queue: agentDeps.queueSelfImprove })] : []),
             ...(agentDeps.listSelfImprovements ? [buildSelfImproveStatusTool({ list: agentDeps.listSelfImprovements })] : []),
+            ...(agentDeps.logsDir ? [buildReadLogsTool({ logsDir: agentDeps.logsDir })] : []),
             ...memoryTools,
           ];
         } else {

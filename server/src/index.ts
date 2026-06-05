@@ -185,6 +185,7 @@ const agentDeps = {
   getChrome,
   pushDeliver,
   provider,  // LLMProvider | null
+  logsDir: cfg.logsDir,
   queueSelfImprove,
   // Lets Ava report the live state of each self-improvement task (queued →
   // reflecting → implementing → verifying → swapped/failed/rolled_back).

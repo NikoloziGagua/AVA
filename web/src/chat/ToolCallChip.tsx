@@ -2,32 +2,47 @@ import { useState } from "react";
 import { motion } from "motion/react";
 
 export interface ToolCallChipProps {
-  tool: string;
-  argSummary?: string;
+  /** Humanized, present-tense action, e.g. "Running git status". */
+  label: string;
+  /** Raw tool output — tucked behind a click, never shown by default. */
   result?: string;
   ok?: boolean;
 }
 
-export function ToolCallChip({ tool, argSummary, result, ok }: ToolCallChipProps) {
+/**
+ * A clean breadcrumb of one action: a tinted dot + a human label. The raw tool
+ * output (stdout / exit codes / JSON) is hidden behind a click so the chat flow
+ * stays legible — only failures and curious taps reveal the guts.
+ */
+export function ToolCallChip({ label, result, ok }: ToolCallChipProps) {
   const [open, setOpen] = useState(false);
-  const summary = argSummary ?? "";
+  const failed = ok === false;
+  const hasDetail = !!result;
   return (
-    <motion.div layout className="my-1">
+    <motion.div layout className="my-0.5">
       <button
-        onClick={() => setOpen((v) => !v)}
-        className="font-mono text-[10px] px-2 py-1 rounded-md border border-white/10 text-white/60 hover:text-white/85 hover:border-white/20"
+        onClick={hasDetail ? () => setOpen((v) => !v) : undefined}
+        className="flex items-center gap-1.5 text-[11px] text-white/50 hover:text-white/80 transition-colors"
+        style={{ cursor: hasDetail ? "pointer" : "default" }}
       >
-        {open ? "▾" : "▸"} {tool}
-        {summary ? ` · ${summary}` : ""}
+        <span
+          className="inline-block h-1 w-1 rounded-full"
+          style={{
+            background: failed ? "var(--ac-stop)" : "var(--ac)",
+            boxShadow: failed ? "0 0 6px var(--ac-stop)" : "0 0 6px var(--ac)",
+          }}
+        />
+        <span>{label}</span>
+        {hasDetail && <span className="text-white/30">{open ? "▾" : "▸"}</span>}
       </button>
-      {open && (
+      {open && hasDetail && (
         <motion.pre
           layout
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: "auto" }}
-          className="mt-1 ml-3 text-[10px] font-mono whitespace-pre-wrap text-white/70 border-l border-white/10 pl-2"
+          className="mt-1 ml-3 max-h-40 overflow-y-auto border-l border-white/10 pl-2 text-[10px] font-mono whitespace-pre-wrap text-white/55"
         >
-          {ok === false ? "ERROR: " : ""}{result ?? "(no result)"}
+          {failed ? "ERROR: " : ""}{result}
         </motion.pre>
       )}
     </motion.div>

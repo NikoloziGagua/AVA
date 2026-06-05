@@ -2,6 +2,7 @@
 // tool_call starts a "running" step; the matching tool_result completes it.
 // Pure + tested so the panel and the working-mode trigger share one source.
 import type { StreamEvent } from "./useChatStream.js";
+import { humanizeTool } from "./humanize.js";
 
 export interface ActivityStep {
   key: string;
@@ -16,7 +17,7 @@ export function deriveSteps(events: StreamEvent[]): ActivityStep[] {
   const running = new Map<string, number>();
   for (const e of events) {
     if (e.kind === "tool_call") {
-      steps.push({ key: `c-${e.id}`, label: e.payload.tool, status: "running" });
+      steps.push({ key: `c-${e.id}`, label: humanizeTool(e.payload.tool, e.payload.args), status: "running" });
       running.set(e.payload.tool, steps.length - 1);
     } else if (e.kind === "tool_result") {
       const idx = running.get(e.payload.tool);
@@ -25,7 +26,7 @@ export function deriveSteps(events: StreamEvent[]): ActivityStep[] {
         steps[idx].ok = e.payload.ok;
         running.delete(e.payload.tool);
       } else {
-        steps.push({ key: `r-${e.id}`, label: e.payload.tool, status: "done", ok: e.payload.ok });
+        steps.push({ key: `r-${e.id}`, label: humanizeTool(e.payload.tool), status: "done", ok: e.payload.ok });
       }
     }
   }

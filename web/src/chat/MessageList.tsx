@@ -4,6 +4,7 @@ import { ShiningText } from "../components/ava/ShiningText.js";
 import { MessageLoading } from "../components/ava/MessageLoading.js";
 import { WordReveal } from "../components/ava/WordReveal.js";
 import { ToolCallChip } from "./ToolCallChip.js";
+import { humanizeTool } from "./humanize.js";
 import { MessageActions } from "./MessageActions.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import type { StreamEvent } from "./useChatStream.js";
@@ -39,7 +40,7 @@ export function MessageList({ history, liveEvents, onRetry }: MessageListProps) 
   let thinkingCaption = "thinking…";
   for (let i = liveEvents.length - 1; i >= 0; i--) {
     const e = liveEvents[i];
-    if (e?.kind === "tool_call") { thinkingCaption = `running ${e.payload.tool}…`; break; }
+    if (e?.kind === "tool_call") { thinkingCaption = humanizeTool(e.payload.tool, e.payload.args) + "…"; break; }
     if (e?.kind === "thought") { thinkingCaption = e.payload.text.slice(0, 80); break; }
   }
 
@@ -99,13 +100,14 @@ export function MessageList({ history, liveEvents, onRetry }: MessageListProps) 
           );
         }
         if (e.kind === "tool_call") {
-          const summary = typeof e.payload.args === "object"
-            ? JSON.stringify(e.payload.args).slice(0, 40)
-            : String(e.payload.args);
-          return <ToolCallChip key={key} tool={e.payload.tool} argSummary={summary} />;
+          return <ToolCallChip key={key} label={humanizeTool(e.payload.tool, e.payload.args)} />;
         }
         if (e.kind === "tool_result") {
-          return <ToolCallChip key={key} tool={e.payload.tool} ok={e.payload.ok} result={e.payload.result} />;
+          // Success is already reflected live in the Activity panel and the
+          // running line — keep the chat flow clean and only surface failures
+          // inline (with the raw output tucked behind a click).
+          if (e.payload.ok) return null;
+          return <ToolCallChip key={key} label={humanizeTool(e.payload.tool)} ok={false} result={e.payload.result} />;
         }
         if (e.kind === "thought") {
           return null; // thoughts surface via thinkingCaption, not rendered as message

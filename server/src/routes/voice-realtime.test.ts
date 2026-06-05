@@ -8,6 +8,7 @@ import {
   sessionHelloFrame,
   actionStartedFrame,
   loadRealtimeVadConfig,
+  vadForReasoning,
   DEFAULT_REALTIME_VAD,
   readTranscriptionCompleted,
   speechDurationMs,
@@ -110,6 +111,19 @@ describe("buildRealtimeSessionUpdate (transcribe-only GA schema)", () => {
     expect(s.modalities).toBeUndefined();
     expect(s.voice).toBeUndefined();
     expect(s.input_audio_transcription).toBeUndefined();
+  });
+});
+
+describe("vadForReasoning (the toggle tunes voice snappiness)", () => {
+  it("fast = snappy (short silence wait), thorough = patient", () => {
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "fast").silenceMs).toBe(300);
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "thorough").silenceMs).toBe(700);
+  });
+  it("leaves the other VAD fields untouched", () => {
+    const out = vadForReasoning(DEFAULT_REALTIME_VAD, "fast");
+    expect(out.threshold).toBe(DEFAULT_REALTIME_VAD.threshold);
+    expect(out.prefixPaddingMs).toBe(DEFAULT_REALTIME_VAD.prefixPaddingMs);
+    expect(out.transcribeModel).toBe(DEFAULT_REALTIME_VAD.transcribeModel);
   });
 });
 

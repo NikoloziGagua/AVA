@@ -8,6 +8,7 @@ import {
   type TranscriptGateConfig,
   type TranscriptGateReason,
 } from "../voice/transcript-gate.js";
+import { getReasoningLevel, type ReasoningLevel } from "../state/reasoning-pref.js";
 
 // ─── OpenAI Realtime API: TRANSCRIBE-ONLY proxy ──────────────────────────────
 //
@@ -72,6 +73,16 @@ export function loadRealtimeVadConfig(
     prefixPaddingMs: num("REALTIME_VAD_PREFIX_PADDING_MS", DEFAULT_REALTIME_VAD.prefixPaddingMs),
     silenceMs: num("REALTIME_VAD_SILENCE_MS", DEFAULT_REALTIME_VAD.silenceMs),
   };
+}
+
+/**
+ * The user-facing "Fast ↔ Thorough" reasoning toggle also tunes voice
+ * responsiveness: how long server-VAD waits after the owner stops talking before
+ * Ava replies. "fast" = snappy (jump in quickly); "thorough" = patient (wait so
+ * she never talks over you). Other VAD fields (threshold/prefix) are unchanged.
+ */
+export function vadForReasoning(base: RealtimeVadConfig, level: ReasoningLevel): RealtimeVadConfig {
+  return { ...base, silenceMs: level === "fast" ? 300 : 700 };
 }
 
 /**
@@ -408,7 +419,9 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
     upstream.on("open", () => {
       upstreamReady = true;
-      log.info(`realtime: upstream open, sending ${hybrid ? "hybrid (speak+tool)" : "transcribe-only"} session.update`);
+      // The reasoning toggle ("fast"/"thorough") also controls voice snappiness.
+      const vad = vadForReasoning(vadConfig, getReasoningLevel(deps.db));
+      log.info(`realtime: upstream open, sending ${hybrid ? "hybrid (speak+tool)" : "transcribe-only"} session.update (vad silence=${vad.silenceMs}ms)`);
       // Configure the realtime session on connect.
       const system = buildSystemPrompt({
         memoryDir: deps.memoryDir,
@@ -421,10 +434,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               "asks you to DO something on the computer (open/find files, run commands, browse, " +
               "control apps, remember something), CALL do_on_computer with a clear task, then speak " +
               "the result it returns. For everything else, just reply directly in your own voice.",
-            vadConfig,
+            vad,
             deps.voice ?? "alloy",
           )
-        : buildRealtimeSessionUpdate(system, vadConfig);
+        : buildRealtimeSessionUpdate(system, vad);
       upstream.send(JSON.stringify(sessionUpdate));
       // Echo the client's current session id back, and tell it the proxy mode so
       // it knows whether to play audio (hybrid) or own the reply (transcribe).

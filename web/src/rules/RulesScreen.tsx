@@ -160,21 +160,23 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
         <div className="hud text-[13px] text-white/95">Rules</div>
       </header>
 
-      <Section title="Reasoning">
+      <Section title="Speed">
         {reason ? (
           <>
             <SegmentedTabs<"fast" | "thorough">
               options={[
-                { value: "fast", label: "Fast", hint: "instant · light" },
-                { value: "thorough", label: "Thorough", hint: "slower · deeper" },
+                { value: "fast", label: "Fast", hint: "snappy voice · instant" },
+                { value: "thorough", label: "Thorough", hint: "patient voice · deeper" },
               ]}
               value={reason.level}
-              onChange={(lvl) => reason.supported !== false && setReasoningLevel(lvl)}
+              onChange={(lvl) => setReasoningLevel(lvl)}
               layout="full"
             />
-            {reason.supported === false && (
-              <div className="text-[10px] text-white/40 mt-2">Available with OpenAI provider only.</div>
-            )}
+            <div className="text-[10px] text-white/40 mt-2">
+              Tunes both <b className="text-white/60">voice responsiveness</b> (how fast Ava jumps in) and{" "}
+              <b className="text-white/60">chat reasoning depth</b>.
+              {reason.supported === false && " (Reasoning depth needs the OpenAI provider; voice speed always applies.)"}
+            </div>
           </>
         ) : (
           <div className="text-xs text-white/40">Loading…</div>

@@ -90,18 +90,22 @@ async function getChrome() {
 // chat.ts blocks a second run within a session at line 42, but cross-session
 // concurrency is not currently guarded. Fine for one user, one phone.
 
-const pushDeliver = (cfg.vapidPublicKey && cfg.vapidPrivateKey)
-  ? (() => {
-      const deliverer = buildDeliverer({
-        db,
-        vapid: {
-          publicKey: cfg.vapidPublicKey!,
-          privateKey: cfg.vapidPrivateKey!,
-          subject: process.env.VAPID_SUBJECT ?? "mailto:nobody@example.com",
-        },
-      });
-      return (a: import("./state/approvals.js").Approval) => deliverer.deliverApprovalPush(a).then(() => undefined);
-    })()
+const deliverer = (cfg.vapidPublicKey && cfg.vapidPrivateKey)
+  ? buildDeliverer({
+      db,
+      vapid: {
+        publicKey: cfg.vapidPublicKey!,
+        privateKey: cfg.vapidPrivateKey!,
+        subject: process.env.VAPID_SUBJECT ?? "mailto:nobody@example.com",
+      },
+    })
+  : null;
+const pushDeliver = deliverer
+  ? (a: import("./state/approvals.js").Approval) => deliverer.deliverApprovalPush(a).then(() => undefined)
+  : undefined;
+// Fire-and-forget "task done" ping to Sir's phone when an action run finishes.
+const notifyDone = deliverer
+  ? (summary: string) => { void deliverer.deliverDonePush(summary).catch(() => { /* best-effort */ }); }
   : undefined;
 
 const provider = buildProvider({
@@ -191,6 +195,7 @@ const agentDeps = {
   memoryDir: cfg.memoryDir,
   getChrome,
   pushDeliver,
+  notifyDone,
   provider,  // LLMProvider | null
   logsDir: cfg.logsDir,
   queueSelfImprove,
@@ -307,6 +312,16 @@ async function runVoiceAction(sessionId: string | null, task: string): Promise<{
           if (curEvent === "final") { try { finalText = (JSON.parse(data) as { text: string }).text; } catch { /* */ } stop = true; }
           else if (curEvent === "error") { try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ } stop = true; }
           else if (curEvent === "killed") stop = true;
+          else if (curEvent === "approval_required") {
+            // A tool needs Sir's go-ahead and the run is now blocked on it (up to
+            // 10 min). Don't sit in dead silence — that's the "voice goes mute,
+            // must reset" bug. Speak it; the push already hit his phone, and
+            // approving there lets the still-running task carry on. (We don't
+            // auto-approve here: a blind "yes" by voice could green-light a
+            // purchase or a delete.)
+            finalText = "That needs your go-ahead, Sir — I've sent it to your phone. Approve it there and I'll carry on.";
+            stop = true;
+          }
         }
       }
     }

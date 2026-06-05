@@ -35,6 +35,8 @@ export type AgentDeps = {
   fsRoots: string[];
   memoryDir: string;
   pushDeliver?: (a: Approval) => Promise<void>;
+  /** Fire-and-forget push when an action run that did real work finishes. */
+  notifyDone?: (summary: string) => void;
   provider: LLMProvider;
   tools: ToolDef[];
 };
@@ -122,6 +124,8 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     { role: "user", content: prompt },
   ];
   let finalText = "";
+  let toolsUsed = 0;
+  let killed = false;
   // Cap the agentic loop. Long research tasks (browsing many pages) are
   // turn-hungry; 48 gives room while still bounding cost. On exhaustion we emit
   // a graceful final below rather than ending the run silently.
@@ -162,6 +166,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     if (stopReason === "abort" || abort.signal.aborted) {
       emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : { reason: "manual" } });
       concluded = true;
+      killed = true;
       break;
     }
 
@@ -206,6 +211,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
         messages.push({ role: "tool", content: result });
         continue;
       }
+      toolsUsed++;
 
       const budget = TOOL_BUDGET_MS[call.name] ?? 30_000;
       try {
@@ -231,6 +237,11 @@ export async function runAgent(opts: RunOpts): Promise<void> {
           || "I reached my step limit before finishing this, Sir — I made progress but didn't complete it in one run. Tell me to continue and I'll pick up where I left off.",
       },
     });
+  }
+  // Proactively ping Sir when an action run that actually did work wraps up — so
+  // a long/background task tells him it's done instead of finishing quietly.
+  if (mode === "action" && toolsUsed > 0 && !killed && deps.notifyDone) {
+    try { deps.notifyDone(finalText.trim().slice(0, 140) || "Task complete."); } catch { /* push is best-effort */ }
   }
   emit({ kind: "done", payload: {} });
 }

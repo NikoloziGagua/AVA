@@ -6,7 +6,7 @@ import { openDb, type Db } from "../state/db.js";
 import { upsertSubscription, listSubscriptions } from "../state/push.js";
 import { createSession } from "../state/sessions.js";
 import { createApproval } from "../state/approvals.js";
-import { deliverApprovalPush } from "./deliver.js";
+import { deliverApprovalPush, deliverDonePush } from "./deliver.js";
 
 let db: Db;
 let sessionId: string;
@@ -79,5 +79,31 @@ describe("deliverApprovalPush", () => {
     const r = await deliverApprovalPush({ db, vapid: VAPID, approval: a, send });
     expect(r).toEqual({ sent: 0, removed: 0, failed: 0 });
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("deliverDonePush", () => {
+  it("sends a 'task done' notification with the summary to all subscriptions", async () => {
+    addSub("https://fcm.googleapis.com/x/1");
+    addSub("https://fcm.googleapis.com/x/2");
+    const send = vi.fn().mockResolvedValue({ statusCode: 201 });
+    const r = await deliverDonePush({ db, vapid: VAPID, summary: "Opened Downloads", send });
+    expect(r.sent).toBe(2);
+    const payload = send.mock.calls[0]![1] as string;
+    expect(payload).toContain("Opened Downloads");
+    expect(payload).toContain("task done");
+    expect(payload).toContain("ava-done");
+  });
+
+  it("prunes dead subscriptions on 410, like the approval path", async () => {
+    addSub("https://fcm.googleapis.com/x/stale");
+    addSub("https://fcm.googleapis.com/x/ok");
+    const send = vi.fn(async (sub: any) => {
+      if (sub.endpoint.endsWith("stale")) { const e = new Error("gone") as any; e.statusCode = 410; throw e; }
+      return { statusCode: 201 };
+    });
+    const r = await deliverDonePush({ db, vapid: VAPID, summary: "done", send });
+    expect(r).toMatchObject({ sent: 1, removed: 1 });
+    expect(listSubscriptions(db).map((s) => s.endpoint)).toEqual(["https://fcm.googleapis.com/x/ok"]);
   });
 });

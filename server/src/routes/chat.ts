@@ -60,6 +60,7 @@ export type AgentDeps = {
   memoryDir: string;
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
+  notifyDone?: (summary: string) => void;
   provider: LLMProvider | null;
   queueSelfImprove?: (goal: string) => string;
   listSelfImprovements?: () => IntentStatusSummary[];
@@ -339,6 +340,7 @@ export function chatRoutes(
             fsRoots: agentDeps.fsRoots,
             memoryDir: agentDeps.memoryDir,
             pushDeliver: agentDeps.pushDeliver,
+            notifyDone: agentDeps.notifyDone,
             provider,
             tools,
           },

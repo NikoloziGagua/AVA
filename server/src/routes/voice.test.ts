@@ -3,6 +3,12 @@ import express from "express";
 import request from "supertest";
 import { voiceRoutes } from "./voice.js";
 import type { VoiceClients } from "../tools/voice-clients.js";
+import { DEFAULT_VOICE } from "./voice-defaults.js";
+import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
+
+// Voices the OpenAI speech model exposes that read as female. Used to prove the
+// no-saved-preference default speaks with a female voice.
+const FEMALE_VOICES = new Set(["nova", "shimmer", "coral", "sage", "fable"]);
 
 function setup(clients: VoiceClients) {
   const app = express();
@@ -90,7 +96,43 @@ describe("voiceRoutes /api/speak", () => {
     const arg = speak.mock.calls[0]?.[0] as { model: string; input: string; voice: string };
     expect(arg.model).toBe("gpt-4o-mini-tts");
     expect(arg.input).toBe("hello world");
-    expect(arg.voice).toBe("nova");
+    expect(arg.voice).toBe(DEFAULT_VOICE);
+  });
+
+  it("defaults to a female voice when no preference is saved", async () => {
+    const speak = vi.fn().mockResolvedValue({
+      arrayBuffer: async () => new Uint8Array([1]).buffer,
+    });
+    const app = setup(mockClients({ speak }));
+    await request(app).post("/api/speak").send({ text: "hello" }).expect(200);
+    const arg = speak.mock.calls[0]?.[0] as { voice: string };
+    expect(arg.voice).toBe(DEFAULT_VOICE);
+    expect(FEMALE_VOICES.has(arg.voice)).toBe(true);
+  });
+
+  it("keeps the faster speech preference unchanged for the default delivery", async () => {
+    const speak = vi.fn().mockResolvedValue({
+      arrayBuffer: async () => new Uint8Array([1]).buffer,
+    });
+    const app = setup(mockClients({ speak }));
+    await request(app).post("/api/speak").send({ text: "hello" }).expect(200);
+    const arg = speak.mock.calls[0]?.[0] as { speed: number };
+    expect(arg.speed).toBe(DEFAULT_SPEECH_RATE);
+    expect(arg.speed).toBeGreaterThan(1.0);
+  });
+
+  it("delivers \"Sir\" seamlessly — no comma/break/pause around the vocative", async () => {
+    const speak = vi.fn().mockResolvedValue({
+      arrayBuffer: async () => new Uint8Array([1]).buffer,
+    });
+    const app = setup(mockClients({ speak }));
+    await request(app).post("/api/speak").send({ text: "Yes, Sir, right away." }).expect(200);
+    const arg = speak.mock.calls[0]?.[0] as { input: string };
+    // The synthesized text drops the commas hugging the vocative so the engine
+    // reads "Yes Sir ..." without a stutter — and adds no SSML break/pause.
+    expect(arg.input).toBe("Yes Sir right away.");
+    expect(arg.input).not.toMatch(/,\s*Sir|Sir\s*,/);
+    expect(arg.input).not.toMatch(/<break|pause/i);
   });
 
   it("uses provided voice when given", async () => {

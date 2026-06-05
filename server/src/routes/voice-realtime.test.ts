@@ -16,6 +16,12 @@ import {
   forwardFrame,
 } from "./voice-realtime.js";
 import { DEFAULT_TRANSCRIPT_GATE } from "../voice/transcript-gate.js";
+import { DEFAULT_VOICE } from "./voice-defaults.js";
+import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
+
+// Voices the OpenAI speech / realtime models expose that read as female. Used to
+// prove the no-saved-preference default speaks with a female voice.
+const FEMALE_VOICES = new Set(["nova", "shimmer", "coral", "sage", "fable"]);
 
 describe("hybrid voice (speak + do_on_computer)", () => {
   it("session.update enables audio out, the tool, and keeps create_response false (gate controls replies)", () => {
@@ -30,6 +36,16 @@ describe("hybrid voice (speak + do_on_computer)", () => {
     expect(u.session.tools.map((t) => t.name)).toContain("do_on_computer");
     expect(u.session.audio.input.turn_detection.create_response).toBe(false);
     expect(u.session.audio.output.voice).toBe("alloy");
+  });
+
+  it("defaults the realtime spoken voice to a female voice when none is supplied", () => {
+    const u = buildHybridSessionUpdate("be ava") as {
+      session: { audio: { output: { voice: string; speed: number } } };
+    };
+    expect(u.session.audio.output.voice).toBe(DEFAULT_VOICE);
+    expect(FEMALE_VOICES.has(u.session.audio.output.voice)).toBe(true);
+    // The faster spoken-delivery preference must be preserved by the default.
+    expect(u.session.audio.output.speed).toBe(DEFAULT_SPEECH_RATE);
   });
 
   it("readToolCall parses a completed do_on_computer function call", () => {

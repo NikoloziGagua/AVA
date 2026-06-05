@@ -4,6 +4,7 @@ import { toFile } from "openai";
 import type { VoiceClients } from "../tools/voice-clients.js";
 import { formatSpeechText } from "../voice/speechText.js";
 import { resolveSpeechRate } from "../voice/voiceConfig.js";
+import { DEFAULT_VOICE } from "./voice-defaults.js";
 
 const ALLOWED_MIMES = new Set([
   "audio/webm",
@@ -57,7 +58,7 @@ export function voiceRoutes(deps: VoiceRoutesDeps): ExpressRouter {
       return res.status(503).json({ error: "OPENAI_API_KEY not configured" });
     }
     const text = typeof req.body?.text === "string" ? req.body.text : "";
-    const voice = typeof req.body?.voice === "string" ? req.body.voice : "nova";
+    const voice = typeof req.body?.voice === "string" ? req.body.voice : DEFAULT_VOICE;
     if (!text.trim()) return res.status(400).json({ error: "text required" });
     try {
       // Smooth vocative "Sir" punctuation only for what is synthesized — the

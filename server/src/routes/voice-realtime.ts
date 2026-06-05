@@ -11,6 +11,7 @@ import {
 import { getReasoningLevel, type ReasoningLevel } from "../state/reasoning-pref.js";
 import { formatSpeechText } from "../voice/speechText.js";
 import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
+import { DEFAULT_VOICE } from "./voice-defaults.js";
 
 // ─── OpenAI Realtime API: TRANSCRIBE-ONLY proxy ──────────────────────────────
 //
@@ -162,7 +163,7 @@ export const DO_ON_COMPUTER_TOOL = {
 export function buildHybridSessionUpdate(
   instructions: string,
   vad: RealtimeVadConfig = DEFAULT_REALTIME_VAD,
-  voice = "alloy",
+  voice = DEFAULT_VOICE,
 ) {
   return {
     type: "session.update",
@@ -445,7 +446,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               "control apps, remember something), CALL do_on_computer with a clear task, then speak " +
               "the result it returns. For everything else, just reply directly in your own voice.",
             vad,
-            deps.voice ?? "alloy",
+            deps.voice ?? DEFAULT_VOICE,
           )
         : buildRealtimeSessionUpdate(system, vad);
       upstream.send(JSON.stringify(sessionUpdate));

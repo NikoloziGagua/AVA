@@ -109,6 +109,22 @@ describe("approvals repo", () => {
     expect(row!.decided_at).not.toBeNull();
   });
 
+  it("waitForDecision with onTimeout='approve' auto-approves on timeout (the veto window)", async () => {
+    const approval = createApproval(db, { sessionId, tool: "bash", args: {}, summary: "s" });
+    const result = await waitForDecision(db, approval.id, 50, "approve");
+    expect(result.status).toBe("approved");
+    const row = getApproval(db, approval.id);
+    expect(row!.status).toBe("approved");
+    expect(row!.decided_at).not.toBeNull();
+  });
+
+  it("an explicit deny still wins over the auto-approve window", async () => {
+    const approval = createApproval(db, { sessionId, tool: "bash", args: {}, summary: "s" });
+    setTimeout(() => decide(db, approval.id, "denied"), 10);
+    const result = await waitForDecision(db, approval.id, 1000, "approve");
+    expect(result.status).toBe("denied");
+  });
+
   it("waitForDecision resolves immediately if approval already decided", async () => {
     const approval = createApproval(db, { sessionId, tool: "bash", args: {}, summary: "s" });
     decide(db, approval.id, "denied");

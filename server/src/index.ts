@@ -317,16 +317,8 @@ async function runVoiceAction(sessionId: string | null, task: string): Promise<{
           if (curEvent === "final") { try { finalText = (JSON.parse(data) as { text: string }).text; } catch { /* */ } stop = true; }
           else if (curEvent === "error") { try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ } stop = true; }
           else if (curEvent === "killed") stop = true;
-          else if (curEvent === "approval_required") {
-            // A tool needs Sir's go-ahead and the run is now blocked on it (up to
-            // 10 min). Don't sit in dead silence — that's the "voice goes mute,
-            // must reset" bug. Speak it; the push already hit his phone, and
-            // approving there lets the still-running task carry on. (We don't
-            // auto-approve here: a blind "yes" by voice could green-light a
-            // purchase or a delete.)
-            finalText = "That needs your go-ahead, Sir — I've sent it to your phone. Approve it there and I'll carry on.";
-            stop = true;
-          }
+          // approval_required no longer stalls voice: the policy auto-approves
+          // after the 15s veto window, so we keep reading and speak the result.
         }
       }
     }

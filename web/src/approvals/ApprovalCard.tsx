@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import { ShieldAlert } from "lucide-react";
 import { approveApproval, denyApproval } from "../api.js";
@@ -20,6 +20,15 @@ export function ApprovalCard({
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Veto window: the server auto-approves after 15s unless Sir declines. This
+  // countdown just mirrors that so he knows how long he has to hit Cancel.
+  const AUTO_APPROVE_S = 15;
+  const [remaining, setRemaining] = useState(AUTO_APPROVE_S);
+  useEffect(() => {
+    if (busy) return; // a tap settles it — stop the countdown
+    const t = setInterval(() => setRemaining((r) => Math.max(0, r - 1)), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
 
   if (resolvedStatus) {
     const label =
@@ -71,6 +80,16 @@ export function ApprovalCard({
         boxShadow: "0 20px 60px -20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.08)",
       }}
     >
+      {/* 15s veto-window countdown bar */}
+      <div className="h-[3px] w-full" style={{ background: "rgba(255,255,255,0.06)" }}>
+        <motion.div
+          className="h-full"
+          style={{ background: "var(--ac-exec)" }}
+          animate={{ width: `${(remaining / AUTO_APPROVE_S) * 100}%` }}
+          transition={{ duration: 1, ease: "linear" }}
+        />
+      </div>
+
       <div className="p-4">
         <div className="flex items-center gap-2.5">
           <span
@@ -84,6 +103,9 @@ export function ApprovalCard({
 
         <p className="mt-2 text-[14px] leading-relaxed text-white/85">
           Ava wants to <span className="font-medium text-white">{humanizeTool(tool, args)}</span>.
+        </p>
+        <p className="mt-1.5 text-[12px]" style={{ color: "var(--ac-exec)" }}>
+          {busy ? "Settling…" : remaining > 0 ? `Auto-approving in ${remaining}s — Cancel to stop.` : "Approving…"}
         </p>
 
         <button
@@ -117,7 +139,7 @@ export function ApprovalCard({
           className="flex-1 py-3 text-sm font-semibold disabled:opacity-50 transition-colors"
           style={{ color: "var(--ac)" }}
         >
-          Approve
+          Approve now
         </button>
       </div>
     </motion.div>

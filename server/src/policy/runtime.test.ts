@@ -64,16 +64,17 @@ describe("buildPolicyHook", () => {
     if (!r.allow) expect(r.message).toMatch(/DENIED \(denied\)/);
   });
 
-  it("approval timeout → expired status", async () => {
+  it("undecided approval auto-approves after the veto window elapses", async () => {
     const events: PolicyEvent[] = [];
     const hook = buildPolicyHook({
       db, sessionId,
       emit: (e) => events.push(e),
-      approvalTimeoutMs: 50,
+      approvalTimeoutMs: 50, // tiny veto window for the test
     });
-    const r = await hook("shell", { command: "rm -rf /tmp/x" });
-    expect(r.allow).toBe(false);
-    if (!r.allow) expect(r.message).toMatch(/expired/);
+    const r = await hook("shell", { command: "git push" });
+    expect(r).toEqual({ allow: true });
+    const resolved = events.find((e) => e.kind === "approval_resolved");
+    expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("approved");
   });
 
   it("active deny rule short-circuits to blocked without approval", async () => {

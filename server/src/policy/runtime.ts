@@ -15,7 +15,8 @@ export type PolicyHookArgs = {
   sessionId: string;
   emit: (e: PolicyEvent) => void;
   pushDeliver?: (a: Approval) => Promise<void>;
-  /** Default 600_000 ms (10 min). */
+  /** The veto window before an undecided approval auto-approves. Default 15s
+   *  (override with APPROVAL_AUTO_APPROVE_MS). */
   approvalTimeoutMs?: number;
 };
 
@@ -31,6 +32,12 @@ function summarize(toolName: string, args: unknown): string {
     }
   })();
   return `${toolName}(${argSnippet})`;
+}
+
+const DEFAULT_AUTO_APPROVE_MS = 15_000;
+function autoApproveMs(): number {
+  const n = Number(process.env.APPROVAL_AUTO_APPROVE_MS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_AUTO_APPROVE_MS;
 }
 
 export function buildPolicyHook(opts: PolicyHookArgs): PolicyHook {
@@ -59,7 +66,8 @@ export function buildPolicyHook(opts: PolicyHookArgs): PolicyHook {
         // best-effort; push failures must not block approval flow
       });
     }
-    const r = await waitForDecision(opts.db, approval.id, opts.approvalTimeoutMs);
+    // Sir gets a veto window; if he doesn't decline in time, it auto-approves.
+    const r = await waitForDecision(opts.db, approval.id, opts.approvalTimeoutMs ?? autoApproveMs(), "approve");
     opts.emit({ kind: "approval_resolved", payload: { id: approval.id, status: r.status as "approved" | "denied" | "expired" } });
     if (r.status === "approved") return { allow: true };
     return { allow: false, message: `DENIED (${r.status})` };

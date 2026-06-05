@@ -72,6 +72,12 @@ export function waitForDecision(
   db: Db,
   id: string,
   timeoutMs: number = 600_000,
+  /**
+   * What an undecided approval becomes when the window elapses. "expire" =
+   * treat as not-granted (block); "approve" = Sir didn't decline in time, so
+   * proceed (the 15s veto-window behaviour).
+   */
+  onTimeout: "expire" | "approve" = "expire",
 ): Promise<{ status: ApprovalStatus }> {
   return new Promise((resolve) => {
     // Resolve immediately if already decided.
@@ -88,12 +94,13 @@ export function waitForDecision(
     };
     const timer = setTimeout(() => {
       cleanup();
-      // Mark expired in DB; emit so any other waiter resolves too.
+      const finalStatus: ApprovalStatus = onTimeout === "approve" ? "approved" : "expired";
+      // Record the timeout outcome in DB; emit so any other waiter resolves too.
       const r = db.prepare(
-        "UPDATE approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'pending'",
-      ).run(Date.now(), id);
-      if (r.changes > 0) approvalEvents.emit("decided", { id, status: "expired" } satisfies DecisionEvent);
-      resolve({ status: "expired" });
+        "UPDATE approvals SET status = ?, decided_at = ? WHERE id = ? AND status = 'pending'",
+      ).run(finalStatus, Date.now(), id);
+      if (r.changes > 0) approvalEvents.emit("decided", { id, status: finalStatus } satisfies DecisionEvent);
+      resolve({ status: finalStatus });
     }, timeoutMs);
 
     const cleanup = () => {

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Orb } from "../components/ava/Orb.js";
 import { ShiningText } from "../components/ava/ShiningText.js";
 import { MessageLoading } from "../components/ava/MessageLoading.js";
+import { WordReveal } from "../components/ava/WordReveal.js";
 import { ToolCallChip } from "./ToolCallChip.js";
 import { MessageActions } from "./MessageActions.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
@@ -132,15 +133,11 @@ export function MessageList({ history, liveEvents, onRetry }: MessageListProps) 
               <Orb state="responding" size={22} />
             </div>
             <div className="flex flex-col gap-2">
-              <div
-                className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
-                }}
-              >
-                {lastFinal.payload.text}
-              </div>
+              <WordReveal
+                text={lastFinal.payload.text}
+                className="text-[15px] leading-[1.65] whitespace-pre-wrap"
+                gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
+              />
               <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
             </div>
           </div>

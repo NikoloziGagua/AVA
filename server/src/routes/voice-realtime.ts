@@ -89,6 +89,29 @@ export function vadForReasoning(base: RealtimeVadConfig, level: ReasoningLevel):
 }
 
 /**
+ * Build the realtime session's `turn_detection` block. In VAD mode this is the
+ * tuned `server_vad` config (auto endpointing, never auto-replies). In Enter
+ * push-to-talk mode it is `null`: automatic VAD/turn-detection is DISABLED, so
+ * the server never decides a turn started or ended from the audio. The client
+ * owns turn boundaries — it forwards mic audio only while a turn is held and
+ * sends an explicit `input_audio_buffer.commit` to finish it. This is what keeps
+ * background/external audio between turns from ever becoming a turn.
+ */
+export function turnDetectionFor(vad: RealtimeVadConfig, pushToTalk: boolean) {
+  if (pushToTalk) return null;
+  return {
+    type: "server_vad" as const,
+    threshold: vad.threshold,
+    prefix_padding_ms: vad.prefixPaddingMs,
+    silence_duration_ms: vad.silenceMs,
+    // The realtime model must not answer on its own — voice replies come from
+    // the text agent (transcribe) or after the gate (hybrid).
+    create_response: false,
+    interrupt_response: false,
+  };
+}
+
+/**
  * GA `gpt-realtime` session.update payload, configured for TRANSCRIBE-ONLY use.
  *
  * Key points:
@@ -103,6 +126,7 @@ export function vadForReasoning(base: RealtimeVadConfig, level: ReasoningLevel):
 export function buildRealtimeSessionUpdate(
   instructions: string,
   vad: RealtimeVadConfig = DEFAULT_REALTIME_VAD,
+  opts: { pushToTalk?: boolean } = {},
 ) {
   return {
     type: "session.update",
@@ -113,17 +137,8 @@ export function buildRealtimeSessionUpdate(
       audio: {
         input: {
           format: { type: "audio/pcm", rate: 24000 },
-          turn_detection: {
-            type: "server_vad",
-            threshold: vad.threshold,
-            prefix_padding_ms: vad.prefixPaddingMs,
-            silence_duration_ms: vad.silenceMs,
-            // The realtime model must not answer — voice replies come from the
-            // text agent over /api/chat. This is the core "no auto-reply to
-            // silence" guarantee on the upstream side.
-            create_response: false,
-            interrupt_response: false,
-          },
+          // server_vad in VAD mode; null (no auto endpointing) in push-to-talk.
+          turn_detection: turnDetectionFor(vad, !!opts.pushToTalk),
           transcription: { model: vad.transcribeModel },
         },
       },
@@ -164,6 +179,7 @@ export function buildHybridSessionUpdate(
   instructions: string,
   vad: RealtimeVadConfig = DEFAULT_REALTIME_VAD,
   voice = DEFAULT_VOICE,
+  opts: { pushToTalk?: boolean } = {},
 ) {
   return {
     type: "session.update",
@@ -176,18 +192,9 @@ export function buildHybridSessionUpdate(
       audio: {
         input: {
           format: { type: "audio/pcm", rate: 24000 },
-          turn_detection: {
-            type: "server_vad",
-            threshold: vad.threshold,
-            prefix_padding_ms: vad.prefixPaddingMs,
-            silence_duration_ms: vad.silenceMs,
-            // Still false: the model does NOT auto-reply. The proxy sends
-            // `response.create` only AFTER the transcript passes the gate, so a
-            // silence/noise blip can never trigger a spoken reply. The model
-            // then speaks directly (fast) or calls do_on_computer.
-            create_response: false,
-            interrupt_response: false,
-          },
+          // server_vad (proxy sends response.create only after the gate passes)
+          // in VAD mode; null (client-driven commit) in push-to-talk.
+          turn_detection: turnDetectionFor(vad, !!opts.pushToTalk),
           transcription: { model: vad.transcribeModel },
         },
         output: {
@@ -389,9 +396,13 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         return;
       }
       const sessionIdParam = url.searchParams.get("sessionId");
+      // Endpointing mode picked by the client. "enter_push_to_talk" disables the
+      // server's automatic VAD/turn-detection for this session; anything else
+      // (incl. absent) keeps the default VAD behaviour.
+      const pushToTalk = url.searchParams.get("inputMode") === "enter_push_to_talk";
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startSession(ws, sessionIdParam, deviceId).catch((err) => {
+        startSession(ws, sessionIdParam, deviceId, pushToTalk).catch((err) => {
           log.error("realtime session error:", err instanceof Error ? err.message : err);
           try { ws.close(1011, "session error"); } catch { /* ignore */ }
         });
@@ -399,7 +410,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     });
   }
 
-  async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string) {
+  async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string, pushToTalk = false) {
     const hybrid = !!deps.runAction;
     // In hybrid mode the proxy owns the action handoff; the session id is tracked
     // here and may be (re)assigned when an action turn creates one.
@@ -430,7 +441,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       upstreamReady = true;
       // The reasoning toggle ("fast"/"thorough") also controls voice snappiness.
       const vad = vadForReasoning(vadConfig, getReasoningLevel(deps.db));
-      log.info(`realtime: upstream open, sending ${hybrid ? "hybrid (speak+tool)" : "transcribe-only"} session.update (vad silence=${vad.silenceMs}ms)`);
+      log.info(`realtime: upstream open, sending ${hybrid ? "hybrid (speak+tool)" : "transcribe-only"} session.update (${pushToTalk ? "push-to-talk, VAD off" : `vad silence=${vad.silenceMs}ms`})`);
       // Configure the realtime session on connect.
       const system = buildSystemPrompt({
         memoryDir: deps.memoryDir,
@@ -447,8 +458,9 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               "the result it returns. For everything else, just reply directly in your own voice.",
             vad,
             deps.voice ?? DEFAULT_VOICE,
+            { pushToTalk },
           )
-        : buildRealtimeSessionUpdate(system, vad);
+        : buildRealtimeSessionUpdate(system, vad, { pushToTalk });
       upstream.send(JSON.stringify(sessionUpdate));
       // Echo the client's current session id back, and tell it the proxy mode so
       // it knows whether to play audio (hybrid) or own the reply (transcribe).

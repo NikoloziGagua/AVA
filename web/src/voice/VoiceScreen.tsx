@@ -34,9 +34,10 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
   }, [v.state]);
   useEffect(() => { if (v.state === "idle") setSecs(0); }, [v.state]);
 
+  const ptt = v.inputMode === "enter_push_to_talk";
   const stateLabel =
     v.state === "connecting" ? "CONNECTING…" :
-    v.state === "listening"  ? `LISTENING · ${formatTime(secs)}` :
+    v.state === "listening"  ? (ptt && !v.capturing ? "PUSH TO TALK · ↵" : `LISTENING · ${formatTime(secs)}`) :
     v.state === "thinking"   ? "THINKING…" :
     v.state === "responding" ? "AVA · SPEAKING" :
                                 "READY";
@@ -117,6 +118,30 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         </div>
       )}
 
+      {/* Input-mode toggle: hands-free VAD ↔ Enter push-to-talk. Persisted. */}
+      <div className="absolute bottom-28 left-0 right-0 z-20 flex items-center justify-center">
+        <div className="glass flex items-center gap-1 rounded-full p-1 text-[10px]">
+          <button
+            aria-label="hands-free voice mode"
+            aria-pressed={!ptt}
+            onClick={() => v.setInputMode("vad")}
+            className="rounded-full px-3 py-1 transition-all"
+            style={!ptt ? { background: "var(--ac)", color: "#04222a" } : { color: "rgba(255,255,255,0.6)" }}
+          >
+            Hands-free
+          </button>
+          <button
+            aria-label="push to talk mode"
+            aria-pressed={ptt}
+            onClick={() => v.setInputMode("enter_push_to_talk")}
+            className="rounded-full px-3 py-1 transition-all"
+            style={ptt ? { background: "var(--ac)", color: "#04222a" } : { color: "rgba(255,255,255,0.6)" }}
+          >
+            Push-to-talk ↵
+          </button>
+        </div>
+      </div>
+
       <div className="absolute bottom-8 left-0 right-0 z-20 flex items-center justify-center gap-5">
         <button
           aria-label={v.muted ? "unmute" : "mute"}
@@ -133,6 +158,20 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
             style={{ background: "var(--ac)", color: "#04222a", boxShadow: "0 0 26px rgba(92,242,255,0.5)" }}
           >
             <Pause size={20} />
+          </button>
+        ) : ptt ? (
+          <button
+            aria-label={v.capturing ? "finish turn" : "start turn"}
+            onClick={v.togglePushToTalk}
+            className="flex h-16 w-16 items-center justify-center rounded-full transition-all active:scale-95"
+            style={{
+              background: v.capturing ? "var(--ac)" : "linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04))",
+              border: "1px solid rgba(255,255,255,0.18)",
+              color: v.capturing ? "#04222a" : undefined,
+              boxShadow: v.capturing ? "0 0 26px rgba(92,242,255,0.5)" : undefined,
+            }}
+          >
+            <Mic size={20} className={v.capturing ? "" : "text-white/85"} />
           </button>
         ) : (
           <div

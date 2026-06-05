@@ -2,6 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
 import { classifyRealtimeEvent, type RealtimeAction } from "./realtime-events.js";
 import { PcmStreamPlayer } from "./realtime-audio.js";
+import {
+  type VoiceInputMode,
+  loadVoiceInputMode,
+  saveVoiceInputMode,
+  shouldForwardMic,
+  shouldInterruptForNewTurn,
+} from "./voiceInputMode.js";
+import { shouldToggleOnEnter } from "./pushToTalk.js";
 import { api, approveApproval, denyApproval } from "../api.js";
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
@@ -76,6 +84,18 @@ export function realtimeActionToHybridEffect(action: RealtimeAction): HybridEffe
   }
 }
 
+// The voice state machine. This single union is the one source of truth for
+// where a session is; all UI derives from it (plus `capturing` for the PTT
+// sub-state and `errorMsg` for the error surface) rather than scattered booleans.
+// Transitions:
+//   idle        → connecting            (start)
+//   connecting  → listening | idle      (ws open ok / failure)   [reconnecting reuses "connecting"]
+//   listening   → thinking              (turn finished: VAD endpoint or Enter commit)
+//   thinking    → responding | listening(reply audio starts / empty reply)
+//   responding  → listening             (Ava's audio drains)
+//   any         → idle                  (stop / fatal close)
+// Spec names map as: sending = "thinking", avaSpeaking = "responding",
+// reconnecting = "connecting", error = `errorMsg` set.
 export type RealtimeState = "idle" | "connecting" | "listening" | "thinking" | "responding";
 
 export interface RealtimeCaption {
@@ -138,11 +158,12 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
-  // Endpointing mode. "vad" (default): hands-free server VAD. "ptt": forward mic
-  // only while the talk button is held — same gate + /api/chat path, just a
-  // narrower window for when audio is sent. Good for noisy rooms.
-  const [mode, setMode] = useState<"vad" | "ptt">("vad");
-  const [pttHeld, setPttHeld] = useState(false);
+  // Endpointing mode. "vad" (default): hands-free server VAD. "enter_push_to_talk":
+  // mic audio is sent ONLY while a turn is captured (Enter starts, Enter finishes);
+  // background/external audio between turns is never transmitted. Persisted.
+  const [inputMode, setInputModeState] = useState<VoiceInputMode>(() => loadVoiceInputMode());
+  // True while an Enter push-to-talk turn is actively being captured.
+  const [capturing, setCapturing] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const captureCtxRef = useRef<AudioContext | null>(null);
@@ -150,8 +171,8 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const mutedRef = useRef(false);
-  const modeRef = useRef<"vad" | "ptt">("vad");
-  const pttHeldRef = useRef(false);
+  const inputModeRef = useRef<VoiceInputMode>(inputMode);
+  const capturingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
   const esRef = useRef<EventSource | null>(null);
@@ -164,8 +185,22 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   useEffect(() => { mutedRef.current = muted; }, [muted]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   useEffect(() => { stateRef.current = state; }, [state]);
-  useEffect(() => { modeRef.current = mode; }, [mode]);
-  useEffect(() => { pttHeldRef.current = pttHeld; }, [pttHeld]);
+  useEffect(() => { capturingRef.current = capturing; }, [capturing]);
+
+  // Persist the input mode and keep the ref in sync. When in push-to-talk and
+  // not actively capturing, suspend the local mic tracks so nothing leaks
+  // upstream between turns; VAD mode (or an in-progress capture) keeps them live.
+  useEffect(() => {
+    inputModeRef.current = inputMode;
+    const tracks = streamRef.current?.getAudioTracks() ?? [];
+    const enabled = inputMode === "enter_push_to_talk" ? capturing : true;
+    for (const t of tracks) t.enabled = enabled;
+  }, [inputMode, capturing]);
+
+  const setInputMode = useCallback((m: VoiceInputMode) => {
+    saveVoiceInputMode(m);
+    setInputModeState(m);
+  }, []);
 
   // Sequential TTS queue: clips are generated + played in order, so we can speak
   // an instant ack and stream the reply sentence-by-sentence instead of waiting
@@ -384,6 +419,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     if (!playerRef.current) {
       const p = new PcmStreamPlayer();
       p.onEnded = () => { scheduleListen(); };
+      // A single corrupt/undecodable audio delta is skipped by the player (it
+      // keeps draining the rest). Surface it as a soft warning rather than
+      // cutting Ava off — the next delta resumes the stream.
+      p.onError = () => { console.warn("[ava] dropped an undecodable audio chunk"); };
       playerRef.current = p;
     }
     return playerRef.current;
@@ -494,6 +533,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     if (wsRef.current || startingRef.current) return; // dedupe StrictMode double-invoke
     startingRef.current = true;
     intentionalStopRef.current = false;
+    setCapturing(false); // a fresh connection starts with no PTT turn in flight
     setErrorMsg(null);
     setState("connecting");
 
@@ -513,7 +553,9 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       const sid = sessionIdRef.current;
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${proto}//${location.host}/api/voice/realtime?t=${encodeURIComponent(token)}`
-        + (sid ? `&sessionId=${encodeURIComponent(sid)}` : "");
+        + (sid ? `&sessionId=${encodeURIComponent(sid)}` : "")
+        // Tell the proxy to disable automatic VAD/turn-detection in push-to-talk.
+        + `&inputMode=${encodeURIComponent(inputModeRef.current)}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -533,12 +575,17 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           workletNodeRef.current = node;
 
           node.port.onmessage = (ev) => {
-            if (mutedRef.current) return;
-            // Only forward mic audio while actually listening. During thinking/
-            // responding the mic stays "open" for barge-in detection but we drop
-            // the chunks so Ava's TTS reply isn't transcribed back as a phantom
-            // user turn.
-            if (stateRef.current !== "listening") return;
+            // Single forwarding rule (see shouldForwardMic): VAD forwards while
+            // "listening" (closed during thinking/responding so Ava's reply isn't
+            // re-heard); push-to-talk forwards ONLY while a turn is being
+            // captured, so background/external audio between turns never leaves
+            // the device.
+            if (!shouldForwardMic({
+              mode: inputModeRef.current,
+              muted: mutedRef.current,
+              capturing: capturingRef.current,
+              listening: stateRef.current === "listening",
+            })) return;
             if (ws.readyState !== WebSocket.OPEN) return;
             const buf = ev.data as ArrayBuffer;
             const b64 = arrayBufferToBase64(buf);
@@ -550,6 +597,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           // eslint-disable-next-line no-console
           console.info("[ava] realtime ready: capture context up");
           reconnectRef.current = 0; // healthy connection — refill the retry budget
+          // In push-to-talk, keep the mic suspended until the owner presses Enter
+          // so the connection's first moments don't leak room audio upstream.
+          if (inputModeRef.current === "enter_push_to_talk") {
+            for (const t of stream.getAudioTracks()) t.enabled = false;
+          }
           setState("listening");
         } catch (err) {
           setErrorMsg(`audio setup failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -608,6 +660,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const stop = useCallback(() => {
     intentionalStopRef.current = true;
     reconnectRef.current = 0;
+    setCapturing(false);
     cleanup();
     setState("idle");
     setCaption(null);
@@ -627,6 +680,57 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     avaCaptionRef.current = "";
     setState("listening");
   }, [stopAgentStream]);
+
+  // ─── Enter push-to-talk turn-taking ────────────────────────────────────────
+  // Start a turn: re-open the mic, and — because pressing Enter is an EXPLICIT
+  // new turn — interrupt Ava if she's mid-reply (the only thing allowed to cut
+  // her off in PTT mode; background audio never is, since it's never forwarded).
+  const startPtt = useCallback(() => {
+    if (inputModeRef.current !== "enter_push_to_talk") return;
+    if (capturingRef.current) return;
+    if (shouldInterruptForNewTurn(stateRef.current)) interrupt();
+    for (const t of streamRef.current?.getAudioTracks() ?? []) t.enabled = true;
+    setCapturing(true);
+    setState("listening");
+  }, [interrupt]);
+
+  // Finish a turn: stop appending mic audio immediately, suspend the local input
+  // stream (so nothing more is captured), commit the buffered audio and let the
+  // server transcribe + request Ava's reply. Nothing is sent again until the
+  // next Enter press.
+  const finishPtt = useCallback(() => {
+    if (inputModeRef.current !== "enter_push_to_talk") return;
+    if (!capturingRef.current) return;
+    setCapturing(false);
+    for (const t of streamRef.current?.getAudioTracks() ?? []) t.enabled = false;
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // Commit the manually-captured buffer. With server VAD disabled this is
+      // what ends the turn: the server transcribes it, gates it, and (hybrid)
+      // asks the model to reply / (transcribe) forwards it to the /api/chat agent.
+      try { ws.send(JSON.stringify({ type: "input_audio_buffer.commit" })); } catch { /* */ }
+    }
+    setState("thinking");
+  }, []);
+
+  // The single Enter action: finish if a turn is in flight, otherwise start one.
+  const togglePushToTalk = useCallback(() => {
+    if (capturingRef.current) finishPtt();
+    else startPtt();
+  }, [finishPtt, startPtt]);
+
+  // Bind Enter globally while in push-to-talk mode. shouldToggleOnEnter ignores
+  // key-repeat (held Enter), modifier combos, and Enter typed in an input/
+  // textarea/contenteditable so it never fights the keyboard composer.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!shouldToggleOnEnter(e, inputModeRef.current)) return;
+      e.preventDefault();
+      togglePushToTalk();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [togglePushToTalk]);
 
   const approve = useCallback(() => {
     setPendingApproval((cur) => {
@@ -657,5 +761,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     start,
     stop,
     interrupt,
+    // Input-mode (endpointing) controls.
+    inputMode,
+    setInputMode,
+    capturing,
+    togglePushToTalk,
   };
 }

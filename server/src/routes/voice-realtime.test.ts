@@ -9,6 +9,7 @@ import {
   actionStartedFrame,
   loadRealtimeVadConfig,
   vadForReasoning,
+  turnDetectionFor,
   DEFAULT_REALTIME_VAD,
   readTranscriptionCompleted,
   speechDurationMs,
@@ -127,6 +128,48 @@ describe("buildRealtimeSessionUpdate (transcribe-only GA schema)", () => {
     expect(s.modalities).toBeUndefined();
     expect(s.voice).toBeUndefined();
     expect(s.input_audio_transcription).toBeUndefined();
+  });
+});
+
+describe("enter_push_to_talk session mode (server VAD disabled)", () => {
+  it("turnDetectionFor returns tuned server_vad in VAD mode", () => {
+    const td = turnDetectionFor(DEFAULT_REALTIME_VAD, false) as Record<string, unknown>;
+    expect(td).not.toBeNull();
+    expect(td.type).toBe("server_vad");
+    expect(td.create_response).toBe(false);
+    expect(td.silence_duration_ms).toBe(DEFAULT_REALTIME_VAD.silenceMs);
+  });
+
+  it("turnDetectionFor returns null (no auto endpointing) in push-to-talk mode", () => {
+    expect(turnDetectionFor(DEFAULT_REALTIME_VAD, true)).toBeNull();
+  });
+
+  it("transcribe-only: push-to-talk disables turn_detection but keeps transcription + format", () => {
+    const s = buildRealtimeSessionUpdate("x", DEFAULT_REALTIME_VAD, { pushToTalk: true }).session as Record<string, any>;
+    expect(s.audio.input.turn_detection).toBeNull();
+    expect(s.audio.input.transcription.model).toBe(DEFAULT_REALTIME_VAD.transcribeModel);
+    expect(s.audio.input.format).toEqual({ type: "audio/pcm", rate: 24000 });
+    expect(s.output_modalities).toEqual(["text"]);
+  });
+
+  it("transcribe-only: the default (no opts) preserves existing VAD behaviour", () => {
+    const s = buildRealtimeSessionUpdate("x").session as Record<string, any>;
+    expect(s.audio.input.turn_detection.type).toBe("server_vad");
+    expect(s.audio.input.turn_detection.create_response).toBe(false);
+  });
+
+  it("hybrid: push-to-talk disables turn_detection but keeps audio out + the tool", () => {
+    const s = buildHybridSessionUpdate("be ava", DEFAULT_REALTIME_VAD, "shimmer", { pushToTalk: true }).session as Record<string, any>;
+    expect(s.audio.input.turn_detection).toBeNull();
+    expect(s.output_modalities).toContain("audio");
+    expect(s.tools.map((t: { name: string }) => t.name)).toContain("do_on_computer");
+    expect(s.audio.output.voice).toBe("shimmer");
+  });
+
+  it("hybrid: the default (no opts) preserves existing VAD behaviour", () => {
+    const s = buildHybridSessionUpdate("be ava").session as Record<string, any>;
+    expect(s.audio.input.turn_detection.type).toBe("server_vad");
+    expect(s.audio.input.turn_detection.create_response).toBe(false);
   });
 });
 

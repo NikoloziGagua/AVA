@@ -9,9 +9,11 @@ import {
   shouldForwardMic,
   shouldInterruptForNewTurn,
   shouldReopenListening,
+  reopenAfterSpeak,
   hasEnoughAudio,
 } from "./voiceInputMode.js";
 import { shouldToggleOnEnter } from "./pushToTalk.js";
+import { humanizeTool } from "../chat/humanize.js";
 import { api, approveApproval, denyApproval } from "../api.js";
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
@@ -58,6 +60,8 @@ export type HybridEffect =
   | { kind: "session"; sessionId: string }
   | { kind: "caption_user"; text: string }
   | { kind: "working"; task: string }
+  | { kind: "step"; tool: string; args: unknown }
+  | { kind: "result"; text: string }
   | { kind: "play_audio"; b64: string }
   | { kind: "ava_delta"; text: string }
   | { kind: "ava_done"; text: string }
@@ -74,6 +78,10 @@ export function realtimeActionToHybridEffect(action: RealtimeAction): HybridEffe
       return { kind: "caption_user", text: action.text };
     case "action_started":
       return { kind: "working", task: action.task };
+    case "action_step":
+      return { kind: "step", tool: action.tool, args: action.args };
+    case "action_result":
+      return { kind: "result", text: action.text };
     case "audio":
       return { kind: "play_audio", b64: action.b64 };
     case "ava_transcript_delta":
@@ -225,6 +233,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const avaCaptionRef = useRef("");      // accumulates Ava's streamed transcript
   const genDoneRef = useRef(false);      // response.done seen for the current turn
   const actionPendingRef = useRef(false); // do_on_computer running (suppress early "listening")
+  const actionResultReceivedRef = useRef(false); // task's final result spoken (mic may reopen)
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // end-of-turn debounce
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // hands-free recovery (Fix 1)
   const pttBytesRef = useRef(0); // bytes forwarded in the current push-to-talk turn (Fix 3)
@@ -260,6 +269,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     avaCaptionRef.current = "";
     genDoneRef.current = false;
     actionPendingRef.current = false;
+    actionResultReceivedRef.current = false;
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
 
@@ -296,7 +306,14 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       } catch { /* skip this clip */ }
     }
     speakBusyRef.current = false;
-    if (stateRef.current === "responding") setState("listening");
+    if (reopenAfterSpeak({
+      state: stateRef.current,
+      actionPending: actionPendingRef.current,
+      resultReceived: actionResultReceivedRef.current,
+    }) === "reopen") {
+      if (actionPendingRef.current) { actionPendingRef.current = false; actionResultReceivedRef.current = false; }
+      setState("listening");
+    }
   }, []);
 
   // Queue a phrase to be spoken. Worker is re-entrant-safe: a running drain
@@ -472,6 +489,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         // response.created/audio/done + onEnded carry us back to listening.
         clearSettle();
         actionPendingRef.current = false;
+        actionResultReceivedRef.current = false;
         avaCaptionRef.current = "";
         genDoneRef.current = false;
         setCaption({ who: "you", text: eff.text });
@@ -484,6 +502,19 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         setCaption({ who: "ava", text: eff.task ? `…${eff.task}` : "…working on it" });
         setState("thinking");
         return;
+      case "step":
+        actionPendingRef.current = true;
+        {
+          const phrase = humanizeTool(eff.tool, eff.args);
+          setCaption({ who: "ava", text: phrase });
+          enqueueSpeak(phrase);
+        }
+        return;
+      case "result":
+        actionResultReceivedRef.current = true;
+        setCaption({ who: "ava", text: eff.text });
+        enqueueSpeak(eff.text);
+        return;
       case "thinking":
         genDoneRef.current = false;
         avaCaptionRef.current = "";
@@ -492,6 +523,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       case "play_audio":
         clearSettle();              // new audio → cancel any pending end-of-turn
         actionPendingRef.current = false; // audio = Ava speaking the reply/result
+        actionResultReceivedRef.current = false;
         genDoneRef.current = false;
         setState("responding");
         ensurePlayer().enqueue(eff.b64);
@@ -517,7 +549,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       case "ignore":
         return;
     }
-  }, [ensurePlayer, clearSettle, scheduleListen]);
+  }, [ensurePlayer, clearSettle, scheduleListen, enqueueSpeak]);
 
   const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
     const action = classifyRealtimeEvent(evt);
@@ -707,6 +739,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
     genDoneRef.current = false;
     actionPendingRef.current = false;
+    actionResultReceivedRef.current = false;
     avaCaptionRef.current = "";
     setState("listening");
   }, [stopAgentStream]);

@@ -250,6 +250,26 @@ export function actionStartedFrame(task: string): string {
   return JSON.stringify({ type: "ava.action", task });
 }
 
+/** Sent (hybrid) per agent tool call so the client can narrate each step via TTS. */
+export function stepFrame(tool: string, args: unknown): string {
+  return JSON.stringify({ type: "ava.step", tool, args });
+}
+
+/** Sent (hybrid) with the task's final result; the client speaks it via TTS. */
+export function actionResultFrame(text: string): string {
+  return JSON.stringify({ type: "ava.result", text });
+}
+
+/**
+ * Satisfy the model's do_on_computer call WITHOUT a response.create, so the
+ * realtime model stays silent — the client narrates the steps and speaks the
+ * result instead (one voice per task). Contrast toolResultFrames, which also
+ * asks the model to speak.
+ */
+export function silentToolResultFrame(callId: string, output: string): string {
+  return JSON.stringify({ type: "conversation.item.create", item: { type: "function_call_output", call_id: callId, output } });
+}
+
 /**
  * If `evt` is a finished user input-transcription event, pull out the transcript
  * plus any confidence signals the transcriber attached; otherwise return null.
@@ -357,7 +377,7 @@ export interface RealtimeProxyDeps {
    * runs this — the full /api/chat agent — and the result is spoken back. When
    * absent, the proxy stays transcribe-only (model never speaks).
    */
-  runAction?: (sessionId: string | null, task: string) => Promise<{ text: string; sessionId: string | null }>;
+  runAction?: (sessionId: string | null, task: string, onStep?: (tool: string, args: unknown) => void) => Promise<{ text: string; sessionId: string | null }>;
   /** Voice for the realtime model's spoken output (hybrid mode). */
   voice?: string;
   log?: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
@@ -454,8 +474,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               "smoothly, as part of the phrase, without a comma pause around it (\"Yes Sir\", not " +
               "\"Yes, Sir,\"). When the owner " +
               "asks you to DO something on the computer (open/find files, run commands, browse, " +
-              "control apps, remember something), CALL do_on_computer with a clear task, then speak " +
-              "the result it returns. For everything else, just reply directly in your own voice.",
+              "control apps, remember something), CALL do_on_computer with a clear task and do NOT " +
+              "speak the steps or the result yourself — the system narrates each step and speaks the " +
+              "result aloud. After the tool returns, stay silent unless Sir asks a follow-up. For " +
+              "everything else (chit-chat, questions), just reply directly in your own voice.",
             vad,
             deps.voice ?? DEFAULT_VOICE,
             { pushToTalk },
@@ -532,15 +554,21 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           try { client.send(actionStartedFrame(task)); } catch { /* */ }
           void (async () => {
             try {
-              const r = await deps.runAction!(sessionId, task);
+              // Narrate each agent step to the client (it speaks them via TTS).
+              const r = await deps.runAction!(sessionId, task, (tool, args) => {
+                try { client.send(stepFrame(tool, args)); } catch { /* */ }
+              });
               sessionId = r.sessionId ?? sessionId;
               try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
-              // formatSpeechText smooths "Sir" punctuation only in what the
-              // realtime model speaks; the agent's persisted reply is untouched.
-              for (const f of toolResultFrames(call.callId, formatSpeechText(r.text || "Done."))) upstream.send(f);
+              // The client speaks the result via TTS; the realtime model stays
+              // silent (silentToolResultFrame omits response.create). One voice
+              // per task. formatSpeechText smooths "Sir" punctuation for speech.
+              try { client.send(actionResultFrame(formatSpeechText(r.text || "Done."))); } catch { /* */ }
+              upstream.send(silentToolResultFrame(call.callId, r.text || "Done."));
             } catch (e) {
               const msg = e instanceof Error ? e.message : String(e);
-              for (const f of toolResultFrames(call.callId, formatSpeechText(`That didn't work, Sir — ${msg}`))) upstream.send(f);
+              try { client.send(actionResultFrame(formatSpeechText(`That didn't work, Sir — ${msg}`))); } catch { /* */ }
+              upstream.send(silentToolResultFrame(call.callId, `error: ${msg}`));
             }
           })();
           return; // don't forward the raw function_call item to the client

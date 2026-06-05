@@ -81,6 +81,16 @@ describe("realtimeActionToHybridEffect", () => {
       .toEqual({ kind: "working", task: "open downloads" });
   });
 
+  it("maps a per-step frame to a step effect (client narrates it)", () => {
+    expect(realtimeActionToHybridEffect({ kind: "action_step", tool: "shell", args: { command: "ls" } }))
+      .toEqual({ kind: "step", tool: "shell", args: { command: "ls" } });
+  });
+
+  it("maps the action-result frame to a result effect (client speaks it)", () => {
+    expect(realtimeActionToHybridEffect({ kind: "action_result", text: "Opened it, Sir." }))
+      .toEqual({ kind: "result", text: "Opened it, Sir." });
+  });
+
   it("ignores VAD speech events (mic gating owns turn-taking)", () => {
     expect(realtimeActionToHybridEffect({ kind: "speech_started" })).toEqual({ kind: "ignore" });
     expect(realtimeActionToHybridEffect({ kind: "speech_stopped" })).toEqual({ kind: "ignore" });

@@ -14,6 +14,8 @@ export type RealtimeAction =
   | { kind: "speech_stopped" }
   | { kind: "user_transcript"; text: string }
   | { kind: "action_started"; task: string }
+  | { kind: "action_step"; tool: string; args: unknown }
+  | { kind: "action_result"; text: string }
   | { kind: "audio"; b64: string }
   | { kind: "response_created" }
   | { kind: "ava_transcript_delta"; text: string }
@@ -35,6 +37,14 @@ export function classifyRealtimeEvent(evt: { type?: string;[k: string]: unknown 
     case "ava.action": {
       const task = (evt.task as string | undefined) ?? "";
       return { kind: "action_started", task };
+    }
+    case "ava.step": {
+      const tool = (evt.tool as string | undefined) ?? "";
+      return tool ? { kind: "action_step", tool, args: evt.args } : { kind: "ignore" };
+    }
+    case "ava.result": {
+      const text = (evt.text as string | undefined) ?? "";
+      return { kind: "action_result", text };
     }
     case "input_audio_buffer.speech_started":
       return { kind: "speech_started" };

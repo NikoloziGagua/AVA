@@ -277,7 +277,11 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
 // SSE stream so the realtime model can speak it.
 const hybridVoice = !!process.env.REALTIME_HYBRID;
 const voiceInternalToken = hybridVoice ? issueToken(db, { label: "voice-internal" }).secret : "";
-async function runVoiceAction(sessionId: string | null, task: string): Promise<{ text: string; sessionId: string | null }> {
+async function runVoiceAction(
+  sessionId: string | null,
+  task: string,
+  onStep?: (tool: string, args: unknown) => void,
+): Promise<{ text: string; sessionId: string | null }> {
   const base = `http://127.0.0.1:${cfg.port}`;
   const auth = { authorization: `Bearer ${voiceInternalToken}` };
   try {
@@ -315,6 +319,7 @@ async function runVoiceAction(sessionId: string | null, task: string): Promise<{
         else if (line.startsWith("data:")) {
           const data = line.slice(5).trim();
           if (curEvent === "final") { try { finalText = (JSON.parse(data) as { text: string }).text; } catch { /* */ } stop = true; }
+          else if (curEvent === "tool_call") { try { const p = JSON.parse(data) as { tool: string; args?: unknown }; onStep?.(p.tool, p.args); } catch { /* */ } }
           else if (curEvent === "error") { try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ } stop = true; }
           else if (curEvent === "killed") stop = true;
           // approval_required no longer stalls voice: the policy auto-approves

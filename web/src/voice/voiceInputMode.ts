@@ -101,6 +101,21 @@ export function shouldReopenListening(opts: {
   return true;
 }
 
+/**
+ * When the TTS speak-queue drains, whether to reopen the mic to "listening".
+ * During a do_on_computer task the queue drains BETWEEN narrated steps; stay
+ * closed until the final result has been spoken, or the mic would reopen
+ * mid-task and re-hear Ava. Outside a task (chit-chat TTS) it reopens at once.
+ */
+export function reopenAfterSpeak(opts: {
+  state: string; actionPending: boolean; resultReceived: boolean;
+}): "reopen" | "stay" {
+  if (opts.state !== "responding") return "stay";
+  if (!opts.actionPending) return "reopen";   // normal chit-chat TTS
+  if (opts.resultReceived) return "reopen";    // task fully narrated
+  return "stay";                               // between task steps
+}
+
 // OpenAI rejects a committed input buffer under 100ms of audio. PCM16 mono at
 // 24kHz → 100ms = 2400 samples × 2 bytes = 4800 bytes. The push-to-talk commit
 // guards on this so a too-quick tap never sends an empty/sub-100ms buffer

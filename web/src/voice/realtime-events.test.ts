@@ -49,6 +49,21 @@ describe("classifyRealtimeEvent", () => {
       .toEqual({ kind: "action_started", task: "open downloads" });
   });
 
+  it("recognizes a per-step narration frame (tool + args)", () => {
+    expect(classifyRealtimeEvent({ type: "ava.step", tool: "shell", args: { command: "ls" } }))
+      .toEqual({ kind: "action_step", tool: "shell", args: { command: "ls" } });
+  });
+
+  it("ignores a step frame with no tool", () => {
+    expect(classifyRealtimeEvent({ type: "ava.step", args: { command: "ls" } }))
+      .toEqual({ kind: "ignore" });
+  });
+
+  it("recognizes the final action-result frame", () => {
+    expect(classifyRealtimeEvent({ type: "ava.result", text: "Opened it, Sir." }))
+      .toEqual({ kind: "action_result", text: "Opened it, Sir." });
+  });
+
   it("ignores unknown events and missing types", () => {
     expect(classifyRealtimeEvent({ type: "something.else" })).toEqual({ kind: "ignore" });
     expect(classifyRealtimeEvent({})).toEqual({ kind: "ignore" });

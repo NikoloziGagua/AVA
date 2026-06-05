@@ -6,6 +6,7 @@ import {
   shouldForwardMic,
   shouldInterruptForNewTurn,
   shouldReopenListening,
+  reopenAfterSpeak,
   hasEnoughAudio,
   MIN_COMMIT_BYTES,
   DEFAULT_VOICE_INPUT_MODE,
@@ -93,6 +94,25 @@ describe("shouldReopenListening — the hands-free recovery rule", () => {
     expect(shouldReopenListening({ ...base, state: "listening" })).toBe(false);
     expect(shouldReopenListening({ ...base, state: "idle" })).toBe(false);
     expect(shouldReopenListening({ ...base, state: "thinking" })).toBe(true);
+  });
+});
+
+describe("reopenAfterSpeak — reopen the mic after the TTS queue drains", () => {
+  it("stays closed when not responding (queue drained while idle/thinking)", () => {
+    expect(reopenAfterSpeak({ state: "thinking", actionPending: false, resultReceived: false })).toBe("stay");
+    expect(reopenAfterSpeak({ state: "listening", actionPending: true, resultReceived: true })).toBe("stay");
+  });
+
+  it("reopens at once for normal chit-chat TTS (no action pending)", () => {
+    expect(reopenAfterSpeak({ state: "responding", actionPending: false, resultReceived: false })).toBe("reopen");
+  });
+
+  it("stays closed between task steps (action pending, result not yet spoken)", () => {
+    expect(reopenAfterSpeak({ state: "responding", actionPending: true, resultReceived: false })).toBe("stay");
+  });
+
+  it("reopens once the task result has been spoken (action fully narrated)", () => {
+    expect(reopenAfterSpeak({ state: "responding", actionPending: true, resultReceived: true })).toBe("reopen");
   });
 });
 

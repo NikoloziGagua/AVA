@@ -182,6 +182,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const avaCaptionRef = useRef("");      // accumulates Ava's streamed transcript
   const genDoneRef = useRef(false);      // response.done seen for the current turn
   const actionPendingRef = useRef(false); // do_on_computer running (suppress early "listening")
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // end-of-turn debounce
 
   const stopAgentStream = useCallback(() => {
     try { esRef.current?.close(); } catch { /* */ }
@@ -214,6 +215,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     avaCaptionRef.current = "";
     genDoneRef.current = false;
     actionPendingRef.current = false;
+    if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
 
     try { wsRef.current?.close(); } catch { /* */ }
     wsRef.current = null;
@@ -354,22 +356,38 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     })();
   }, [enqueueSpeak, stopAgentStream]);
 
-  // Lazily build the PCM player; its onEnded ends the turn once generation is
-  // also complete (response.done seen) so the mic only reopens after Ava has
-  // actually finished speaking.
+  const clearSettle = useCallback(() => {
+    if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
+  }, []);
+  // Debounced end-of-turn: only reopen the mic once Ava's audio has been silent
+  // for a beat AND generation is done. A brief gap between audio chunks (network
+  // jitter on a weak connection) won't trip it — new audio cancels the timer —
+  // so Ava no longer cuts herself off mid-sentence by re-hearing her own tail.
+  const scheduleListen = useCallback(() => {
+    clearSettle();
+    settleTimerRef.current = setTimeout(() => {
+      settleTimerRef.current = null;
+      if (
+        genDoneRef.current &&
+        !actionPendingRef.current &&
+        !playerRef.current?.playing &&
+        (stateRef.current === "responding" || stateRef.current === "thinking")
+      ) {
+        setState("listening");
+      }
+    }, 350);
+  }, [clearSettle]);
+
+  // Lazily build the PCM player; its onEnded schedules the (debounced) end-of-turn
+  // so the mic only reopens after Ava has truly finished — not during a jitter gap.
   const ensurePlayer = useCallback(() => {
     if (!playerRef.current) {
       const p = new PcmStreamPlayer();
-      p.onEnded = () => {
-        if (genDoneRef.current && stateRef.current === "responding") {
-          actionPendingRef.current = false;
-          setState("listening");
-        }
-      };
+      p.onEnded = () => { scheduleListen(); };
       playerRef.current = p;
     }
     return playerRef.current;
-  }, []);
+  }, [scheduleListen]);
 
   // HYBRID turn-taking. The realtime model speaks; we play its audio + caption
   // it and never call /api/chat (the do_on_computer tool does any real work on
@@ -387,6 +405,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         // stops forwarding before Ava starts speaking — closes the echo window.
         // The server already sent response.create, so a response is guaranteed;
         // response.created/audio/done + onEnded carry us back to listening.
+        clearSettle();
         actionPendingRef.current = false;
         avaCaptionRef.current = "";
         genDoneRef.current = false;
@@ -406,6 +425,8 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         setState("thinking");
         return;
       case "play_audio":
+        clearSettle();              // new audio → cancel any pending end-of-turn
+        actionPendingRef.current = false; // audio = Ava speaking the reply/result
         genDoneRef.current = false;
         setState("responding");
         ensurePlayer().enqueue(eff.b64);
@@ -420,10 +441,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         return;
       case "gen_done":
         genDoneRef.current = true;
-        // The tool-call response also emits done (no audio) — ignore that one;
-        // the real reply's audio + onEnded ends the turn. Only a no-audio,
-        // no-action turn ends here directly.
-        if (!actionPendingRef.current && !playerRef.current?.playing) setState("listening");
+        // Don't end the turn on the raw event — debounce it. A tool-call response
+        // also emits done (no audio, actionPending) and is correctly ignored; the
+        // real reply ends via the audio draining + the settle timer.
+        scheduleListen();
         return;
       case "error":
         setErrorMsg(eff.message);
@@ -431,7 +452,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       case "ignore":
         return;
     }
-  }, [ensurePlayer]);
+  }, [ensurePlayer, clearSettle, scheduleListen]);
 
   const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
     const action = classifyRealtimeEvent(evt);
@@ -600,6 +621,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     stopAgentStream();
     // Hybrid: cut the model's spoken audio immediately and end the turn.
     try { playerRef.current?.interrupt(); } catch { /* */ }
+    if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
     genDoneRef.current = false;
     actionPendingRef.current = false;
     avaCaptionRef.current = "";

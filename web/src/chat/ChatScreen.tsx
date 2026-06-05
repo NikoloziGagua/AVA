@@ -5,7 +5,7 @@ import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
 import { Orb } from "../components/ava/Orb.js";
-import { RainBackground } from "../components/ava/RainBackground.js";
+import { EtherealShadows } from "../components/ava/EtherealShadows.js";
 import { ActivityPanel } from "./ActivityPanel.js";
 import { deriveSteps, isExecuting, currentTool } from "./activity-steps.js";
 import { ChevronLeft, List, Brain, Settings2 } from "lucide-react";
@@ -166,7 +166,7 @@ export function ChatScreen({
 
   return (
     <div className="relative flex h-full flex-col bg-black text-white">
-      <RainBackground charged={executing} />
+      <EtherealShadows charged={executing} />
       {/* Bigger glass navbar */}
       <header
         className="relative z-10 flex items-center gap-2 px-3 h-[72px]"

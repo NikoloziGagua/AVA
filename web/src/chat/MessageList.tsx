@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Orb } from "../components/ava/Orb.js";
 import { ShiningText } from "../components/ava/ShiningText.js";
+import { MessageLoading } from "../components/ava/MessageLoading.js";
 import { ToolCallChip } from "./ToolCallChip.js";
 import { MessageActions } from "./MessageActions.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
@@ -148,7 +149,7 @@ export function MessageList({ history, liveEvents, onRetry }: MessageListProps) 
 
       {isThinking && (
         <div className="flex items-center gap-2 text-white/60">
-          <Orb state="thinking" size={18} />
+          <MessageLoading className="h-5 w-5" />
           <ShiningText text={thinkingCaption} className="text-xs" />
         </div>
       )}

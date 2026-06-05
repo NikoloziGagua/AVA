@@ -1,5 +1,8 @@
 import { useState } from "react";
+import { motion } from "motion/react";
+import { ShieldAlert } from "lucide-react";
 import { approveApproval, denyApproval } from "../api.js";
+import { humanizeTool } from "../chat/humanize.js";
 
 export function ApprovalCard({
   id,
@@ -15,18 +18,25 @@ export function ApprovalCard({
   resolvedStatus: "approved" | "denied" | "expired" | null;
 }) {
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   if (resolvedStatus) {
     const label =
       resolvedStatus === "approved" ? "Approved" :
       resolvedStatus === "denied" ? "Denied" : "Expired";
-    const cls =
-      resolvedStatus === "approved" ? "text-emerald-400" :
-      resolvedStatus === "denied" ? "text-red-400" : "text-neutral-500";
+    const color =
+      resolvedStatus === "approved" ? "var(--ac-live)" :
+      resolvedStatus === "denied" ? "var(--ac-stop)" : "rgba(255,255,255,0.4)";
     return (
-      <div data-testid="approval-card-resolved" data-status={resolvedStatus} className={`text-xs ${cls} font-mono`}>
-        {label} · {tool} · {new Date().toLocaleTimeString()}
+      <div
+        data-testid="approval-card-resolved"
+        data-status={resolvedStatus}
+        className="my-1 flex items-center gap-1.5 text-[11px]"
+        style={{ color, fontFamily: "var(--font-mono)" }}
+      >
+        <span>{resolvedStatus === "denied" ? "✕" : resolvedStatus === "approved" ? "✓" : "○"}</span>
+        {label} · {humanizeTool(tool, args)}
       </div>
     );
   }
@@ -41,41 +51,75 @@ export function ApprovalCard({
       setErr(String(e));
       setBusy(false);
     }
-    // Don't clear busy on success — the card will be replaced by the resolved-state version once
-    // the SSE approval_resolved event arrives.
+    // Don't clear busy on success — the resolved-state version replaces this
+    // once the SSE approval_resolved event arrives.
   }
 
   return (
-    <div data-testid="approval-card" className="border border-amber-500 rounded-lg bg-amber-900/30 p-3 my-2 max-w-[90%]">
-      <div className="flex items-center gap-2 text-sm font-semibold text-amber-200">
-        <span>⚠</span>
-        <span>Ava wants to: {summary}</span>
+    <motion.div
+      data-testid="approval-card"
+      layout
+      initial={{ opacity: 0, y: 10, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+      className="my-3 w-full max-w-md overflow-hidden rounded-2xl"
+      style={{
+        background: "linear-gradient(180deg, rgba(20,16,8,0.72), rgba(10,8,4,0.72))",
+        border: "1px solid rgba(255,212,121,0.30)",
+        backdropFilter: "blur(20px) saturate(150%)",
+        WebkitBackdropFilter: "blur(20px) saturate(150%)",
+        boxShadow: "0 20px 60px -20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.08)",
+      }}
+    >
+      <div className="p-4">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="flex h-7 w-7 items-center justify-center rounded-full"
+            style={{ background: "rgba(255,212,121,0.14)", color: "var(--ac-exec)" }}
+          >
+            <ShieldAlert size={16} />
+          </span>
+          <h3 className="text-[15px] font-semibold text-white">Approve this action?</h3>
+        </div>
+
+        <p className="mt-2 text-[14px] leading-relaxed text-white/85">
+          Ava wants to <span className="font-medium text-white">{humanizeTool(tool, args)}</span>.
+        </p>
+
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="mt-2 text-[11px] text-white/40 hover:text-white/70 transition-colors"
+        >
+          {open ? "▾ hide details" : "▸ details"}
+        </button>
+        {open && (
+          <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-black/40 p-2 text-[10.5px] font-mono whitespace-pre-wrap break-words text-white/60">
+            {tool}{"\n"}{JSON.stringify(args, null, 2)}
+          </pre>
+        )}
+        {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
       </div>
-      <div className="text-xs text-amber-100/70 font-mono mt-2">
-        Tool: {tool}
-      </div>
-      <pre className="text-xs text-amber-100/70 font-mono mt-1 whitespace-pre-wrap break-words bg-black/30 p-2 rounded">
-        {JSON.stringify(args, null, 2)}
-      </pre>
-      {err && <div className="text-xs text-red-400 mt-2">{err}</div>}
-      <div className="flex gap-2 mt-3">
+
+      <div className="flex border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
         <button
           data-testid="approval-deny"
           onClick={() => act("deny")}
           disabled={busy}
-          className="bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 text-sm px-3 py-1.5 rounded text-white"
+          className="flex-1 py-3 text-sm font-medium text-white/60 hover:bg-white/5 hover:text-white/90 disabled:opacity-50 transition-colors"
         >
-          Deny
+          Cancel
         </button>
+        <div style={{ width: 1, background: "rgba(255,255,255,0.08)" }} />
         <button
           data-testid="approval-approve"
           onClick={() => act("approve")}
           disabled={busy}
-          className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-sm px-3 py-1.5 rounded text-white"
+          className="flex-1 py-3 text-sm font-semibold disabled:opacity-50 transition-colors"
+          style={{ color: "var(--ac)" }}
         >
           Approve
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 }

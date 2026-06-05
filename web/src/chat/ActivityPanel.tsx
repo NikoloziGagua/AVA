@@ -70,7 +70,7 @@ export function ActivityPanel({ steps, collapsed, onToggle, executing }: Activit
         </button>
       </div>
 
-      <div className="mt-3 flex flex-col overflow-y-auto">
+      <div className="no-scrollbar mt-3 flex flex-col overflow-y-auto">
         {steps.length === 0 ? (
           <div className="hud text-[9px] text-white/30">No activity yet</div>
         ) : (

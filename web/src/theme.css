@@ -87,6 +87,10 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Hide the scrollbar while keeping scroll (Activity panel, etc.). */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { width: 0; height: 0; display: none; }
+
 /* Gradient pulse class — use as bg for the orb */
 .ava-gradient {
   background: linear-gradient(135deg, var(--ava-purple), var(--ava-blue), var(--ava-teal));

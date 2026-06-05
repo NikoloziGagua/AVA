@@ -61,8 +61,8 @@ export function WordReveal({ text, className, style, gradient }: WordRevealProps
             key={i}
             style={{ display: "inline-block", whiteSpace: "pre-wrap", ...gradientStyle(gradient) }}
             variants={{
-              hidden: { opacity: 0, y: 4, filter: "blur(4px)" },
-              visible: { opacity: 1, y: 0, filter: "blur(0px)" },
+              hidden: { opacity: 0, filter: "blur(10px)" },
+              visible: { opacity: 1, filter: "blur(0px)" },
             }}
             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
           >

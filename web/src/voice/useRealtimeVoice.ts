@@ -513,7 +513,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       case "result":
         actionResultReceivedRef.current = true;
         setCaption({ who: "ava", text: eff.text });
-        enqueueSpeak(eff.text);
+        // The mic reopens when the speak queue drains, so an empty result must
+        // still enqueue a clip — otherwise hands-free would hang after the task.
+        // Don't depend on the server's "Done." fallback for this safety property.
+        enqueueSpeak(eff.text.trim() || "Done.");
         return;
       case "thinking":
         genDoneRef.current = false;

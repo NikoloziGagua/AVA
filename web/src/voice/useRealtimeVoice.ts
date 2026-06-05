@@ -10,6 +10,7 @@ import {
   shouldInterruptForNewTurn,
   shouldReopenListening,
   reopenAfterSpeak,
+  shouldReconnectForModeChange,
   hasEnoughAudio,
 } from "./voiceInputMode.js";
 import { shouldToggleOnEnter } from "./pushToTalk.js";
@@ -188,6 +189,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const mutedRef = useRef(false);
   const inputModeRef = useRef<VoiceInputMode>(inputMode);
+  const prevInputModeRef = useRef<VoiceInputMode>(inputMode); // last mode we connected with (Bug A reconnect)
   const capturingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
@@ -223,6 +225,8 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   // for the whole answer plus one big TTS at the end. (Transcribe-only path.)
   const speakQueueRef = useRef<string[]>([]);
   const speakBusyRef = useRef(false);
+  const speakEpochRef = useRef(0);                       // bumped by interrupt() to abort an in-flight TTS drain
+  const ttsDoneRef = useRef<(() => void) | null>(null);  // ends the current clip's await on barge-in
 
   // HYBRID path: the proxy says `mode: "hybrid"` in its session hello when the
   // realtime model speaks directly. Then we play its PCM audio and DON'T route
@@ -283,8 +287,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     if (speakBusyRef.current) return;
     speakBusyRef.current = true;
     setState("responding");
+    const epoch = speakEpochRef.current;     // interrupt() bumps this to abort the drain
     const token = getToken() ?? "";
     while (speakQueueRef.current.length > 0) {
+      if (speakEpochRef.current !== epoch) break;   // barged-in before this clip
       const text = speakQueueRef.current.shift()!;
       try {
         const resp = await fetch("/api/speak", {
@@ -292,20 +298,23 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
           body: JSON.stringify({ text }),
         });
+        if (speakEpochRef.current !== epoch) break; // barged-in during the fetch
         if (resp.ok) {
           const url = URL.createObjectURL(await resp.blob());
           await new Promise<void>((resolve) => {
             const el = new Audio(url);
             ttsRef.current = el;
-            const done = () => { URL.revokeObjectURL(url); if (ttsRef.current === el) ttsRef.current = null; resolve(); };
+            const done = () => { URL.revokeObjectURL(url); if (ttsRef.current === el) ttsRef.current = null; ttsDoneRef.current = null; resolve(); };
             el.onended = done;
             el.onerror = done;
+            ttsDoneRef.current = done;              // interrupt() calls this to end the clip's await
             void el.play().catch(done);
           });
         }
       } catch { /* skip this clip */ }
     }
     speakBusyRef.current = false;
+    ttsDoneRef.current = null;
     if (reopenAfterSpeak({
       state: stateRef.current,
       actionPending: actionPendingRef.current,
@@ -721,6 +730,23 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   // Keep a stable handle to the latest start() for the reconnect timer.
   useEffect(() => { startRef.current = () => { void start(); }; }, [start]);
 
+  // Bug A: when the endpointing mode changes mid-session, reconnect so the server
+  // applies the new turn_detection. Push-to-talk must turn server VAD OFF; without
+  // a reconnect the session keeps whatever mode it opened with — so silence ends
+  // the turn and empty buffers get committed ("0.00ms"). A fresh start() reads the
+  // mode from the URL, so only an already-active session needs this.
+  useEffect(() => {
+    const prev = prevInputModeRef.current;
+    prevInputModeRef.current = inputMode;
+    if (!shouldReconnectForModeChange(prev, inputMode, stateRef.current)) return;
+    setCapturing(false);
+    capturingRef.current = false;
+    cleanup();
+    setState("connecting");
+    const t = window.setTimeout(() => { if (!intentionalStopRef.current) startRef.current(); }, 150);
+    return () => window.clearTimeout(t);
+  }, [inputMode, cleanup]);
+
   const stop = useCallback(() => {
     intentionalStopRef.current = true;
     reconnectRef.current = 0;
@@ -738,6 +764,16 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     stopAgentStream();
     // Hybrid: cut the model's spoken audio immediately and end the turn.
     try { playerRef.current?.interrupt(); } catch { /* */ }
+    // Bug B: the realtime player isn't the only voice — task steps/results and
+    // transcribe-path replies speak via TTS (/api/speak). Stop those too, or the
+    // owner can't cut Ava off mid-sentence. Bump the epoch so the in-flight drain
+    // aborts, drop the queue, halt the current clip, and end its await.
+    speakEpochRef.current += 1;
+    speakQueueRef.current.length = 0;
+    try { ttsRef.current?.pause(); } catch { /* */ }
+    ttsRef.current = null;
+    ttsDoneRef.current?.();
+    ttsDoneRef.current = null;
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
     genDoneRef.current = false;

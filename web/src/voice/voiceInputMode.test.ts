@@ -7,6 +7,7 @@ import {
   shouldInterruptForNewTurn,
   shouldReopenListening,
   reopenAfterSpeak,
+  shouldReconnectForModeChange,
   hasEnoughAudio,
   MIN_COMMIT_BYTES,
   DEFAULT_VOICE_INPUT_MODE,
@@ -127,5 +128,22 @@ describe("hasEnoughAudio — the empty-commit guard", () => {
   it("accepts a buffer at or over the floor", () => {
     expect(hasEnoughAudio(4800)).toBe(true);
     expect(hasEnoughAudio(48000)).toBe(true);
+  });
+});
+
+describe("shouldReconnectForModeChange — PTT must re-apply server turn_detection", () => {
+  it("reconnects when the mode actually changes mid-session", () => {
+    expect(shouldReconnectForModeChange("vad", "enter_push_to_talk", "listening")).toBe(true);
+    expect(shouldReconnectForModeChange("enter_push_to_talk", "vad", "responding")).toBe(true);
+    expect(shouldReconnectForModeChange("vad", "enter_push_to_talk", "thinking")).toBe(true);
+  });
+
+  it("does NOT reconnect when the mode is unchanged", () => {
+    expect(shouldReconnectForModeChange("vad", "vad", "listening")).toBe(false);
+    expect(shouldReconnectForModeChange("enter_push_to_talk", "enter_push_to_talk", "listening")).toBe(false);
+  });
+
+  it("does NOT reconnect when idle — the next connect reads the mode from the URL", () => {
+    expect(shouldReconnectForModeChange("vad", "enter_push_to_talk", "idle")).toBe(false);
   });
 });

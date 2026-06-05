@@ -116,6 +116,24 @@ export function reopenAfterSpeak(opts: {
   return "stay";                               // between task steps
 }
 
+/**
+ * Whether changing the endpointing mode must RECONNECT the realtime session.
+ * The server fixes its turn_detection (VAD vs push-to-talk) at CONNECT time, so
+ * a live mode switch only takes effect after a reconnect — without one, flipping
+ * to push-to-talk leaves the server's VAD running (silence wrongly ends the turn
+ * and empty buffers get committed: "buffer too small … 0.00ms"). No reconnect is
+ * needed when the mode didn't change, or when no session is active ("idle") —
+ * the next connect reads the mode from the URL.
+ */
+export function shouldReconnectForModeChange(
+  prev: VoiceInputMode,
+  next: VoiceInputMode,
+  state: string,
+): boolean {
+  if (prev === next) return false;
+  return state !== "idle";
+}
+
 // OpenAI rejects a committed input buffer under 100ms of audio. PCM16 mono at
 // 24kHz → 100ms = 2400 samples × 2 bytes = 4800 bytes. The push-to-talk commit
 // guards on this so a too-quick tap never sends an empty/sub-100ms buffer

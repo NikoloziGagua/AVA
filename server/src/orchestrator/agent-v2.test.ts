@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runAgent, type AgentEvent } from "./agent.js";
 import { MockLLMProvider } from "./llm/mock-provider.js";
+import { CONSISTENCY_REMINDER_MARKER } from "./tool-result-consistency.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { openInMemoryDb, type Db } from "../state/db.js";
 import { bootstrapMemoryDir } from "../memory/bootstrap.js";
@@ -346,6 +347,74 @@ describe("runAgent (v2 loop)", () => {
     ac.abort();
     await promise;
     expect(events.find((e) => e.kind === "killed")).toBeDefined();
+  });
+});
+
+describe("runAgent — result-consistency reminder", () => {
+  function toolReturning(result: { text: string; ok: boolean }): ToolDef {
+    return {
+      tool: { name: "shell", description: "shell",
+        inputSchema: { type: "object", properties: { command: { type: "string" } } } as const },
+      run: vi.fn().mockResolvedValue(result),
+    };
+  }
+
+  // Two-turn script: turn 1 calls the tool, turn 2 produces a (would-be) final.
+  function twoTurnProvider(): MockLLMProvider {
+    return new MockLLMProvider({
+      scripts: [
+        [{ kind: "tool_call", call: { id: "c1", name: "shell", args: { command: "go" } } },
+         { kind: "done", stop_reason: "tool_use" }],
+        [{ kind: "delta", text: "All done, Sir." }, { kind: "done", stop_reason: "end_turn" }],
+      ],
+    });
+  }
+
+  async function run(tool: ToolDef, provider: MockLLMProvider): Promise<void> {
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    await runAgent({
+      prompt: "do the thing",
+      abort: new AbortController(),
+      emit: () => {},
+      runId: "r1", sessionId: "s1", db,
+      mode: "action",
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [tool] } as never,
+    } as never);
+  }
+
+  function reminderMessages(provider: MockLLMProvider): unknown[] {
+    // messages is a single mutated array shared across turns; inspect final state.
+    const msgs = provider.calls.stream.at(-1)!.messages as Array<{ role: string; content?: unknown }>;
+    return msgs.filter(
+      (m) => m.role === "user" && typeof m.content === "string" &&
+        (m.content as string).includes(CONSISTENCY_REMINDER_MARKER),
+    );
+  }
+
+  it("injects the reminder after a failed action-tool result", async () => {
+    const provider = twoTurnProvider();
+    await run(toolReturning({ text: "command not found", ok: false }), provider);
+    expect(provider.calls.stream).toHaveLength(2);
+    const reminders = reminderMessages(provider);
+    expect(reminders).toHaveLength(1);
+    expect(String((reminders[0] as { content: string }).content).toLowerCase()).toContain("failure");
+  });
+
+  it("injects the reminder after a partial/uncertain action-tool result", async () => {
+    const provider = twoTurnProvider();
+    await run(toolReturning({ text: JSON.stringify({ status: "partial", done: 2, total: 5 }), ok: true }), provider);
+    const reminders = reminderMessages(provider);
+    expect(reminders).toHaveLength(1);
+    expect(String((reminders[0] as { content: string }).content).toLowerCase()).toContain("partial");
+  });
+
+  it("does NOT inject the reminder after a clean success", async () => {
+    const provider = twoTurnProvider();
+    await run(toolReturning({ text: JSON.stringify({ ok: true, text: "file1\nfile2" }), ok: true }), provider);
+    expect(provider.calls.stream).toHaveLength(2);
+    expect(reminderMessages(provider)).toHaveLength(0);
   });
 });
 

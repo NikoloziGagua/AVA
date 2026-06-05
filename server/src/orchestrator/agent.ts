@@ -11,6 +11,12 @@ import type { Approval } from "../state/approvals.js";
 import { withTimeout, TOOL_BUDGET_MS } from "./timeout.js";
 import { createStuckLoop } from "./stuck-loop.js";
 import { loadProjectIndex, detectProject, readProjectFile, type ProjectEntry } from "../memory/project-index.js";
+import {
+  classifyActionResult,
+  worstClass,
+  buildConsistencyReminder,
+  type ActionResultClass,
+} from "./tool-result-consistency.js";
 
 export type AgentEvent =
   | { kind: "thought"; payload: { text: string } }
@@ -188,6 +194,10 @@ export async function runAgent(opts: RunOpts): Promise<void> {
 
     messages.push({ role: "assistant", content: assistantText, tool_calls: pendingCalls });
 
+    // Track how each action-tool result for this turn classifies, so we can
+    // stop the model from claiming success after a failure or partial result.
+    const turnResultClasses: ActionResultClass[] = [];
+
     for (const call of pendingCalls) {
       if (abort.signal.aborted) break;
       emit({ kind: "tool_call", payload: { tool: call.name, args: call.args } });
@@ -209,6 +219,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
         const result = { call_id: call.id, output: decision.message, is_error: true };
         emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: result.output } });
         messages.push({ role: "tool", content: result });
+        turnResultClasses.push(classifyActionResult(result));
         continue;
       }
       toolsUsed++;
@@ -218,11 +229,22 @@ export async function runAgent(opts: RunOpts): Promise<void> {
         const r = await withTimeout(registry.dispatch(call), budget, call.name);
         emit({ kind: "tool_result", payload: { tool: call.name, ok: !r.is_error, result: r.output } });
         messages.push({ role: "tool", content: r });
+        turnResultClasses.push(classifyActionResult(r));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: msg } });
         messages.push({ role: "tool", content: { call_id: call.id, output: msg, is_error: true } });
+        turnResultClasses.push("error");
       }
+    }
+
+    // Before the next turn generates the model's wording, if any action-tool
+    // result this turn failed or was only partial/uncertain, inject a final
+    // reminder that forbids claiming completion/success and requires an honest
+    // report of the failure and any partial progress.
+    const worst = worstClass(turnResultClasses);
+    if (worst !== "ok") {
+      messages.push({ role: "user", content: buildConsistencyReminder(worst) });
     }
   }
 

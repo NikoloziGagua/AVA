@@ -115,4 +115,18 @@ describe("buildSystemPrompt (layered)", () => {
     const opts = { memoryDir: dir, mode: "conversation" as const };
     expect(buildSystemPrompt(opts)).toBe(buildSystemPrompt(opts));
   });
+
+  it("includes the capability map in both modes, right after the persona (recollection)", () => {
+    writeFileSync(join(dir, "personality.md"), "PERSONA-BLOCK\n", "utf8");
+    writeFileSync(join(dir, "MEMORY.md"), "INDEX-BLOCK\n", "utf8");
+    for (const mode of ["action", "conversation"] as const) {
+      const out = buildSystemPrompt({ memoryDir: dir, mode });
+      expect(out).toContain("# Capabilities");
+      const iPersona = out.indexOf("PERSONA-BLOCK");
+      const iCap = out.indexOf("# Capabilities");
+      const iIndex = out.indexOf("INDEX-BLOCK");
+      expect(iPersona).toBeLessThan(iCap);
+      expect(iCap).toBeLessThan(iIndex);
+    }
+  });
 });

@@ -3,6 +3,7 @@ import { readFile } from "../memory/store.js";
 import { autoPruneObservations, SOFT_CAPS } from "../memory/budgets.js";
 import { bootstrapMemoryDir } from "../memory/bootstrap.js";
 import { TOOL_RUBRIC } from "./tool-rubric.js";
+import { CAPABILITIES_MD } from "./capabilities-content.js";
 
 export type BuildSystemPromptOpts = {
   memoryDir: string;
@@ -63,6 +64,10 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
 
   const layers: string[] = [];
   if (persona.trim()) layers.push(persona.replace(/\s+$/, "") + "\n");
+  // Canonical capability map — present in both modes so Ava recalls its own reach
+  // in voice/conversation as well as action. Static text, kept in the stable cache
+  // prefix right after the persona.
+  layers.push(CAPABILITIES_MD.replace(/\s+$/, "") + "\n");
   if (memoryIndex.trim()) layers.push(block("Memory index", memoryIndex));
   if (preferences.trim()) layers.push(block("Preferences", preferences));
   if (observations.trim()) layers.push(block("Observations", observations));

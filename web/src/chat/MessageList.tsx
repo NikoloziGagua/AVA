@@ -45,7 +45,7 @@ export function MessageList({ history, liveEvents, onRetry }: MessageListProps) 
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-6 space-y-5">
+    <div className="no-scrollbar flex-1 overflow-y-auto px-4 py-6 space-y-5">
       {history.map((m) => (
         <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
           {m.role === "user" ? (

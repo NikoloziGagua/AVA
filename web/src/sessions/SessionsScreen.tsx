@@ -24,7 +24,7 @@ export function SessionsScreen({
         <h1 className="text-base">Sessions</h1>
         <button onClick={onNew} className="text-emerald-400">+ new</button>
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="no-scrollbar flex-1 overflow-y-auto">
         {err && <div className="p-4 text-red-400 text-sm">error: {err}</div>}
         {!rows && !err && <div className="p-4 text-neutral-500 text-sm">loading…</div>}
         {rows?.length === 0 && <div className="p-4 text-neutral-500 text-sm">no sessions yet.</div>}

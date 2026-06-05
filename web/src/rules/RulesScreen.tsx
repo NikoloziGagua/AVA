@@ -135,7 +135,7 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="relative h-full overflow-y-auto text-white"
+      className="no-scrollbar relative h-full overflow-y-auto text-white"
       style={{
         background:
           "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(92,242,255,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",

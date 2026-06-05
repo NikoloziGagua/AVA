@@ -29,6 +29,22 @@ export function listIntents(db: Db): Intent[] {
   return db.prepare("SELECT * FROM self_improvements ORDER BY created_at DESC, rowid DESC").all() as Intent[];
 }
 
+/**
+ * On boot, no improvement loop is in flight (the lock is in-memory), so any
+ * intent left in a non-terminal state was orphaned by a restart. Mark them
+ * failed so they don't report as forever-"implementing" and don't mislead
+ * self_improve_status. Returns how many were reconciled.
+ */
+export function failStaleIntents(db: Db): number {
+  const r = db
+    .prepare(
+      "UPDATE self_improvements SET status = 'failed', error = COALESCE(error, 'interrupted by a server restart') " +
+        "WHERE status IN ('queued','reflecting','implementing','verifying')",
+    )
+    .run();
+  return r.changes;
+}
+
 export function updateIntent(db: Db, id: string, patch: Partial<Omit<Intent, "id" | "created_at">>): void {
   const keys = Object.keys(patch);
   if (keys.length === 0) return;

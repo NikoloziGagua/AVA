@@ -45,13 +45,20 @@ import { verify } from "./self/verify.js";
 import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
 import { runImprovement, type ImproverDeps } from "./self/improver.js";
-import { createIntent, getIntent, listIntents } from "./self/intents.js";
+import { createIntent, getIntent, listIntents, failStaleIntents } from "./self/intents.js";
 import { selfRoutes } from "./routes/self.js";
 
 const startedAt = Date.now();
 const cfg = loadConfig();
 const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
+// Reconcile self-improvement intents orphaned by a previous restart: nothing is
+// in flight at boot, so any non-terminal intent is dead — mark it failed so it
+// doesn't report as forever-"implementing".
+{
+  const reconciled = failStaleIntents(db);
+  if (reconciled > 0) log.info({ reconciled }, "self: failed stale intents orphaned by restart");
+}
 const purgedCount = purgeDeletedSessions(db, Date.now() - 24 * 60 * 60 * 1000);
 if (purgedCount > 0) log.info({ purgedCount }, "purged soft-deleted sessions older than 24h");
 const runs = new ActiveRuns();

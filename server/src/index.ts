@@ -205,6 +205,11 @@ const agentDeps = {
     listIntents(db).map((r) => ({
       id: r.id, goal: r.goal, status: r.status, trigger: r.trigger,
       error: r.error, outcome: r.outcome, created_at: r.created_at,
+      commit: r.commit_sha,
+      // The reflect brief (what the change set out to do), trimmed for speech.
+      detail: r.diff_summary
+        ? r.diff_summary.replace(/^BRIEF:\s*/, "").split(/\n\nWORKER:/)[0]!.trim().slice(0, 500)
+        : null,
     })),
 };
 

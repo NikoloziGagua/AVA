@@ -25,6 +25,10 @@ export type IntentStatusSummary = {
   error: string | null;
   outcome: string | null;
   created_at: number;
+  /** What the change set out to do (the reflect brief) — so Sir sees what it involved. */
+  detail: string | null;
+  /** The shipped commit sha, when swapped. */
+  commit: string | null;
 };
 
 export function buildSelfImproveStatusTool(deps: { list: () => IntentStatusSummary[] }): ToolDef {
@@ -32,29 +36,47 @@ export function buildSelfImproveStatusTool(deps: { list: () => IntentStatusSumma
     tool: {
       name: "self_improve_status",
       description:
-        "Report the state of my self-improvement tasks: queued, reflecting, implementing, " +
-        "verifying, swapped (=shipped/live), failed, or rolled_back. Use when Sir asks what " +
-        "self-development is running, pending, or finished — or to check on a task he kicked " +
-        "off earlier. Optional { id } to report just one task.",
+        "Report my self-improvement tasks and explain what each one involved. States: " +
+        "queued, reflecting, implementing, verifying, swapped (=shipped/live), failed, " +
+        "rolled_back. Use when Sir asks what self-development is running, pending, or " +
+        "finished, what I changed, or to recap improvements he missed while away. Pass " +
+        "{ id } for the full detail of one task (what it changed + the commit).",
       inputSchema: {
         type: "object",
-        properties: { id: { type: "string", description: "optional intent id to report just that one task" } },
+        properties: { id: { type: "string", description: "optional intent id for the full detail of that one task" } },
       },
     },
     run: async (args) => {
       const all = deps.list();
       if (all.length === 0) return { ok: true, text: "No self-improvement tasks yet." };
       const id = String(args.id ?? "").trim();
-      const rows = id ? all.filter((r) => r.id === id) : all.slice(0, 12);
-      if (rows.length === 0) return { ok: true, text: `No self-improvement task ${id}.` };
+
+      // Detail view: a full account of one task — what it set out to change, the
+      // commit, and the outcome.
+      if (id) {
+        const r = all.find((x) => x.id === id);
+        if (!r) return { ok: true, text: `No self-improvement task ${id}.` };
+        const out = [`${r.id} — ${r.status === "swapped" ? "shipped (live)" : r.status}`, `Goal: ${r.goal}`];
+        if (r.detail) out.push(`What it involves: ${r.detail}`);
+        if (r.commit) out.push(`Commit: ${r.commit.slice(0, 8)}`);
+        if (r.status === "failed" && r.error) out.push(`Failed: ${r.error.slice(0, 200)}`);
+        return { ok: true, text: out.join("\n") };
+      }
+
+      // List view: one concise line per task; the goal says what it involves, and
+      // Sir can ask about an id for the full change detail.
+      const rows = all.slice(0, 12);
       const line = (r: IntentStatusSummary) => {
         const tail =
-          r.status === "failed" && r.error ? ` — ${r.error.slice(0, 160)}`
+          r.status === "failed" && r.error ? ` — ${r.error.slice(0, 120)}`
             : r.status === "swapped" ? " — shipped (live)"
               : "";
         return `• ${r.id} [${r.status}] ${r.goal}${tail}`;
       };
-      return { ok: true, text: rows.map(line).join("\n") };
+      return {
+        ok: true,
+        text: rows.map(line).join("\n") + "\n\n(ask me about any id for the full detail of what it changed)",
+      };
     },
   };
 }

@@ -22,9 +22,9 @@ describe("self_improve tool", () => {
 
 describe("self_improve_status tool", () => {
   const rows = [
-    { id: "imp-1", goal: "add screenshots", status: "implementing", trigger: "explicit", error: null, outcome: null, created_at: 2 },
-    { id: "imp-2", goal: "be faster", status: "swapped", trigger: "explicit", error: null, outcome: "shipped", created_at: 1 },
-    { id: "imp-3", goal: "bad idea", status: "failed", trigger: "explicit", error: "tests failed: boom", outcome: null, created_at: 0 },
+    { id: "imp-1", goal: "add screenshots", status: "implementing", trigger: "explicit", error: null, outcome: null, created_at: 2, detail: "CHANGE: add a screenshot tool", commit: null },
+    { id: "imp-2", goal: "be faster", status: "swapped", trigger: "explicit", error: null, outcome: "shipped", created_at: 1, detail: "CHANGE: cache the thing", commit: "abcdef1234567" },
+    { id: "imp-3", goal: "bad idea", status: "failed", trigger: "explicit", error: "tests failed: boom", outcome: null, created_at: 0, detail: null, commit: null },
   ];
 
   it("lists every task with its state", async () => {
@@ -48,6 +48,15 @@ describe("self_improve_status tool", () => {
     const r = await t.run({ id: "imp-2" }, { runId: "r" });
     expect(r.text).toContain("imp-2");
     expect(r.text).not.toContain("imp-1");
+  });
+
+  it("gives the full detail of one task by id — what it changed + commit", async () => {
+    const t = buildSelfImproveStatusTool({ list: () => rows });
+    const r = await t.run({ id: "imp-2" }, { runId: "r" });
+    expect(r.text).toContain("be faster");
+    expect(r.text).toContain("cache the thing"); // the change brief
+    expect(r.text).toContain("abcdef12"); // short commit
+    expect(r.text.toLowerCase()).toContain("shipped");
   });
 
   it("reports cleanly when there are no tasks", async () => {

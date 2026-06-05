@@ -9,6 +9,7 @@ import {
   type TranscriptGateReason,
 } from "../voice/transcript-gate.js";
 import { getReasoningLevel, type ReasoningLevel } from "../state/reasoning-pref.js";
+import { formatSpeechText } from "../voice/speechText.js";
 
 // ─── OpenAI Realtime API: TRANSCRIBE-ONLY proxy ──────────────────────────────
 //
@@ -434,7 +435,9 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       const sessionUpdate = hybrid
         ? buildHybridSessionUpdate(
             system +
-              "\n\n[VOICE] You are speaking aloud — keep replies short and natural. When the owner " +
+              "\n\n[VOICE] You are speaking aloud — keep replies short and natural. Say \"Sir\" " +
+              "smoothly, as part of the phrase, without a comma pause around it (\"Yes Sir\", not " +
+              "\"Yes, Sir,\"). When the owner " +
               "asks you to DO something on the computer (open/find files, run commands, browse, " +
               "control apps, remember something), CALL do_on_computer with a clear task, then speak " +
               "the result it returns. For everything else, just reply directly in your own voice.",
@@ -516,10 +519,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               const r = await deps.runAction!(sessionId, task);
               sessionId = r.sessionId ?? sessionId;
               try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
-              for (const f of toolResultFrames(call.callId, r.text || "Done.")) upstream.send(f);
+              // formatSpeechText smooths "Sir" punctuation only in what the
+              // realtime model speaks; the agent's persisted reply is untouched.
+              for (const f of toolResultFrames(call.callId, formatSpeechText(r.text || "Done."))) upstream.send(f);
             } catch (e) {
               const msg = e instanceof Error ? e.message : String(e);
-              for (const f of toolResultFrames(call.callId, `That didn't work, Sir — ${msg}`)) upstream.send(f);
+              for (const f of toolResultFrames(call.callId, formatSpeechText(`That didn't work, Sir — ${msg}`))) upstream.send(f);
             }
           })();
           return; // don't forward the raw function_call item to the client

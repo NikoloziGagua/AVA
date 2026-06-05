@@ -263,11 +263,21 @@ async function runVoiceAction(sessionId: string | null, task: string): Promise<{
   const base = `http://127.0.0.1:${cfg.port}`;
   const auth = { authorization: `Bearer ${voiceInternalToken}` };
   try {
-    const post = await fetch(`${base}/api/chat`, {
+    const postChat = () => fetch(`${base}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth },
       body: JSON.stringify({ sessionId, text: task }),
     });
+    let post = await postChat();
+    // A previous action may still hold this session (a long-running or stuck
+    // run). A new spoken command must win: abort the in-flight run and retry
+    // once, rather than silently dropping the new task — this is the
+    // "I ran the first job and can't run the second" bug.
+    if (post.status === 409 && sessionId) {
+      await fetch(`${base}/api/chat/${sessionId}/kill`, { method: "POST", headers: auth }).catch(() => {});
+      await new Promise((r) => setTimeout(r, 250));
+      post = await postChat();
+    }
     const started = (await post.json()) as { sessionId?: string };
     const sid = started.sessionId ?? sessionId;
     if (!sid) return { text: "I couldn't start that, Sir.", sessionId };

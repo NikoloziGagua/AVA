@@ -120,8 +120,6 @@ export function chatRoutes(
         }).catch(() => {});
       }
     }
-    appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
-
     if (createdNew && agentDeps.provider) {
       const sid = sessionId;
       const firstMessage = parsed.data.text;
@@ -139,13 +137,21 @@ export function chatRoutes(
       return;
     }
 
+    // Record the user turn only AFTER the concurrency gate. Appending before it
+    // meant a rejected request still stacked an orphan user message with no
+    // reply — the exact "voice session goes silent / second job won't run"
+    // symptom (a stuck run 409s every later turn while history fills with
+    // unanswered user lines).
+    appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
+
     if (agentDeps.provider) {
       await maybeSummarize({ db, sessionId, provider: agentDeps.provider });
     }
 
     const buffer = new SseBuffer({ maxEvents: 500, maxBytes: 5 * 1024 * 1024 });
     const abort = new AbortController();
-    runs.register({ sessionId, abort, buffer });
+    const activeRun = { sessionId, abort, buffer };
+    runs.register(activeRun);
 
     const full = getSessionFull(db, sessionId);
     const recent = full?.summary_through_message_id
@@ -335,7 +341,7 @@ export function chatRoutes(
           },
         });
       } finally {
-        runs.unregister(sid);
+        runs.unregister(sid, activeRun);
       }
     })();
 
@@ -383,6 +389,7 @@ export function chatRoutes(
       return;
     }
     const ok = runs.abort(sessionId);
+    runs.unregister(sessionId); // free the slot immediately so a new turn can start (preempt)
     res.json({ aborted: ok });
   });
 

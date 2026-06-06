@@ -385,7 +385,7 @@ describe("decideTranscriptForward — the silence/hallucination chokepoint", () 
 
 describe("Hume EVI provider helpers", () => {
   it("buildHumeSessionSettings pins the voice by id when present", () => {
-    const s = buildHumeSessionSettings("be ava", { apiKey: "k", configId: null, voiceId: "vid-1", voiceName: "Alice Bennett" });
+    const s = buildHumeSessionSettings("be ava", { apiKey: "k", secretKey: null, configId: null, voiceId: "vid-1", voiceName: "Alice Bennett" });
     expect(s.type).toBe("session_settings");
     expect(s.system_prompt).toBe("be ava");
     expect(s.voice).toEqual({ provider: "HUME_AI", id: "vid-1" });
@@ -393,7 +393,7 @@ describe("Hume EVI provider helpers", () => {
   });
 
   it("buildHumeSessionSettings falls back to the voice name (Alice Bennett) when no id", () => {
-    const s = buildHumeSessionSettings("be ava", { apiKey: "k", configId: null, voiceId: null, voiceName: "Alice Bennett" });
+    const s = buildHumeSessionSettings("be ava", { apiKey: "k", secretKey: null, configId: null, voiceId: null, voiceName: "Alice Bennett" });
     expect(s.voice).toEqual({ provider: "HUME_AI", name: "Alice Bennett" });
   });
 

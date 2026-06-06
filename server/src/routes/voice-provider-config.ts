@@ -20,6 +20,9 @@ export const DEFAULT_HUME_VOICE_NAME = "Alice Bennett";
 export interface HumeProviderConfig {
   /** HUME_API_KEY — required for Hume to be selected. */
   apiKey: string;
+  /** HUME_SECRET_KEY — optional; enables the robust OAuth access-token auth
+   *  (preferred over the raw api_key query param, which is rate-limited). */
+  secretKey: string | null;
   /** HUME_CONFIG_ID — optional EVI config id. */
   configId: string | null;
   /** HUME_VOICE_ID — optional exact voice id (preferred over the name). */
@@ -85,6 +88,7 @@ export function resolveVoiceProvider(env: Env = process.env): VoiceProviderConfi
 
   const hume: HumeProviderConfig = {
     apiKey,
+    secretKey: str(env, "HUME_SECRET_KEY"),
     configId: str(env, "HUME_CONFIG_ID"),
     voiceId: str(env, "HUME_VOICE_ID"),
     voiceName: str(env, "HUME_VOICE_NAME") ?? DEFAULT_HUME_VOICE_NAME,
@@ -132,4 +136,48 @@ export function buildHumeRealtimeUrl(hume: HumeProviderConfig): string {
   const params = new URLSearchParams({ api_key: hume.apiKey });
   if (hume.configId) params.set("config_id", hume.configId);
   return `wss://api.hume.ai/v0/evi/chat?${params.toString()}`;
+}
+
+// OAuth client-credentials token cache. A token is valid ~30 min; we reuse it
+// across connections (the raw api_key query-param auth is rate-limited and the
+// source of intermittent "auth failed" under reconnect churn).
+let humeTokenCache: { token: string; expiresAt: number } | null = null;
+
+/** Fetch a short-lived Hume access token from api_key + secret (client_credentials).
+ *  Cached until ~1 min before expiry. Throws on a non-2xx so the caller can fall
+ *  back to api_key auth. Never logs the secret. */
+export async function fetchHumeAccessToken(apiKey: string, secretKey: string): Promise<string> {
+  const now = Date.now();
+  if (humeTokenCache && humeTokenCache.expiresAt > now + 60_000) return humeTokenCache.token;
+  const res = await fetch("https://api.hume.ai/oauth2-cc/token", {
+    method: "POST",
+    headers: {
+      Authorization: "Basic " + Buffer.from(`${apiKey}:${secretKey}`).toString("base64"),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+  });
+  if (!res.ok) throw new Error(`hume token endpoint HTTP ${res.status}`);
+  const j = (await res.json()) as { access_token?: string; expires_in?: number };
+  if (!j.access_token) throw new Error("hume token endpoint returned no access_token");
+  humeTokenCache = { token: j.access_token, expiresAt: now + (j.expires_in ?? 1800) * 1000 };
+  return j.access_token;
+}
+
+/** Resolve the Hume EVI websocket URL, preferring OAuth access-token auth (robust)
+ *  when a secret key is configured, and falling back to the raw api_key query
+ *  param otherwise (or if the token fetch fails). The URL embeds a secret — NEVER
+ *  log it. */
+export async function resolveHumeWsUrl(hume: HumeProviderConfig): Promise<string> {
+  if (hume.secretKey) {
+    try {
+      const token = await fetchHumeAccessToken(hume.apiKey, hume.secretKey);
+      const params = new URLSearchParams({ access_token: token });
+      if (hume.configId) params.set("config_id", hume.configId);
+      return `wss://api.hume.ai/v0/evi/chat?${params.toString()}`;
+    } catch {
+      // fall through to api_key auth — better a rate-limited connect than none.
+    }
+  }
+  return buildHumeRealtimeUrl(hume);
 }

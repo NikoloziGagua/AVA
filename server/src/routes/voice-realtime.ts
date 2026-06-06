@@ -20,6 +20,7 @@ import {
   describeVoiceProvider,
   redactSecrets,
   buildHumeRealtimeUrl,
+  resolveHumeWsUrl,
   type VoiceProviderConfig,
   type HumeProviderConfig,
 } from "./voice-provider-config.js";
@@ -671,7 +672,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     // OpenAI path below. No client handlers are attached until Hume actually opens,
     // so a failed attempt leaves the connection clean for the OpenAI fallback.
     if (getVoiceEngine(deps.db) === "hume" && providerConfig.hume) {
-      const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume);
+      // Resolve the upstream URL here (async): prefers OAuth access-token auth when
+      // a secret key is set, else the raw api_key. Done before the session Promise
+      // so the executor stays synchronous.
+      const humeUrl = await resolveHumeWsUrl(providerConfig.hume);
+      const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume, humeUrl);
       if (opened) return;
       log.warn("realtime: hume upstream did not establish — falling back to OpenAI");
     }
@@ -980,17 +985,18 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     client: WebSocket,
     requestedSessionId: string | null,
     hume: HumeProviderConfig,
+    wsUrl: string,
   ): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const hybrid = !!deps.runAction;
       let sessionId = requestedSessionId;
       const actionAbort = new AbortController();
       let opened = false;
-      const redact = (m: string) => redactSecrets(m, [hume.apiKey, hume.configId, hume.voiceId]);
+      const redact = (m: string) => redactSecrets(m, [hume.apiKey, hume.secretKey, hume.configId, hume.voiceId]);
 
       let upstream: WebSocket;
       try {
-        upstream = new WebSocket(buildHumeRealtimeUrl(hume));
+        upstream = new WebSocket(wsUrl);
       } catch (e) {
         log.warn("realtime: hume connect threw:", redact(e instanceof Error ? e.message : String(e)));
         resolve(false);
@@ -1102,10 +1108,17 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         }
       });
 
+      // Hume answered the WS upgrade with a non-101 HTTP status (401/403 = auth,
+      // 429 = rate limit, 5xx = Hume down). Log the real status so an auth/rate
+      // problem is diagnosable instead of a blank "error before open".
+      upstream.on("unexpected-response", (_req, res) => {
+        log.warn({ status: res.statusCode }, "realtime: hume upstream rejected the connection (HTTP status)");
+        if (!opened) { resolve(false); return; }
+      });
       upstream.on("error", (err) => {
         const msg = redact(err.message);
-        if (!opened) { log.warn("realtime: hume upstream error before open:", msg); resolve(false); return; }
-        log.error("realtime: hume upstream error:", msg);
+        if (!opened) { log.warn({ err: msg }, "realtime: hume upstream error before open"); resolve(false); return; }
+        log.error({ err: msg }, "realtime: hume upstream error");
         try { client.send(JSON.stringify({ type: "error", error: { message: msg } })); } catch { /* */ }
         try { client.close(1011, "upstream error"); } catch { /* */ }
       });

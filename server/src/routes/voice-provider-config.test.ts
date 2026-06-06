@@ -99,13 +99,13 @@ describe("redactSecrets", () => {
 
 describe("buildHumeRealtimeUrl", () => {
   it("includes the api key and config id as query params", () => {
-    const url = buildHumeRealtimeUrl({ apiKey: "k1", configId: "c1", voiceId: null, voiceName: "Alice Bennett" });
+    const url = buildHumeRealtimeUrl({ apiKey: "k1", secretKey: null, configId: "c1", voiceId: null, voiceName: "Alice Bennett" });
     expect(url.startsWith("wss://api.hume.ai/v0/evi/chat?")).toBe(true);
     expect(url).toContain("api_key=k1");
     expect(url).toContain("config_id=c1");
   });
   it("omits config_id when absent", () => {
-    const url = buildHumeRealtimeUrl({ apiKey: "k1", configId: null, voiceId: null, voiceName: "Alice Bennett" });
+    const url = buildHumeRealtimeUrl({ apiKey: "k1", secretKey: null, configId: null, voiceId: null, voiceName: "Alice Bennett" });
     expect(url).toContain("api_key=k1");
     expect(url).not.toContain("config_id");
   });

@@ -28,6 +28,10 @@ vi.mock("../api.js", () => ({
   },
   approveApproval: vi.fn(() => Promise.resolve()),
   denyApproval: vi.fn(() => Promise.resolve()),
+  // The hook fetches the engine on mount and POSTs it on change. Resolve to the
+  // same value the hook optimistically starts with so no engine-reconnect fires.
+  fetchVoiceEngine: vi.fn(() => Promise.resolve("openai")),
+  setVoiceEngine: vi.fn(() => Promise.resolve()),
 }));
 // Stable token so the speak fetch has an auth header without touching storage.
 vi.mock("../auth/tokens.js", () => ({ getToken: () => "tkn" }));
@@ -273,6 +277,33 @@ describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
     // still reopens when the queue drains.
     expect(fetchSpy.mock.calls.some(([u]) => String(u).includes("/api/speak"))).toBe(true);
   });
+
+  // Item 4: the speak-worker drain-end reopen must not race the realtime audio
+  // tail. If a narrated clip's queue drains while Ava's realtime audio is still
+  // playing, the worker must NOT reopen the mic (the scheduleListen settle path
+  // already waits for the audio to drain; the worker now does too).
+  it("the worker does NOT reopen the mic while realtime audio is still playing", async () => {
+    const { hook, ws } = await bootHybrid();
+
+    // Ava is speaking via realtime audio (a live source → player.playing = true).
+    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
+    await flush();
+    expect(hook.result.current.state).toBe("responding");
+
+    // A result clip is also queued (TTS). Its drain end is where the worker would
+    // wrongly reopen — but realtime audio is still playing, so it must stay closed.
+    await act(async () => { ws.fireMessage({ type: "ava.result", text: "Done, Sir." }); });
+    await flush();
+    // End the TTS clip's playback so the worker's drain loop completes.
+    const clip = FakeAudio.created.at(-1)!;
+    await act(async () => { clip.onended?.(); });
+    await flush();
+
+    // The realtime audio source never ended, so player.playing is still true → the
+    // worker's reopen is suppressed. State stays "responding" (mic closed). Pre-fix
+    // it reopened to "listening" mid-reply, re-hearing Ava's own tail.
+    expect(hook.result.current.state).toBe("responding");
+  });
 });
 
 describe("useRealtimeVoice — barge-in (effectful)", () => {
@@ -336,6 +367,123 @@ describe("useRealtimeVoice — barge-in (effectful)", () => {
     const { hook } = await bootHybrid();
     expect(() => act(() => { hook.result.current.interrupt(); })).not.toThrow();
     expect(hook.result.current.state).toBe("listening");
+  });
+});
+
+// Item 1 (CRITICAL): in hybrid CHIT-CHAT Ava's voice is the realtime model
+// streaming `response.output_audio.delta` (the play_audio branch), NOT TTS. The
+// barge-in must (a) tell the realtime model to STOP (response.cancel upstream),
+// and (b) DROP any late deltas already in flight so her cancelled tail can't
+// resume playing / re-arm "responding" after the barge-in.
+describe("useRealtimeVoice — barge-in on the realtime audio (play_audio) path", () => {
+  // 4 bytes → 2 PCM16 samples, enough for the player to schedule a source so
+  // `playing` is true (the FakeBufferSource never fires onended on its own).
+  const AUDIO_B64 = btoa("ABCD");
+
+  async function speakViaRealtime(ws: FakeWebSocket) {
+    // The realtime model's reply: response.created (thinking) then an audio delta.
+    await act(async () => { ws.fireMessage({ type: "response.created" }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: AUDIO_B64 }); });
+    await flush();
+  }
+
+  it("a realtime audio delta plays and arms 'responding' (positive control)", async () => {
+    const { hook, ws } = await bootHybrid();
+    await speakViaRealtime(ws);
+    expect(hook.result.current.state).toBe("responding");
+  });
+
+  it("interrupt() sends response.cancel + input_audio_buffer.clear upstream", async () => {
+    const { hook, ws } = await bootHybrid();
+    await speakViaRealtime(ws);
+    expect(hook.result.current.state).toBe("responding");
+
+    await act(async () => { hook.result.current.interrupt(); });
+    await flush();
+
+    // Without these upstream frames the realtime model keeps generating and the
+    // next delta resumes her — this is the core of the reported bug.
+    expect(ws.sent.some((s) => s.includes("response.cancel"))).toBe(true);
+    expect(ws.sent.some((s) => s.includes("input_audio_buffer.clear"))).toBe(true);
+    expect(hook.result.current.state).toBe("listening");
+  });
+
+  it("a LATE audio delta after a barge-in is DROPPED (does not re-arm responding)", async () => {
+    const { hook, ws } = await bootHybrid();
+    await speakViaRealtime(ws);
+
+    await act(async () => { hook.result.current.interrupt(); });
+    await flush();
+    expect(hook.result.current.state).toBe("listening");
+
+    // A delta from the just-cancelled turn arrives after the barge-in (it was in
+    // flight before response.cancel landed). The epoch advanced, so it must be
+    // ignored: Ava stays silent and the mic stays open.
+    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: AUDIO_B64 }); });
+    await flush();
+    expect(hook.result.current.state).toBe("listening");
+  });
+
+  it("a fresh turn's audio plays again after a barge-in (the drop is per-turn, not permanent)", async () => {
+    const { hook, ws } = await bootHybrid();
+    await speakViaRealtime(ws);
+    await act(async () => { hook.result.current.interrupt(); });
+    await flush();
+    expect(hook.result.current.state).toBe("listening");
+
+    // A brand-new user turn → new transcript caption → new response → its audio is
+    // allowed (the snapshot refreshes to the current epoch).
+    await act(async () => {
+      ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "what's the time" });
+    });
+    await speakViaRealtime(ws);
+    expect(hook.result.current.state).toBe("responding");
+  });
+});
+
+// Item 3: a transcript can be gate-accepted MID-TASK (the do_on_computer
+// tool-call response emits response.done while the tools are still running). When
+// that happens the caption_user handler must NOT clear the action guards, or the
+// end-of-turn settle reopens the mic into a still-running task and Ava re-hears
+// herself. The guards stay set until the task's own result clears them.
+describe("useRealtimeVoice — caption_user must not reopen the mic mid-task (Item 3)", () => {
+  it("a transcript accepted while a task runs keeps the mic closed at the settle", async () => {
+    const { hook, ws } = await bootHybrid();
+
+    // A do_on_computer task starts → actionPending; the mic is held closed.
+    await act(async () => { ws.fireMessage({ type: "ava.action", task: "search the web" }); });
+    await flush();
+    expect(hook.result.current.state).toBe("thinking");
+
+    // Switch to fake timers now (after the async boot) so we can drive the 350ms
+    // settle deterministically without a real wait.
+    vi.useFakeTimers();
+
+    // A transcript is accepted WHILE the task is still running (the tool-call
+    // response already emitted response.done). Pre-fix this cleared actionPending.
+    act(() => {
+      ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "are you done yet" });
+    });
+    // response.done for that window → schedules the end-of-turn settle.
+    act(() => { ws.fireMessage({ type: "response.done" }); });
+    // Advance past the 350ms fast settle.
+    act(() => { vi.advanceTimersByTime(400); });
+
+    // The task is still running, so the mic must NOT have reopened — state stays
+    // "thinking" (the action guard held). Pre-fix it would be "listening".
+    expect(hook.result.current.state).toBe("thinking");
+  });
+
+  it("with NO task running, a transcript still opens a normal turn (control)", async () => {
+    const { hook, ws } = await bootHybrid();
+    expect(hook.result.current.state).toBe("listening");
+
+    // No ava.action first → not mid-task. An accepted transcript opens a turn
+    // (state → thinking) exactly as before; the guard change doesn't regress this.
+    act(() => {
+      ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "what time is it" });
+    });
+    expect(hook.result.current.state).toBe("thinking");
   });
 });
 

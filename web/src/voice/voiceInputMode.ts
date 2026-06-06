@@ -12,6 +12,8 @@
 // both the web client (mic gating + Enter binding) and forwarded to the server
 // so it can disable automatic VAD/turn-detection for the realtime session.
 
+import type { VoiceEngine } from "../api.js";
+
 export type VoiceInputMode = "vad" | "enter_push_to_talk";
 
 const KEY = "ava.voiceInputMode";
@@ -132,6 +134,45 @@ export function shouldReconnectForModeChange(
 ): boolean {
   if (prev === next) return false;
   return state !== "idle";
+}
+
+/**
+ * Whether changing the voice ENGINE must reconnect the realtime session.
+ *
+ * The engine value alone decides the realtime session shape: "chatterbox" makes
+ * the realtime model transcribe-only (the client routes transcripts to /api/chat
+ * and speaks via Chatterbox /api/speak), while "openai"/"hybrid" make the model
+ * speak directly with the do_on_computer tool. Crucially, "openai" and "hybrid"
+ * build an IDENTICAL realtime session — they differ only in the per-request
+ * /api/speak TTS for narrated steps/results, which needs no reconnect. So the
+ * ONLY engine change that alters the live realtime session is one that crosses
+ * the chatterbox boundary; openai↔hybrid must NOT reconnect (it would needlessly
+ * tear down a working session). As with the mode reconnect, an idle session needs
+ * nothing — the next connect reads the engine server-side.
+ */
+export function shouldReconnectForEngineChange(
+  prev: VoiceEngine,
+  next: VoiceEngine,
+  state: string,
+): boolean {
+  if (prev === next) return false;
+  if (state === "idle") return false;
+  // Crossing the chatterbox boundary in either direction is the only switch that
+  // changes the realtime "speaks vs transcribe" session.
+  return (prev === "chatterbox") !== (next === "chatterbox");
+}
+
+/**
+ * Whether a realtime audio delta arriving now should be DROPPED because a
+ * barge-in happened since this speaking turn began. interrupt() bumps an
+ * "interrupt epoch"; the audio branch captures the epoch at the start of the
+ * turn. If the live epoch has advanced past the captured one, every late delta
+ * (the realtime model's tail, still streaming after response.cancel) must be
+ * ignored — neither played nor allowed to re-arm "responding" — or Ava resumes
+ * talking over Sir despite the barge-in.
+ */
+export function shouldDropAudioDelta(turnEpoch: number, currentEpoch: number): boolean {
+  return currentEpoch !== turnEpoch;
 }
 
 // OpenAI rejects a committed input buffer under 100ms of audio. PCM16 mono at

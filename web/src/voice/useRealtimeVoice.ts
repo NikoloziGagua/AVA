@@ -11,6 +11,8 @@ import {
   shouldReopenListening,
   reopenAfterSpeak,
   shouldReconnectForModeChange,
+  shouldReconnectForEngineChange,
+  shouldDropAudioDelta,
   hasEnoughAudio,
 } from "./voiceInputMode.js";
 import { shouldToggleOnEnter } from "./pushToTalk.js";
@@ -272,6 +274,14 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // end-of-turn debounce
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // hands-free recovery (Fix 1)
   const pttBytesRef = useRef(0); // bytes forwarded in the current push-to-talk turn (Fix 3)
+  // Barge-in epoch (Item 1). interrupt() bumps interruptEpochRef AND sends
+  // response.cancel upstream so the realtime model stops generating. But late
+  // audio deltas already in flight still arrive after the cancel; the realtime
+  // speaking turn snapshots the epoch when it starts (playTurnEpochRef), and the
+  // audio branch DROPS any delta whose snapshot is stale (epoch advanced since) so
+  // a barged-in reply can't resume playing / re-arm "responding".
+  const interruptEpochRef = useRef(0);
+  const playTurnEpochRef = useRef(0);
 
   const stopAgentStream = useCallback(() => {
     try { esRef.current?.close(); } catch { /* */ }
@@ -346,11 +356,23 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     }
     speakBusyRef.current = false;
     ttsDoneRef.current = null;
-    if (reopenAfterSpeak({
+    // Item 4: the speak queue can drain while Ava's REALTIME audio is still
+    // playing (hybrid) or before her turn's generation is done — the scheduleListen
+    // settle path already guards both, so the worker must too, or it reopens the
+    // mic into a still-draining reply. reopenAfterSpeak owns the action-aware part
+    // (chit-chat vs between task steps vs task fully narrated); we additionally
+    // require no realtime audio still playing, and — in HYBRID only — that the
+    // realtime response.done was seen. The pure-TTS transcribe path has no realtime
+    // player (playing is false) and never sets genDone, so its existing reopen
+    // semantics are preserved by gating genDone behind hybridRef.
+    const wantReopen = reopenAfterSpeak({
       state: stateRef.current,
       actionPending: actionPendingRef.current,
       resultReceived: actionResultReceivedRef.current,
-    }) === "reopen") {
+    }) === "reopen";
+    const audioSettled = !playerRef.current?.playing;
+    const genSettled = !hybridRef.current || genDoneRef.current;
+    if (wantReopen && audioSettled && genSettled) {
       if (actionPendingRef.current) { actionPendingRef.current = false; actionResultReceivedRef.current = false; }
       setState("listening");
     }
@@ -528,8 +550,20 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         // The server already sent response.create, so a response is guaranteed;
         // response.created/audio/done + onEnded carry us back to listening.
         clearSettle();
-        actionPendingRef.current = false;
-        actionResultReceivedRef.current = false;
+        // A genuinely new turn begins here: snapshot the current barge-in epoch so
+        // this turn's audio is allowed to play. (Item 1 — a later interrupt() bumps
+        // the epoch, which then strands any in-flight deltas from THIS turn.)
+        playTurnEpochRef.current = interruptEpochRef.current;
+        // Item 3: only clear the action guards for a genuinely NEW turn (no task
+        // running). A do_on_computer task emits its tool-call response.done while
+        // its tools are still executing; a transcript accepted in that window must
+        // NOT clear actionPending/resultReceived, or the speak-queue/settle reopen
+        // would fire mid-task → the mic reopens into the running task and Ava
+        // re-hears herself. While a task is pending we leave the guards intact (the
+        // task's own result will clear them when it finishes).
+        if (!actionPendingRef.current) {
+          actionResultReceivedRef.current = false;
+        }
         avaCaptionRef.current = "";
         genDoneRef.current = false;
         setCaption({ who: "you", text: eff.text });
@@ -559,11 +593,22 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         enqueueSpeak(eff.text.trim() || "Done.");
         return;
       case "thinking":
+        // A fresh generation (response.created) — refresh the turn's epoch snapshot
+        // so its upcoming audio is allowed. A response.created always precedes a
+        // post-barge-in reply, so this is the reliable "new speaking turn" marker
+        // even when no new caption_user preceded it.
+        playTurnEpochRef.current = interruptEpochRef.current;
         genDoneRef.current = false;
         avaCaptionRef.current = "";
         setState("thinking");
         return;
       case "play_audio":
+        // Item 1 (barge-in): a late delta from a turn that was already barged-in
+        // (interrupt() bumped the epoch after this turn's snapshot) must be DROPPED
+        // — don't play it and DON'T re-arm "responding", or the realtime model's
+        // cancelled tail resumes and Ava talks over Sir. (response.cancel upstream
+        // stops further generation; this guards the deltas already in flight.)
+        if (shouldDropAudioDelta(playTurnEpochRef.current, interruptEpochRef.current)) return;
         clearSettle();              // new audio → cancel any pending end-of-turn
         actionPendingRef.current = false; // audio = Ava speaking the reply/result
         actionResultReceivedRef.current = false;
@@ -778,17 +823,20 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     return () => window.clearTimeout(t);
   }, [inputMode, cleanup]);
 
-  // Engine change → reconnect so the server applies the new realtime mode: in
-  // "chatterbox" the realtime model is transcribe-only; in "openai"/"hybrid" it
-  // speaks. The proxy fixes this at CONNECT time (reads getVoiceEngine then), so
-  // a live switch only takes effect after a reconnect. Same machinery as the
-  // input-mode reconnect above; only an already-active session needs it (a fresh
-  // start() reads the engine server-side on connect).
+  // Engine change → reconnect ONLY when it crosses the chatterbox boundary, since
+  // that's the only switch that changes the realtime session the server builds at
+  // CONNECT time: "chatterbox" makes the model transcribe-only; "openai"/"hybrid"
+  // make it speak. openai↔hybrid build an IDENTICAL realtime session (they differ
+  // only in the per-request /api/speak TTS for narrated steps/results), so
+  // reconnecting on that switch would needlessly tear down a working session and
+  // drop the mic. Same machinery as the input-mode reconnect above; only an
+  // already-active session needs it (a fresh start() reads the engine server-side
+  // on connect). We always advance prevVoiceEngineRef so the next change compares
+  // against the current value even when we skip the reconnect.
   useEffect(() => {
     const prev = prevVoiceEngineRef.current;
     prevVoiceEngineRef.current = voiceEngine;
-    if (prev === voiceEngine) return;
-    if (stateRef.current === "idle") return;
+    if (!shouldReconnectForEngineChange(prev, voiceEngine, stateRef.current)) return;
     setCapturing(false);
     capturingRef.current = false;
     cleanup();
@@ -812,6 +860,19 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     const sid = sessionIdRef.current;
     if (sid) void api.kill(sid).catch(() => {});
     stopAgentStream();
+    // Item 1 (CRITICAL): in hybrid chit-chat Ava's voice IS the realtime model
+    // streaming audio deltas. Stopping the local player/queue is not enough —
+    // upstream keeps generating and the next delta resumes her. Tell the realtime
+    // model to STOP: cancel the active response and clear any buffered input so it
+    // doesn't immediately re-respond. Bump the interrupt epoch FIRST so any delta
+    // racing in after this (already in flight before cancel lands) is dropped by
+    // the audio branch instead of re-arming "responding".
+    interruptEpochRef.current += 1;
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try { ws.send(JSON.stringify({ type: "response.cancel" })); } catch { /* */ }
+      try { ws.send(JSON.stringify({ type: "input_audio_buffer.clear" })); } catch { /* */ }
+    }
     // Hybrid: cut the model's spoken audio immediately and end the turn.
     try { playerRef.current?.interrupt(); } catch { /* */ }
     // Bug B: the realtime player isn't the only voice — task steps/results and

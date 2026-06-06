@@ -8,6 +8,8 @@ import {
   shouldReopenListening,
   reopenAfterSpeak,
   shouldReconnectForModeChange,
+  shouldReconnectForEngineChange,
+  shouldDropAudioDelta,
   hasEnoughAudio,
   MIN_COMMIT_BYTES,
   DEFAULT_VOICE_INPUT_MODE,
@@ -145,5 +147,50 @@ describe("shouldReconnectForModeChange — PTT must re-apply server turn_detecti
 
   it("does NOT reconnect when idle — the next connect reads the mode from the URL", () => {
     expect(shouldReconnectForModeChange("vad", "enter_push_to_talk", "idle")).toBe(false);
+  });
+});
+
+describe("shouldReconnectForEngineChange — only the chatterbox boundary matters", () => {
+  // openai and hybrid produce an IDENTICAL realtime session (the model speaks +
+  // gets do_on_computer); they differ only in the per-request /api/speak TTS, which
+  // needs no reconnect. chatterbox alone flips the realtime session to
+  // transcribe-only, so only crossing that boundary must reconnect.
+  it("reconnects only when crossing the chatterbox boundary", () => {
+    expect(shouldReconnectForEngineChange("openai", "chatterbox", "listening")).toBe(true);
+    expect(shouldReconnectForEngineChange("chatterbox", "openai", "responding")).toBe(true);
+    expect(shouldReconnectForEngineChange("hybrid", "chatterbox", "listening")).toBe(true);
+    expect(shouldReconnectForEngineChange("chatterbox", "hybrid", "thinking")).toBe(true);
+  });
+
+  it("does NOT reconnect for openai <-> hybrid (identical realtime session)", () => {
+    expect(shouldReconnectForEngineChange("openai", "hybrid", "listening")).toBe(false);
+    expect(shouldReconnectForEngineChange("hybrid", "openai", "responding")).toBe(false);
+  });
+
+  it("does NOT reconnect when the engine is unchanged", () => {
+    expect(shouldReconnectForEngineChange("openai", "openai", "listening")).toBe(false);
+    expect(shouldReconnectForEngineChange("chatterbox", "chatterbox", "listening")).toBe(false);
+    expect(shouldReconnectForEngineChange("hybrid", "hybrid", "responding")).toBe(false);
+  });
+
+  it("does NOT reconnect when idle — the next connect reads the engine server-side", () => {
+    expect(shouldReconnectForEngineChange("openai", "chatterbox", "idle")).toBe(false);
+    expect(shouldReconnectForEngineChange("chatterbox", "openai", "idle")).toBe(false);
+  });
+});
+
+describe("shouldDropAudioDelta — late realtime deltas after a barge-in are ignored", () => {
+  // The play_audio/audio branch captures the interrupt epoch at the START of the
+  // turn; if interrupt() advances the epoch mid-turn, every delta that arrives
+  // afterwards must be DROPPED (not played, not re-arm "responding"), or the
+  // realtime model talks over Sir despite the barge-in.
+  it("keeps a delta whose epoch matches the turn's captured epoch", () => {
+    expect(shouldDropAudioDelta(3, 3)).toBe(false);
+  });
+  it("drops a delta once the epoch has advanced (a barge-in happened)", () => {
+    expect(shouldDropAudioDelta(3, 4)).toBe(true);
+  });
+  it("treats any epoch advance (not just +1) as a barge-in", () => {
+    expect(shouldDropAudioDelta(0, 2)).toBe(true);
   });
 });

@@ -381,9 +381,12 @@ async function runVoiceAction(
   sessionId: string | null,
   task: string,
   onStep?: (tool: string, args: unknown) => void,
+  signal?: AbortSignal,
 ): Promise<{ text: string; sessionId: string | null }> {
   const base = `http://127.0.0.1:${cfg.port}`;
   const auth = { authorization: `Bearer ${voiceInternalToken}` };
+  // If the voice connection already dropped before we started, don't run at all.
+  if (signal?.aborted) return { text: "", sessionId };
   try {
     const postChat = () => fetch(`${base}/api/chat`, {
       method: "POST",
@@ -393,6 +396,7 @@ async function runVoiceAction(
       // (single source of truth for voice turns; no double-store). Independent of
       // `voice` (do NOT overload it): this flag only gates message storage.
       body: JSON.stringify({ sessionId, text: task, persist: false }),
+      signal,
     });
     let post = await postChat();
     // A previous action may still hold this session (a long-running or stuck
@@ -407,7 +411,12 @@ async function runVoiceAction(
     const started = (await post.json()) as { sessionId?: string };
     const sid = started.sessionId ?? sessionId;
     if (!sid) return { text: "I couldn't start that, Sir.", sessionId };
-    const res = await fetch(`${base}/api/chat/${sid}/stream`, { headers: auth });
+    // If the voice connection drops mid-run, kill the loopback run so it stops
+    // executing tools (and frees the shared browser) instead of finishing into a
+    // dead socket — the zombie-run fix.
+    const killOnAbort = () => { void fetch(`${base}/api/chat/${sid}/kill`, { method: "POST", headers: auth }).catch(() => {}); };
+    signal?.addEventListener("abort", killOnAbort, { once: true });
+    const res = await fetch(`${base}/api/chat/${sid}/stream`, { headers: auth, signal });
     const reader = res.body?.getReader();
     if (!reader) return { text: "Done.", sessionId: sid };
     const decoder = new TextDecoder();
@@ -432,8 +441,11 @@ async function runVoiceAction(
       }
     }
     try { await reader.cancel(); } catch { /* */ }
+    signal?.removeEventListener("abort", killOnAbort); // ran to completion — don't kill on a later close
     return { text: finalText || "Done.", sessionId: sid };
   } catch (e) {
+    // An abort surfaces here as an AbortError; the connection is gone, so the
+    // (now-empty) result is never spoken anyway.
     return { text: `That didn't work, Sir — ${e instanceof Error ? e.message : String(e)}`, sessionId };
   }
 }

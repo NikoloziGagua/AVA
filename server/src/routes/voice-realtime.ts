@@ -391,7 +391,7 @@ export interface RealtimeProxyDeps {
    * runs this — the full /api/chat agent — and the result is spoken back. When
    * absent, the proxy stays transcribe-only (model never speaks).
    */
-  runAction?: (sessionId: string | null, task: string, onStep?: (tool: string, args: unknown) => void) => Promise<{ text: string; sessionId: string | null }>;
+  runAction?: (sessionId: string | null, task: string, onStep?: (tool: string, args: unknown) => void, signal?: AbortSignal) => Promise<{ text: string; sessionId: string | null }>;
   /** Voice for the realtime model's spoken output (hybrid mode). */
   voice?: string;
   log?: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
@@ -456,6 +456,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     // In hybrid mode the proxy owns the action handoff; the session id is tracked
     // here and may be (re)assigned when an action turn creates one.
     let sessionId = requestedSessionId;
+    // Aborts any in-flight do_on_computer agent run when THIS connection drops, so
+    // a mid-task disconnect (1006) doesn't leave a zombie run burning tokens and
+    // holding the shared browser — and so a reconnect starts clean instead of
+    // double-executing the command.
+    const actionAbort = new AbortController();
 
     // No `OpenAI-Beta: realtime=v1` header: that selects the beta protocol, and
     // we're now speaking the GA session schema over the GA `/v1/realtime` path.
@@ -497,8 +502,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               "asks you to DO something on the computer (open/find files, run commands, browse, " +
               "control apps, remember something), CALL do_on_computer with a clear task and do NOT " +
               "speak the steps or the result yourself — the system narrates each step and speaks the " +
-              "result aloud. After the tool returns, stay silent unless Sir asks a follow-up. For " +
-              "everything else (chit-chat, questions), just reply directly in your own voice.",
+              "result aloud. After the tool returns, stay silent unless Sir asks a follow-up. If Sir " +
+              "asks how it went WHILE the task is still running, say you're still working on it — never " +
+              "say it's \"done\" and never invent results before the system has actually spoken them. " +
+              "For everything else (chit-chat, questions), just reply directly in your own voice.",
             vad,
             deps.voice ?? DEFAULT_VOICE,
             { pushToTalk },
@@ -622,9 +629,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           void (async () => {
             try {
               // Narrate each agent step to the client (it speaks them via TTS).
+              // actionAbort.signal ties this run to the connection: if the client
+              // drops mid-task, runVoiceAction aborts its fetches and kills the
+              // loopback run instead of finishing into a dead socket.
               const r = await deps.runAction!(sessionId, task, (tool, args) => {
                 try { client.send(stepFrame(tool, args)); } catch { /* */ }
-              });
+              }, actionAbort.signal);
               sessionId = r.sessionId ?? sessionId;
               try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
               // Persist the action RESULT as Ava's turn. The user's raw words were
@@ -731,10 +741,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     });
 
     client.on("close", () => {
+      try { actionAbort.abort(); } catch { /* ignore */ } // cancel any in-flight do_on_computer run
       try { upstream.close(); } catch { /* ignore */ }
     });
     client.on("error", (err) => {
       log.warn("realtime client error:", err.message);
+      try { actionAbort.abort(); } catch { /* ignore */ }
       try { upstream.close(); } catch { /* ignore */ }
     });
   }

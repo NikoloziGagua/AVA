@@ -12,6 +12,7 @@ import { reflect } from "../src/self/reflect.js";
 import { loadSelfKnowledge } from "../src/self/identity.js";
 import { addWorktree, removeWorktree } from "../src/self/worktree.js";
 import { headSha, swapTo, revertTo } from "../src/self/swap.js";
+import { SAFETY_RE, assertSwapSafe } from "../src/self/safety-guard.js";
 import { verify } from "../src/self/verify.js";
 import { buildRunner } from "../src/self/verify-runner.js";
 import { bootSmoke } from "../src/self/boot-smoke.js";
@@ -35,7 +36,8 @@ function log(msg: string): void {
   try { appendFileSync(LOG, line + "\n"); } catch { /* */ }
 }
 
-const SAFETY_RE = /(\/(security|policy|auth)\/|\/self\/(verify|swap|watchdog|boot-smoke|improver|suggest|claude-session|auto-improve|model-policy|intents)|approval|settings\.local|\.claude\/|path-allowlist|workerEnv|scrub)/i;
+// SAFETY_RE is imported from the shared safety-guard module (single source of
+// truth shared with the live interactive path in src/index.ts).
 
 const MAX_ITERS = Number(process.env.MAX_ITERS ?? 60);
 const MAX_CONSEC_FAILS = Number(process.env.MAX_CONSEC_FAILS ?? 6);
@@ -82,19 +84,19 @@ const deps: ImproverDeps = {
     execFileSync("git", ["commit", "-m", msg], { cwd, stdio: ["ignore", "pipe", "pipe"] });
     return execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
   },
-  swapTo: (sha) => {
+  swapTo: (sha, lastKnownGood) => {
     // HARD GUARD: never ship a change that touches safety-critical code.
-    const files = execFileSync("git", ["diff", "--name-only", `${sha}^`, sha], { cwd: cfg.repoRoot }).toString();
-    if (SAFETY_RE.test(files)) throw new Error(`guard: refusing to swap — change touches safety-critical code:\n${files}`);
+    // Diff the candidate against last-known-good (shared guard, single source).
+    assertSwapSafe(cfg.repoRoot, lastKnownGood, sha);
     swapTo(cfg.repoRoot, sha);
   },
   revertTo: (sha) => revertTo(cfg.repoRoot, sha),
   restart: async () => {},
-  watch: (knownGood) => {
+  watch: (knownGood, swapped) => {
     const healthUrl = `http://127.0.0.1:${cfg.port}/api/health`;
     const entry = join(cfg.repoRoot, "server/src/self/watchdog-main.ts");
     try {
-      const c = spawn("npx", ["tsx", entry, cfg.repoRoot, knownGood, healthUrl, "45000"],
+      const c = spawn("npx", ["tsx", entry, cfg.repoRoot, knownGood, healthUrl, "45000", swapped],
         { cwd: cfg.repoRoot, detached: true, stdio: "ignore", shell: true });
       c.unref();
     } catch { /* */ }

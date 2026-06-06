@@ -70,11 +70,17 @@ export function buildPolicyHook(opts: PolicyHookArgs): PolicyHook {
         // best-effort; push failures must not block approval flow
       });
     }
-    // Sir gets a veto window; if he doesn't decline in time, it auto-approves.
+    // Sir gets a veto window. The timeout default depends on how destructive the
+    // op is (the classifier tier carried on the "ask" decision):
+    //   • medium → "approve": Sir didn't decline in time, so proceed (convenience).
+    //   • high   → "expire": genuinely destructive (fs_delete, rm -rf, format,
+    //     reg delete, shutdown, submit/checkout). If Sir never saw it, it is
+    //     CANCELLED, not silently executed — auto-DENY, not auto-approve.
     // A Stop mid-window aborts the signal, which resolves this as expired (not
-    // approved) so the pending tool is cancelled rather than run.
+    // approved) so the pending tool is cancelled rather than run — in BOTH tiers.
+    const onTimeout: "approve" | "expire" = e.tier === "high" ? "expire" : "approve";
     const r = await waitForDecision(
-      opts.db, approval.id, opts.approvalTimeoutMs ?? autoApproveMs(), "approve", opts.signal,
+      opts.db, approval.id, opts.approvalTimeoutMs ?? autoApproveMs(), onTimeout, opts.signal,
     );
     opts.emit({ kind: "approval_resolved", payload: { id: approval.id, status: r.status as "approved" | "denied" | "expired" } });
     if (r.status === "approved") return { allow: true };

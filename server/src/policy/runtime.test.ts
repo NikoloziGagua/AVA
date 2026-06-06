@@ -65,18 +65,59 @@ describe("buildPolicyHook", () => {
     if (!r.allow) expect(r.message).toMatch(/DENIED \(denied\)/);
   });
 
-  it("undecided approval auto-approves after the veto window elapses", async () => {
+  it("undecided MEDIUM op auto-approves after the veto window elapses (convenience)", async () => {
     const events: PolicyEvent[] = [];
     const hook = buildPolicyHook({
       db, sessionId,
       emit: (e) => events.push(e),
       approvalTimeoutMs: 50, // tiny veto window for the test
     });
-    // Destructive shell still classifies "high" → ask, so the veto window applies.
-    const r = await hook("shell", { command: "rm -rf /tmp/x" });
+    // claude_code classifies "medium" → ask; an undecided medium op auto-approves.
+    const r = await hook("claude_code", { prompt: "edit a file" });
     expect(r).toEqual({ allow: true });
     const resolved = events.find((e) => e.kind === "approval_resolved");
     expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("approved");
+  });
+
+  // ── Item 5: genuinely destructive HIGH-risk ops AUTO-DENY on timeout ──────
+  it("undecided HIGH-risk op auto-DENIES after the veto window (not allow)", async () => {
+    const events: PolicyEvent[] = [];
+    const hook = buildPolicyHook({
+      db, sessionId,
+      emit: (e) => events.push(e),
+      approvalTimeoutMs: 50,
+    });
+    // rm -rf classifies "high" — if Sir is away it must be CANCELLED, not run.
+    const r = await hook("shell", { command: "rm -rf /tmp/x" });
+    expect(r.allow).toBe(false);
+    if (!r.allow) expect(r.message).toMatch(/DENIED \(expired\)/);
+    const resolved = events.find((e) => e.kind === "approval_resolved");
+    expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("expired");
+  });
+
+  it("undecided HIGH-risk fs_delete auto-DENIES on timeout", async () => {
+    const hook = buildPolicyHook({ db, sessionId, emit: () => {}, approvalTimeoutMs: 50 });
+    const r = await hook("fs_delete", { path: "C:/ai/important.txt" });
+    expect(r.allow).toBe(false);
+    if (!r.allow) expect(r.message).toMatch(/DENIED \(expired\)/);
+  });
+
+  it("undecided HIGH-risk submit/checkout click auto-DENIES on timeout", async () => {
+    const hook = buildPolicyHook({ db, sessionId, emit: () => {}, approvalTimeoutMs: 50 });
+    const r = await hook("chrome_click", { selector: "button[type='submit']" });
+    expect(r.allow).toBe(false);
+    if (!r.allow) expect(r.message).toMatch(/DENIED \(expired\)/);
+  });
+
+  it("HIGH-risk op still RUNS if Sir explicitly approves within the window", async () => {
+    const hook = buildPolicyHook({
+      db, sessionId,
+      emit: (e) => { if (e.kind === "approval_required") setTimeout(() => decide(db, e.payload.id, "approved"), 5); },
+      approvalTimeoutMs: 5_000,
+    });
+    // Auto-deny is only the TIMEOUT behaviour; an explicit approval still allows.
+    const r = await hook("shell", { command: "rm -rf /tmp/x" });
+    expect(r).toEqual({ allow: true });
   });
 
   it("Stop during the veto window cancels (not allow): aborting the signal blocks the tool", async () => {

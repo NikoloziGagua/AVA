@@ -9,10 +9,16 @@ export type ImproverDeps = {
   verify: (cwd: string) => Promise<{ ok: boolean; log: string }>;
   headSha: () => string;
   commitWorktree: (cwd: string, msg: string) => string;
-  swapTo: (sha: string) => void;
+  /** Move the live tree to the verified commit. `lastKnownGood` is the pre-swap
+   *  HEAD; the binding uses it to refuse a swap whose diff touches
+   *  safety-critical code (Ava must not hot-swap a weakening of its guardrails). */
+  swapTo: (sha: string, lastKnownGood: string) => void;
   revertTo: (sha: string) => void;
   restart: () => Promise<void>;
-  watch: (knownGood: string) => Promise<void>;
+  /** Watchdog: rolls back to `knownGood` if the new build never gets healthy.
+   *  `swapped` is the commit the swap moved HEAD to, so the watchdog can SKIP the
+   *  rollback if newer work was committed on top in the meantime. */
+  watch: (knownGood: string, swapped: string) => Promise<void>;
   emit: (e: { intentId: string; step: string; ok?: boolean }) => void;
 };
 
@@ -49,11 +55,11 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     const knownGood = deps.headSha();
     const sha = deps.commitWorktree(wt.path, `self: ${intent.goal}`);
     updateIntent(db, id, { last_known_good: knownGood, commit_sha: sha, branch: wt.branch });
-    deps.swapTo(sha);
+    deps.swapTo(sha, knownGood);
     deps.emit({ intentId: id, step: "swapped", ok: true });
     updateIntent(db, id, { status: "swapped", outcome: "shipped" });
 
-    void deps.watch(knownGood); // transient watchdog; rolls back if unhealthy
+    void deps.watch(knownGood, sha); // transient watchdog; rolls back if unhealthy (skips if newer work landed)
     await deps.restart();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

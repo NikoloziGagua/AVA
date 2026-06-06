@@ -40,8 +40,9 @@ import { bootstrapMemoryDir } from "./memory/bootstrap.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
 import { loadSelfKnowledge } from "./self/identity.js";
-import { addWorktree, removeWorktree } from "./self/worktree.js";
+import { addWorktree, removeWorktree, pruneOrphanWorktrees } from "./self/worktree.js";
 import { headSha, swapTo, revertTo } from "./self/swap.js";
+import { assertSwapSafe } from "./self/safety-guard.js";
 import { verify } from "./self/verify.js";
 import { flightcheck } from "./self/flightcheck.js";
 import { buildRunner } from "./self/verify-runner.js";
@@ -63,6 +64,15 @@ const db = openDb(cfg.dbPath);
 {
   const reconciled = failStaleIntents(db);
   if (reconciled > 0) log.info({ reconciled }, "self: failed stale intents orphaned by restart");
+}
+// Prune git worktrees/branches leaked by a crash mid-improvement (failStaleIntents
+// only reconciles DB rows; the temp worktree dir + self/<id> branch are left
+// behind, showing as "prunable"). Best-effort — never crash boot on it.
+try {
+  const prunedBranches = pruneOrphanWorktrees(cfg.repoRoot);
+  if (prunedBranches.length > 0) log.info({ prunedBranches }, "self: pruned orphaned self-improve worktrees/branches");
+} catch (e) {
+  log.warn({ err: e instanceof Error ? e.message : String(e) }, "self: worktree prune failed (non-fatal)");
 }
 // Same for background Claude consults: none is in flight at boot, so any left
 // 'running' was orphaned by a restart — mark them failed.
@@ -179,16 +189,23 @@ function buildImproverDeps(): ImproverDeps {
       }
       return execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
     },
-    swapTo: (sha) => swapTo(cfg.repoRoot, sha),
+    swapTo: (sha, lastKnownGood) => {
+      // HARD GUARD: never hot-swap a change that touches safety-critical code
+      // (security/policy/auth, self-improve machinery, approval flow, path
+      // allowlist, scrub). Throws → runImprovement marks the intent failed.
+      assertSwapSafe(cfg.repoRoot, lastKnownGood, sha);
+      swapTo(cfg.repoRoot, sha);
+    },
     revertTo: (sha) => revertTo(cfg.repoRoot, sha),
     // Dev: tsx watch auto-reloads when swapTo rewrites the working tree. (pm2/prod restart is a follow-up.)
     restart: async () => {},
     // Detached watchdog: survives the reload and reverts if the new build never gets healthy.
-    watch: (knownGood) => {
+    // `swapped` is passed through so the rollback is skipped if newer work landed on top.
+    watch: (knownGood, swapped) => {
       const healthUrl = `http://127.0.0.1:${cfg.port}/api/health`;
       const entry = join(cfg.repoRoot, "server/src/self/watchdog-main.ts");
       try {
-        const child = spawn("npx", ["tsx", entry, cfg.repoRoot, knownGood, healthUrl, "45000"],
+        const child = spawn("npx", ["tsx", entry, cfg.repoRoot, knownGood, healthUrl, "45000", swapped],
           { cwd: cfg.repoRoot, detached: true, stdio: "ignore", shell: true });
         child.unref();
       } catch (e) {
@@ -344,8 +361,15 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
 // REAL /api/chat agent (full tools), reusing the exact text path. We call it over
 // loopback with a dedicated internal token and read the run's final reply off the
 // SSE stream so the realtime model can speak it.
+//
+// REALTIME_HYBRID is now only an optional default-seed for the engine preference
+// (legacy opt-in); it no longer gates the handoff. The action handoff is wired
+// UNCONDITIONALLY — it's harmless when the model never calls do_on_computer — so
+// the persisted engine value alone (read at connect via getVoiceEngine) decides
+// whether the realtime model speaks (openai/hybrid) or stays transcribe-only
+// (chatterbox). The internal token must therefore always exist.
 const hybridVoice = !!process.env.REALTIME_HYBRID;
-const voiceInternalToken = hybridVoice ? issueToken(db, { label: "voice-internal" }).secret : "";
+const voiceInternalToken = issueToken(db, { label: "voice-internal" }).secret;
 async function runVoiceAction(
   sessionId: string | null,
   task: string,
@@ -407,19 +431,23 @@ async function runVoiceAction(
   }
 }
 
-// Realtime voice WebSocket proxy: /api/voice/realtime. HYBRID (model speaks +
-// do_on_computer routes to the full agent) is OPT-IN via REALTIME_HYBRID — the
-// matching client audio path must be live too, so until then the default stays
-// the working transcribe-only path. (hybridVoice declared above with the token.)
+// Realtime voice WebSocket proxy: /api/voice/realtime. The action handoff
+// (runAction → the full /api/chat agent via do_on_computer) is provided
+// UNCONDITIONALLY: it's inert unless the realtime model actually calls the tool,
+// and whether the model speaks at all is decided by the persisted engine value
+// (getVoiceEngine, read at connect) — "openai"/"hybrid" speak, "chatterbox" stays
+// transcribe-only. This is what lets the engine toggle switch speak↔transcribe
+// without REALTIME_HYBRID being set.
 const realtimeProxy = buildRealtimeProxy({
   db,
   apiKey: cfg.openaiApiKey,
   memoryDir: cfg.memoryDir,
-  ...(hybridVoice ? { runAction: runVoiceAction, voice: process.env.REALTIME_VOICE || "alloy" } : {}),
+  runAction: runVoiceAction,
+  voice: process.env.REALTIME_VOICE || undefined,
   log,
 });
 realtimeProxy.attach(httpServer);
-if (hybridVoice) log.info("realtime voice: HYBRID mode enabled (REALTIME_HYBRID)");
+if (hybridVoice) log.info("realtime voice: REALTIME_HYBRID set (legacy default-seed; engine value now drives speak/transcribe)");
 
 try {
   startSystray({

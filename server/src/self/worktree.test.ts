@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, lstatSync } 
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addWorktree, removeWorktree } from "./worktree.js";
+import { addWorktree, removeWorktree, pruneOrphanWorktrees } from "./worktree.js";
 
 function tmpRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "ava-wt-"));
@@ -43,5 +43,43 @@ describe("worktree", () => {
     // Worktree gone, but the real node_modules + its contents survive.
     expect(existsSync(w.path)).toBe(false);
     expect(existsSync(join(repo, "node_modules", "marker.txt"))).toBe(true);
+  });
+
+  // ── Item 4: prune orphaned self-improve worktrees + branches at boot ──────
+  const branches = (r: string) =>
+    execFileSync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads/"], { cwd: r })
+      .toString().split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+
+  it("deletes a dangling self/* branch whose worktree dir was removed", () => {
+    const w = addWorktree(repo, "orphan-1");
+    expect(branches(repo)).toContain("self/orphan-1");
+    // Simulate a crash mid-improvement: the temp worktree dir vanishes but the
+    // branch + git's admin entry are left behind (the "prunable" leak).
+    rmSync(w.path, { recursive: true, force: true });
+
+    const deleted = pruneOrphanWorktrees(repo);
+    expect(deleted).toContain("self/orphan-1");
+    expect(branches(repo)).not.toContain("self/orphan-1");
+  });
+
+  it("keeps a self/* branch that still backs a live worktree", () => {
+    wt = addWorktree(repo, "alive-1"); // cleaned up in afterEach
+    const deleted = pruneOrphanWorktrees(repo);
+    expect(deleted).not.toContain("self/alive-1");
+    expect(branches(repo)).toContain("self/alive-1");
+  });
+
+  it("never touches non-self branches", () => {
+    execFileSync("git", ["branch", "feature/keep-me"], { cwd: repo });
+    const w = addWorktree(repo, "orphan-2");
+    rmSync(w.path, { recursive: true, force: true });
+    pruneOrphanWorktrees(repo);
+    expect(branches(repo)).toContain("feature/keep-me");
+    expect(branches(repo)).not.toContain("self/orphan-2");
+  });
+
+  it("is a no-op (no throw) on a repo with no self/* branches", () => {
+    expect(() => pruneOrphanWorktrees(repo)).not.toThrow();
+    expect(pruneOrphanWorktrees(repo)).toEqual([]);
   });
 });

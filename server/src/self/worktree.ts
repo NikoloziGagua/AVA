@@ -41,6 +41,60 @@ export function addWorktree(repoRoot: string, id: string): Worktree {
   return { path, branch };
 }
 
+/** Branches currently checked out by a live worktree (refs/heads/<short>). */
+function worktreeBranches(repoRoot: string): Set<string> {
+  const out = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repoRoot }).toString();
+  const branches = new Set<string>();
+  for (const line of out.split(/\r?\n/)) {
+    const m = /^branch\s+refs\/heads\/(.+)$/.exec(line.trim());
+    if (m) branches.add(m[1]!);
+  }
+  return branches;
+}
+
+/**
+ * Boot cleanup for leaked self-improvement state. A crash/restart mid-improvement
+ * leaves a temp worktree dir + a `self/<id>` branch behind ("prunable" in
+ * `git worktree list`). `failStaleIntents` reconciles the DB rows but nothing
+ * touches git. This:
+ *   1. `git worktree prune` — drops admin entries whose dirs are already gone,
+ *   2. deletes any `self/*` branch NOT backing a live worktree.
+ * Best-effort: every step is wrapped so a boot can never crash on it. Returns the
+ * deleted branch names (for logging).
+ */
+export function pruneOrphanWorktrees(repoRoot: string): string[] {
+  try {
+    execFileSync("git", ["worktree", "prune"], { cwd: repoRoot });
+  } catch { /* best-effort */ }
+
+  let live: Set<string>;
+  try {
+    live = worktreeBranches(repoRoot);
+  } catch {
+    return []; // can't enumerate worktrees → don't risk deleting a live branch
+  }
+
+  let selfBranches: string[] = [];
+  try {
+    const out = execFileSync(
+      "git", ["for-each-ref", "--format=%(refname:short)", "refs/heads/self/"], { cwd: repoRoot },
+    ).toString();
+    selfBranches = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+
+  const deleted: string[] = [];
+  for (const branch of selfBranches) {
+    if (live.has(branch)) continue; // still in use by a worktree — leave it
+    try {
+      execFileSync("git", ["branch", "-D", branch], { cwd: repoRoot });
+      deleted.push(branch);
+    } catch { /* best-effort per branch */ }
+  }
+  return deleted;
+}
+
 export function removeWorktree(repoRoot: string, wt: Worktree): void {
   // Remove the node_modules junctions BEFORE git deletes the worktree, and
   // remove them NON-recursively. rmSync(recursive:false) on a junction is a

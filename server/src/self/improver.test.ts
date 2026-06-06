@@ -46,6 +46,33 @@ describe("runImprovement", () => {
     expect(ds).toContain("edited index.ts");
   });
 
+  it("a safety-guard throw in swapTo fails the intent (no live swap)", async () => {
+    // Simulates assertSwapSafe refusing a candidate that touches guardrail code:
+    // swapTo throws → the intent is marked failed instead of clobbering.
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "weaken classify.ts" });
+    let watched = false;
+    await runImprovement(d, id, deps({
+      swapTo: () => { throw new Error("guard: refusing to swap — change touches safety-critical code:\nserver/src/policy/classify.ts"); },
+      watch: async () => { watched = true; },
+    }));
+    expect(getIntent(d, id)!.status).toBe("failed");
+    expect(getIntent(d, id)!.error).toMatch(/safety-critical/);
+    expect(watched).toBe(false); // never reached the watchdog/restart
+  });
+
+  it("passes last_known_good through to swapTo for the guard diff", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    let seen: { sha: string; lkg: string } | null = null;
+    await runImprovement(d, id, deps({
+      headSha: () => "LKG_SHA",
+      commitWorktree: () => "CAND_SHA",
+      swapTo: (sha: string, lkg: string) => { seen = { sha, lkg }; },
+    }));
+    expect(seen).toEqual({ sha: "CAND_SHA", lkg: "LKG_SHA" });
+  });
+
   it("a no-op commit surfaces as a clear failure", async () => {
     const d = db();
     const id = createIntent(d, { trigger: "explicit", goal: "g" });

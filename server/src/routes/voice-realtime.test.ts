@@ -15,6 +15,7 @@ import {
   speechDurationMs,
   decideTranscriptForward,
   forwardFrame,
+  chooseResumeOrNew,
 } from "./voice-realtime.js";
 import { DEFAULT_TRANSCRIPT_GATE } from "../voice/transcript-gate.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
@@ -78,6 +79,18 @@ describe("hybrid voice (speak + do_on_computer)", () => {
 
   it("actionStartedFrame carries the task for an in-progress caption", () => {
     expect(JSON.parse(actionStartedFrame("open downloads"))).toEqual({ type: "ava.action", task: "open downloads" });
+  });
+});
+
+describe("chooseResumeOrNew — voice session continuity", () => {
+  it("resumes the most-recent session by default (voice<->chat shared memory)", () => {
+    expect(chooseResumeOrNew(false, "sess-123")).toEqual({ resumeId: "sess-123" });
+  });
+  it("starts fresh when the client asks for a new conversation (?new=1)", () => {
+    expect(chooseResumeOrNew(true, "sess-123")).toEqual({ resumeId: null });
+  });
+  it("creates a new session when there is no prior conversation to resume", () => {
+    expect(chooseResumeOrNew(false, null)).toEqual({ resumeId: null });
   });
 });
 

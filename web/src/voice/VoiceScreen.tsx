@@ -6,7 +6,7 @@ import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { useRealtimeVoice } from "./useRealtimeVoice.js";
 import { useMicAmplitude } from "./useMicAmplitude.js";
-import { Mic, Keyboard, MicOff, Pause, X } from "lucide-react";
+import { Mic, Keyboard, MicOff, Pause, X, MessageSquarePlus } from "lucide-react";
 
 export interface VoiceScreenProps {
   initialSessionId: string | null;
@@ -68,6 +68,16 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
       />
 
       <div className="hud absolute left-5 top-5 z-20 text-[10px]" style={{ color: "var(--ac)" }}>{stateLabel}</div>
+      {/* New conversation: voice resumes your latest chat by default, so this is
+          how you deliberately start fresh. */}
+      <button
+        onClick={() => v.newConversation()}
+        aria-label="new conversation"
+        title="New conversation"
+        className="absolute right-16 top-5 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white/70 transition-all active:scale-95"
+      >
+        <MessageSquarePlus size={14} />
+      </button>
       <button
         onClick={() => onExit(v.sessionId)}
         aria-label="exit"

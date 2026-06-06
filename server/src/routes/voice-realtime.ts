@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Db } from "../state/db.js";
 import { buildSystemPrompt } from "../orchestrator/system-prompt.js";
 import { validateToken } from "../auth/tokens.js";
-import { createSession, touchSession } from "../state/sessions.js";
+import { createSession, touchSession, listSessions } from "../state/sessions.js";
 import { appendMessage, listMessages } from "../state/messages.js";
 import {
   gateTranscript,
@@ -248,6 +248,17 @@ export function sessionHelloFrame(sessionId: string | null, hybrid: boolean): st
   return JSON.stringify({ type: "ava.session", sessionId, mode: hybrid ? "hybrid" : "transcribe" });
 }
 
+/** When hybrid voice connects WITHOUT a session id (e.g. entering voice from the
+ *  home orb), decide whether to resume an existing conversation or start fresh.
+ *  Default is to RESUME the most-recent session so voice↔chat share one continuous
+ *  memory ("ask in voice → finish in chat → ask in voice again, it remembers").
+ *  `wantNew` (the client's "+new conversation" control → `?new=1`) forces a fresh
+ *  session. Pure so the resume/new choice is unit-testable without a socket;
+ *  `resumeId === null` means the caller should create a new session. */
+export function chooseResumeOrNew(wantNew: boolean, mostRecentId: string | null): { resumeId: string | null } {
+  return { resumeId: wantNew ? null : mostRecentId };
+}
+
 /** Sent (hybrid) when do_on_computer starts so the UI shows progress, not dead air. */
 export function actionStartedFrame(task: string): string {
   return JSON.stringify({ type: "ava.action", task });
@@ -419,13 +430,15 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         return;
       }
       const sessionIdParam = url.searchParams.get("sessionId");
+      // "+new conversation" control: force a fresh session instead of resuming.
+      const wantNew = url.searchParams.get("new") === "1";
       // Endpointing mode picked by the client. "enter_push_to_talk" disables the
       // server's automatic VAD/turn-detection for this session; anything else
       // (incl. absent) keeps the default VAD behaviour.
       const pushToTalk = url.searchParams.get("inputMode") === "enter_push_to_talk";
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startSession(ws, sessionIdParam, deviceId, pushToTalk).catch((err) => {
+        startSession(ws, sessionIdParam, deviceId, pushToTalk, wantNew).catch((err) => {
           log.error("realtime session error:", err instanceof Error ? err.message : err);
           try { ws.close(1011, "session error"); } catch { /* ignore */ }
         });
@@ -433,7 +446,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     });
   }
 
-  async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string, pushToTalk = false) {
+  async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string, pushToTalk = false, wantNew = false) {
     // The realtime model speaks only when the engine is NOT "chatterbox". In
     // "chatterbox" mode it stays transcribe-only (the client routes transcripts
     // to /api/chat and speaks via /api/speak=Chatterbox), so ALL voice is the
@@ -493,10 +506,17 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         : buildRealtimeSessionUpdate(system, vad, { pushToTalk });
       upstream.send(JSON.stringify(sessionUpdate));
       // HYBRID: unify voice with chat. Voice from the orb may have no session
-      // (requestedSessionId === null), so mint one now — the hello below sends it
-      // and the client latches `ava.session`, adopting the real id. This makes the
-      // spoken turns land in the SAME persistent conversation as typed messages.
-      if (hybrid && !sessionId) sessionId = createSession(deps.db, { title: "Voice chat" }).id;
+      // (requestedSessionId === null). RESUME the most-recent conversation by
+      // default so voice↔chat stay one continuous memory — re-entering voice and
+      // asking "what did you do?" recalls what just happened, instead of landing
+      // in a brand-new empty "Voice chat" session (the old bug: each entry minted
+      // a fresh session). `?new=1` (the client's "+new" control) forces a fresh
+      // one. The hello below sends whichever id we land on; the client latches
+      // `ava.session` and adopts it.
+      if (hybrid && !sessionId) {
+        const { resumeId } = chooseResumeOrNew(wantNew, listSessions(deps.db)[0]?.id ?? null);
+        sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
+      }
       // Seed the realtime model with recent conversation history so voice no
       // longer forgets what was typed (and vice-versa). Context only — NO
       // response.create — and bounded by N (env-tunable) because every seeded

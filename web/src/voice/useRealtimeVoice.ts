@@ -207,6 +207,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const prevVoiceEngineRef = useRef<VoiceEngine>(voiceEngine); // last engine we connected with (reconnect on change)
   const capturingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(initialSessionId);
+  // When the user taps "+new", the next connect forces a fresh server session
+  // (?new=1) instead of resuming the most-recent conversation. Consumed (reset)
+  // once the server hands back the new session id.
+  const forceNewRef = useRef(false);
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
   const esRef = useRef<EventSource | null>(null);
   const ttsRef = useRef<HTMLAudioElement | null>(null);
@@ -541,6 +545,9 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     const eff = realtimeActionToHybridEffect(action);
     switch (eff.kind) {
       case "session":
+        // Got the (possibly newly-created) session id from the proxy — the
+        // force-new request is now satisfied, so future reconnects resume it.
+        forceNewRef.current = false;
         setSessionId(eff.sessionId);
         return;
       case "caption_user":
@@ -696,10 +703,15 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
       // 2. WebSocket
       const token = getToken() ?? "";
-      const sid = sessionIdRef.current;
+      // "+new" forces a fresh session: drop any current id and tell the proxy not
+      // to resume (?new=1). Otherwise a null id lets the proxy RESUME the most
+      // recent conversation (voice<->chat shared memory).
+      const forceNew = forceNewRef.current;
+      const sid = forceNew ? null : sessionIdRef.current;
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${proto}//${location.host}/api/voice/realtime?t=${encodeURIComponent(token)}`
         + (sid ? `&sessionId=${encodeURIComponent(sid)}` : "")
+        + (forceNew ? "&new=1" : "")
         // Tell the proxy to disable automatic VAD/turn-detection in push-to-talk.
         + `&inputMode=${encodeURIComponent(inputModeRef.current)}`;
       const ws = new WebSocket(wsUrl);
@@ -854,6 +866,23 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     setCaption(null);
   }, [cleanup]);
 
+  // "+new conversation": drop the current session and reconnect forcing a fresh
+  // one (?new=1). Same teardown→reconnect dance as the engine-change effect, so
+  // it reuses the proven reconnect path rather than inventing a new one.
+  const newConversation = useCallback(() => {
+    forceNewRef.current = true;
+    setSessionId(null);
+    sessionIdRef.current = null;
+    intentionalStopRef.current = false; // we DO want the reconnect to fire
+    reconnectRef.current = 0;
+    setCapturing(false);
+    capturingRef.current = false;
+    setCaption(null);
+    cleanup();
+    setState("connecting");
+    window.setTimeout(() => { if (!intentionalStopRef.current) startRef.current(); }, 150);
+  }, [cleanup]);
+
   // Barge-in: stop Ava speaking / abort the in-flight agent run and return to
   // listening. Kills the server-side run too so tools don't keep executing.
   const interrupt = useCallback(() => {
@@ -983,6 +1012,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     start,
     stop,
     interrupt,
+    newConversation,
     // Input-mode (endpointing) controls.
     inputMode,
     setInputMode,

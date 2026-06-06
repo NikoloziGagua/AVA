@@ -20,6 +20,12 @@ export class PidfileRegistry {
       .filter((n) => Number.isInteger(n) && n > 0);
   }
 
+  /** Alias of {@link list}: the PIDs registered under a runId. Used by the kill
+   *  endpoint to find a run's child processes so it can killTree() the subtree. */
+  listForRun(runId: string): number[] {
+    return this.list(runId);
+  }
+
   clear(runId: string): void {
     const dir = join(this.baseDir, runId);
     rmSync(dir, { recursive: true, force: true });

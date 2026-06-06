@@ -1,0 +1,85 @@
+import { describe, it, expect, vi } from "vitest";
+import express from "express";
+import request from "supertest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openDb } from "../state/db.js";
+import { ActiveRuns } from "../orchestrator/active-runs.js";
+import { PidfileRegistry } from "../process/pidfile.js";
+import { chatRoutes } from "./chat.js";
+import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
+
+// Capture every pid tree-kill is asked to kill, so we can assert the kill
+// endpoint reaches the run's child PIDs (not just abort()).
+const killed: number[] = [];
+vi.mock("tree-kill", () => ({
+  default: (pid: number, _sig: string, cb: (e?: Error) => void) => {
+    killed.push(pid);
+    cb();
+  },
+}));
+
+function setup() {
+  const dir = mkdtempSync(join(tmpdir(), "ava-kill-"));
+  const memoryDir = mkdtempSync(join(tmpdir(), "ava-kill-mem-"));
+  const db = openDb(join(dir, "x.db"));
+  db.prepare("INSERT INTO device_tokens (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)").run("d", "h", "t", Date.now());
+  const runs = new ActiveRuns();
+  const pidfiles = new PidfileRegistry(join(dir, "pidfiles"));
+
+  // Fake agent loop: simulate a running tool by registering two child PIDs
+  // under the run's runId, then block until the run is aborted (Stop). This is
+  // exactly the "tool already executing" state the kill must reach.
+  const FAKE_PIDS = [424242, 424243];
+  const runAgentImpl = vi.fn(async (opts: { runId: string; abort: AbortController }) => {
+    for (const pid of FAKE_PIDS) pidfiles.add(opts.runId, pid);
+    await new Promise<void>((resolve) => {
+      if (opts.abort.signal.aborted) return resolve();
+      opts.abort.signal.addEventListener("abort", () => resolve(), { once: true });
+    });
+  });
+
+  const app = express();
+  app.use(express.json());
+  app.use((req: express.Request & { deviceId?: string }, _res, next) => { req.deviceId = "d"; next(); });
+  app.use("/api/chat", chatRoutes(
+    db, runs, (_q, _s, n) => n(),
+    {
+      pidfiles, fsRoots: [], memoryDir, dataDir: dir,
+      getChrome: async () => ({} as never),
+      provider: new MockLLMProvider({ scripts: [] }),
+      runAgentImpl: runAgentImpl as never,
+    },
+    { anthropic: null, openai: null },
+  ));
+  return { app, runs, pidfiles, FAKE_PIDS, db };
+}
+
+describe("chat kill endpoint", () => {
+  it("killTrees the run's child PIDs (not just abort) when Stop is pressed", async () => {
+    killed.length = 0;
+    const { app, FAKE_PIDS } = setup();
+
+    // Start a run; the fake agent registers child PIDs and blocks on abort.
+    const started = await request(app).post("/api/chat").send({ text: "do a long thing" }).expect(200);
+    const sessionId = started.body.sessionId as string;
+
+    // Give the fire-and-forget run a tick to register its child PIDs.
+    await new Promise((r) => setTimeout(r, 30));
+
+    const res = await request(app).post(`/api/chat/${sessionId}/kill`).send().expect(200);
+    expect(res.body.aborted).toBe(true);
+
+    // The kill endpoint must have killed every child pid the run registered.
+    for (const pid of FAKE_PIDS) expect(killed).toContain(pid);
+  });
+
+  it("kill on a session with no active run is a no-op (no PIDs killed)", async () => {
+    killed.length = 0;
+    const { app } = setup();
+    const res = await request(app).post(`/api/chat/no-such-session/kill`).send().expect(200);
+    expect(res.body.aborted).toBe(false);
+    expect(killed).toEqual([]);
+  });
+});

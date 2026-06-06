@@ -16,6 +16,7 @@ import { autoTitle } from "../orchestrator/auto-title.js";
 import { maybeSummarize } from "../orchestrator/auto-summary.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
+import { killTree } from "../process/kill-tree.js";
 import type { Approval } from "../state/approvals.js";
 import type { LLMProvider, Message as LLMMessage } from "../orchestrator/llm/types.js";
 import { buildShellTool } from "../tools/shell-tool.js";
@@ -161,7 +162,11 @@ export function chatRoutes(
 
     const buffer = new SseBuffer({ maxEvents: 500, maxBytes: 5 * 1024 * 1024 });
     const abort = new AbortController();
-    const activeRun = { sessionId, abort, buffer };
+    // Generate the runId HERE (before register) so it's stored on the ActiveRun.
+    // The same id keys the agent run, the tool ctx, and the pidfiles — letting
+    // the kill endpoint find this run's child PIDs and kill the whole subtree.
+    const runId = nanoid(12);
+    const activeRun = { sessionId, runId, abort, buffer };
     runs.register(activeRun);
 
     const full = getSessionFull(db, sessionId);
@@ -247,7 +252,6 @@ export function chatRoutes(
 
     void (async () => {
       const sid = sessionId!;
-      const runId = nanoid(12);
       // Collect the run's tool steps so a successful >=2-tool run can be
       // distilled into a reusable playbook (best-effort, fire-and-forget).
       const runSteps: RunStep[] = [];
@@ -412,13 +416,26 @@ export function chatRoutes(
     req.on("close", () => clearInterval(interval));
   });
 
-  r.post("/:sessionId/kill", auth, (req, res) => {
+  r.post("/:sessionId/kill", auth, async (req, res) => {
     const sessionId = req.params.sessionId;
     if (typeof sessionId !== "string") {
       res.status(400).json({ error: "bad_request" });
       return;
     }
+    // Look up the run's id BEFORE unregistering so we can find its child PIDs.
+    const runId = runs.getRunId(sessionId);
+    // 1. Abort the model read-loop and signal in-flight tools (computer_use's
+    //    GUI loop, claude_code's child via its abort listener).
     const ok = runs.abort(sessionId);
+    // 2. Kill the run's spawned process subtree — claude_code's `claude -p`
+    //    child and everything it spawned — so Stop actually halts running work,
+    //    not just the next model turn. Best-effort: never let a dead/missing pid
+    //    fail the request. (Belt-and-suspenders with claude_code's own abort.)
+    if (runId) {
+      for (const pid of agentDeps.pidfiles.listForRun(runId)) {
+        try { await killTree(pid); } catch { /* already gone — keep going */ }
+      }
+    }
     runs.unregister(sessionId); // free the slot immediately so a new turn can start (preempt)
     res.json({ aborted: ok });
   });

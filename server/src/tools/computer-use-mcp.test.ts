@@ -20,14 +20,14 @@ describe("buildComputerUseTool (lazy chrome)", () => {
     const t = buildComputerUseTool({ anthropic: {} as any, openai: null, getChrome, emit: () => {} });
 
     expect(getChrome).not.toHaveBeenCalled();
-    await t.run({ task: "open example" });
+    await t.run({ task: "open example" }, { runId: "test" });
     expect(getChrome).toHaveBeenCalledTimes(1);
   });
 
   it("does not boot chrome when no provider key is configured", async () => {
     const getChrome = vi.fn();
     const t = buildComputerUseTool({ anthropic: null, openai: null, getChrome, emit: () => {} });
-    const r = await t.run({ task: "open example" });
+    const r = await t.run({ task: "open example" }, { runId: "test" });
     expect(getChrome).not.toHaveBeenCalled();
     expect(r.ok).toBe(false);
   });

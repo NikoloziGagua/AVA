@@ -128,4 +128,20 @@ describe("runComputerUse", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("task required");
   });
+
+  it("bails immediately when given an already-aborted signal (Stop reaches the GUI loop)", async () => {
+    const surface = makeSurface();
+    const { client, create } = makeClient();
+    const ac = new AbortController();
+    ac.abort();
+    const r = await runComputerUse(
+      { client, surface, signal: ac.signal },
+      { task: "do something" },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("interrupted");
+    // Never calls the model when already aborted, and never even screenshots.
+    expect(create).not.toHaveBeenCalled();
+    expect(surface.screenshotBytes).not.toHaveBeenCalled();
+  });
 });

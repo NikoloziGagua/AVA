@@ -10,7 +10,10 @@ export type ComputerUseToolEvent =
 
 export type ComputerUseToolDef = {
   tool: Tool;
-  run: (args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }>;
+  run: (
+    args: Record<string, unknown>,
+    ctx: { runId: string; signal?: AbortSignal },
+  ) => Promise<{ text: string; ok: boolean }>;
 };
 
 export function buildComputerUseTool(opts: {
@@ -37,14 +40,15 @@ export function buildComputerUseTool(opts: {
         required: ["task"],
       },
     },
-    run: async (args) => {
+    run: async (args, ctx) => {
       opts.emit({ kind: "computer_use.call", args });
       const task = String(args.task ?? "");
+      const signal = ctx?.signal;
 
       if (opts.anthropic) {
         const chrome = await opts.getChrome();
         const r = await runComputerUse(
-          { client: opts.anthropic, surface: chrome },
+          { client: opts.anthropic, surface: chrome, signal },
           { task },
         );
         if (!r.ok) {
@@ -59,7 +63,7 @@ export function buildComputerUseTool(opts: {
       if (opts.openai) {
         const chrome = await opts.getChrome();
         const r = await runComputerUseOpenAI(
-          { client: opts.openai, surface: chrome },
+          { client: opts.openai, surface: chrome, signal },
           { task },
         );
         if (!r.ok) {

@@ -2,6 +2,9 @@ import type { SseBuffer } from "../sse/buffer.js";
 
 export type ActiveRun = {
   sessionId: string;
+  /** The run's id (nanoid). Lets the kill endpoint find this run's child PIDs
+   *  in the PidfileRegistry so it can kill the whole subtree on Stop. */
+  runId: string;
   abort: AbortController;
   buffer: SseBuffer;
 };
@@ -15,6 +18,12 @@ export class ActiveRuns {
 
   get(sessionId: string): ActiveRun | undefined {
     return this.runs.get(sessionId);
+  }
+
+  /** The runId of the run currently holding this session's slot, or null. The
+   *  kill endpoint uses it to look up the run's child PIDs and kill the tree. */
+  getRunId(sessionId: string): string | null {
+    return this.runs.get(sessionId)?.runId ?? null;
   }
 
   unregister(sessionId: string, run?: ActiveRun): void {

@@ -30,6 +30,14 @@ describe("buildToolRegistry", () => {
     expect(r).toEqual({ call_id: "c1", output: "result-text", is_error: false });
   });
 
+  it("threads the abort signal from ctx into the tool's run (so Stop reaches tools)", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "ok", ok: true });
+    const ac = new AbortController();
+    const reg = buildToolRegistry({ tools: [defOf("a", run)], ctx: { runId: "r1", signal: ac.signal } });
+    await reg.dispatch({ id: "c1", name: "a", args: { x: "y" } });
+    expect(run).toHaveBeenCalledWith({ x: "y" }, { runId: "r1", signal: ac.signal });
+  });
+
   it("packages an error when the ToolDef returns ok:false", async () => {
     const run = vi.fn().mockResolvedValue({ text: "boom", ok: false });
     const reg = buildToolRegistry({ tools: [defOf("a", run)], ctx: { runId: "r1" } });

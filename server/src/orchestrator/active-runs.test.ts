@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { ActiveRuns, type ActiveRun } from "./active-runs.js";
 
-function fakeRun(sessionId: string): ActiveRun {
-  return { sessionId, abort: new AbortController(), buffer: {} } as unknown as ActiveRun;
+function fakeRun(sessionId: string, runId = `run-${sessionId}`): ActiveRun {
+  return { sessionId, runId, abort: new AbortController(), buffer: {} } as unknown as ActiveRun;
 }
 
 describe("ActiveRuns", () => {
@@ -11,6 +11,17 @@ describe("ActiveRuns", () => {
     const r = fakeRun("s1");
     runs.register(r);
     expect(runs.get("s1")).toBe(r);
+  });
+
+  it("stores the runId and returns it via getRunId (so kill can find the run's PIDs)", () => {
+    const runs = new ActiveRuns();
+    runs.register(fakeRun("s1", "run-abc"));
+    expect(runs.getRunId("s1")).toBe("run-abc");
+  });
+
+  it("getRunId returns null for a session with no active run", () => {
+    const runs = new ActiveRuns();
+    expect(runs.getRunId("missing")).toBeNull();
   });
 
   it("abort() signals the controller and reports whether one was active", () => {

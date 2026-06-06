@@ -19,6 +19,9 @@ export type ComputerUseDeps = {
   client: Anthropic;
   surface: ComputerSurface;
   maxIterations?: number;
+  /** Run's abort signal. Checked before every model turn so the red Stop button
+   *  halts the desktop loop promptly instead of running all ≤25 iterations. */
+  signal?: AbortSignal;
 };
 
 export type ComputerUseResult =
@@ -55,9 +58,12 @@ export async function runComputerUse(
     return { ok: false, reason: "task required" };
   }
 
-  const { client, surface } = deps;
+  const { client, surface, signal } = deps;
   const maxIterations = deps.maxIterations ?? 25;
   const screenshots: string[] = [];
+
+  // Bail before any work (screenshot or model call) if Stop already fired.
+  if (signal?.aborted) return { ok: false, reason: "interrupted" };
 
   const initial = await surface.screenshotBytes();
   if (!initial.ok || !initial.base64) {
@@ -79,6 +85,9 @@ export async function runComputerUse(
   ];
 
   for (let iter = 0; iter < maxIterations; iter++) {
+    // Stop reaches the GUI loop here: abort between turns so an in-flight
+    // computer_use halts promptly instead of finishing all its iterations.
+    if (signal?.aborted) return { ok: false, reason: "interrupted" };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response: any = await client.beta.messages.create({
       model: "claude-sonnet-4-5",
@@ -204,6 +213,9 @@ export type OpenAIComputerUseDeps = {
   client: OpenAI;
   surface: ComputerSurface;
   maxIterations?: number;
+  /** Run's abort signal. Checked before every model turn so the red Stop button
+   *  halts the desktop loop promptly instead of running all ≤25 iterations. */
+  signal?: AbortSignal;
 };
 
 type OpenAIAction =
@@ -247,9 +259,12 @@ export async function runComputerUseOpenAI(
   if (!args || typeof args.task !== "string" || args.task.trim().length === 0) {
     return { ok: false, reason: "task required" };
   }
-  const { client, surface } = deps;
+  const { client, surface, signal } = deps;
   const maxIterations = deps.maxIterations ?? 25;
   const screenshots: string[] = [];
+
+  // Bail before any work (screenshot or model call) if Stop already fired.
+  if (signal?.aborted) return { ok: false, reason: "interrupted" };
 
   const initial = await surface.screenshotBytes();
   if (!initial.ok || !initial.base64) {
@@ -284,6 +299,9 @@ export async function runComputerUseOpenAI(
   })) as ResponsesPayload;
 
   for (let iter = 0; iter < maxIterations; iter++) {
+    // Stop reaches the GUI loop here: abort between turns so an in-flight
+    // computer_use halts promptly instead of finishing all its iterations.
+    if (signal?.aborted) return { ok: false, reason: "interrupted" };
     const calls = response.output.filter(
       (o): o is ComputerCallItem => (o as { type: string }).type === "computer_call",
     );

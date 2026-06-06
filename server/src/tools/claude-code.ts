@@ -11,6 +11,10 @@ export type ClaudeCodeRunArgs = {
   /** Hard cap on the run. If set, the child is killed and the call resolves
    *  `{ ok: false, reason: "timed out after <ms>ms" }` so it can never hang. */
   timeoutMs?: number;
+  /** Run's abort signal. When the red Stop button fires, the spawned child is
+   *  killed (SIGTERM, then SIGKILL after 1s) and the call resolves
+   *  `{ ok: false, reason: "aborted" }` so Stop reaches the worker immediately. */
+  signal?: AbortSignal;
 };
 export type ClaudeCodeResult =
   | { ok: true; output: string; exitCode: number }
@@ -74,10 +78,12 @@ export function buildClaudeCode(cfg: ClaudeCodeConfig): ClaudeCode {
   const buildArgs = cfg.claudeArgs ?? defaultClaudeArgs;
 
   return {
-    async run({ prompt, cwd, runId, model, session, timeoutMs }) {
+    async run({ prompt, cwd, runId, model, session, timeoutMs, signal }) {
       if (DANGEROUS_FLAG.test(prompt)) {
         return { ok: false, reason: "prompt contains --dangerously-skip-permissions (hard-blocked)" };
       }
+      // If Stop already fired before we spawn, don't start the worker at all.
+      if (signal?.aborted) return { ok: false, reason: "aborted" };
       const cwdDecision = cfg.check(cwd);
       if (!cwdDecision.ok) return { ok: false, reason: cwdDecision.reason };
 
@@ -122,7 +128,24 @@ export function buildClaudeCode(cfg: ClaudeCodeConfig): ClaudeCode {
           }, timeoutMs);
           timer.unref?.();
         }
-        const clear = () => { if (timer) clearTimeout(timer); if (killTimer) clearTimeout(killTimer); };
+        // Abort: the red Stop button fired mid-run. Same kill ladder as the
+        // timeout (SIGTERM, then SIGKILL after 1s), but resolve `aborted`.
+        // Belt-and-suspenders with the kill endpoint's killTree of the subtree.
+        const onAbort = () => {
+          if (settled) return;
+          settled = true;
+          try { child.kill("SIGTERM"); } catch { /* already gone */ }
+          killTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already gone */ } }, 1000);
+          killTimer.unref?.();
+          if (typeof childPid === "number") cfg.pidfiles.remove(runId, childPid);
+          resolve({ ok: false, reason: "aborted" });
+        };
+        if (signal) signal.addEventListener("abort", onAbort, { once: true });
+        const clear = () => {
+          if (timer) clearTimeout(timer);
+          if (killTimer) clearTimeout(killTimer);
+          if (signal) signal.removeEventListener("abort", onAbort);
+        };
         child.on("error", (err) => {
           if (settled) return;
           settled = true;

@@ -8,7 +8,10 @@ export type ClaudeCodeToolEvent =
 
 export type ClaudeCodeToolDef = {
   tool: Tool;
-  run: (args: Record<string, unknown>, ctx: { runId: string }) => Promise<{ text: string; ok: boolean }>;
+  run: (
+    args: Record<string, unknown>,
+    ctx: { runId: string; signal?: AbortSignal },
+  ) => Promise<{ text: string; ok: boolean }>;
 };
 
 export function buildClaudeCodeTool(opts: {
@@ -37,6 +40,7 @@ export function buildClaudeCodeTool(opts: {
         cwd: String(args.cwd ?? ""),
         model: typeof args.model === "string" ? args.model : undefined,
         runId: ctx.runId,
+        signal: ctx.signal,
       });
       if (r.ok) {
         const summary = `EXIT ${r.exitCode}\n${r.output}`;

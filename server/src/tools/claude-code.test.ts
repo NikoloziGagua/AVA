@@ -125,6 +125,43 @@ describe("claude_code tool", () => {
     await new Promise((res) => setTimeout(res, 200));
   });
 
+  it("an already-aborted signal resolves {ok:false, reason:'aborted'} without spawning", async () => {
+    const cc = build();
+    const ac = new AbortController();
+    ac.abort();
+    const r = await cc.run({ prompt: "say hi", cwd: root, runId: "rA0", signal: ac.signal });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("aborted");
+  });
+
+  it("aborting mid-run kills the child and resolves {ok:false, reason:'aborted'}", async () => {
+    const reg = new PidfileRegistry(pidDir);
+    const cc = buildClaudeCode({
+      pidfiles: reg,
+      check: buildPathAllowlist({ roots: [`${root.replace(/\\/g, "/")}/**`] }),
+      claudeBinary: process.execPath,
+      // A child that never closes on its own. On SIGTERM it chdir's out of the
+      // temp cwd and exits so Windows releases the directory handle.
+      claudeArgs: () => [
+        "-e",
+        "process.on('SIGTERM',()=>{try{process.chdir(require('os').tmpdir())}catch{};process.exit(0)});setInterval(()=>{},1000)",
+      ],
+    });
+    const ac = new AbortController();
+    const p = cc.run({ prompt: "x", cwd: root, runId: "rA1", signal: ac.signal });
+    // Let it spawn, then hit Stop.
+    await new Promise((res) => setTimeout(res, 20));
+    expect(reg.list("rA1").length).toBeGreaterThan(0);
+    ac.abort();
+    const r = await p;
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("aborted");
+    // pid is released on the abort path so it doesn't leak/zombie.
+    expect(reg.list("rA1").length).toBe(0);
+    // Let the SIGTERM'd child fully exit before afterEach removes the temp cwd.
+    await new Promise((res) => setTimeout(res, 200));
+  });
+
   it("scrubs secrets from output", async () => {
     const cc = buildClaudeCode({
       pidfiles: new PidfileRegistry(pidDir),

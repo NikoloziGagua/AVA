@@ -31,6 +31,14 @@ describe("PidfileRegistry", () => {
     expect(reg.list("run-3").sort()).toEqual([100, 200]);
   });
 
+  it("listForRun returns the pids added under a runId (used by the kill endpoint)", () => {
+    const reg = new PidfileRegistry(dir);
+    reg.add("run-kill", 4242);
+    reg.add("run-kill", 4243);
+    expect(reg.listForRun("run-kill").sort()).toEqual([4242, 4243]);
+    expect(reg.listForRun("nonexistent-run")).toEqual([]);
+  });
+
   it("clears all pidfiles for a run", () => {
     const reg = new PidfileRegistry(dir);
     reg.add("run-4", 1);

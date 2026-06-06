@@ -6,7 +6,14 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 
-export type RunCtx = { runId: string };
+export type RunCtx = {
+  runId: string;
+  /** The run's abort signal. Threaded into long-running tools (computer_use,
+   *  claude_code) so the red Stop button can interrupt work already in flight,
+   *  not just the model read-loop. Optional so existing call sites/tests that
+   *  build a ctx without it still type-check. */
+  signal?: AbortSignal;
+};
 
 export type ToolDef = {
   tool: Tool;

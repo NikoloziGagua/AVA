@@ -116,7 +116,10 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     fsRoots: deps.fsRoots,
   });
   let loadedProjectSlug: string | null = initialProject?.slug ?? null;
-  const registry = buildToolRegistry({ tools: deps.tools, ctx: { runId } });
+  // Pass the run's abort signal into every tool's ctx so the red Stop button
+  // (which calls abort()) reaches tools already executing — claude_code's child
+  // process and computer_use's desktop loop — not just the model read-loop.
+  const registry = buildToolRegistry({ tools: deps.tools, ctx: { runId, signal: abort.signal } });
   const allTools = registry.toolDefinitions();
   // Conversation mode hides tools entirely so the side model can't try to call
   // them. Persona/system prompt stays byte-stable in both modes for cache hits.

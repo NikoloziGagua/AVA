@@ -52,10 +52,12 @@ export const DESTRUCTIVE_PATTERNS: RegExp[] = [
   // remote code execution
   /\b(curl|wget|iwr|invoke-webrequest)\b[\s\S]*\|\s*(sh|bash|iex|invoke-expression)\b/i,
   // PowerShell encoded command via -e/-en/-enc/.../-encodedcommand (short flag).
-  // Negative lookahead skips the benign -e* parameters that share the prefix:
-  // -ExecutionPolicy (-ex…), -ErrorAction/-ErrorVariable (-err…), -Encoding
-  // (-encodi…). -EncodedCommand diverges at "-encode" so it is still caught.
-  /\b(powershell|pwsh)\b[\s\S]*\s-e(?!x|rr|ncodi)[a-z]*\s/i,
+  // Negative lookahead skips the benign -e* parameters/operators that share the
+  // prefix: -ExecutionPolicy (-ex…), -ErrorAction/-ErrorVariable (-err…),
+  // -Encoding (-encodi…), and the comparison/alias operators -eq, -ea, -ev
+  // (q/a/v) that appear constantly inside `powershell -Command "… -eq …"`.
+  // -EncodedCommand diverges at "-encode" so it is still caught.
+  /\b(powershell|pwsh)\b[\s\S]*\s-e(?!x|rr|ncodi|q|a|v)[a-z]*\s/i,
   /\bcertutil\b[\s\S]*-urlcache\b/i,
   // outbound data-upload exfiltration (curl/wget/iwr/irm uploading a file).
   /\b(curl|wget|iwr|invoke-webrequest|invoke-restmethod)\b[\s\S]*(-d\s*@|--data\s*@|-T\s|-InFile\b|@[A-Za-z]:)/i,

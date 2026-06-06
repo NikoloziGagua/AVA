@@ -107,6 +107,12 @@ CREATE TABLE IF NOT EXISTS reasoning_pref (
   updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS voice_engine_pref (
+  scope_id   TEXT PRIMARY KEY,
+  engine     TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chip_label_cache (
   device_id    TEXT NOT NULL,
   prompt_hash  TEXT NOT NULL,

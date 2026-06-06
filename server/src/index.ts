@@ -23,6 +23,7 @@ import { pushRoutes } from "./routes/push.js";
 import { rulesRoutes } from "./routes/rules.js";
 import { approvalsRoutes } from "./routes/approvals.js";
 import { voiceRoutes } from "./routes/voice.js";
+import { voiceEngineRoutes } from "./routes/voice-engine.js";
 import { chipsRoutes } from "./routes/chips.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
@@ -301,10 +302,16 @@ app.use("/api/self", selfRoutes(db, requireToken(db), {
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });
 // STT (/transcribe) + TTS (/speak) primitives only. Voice conversations route
 // through POST /api/chat (the full tool-using agent) via the realtime WS proxy.
+// /speak routes by the global voice-engine pref (openai | chatterbox | hybrid),
+// so db + log are threaded in.
 app.use("/api", voiceRoutes({
   clients: voiceClients,
   requireToken: requireToken(db),
+  db,
+  log,
 }));
+// Get/set how Ava's voice is produced (openai | chatterbox | hybrid).
+app.use("/api/voice/engine", voiceEngineRoutes(db, requireToken(db)));
 
 app.use("/", statusRoutes({ db, runs, startedAt }));
 

@@ -187,6 +187,24 @@ export async function putReasoning(level: "fast" | "thorough"): Promise<void> {
   });
 }
 
+// How Ava's voice is produced:
+//   "openai"     — realtime model speaks (OpenAI) + /api/speak = OpenAI TTS.
+//   "chatterbox" — realtime transcribe-only + /api/speak = local Chatterbox.
+//   "hybrid"     — realtime model speaks chitchat + /api/speak = Chatterbox.
+export type VoiceEngine = "openai" | "chatterbox" | "hybrid";
+
+export async function fetchVoiceEngine(): Promise<VoiceEngine> {
+  const j = await request<{ engine: VoiceEngine }>("/api/voice/engine");
+  return j.engine;
+}
+
+export async function setVoiceEngine(engine: VoiceEngine): Promise<void> {
+  await request<{ engine: VoiceEngine }>("/api/voice/engine", {
+    method: "POST",
+    body: JSON.stringify({ engine }),
+  });
+}
+
 export type MemoryView = {
   personality: string;
   memoryIndex: string;

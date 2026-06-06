@@ -11,6 +11,7 @@ import {
   type TranscriptGateReason,
 } from "../voice/transcript-gate.js";
 import { getReasoningLevel, type ReasoningLevel } from "../state/reasoning-pref.js";
+import { getVoiceEngine } from "../state/voice-engine-pref.js";
 import { formatSpeechText } from "../voice/speechText.js";
 import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
@@ -433,7 +434,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
   }
 
   async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string, pushToTalk = false) {
-    const hybrid = !!deps.runAction;
+    // The realtime model speaks only when the engine is NOT "chatterbox". In
+    // "chatterbox" mode it stays transcribe-only (the client routes transcripts
+    // to /api/chat and speaks via /api/speak=Chatterbox), so ALL voice is the
+    // cloned voice. "openai"/"hybrid" keep the realtime model speaking. Read at
+    // connect time so a mid-session engine switch takes effect on reconnect.
+    const hybrid = getVoiceEngine(deps.db) !== "chatterbox" && !!deps.runAction;
     // In hybrid mode the proxy owns the action handoff; the session id is tracked
     // here and may be (re)assigned when an action turn creates one.
     let sessionId = requestedSessionId;

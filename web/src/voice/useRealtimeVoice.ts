@@ -15,7 +15,14 @@ import {
 } from "./voiceInputMode.js";
 import { shouldToggleOnEnter } from "./pushToTalk.js";
 import { humanizeTool } from "../chat/humanize.js";
-import { api, approveApproval, denyApproval } from "../api.js";
+import {
+  api,
+  approveApproval,
+  denyApproval,
+  fetchVoiceEngine,
+  setVoiceEngine as apiSetVoiceEngine,
+  type VoiceEngine,
+} from "../api.js";
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
 const SAMPLE_RATE = 24000;
@@ -179,6 +186,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   // mic audio is sent ONLY while a turn is captured (Enter starts, Enter finishes);
   // background/external audio between turns is never transmitted. Persisted.
   const [inputMode, setInputModeState] = useState<VoiceInputMode>(() => loadVoiceInputMode());
+  // How Ava's voice is produced (openai | chatterbox | hybrid). Server-persisted
+  // (not localStorage): it changes the realtime "speaks vs transcribe" mode, so
+  // it must be the same wherever Ava runs. Fetched on mount; a change POSTs it
+  // and reconnects so the new realtime mode takes effect.
+  const [voiceEngine, setVoiceEngineState] = useState<VoiceEngine>("openai");
   // True while an Enter push-to-talk turn is actively being captured.
   const [capturing, setCapturing] = useState(false);
 
@@ -190,6 +202,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const mutedRef = useRef(false);
   const inputModeRef = useRef<VoiceInputMode>(inputMode);
   const prevInputModeRef = useRef<VoiceInputMode>(inputMode); // last mode we connected with (Bug A reconnect)
+  const prevVoiceEngineRef = useRef<VoiceEngine>(voiceEngine); // last engine we connected with (reconnect on change)
   const capturingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(initialSessionId);
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
@@ -218,6 +231,24 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const setInputMode = useCallback((m: VoiceInputMode) => {
     saveVoiceInputMode(m);
     setInputModeState(m);
+  }, []);
+
+  // Fetch the current engine on mount so the toggle reflects the active setting.
+  useEffect(() => {
+    let live = true;
+    void fetchVoiceEngine()
+      .then((e) => { if (live) { setVoiceEngineState(e); prevVoiceEngineRef.current = e; } })
+      .catch(() => { /* keep the optimistic default */ });
+    return () => { live = false; };
+  }, []);
+
+  // Change the engine: persist it server-side, then update local state. The
+  // reconnect effect below applies the new realtime "speaks vs transcribe" mode
+  // by reconnecting an active session. We set local state optimistically so the
+  // toggle is responsive; a failed POST is non-fatal (voice keeps working).
+  const setVoiceEngine = useCallback((e: VoiceEngine) => {
+    setVoiceEngineState(e);
+    void apiSetVoiceEngine(e).catch(() => { /* non-fatal */ });
   }, []);
 
   // Sequential TTS queue: clips are generated + played in order, so we can speak
@@ -747,6 +778,25 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     return () => window.clearTimeout(t);
   }, [inputMode, cleanup]);
 
+  // Engine change → reconnect so the server applies the new realtime mode: in
+  // "chatterbox" the realtime model is transcribe-only; in "openai"/"hybrid" it
+  // speaks. The proxy fixes this at CONNECT time (reads getVoiceEngine then), so
+  // a live switch only takes effect after a reconnect. Same machinery as the
+  // input-mode reconnect above; only an already-active session needs it (a fresh
+  // start() reads the engine server-side on connect).
+  useEffect(() => {
+    const prev = prevVoiceEngineRef.current;
+    prevVoiceEngineRef.current = voiceEngine;
+    if (prev === voiceEngine) return;
+    if (stateRef.current === "idle") return;
+    setCapturing(false);
+    capturingRef.current = false;
+    cleanup();
+    setState("connecting");
+    const t = window.setTimeout(() => { if (!intentionalStopRef.current) startRef.current(); }, 150);
+    return () => window.clearTimeout(t);
+  }, [voiceEngine, cleanup]);
+
   const stop = useCallback(() => {
     intentionalStopRef.current = true;
     reconnectRef.current = 0;
@@ -877,5 +927,8 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     setInputMode,
     capturing,
     togglePushToTalk,
+    // Voice-engine (how Ava's voice is produced) controls.
+    voiceEngine,
+    setVoiceEngine,
   };
 }

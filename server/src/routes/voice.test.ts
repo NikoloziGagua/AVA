@@ -1,8 +1,10 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import express from "express";
 import request from "supertest";
 import { voiceRoutes } from "./voice.js";
 import type { VoiceClients } from "../tools/voice-clients.js";
+import { openInMemoryDb } from "../state/db.js";
+import { setVoiceEngine, type VoiceEngine } from "../state/voice-engine-pref.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
 import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
 
@@ -10,11 +12,13 @@ import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
 // no-saved-preference default speaks with a female voice.
 const FEMALE_VOICES = new Set(["nova", "shimmer", "coral", "sage", "fable"]);
 
-function setup(clients: VoiceClients) {
+function setup(clients: VoiceClients, engine?: VoiceEngine) {
   const app = express();
   app.use(express.json());
   const auth = (_req: any, _res: any, next: any) => next();
-  app.use("/api", voiceRoutes({ clients, requireToken: auth }));
+  const db = openInMemoryDb(); // defaults to engine="openai" → current behaviour
+  if (engine) setVoiceEngine(db, engine);
+  app.use("/api", voiceRoutes({ clients, requireToken: auth, db }));
   return app;
 }
 
@@ -149,6 +153,71 @@ describe("voiceRoutes /api/speak", () => {
     const app = setup(mockClients({}));
     await request(app).post("/api/speak").send({}).expect(400);
     await request(app).post("/api/speak").send({ text: "   " }).expect(400);
+  });
+});
+
+describe("voiceRoutes /api/speak — Chatterbox engine routing", () => {
+  const realFetch = global.fetch;
+  afterEach(() => { global.fetch = realFetch; vi.restoreAllMocks(); });
+
+  it("chatterbox engine: POSTs {text} to Chatterbox and returns audio/wav", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([7, 8, 9]).buffer, { status: 200, headers: { "content-type": "audio/wav" } }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    // OpenAI speak must NOT be called when Chatterbox succeeds.
+    const speak = vi.fn();
+    const app = setup(mockClients({ speak }), "chatterbox");
+    const res = await request(app).post("/api/speak").send({ text: "Yes, Sir, done." });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/audio\/wav/);
+    expect(Array.from(res.body as Buffer)).toEqual([7, 8, 9]);
+    expect(speak).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("8123");
+    // Body carries the "Sir"-smoothed text.
+    expect(JSON.parse(init.body as string)).toEqual({ text: "Yes Sir done." });
+  });
+
+  it("hybrid engine also synthesizes /api/speak via Chatterbox", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Uint8Array([1]).buffer, { status: 200 }),
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const app = setup(mockClients({}), "hybrid");
+    const res = await request(app).post("/api/speak").send({ text: "hi" });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/audio\/wav/);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to OpenAI (mpeg) when Chatterbox fails and a client is configured", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const speak = vi.fn().mockResolvedValue({
+      arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer,
+    });
+    const app = setup(mockClients({ speak }), "chatterbox");
+    const res = await request(app).post("/api/speak").send({ text: "hello" });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/audio\/mpeg/);
+    expect(Array.from(res.body as Buffer)).toEqual([4, 5, 6]);
+    expect(speak).toHaveBeenCalledOnce();
+  });
+
+  it("returns 502 when Chatterbox fails and no OpenAI client is configured", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    // clients=null AND chatterbox engine → no fallback possible.
+    const app = express();
+    app.use(express.json());
+    const auth = (_req: any, _res: any, next: any) => next();
+    const db = openInMemoryDb();
+    setVoiceEngine(db, "chatterbox");
+    app.use("/api", voiceRoutes({ clients: null, requireToken: auth, db }));
+    const res = await request(app).post("/api/speak").send({ text: "hello" });
+    expect(res.status).toBe(502);
   });
 });
 

@@ -118,6 +118,32 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         </div>
       )}
 
+      {/* Voice-engine toggle: how Ava's voice is produced. Server-persisted;
+          changing it reconnects so the realtime speaks/transcribe mode applies. */}
+      <div className="absolute bottom-40 left-0 right-0 z-20 flex items-center justify-center">
+        <div className="glass flex items-center gap-1 rounded-full p-1 text-[10px]">
+          {([
+            ["openai", "OpenAI"],
+            ["chatterbox", "Chatterbox"],
+            ["hybrid", "Hybrid"],
+          ] as const).map(([value, label]) => {
+            const active = v.voiceEngine === value;
+            return (
+              <button
+                key={value}
+                aria-label={`${label} voice engine`}
+                aria-pressed={active}
+                onClick={() => v.setVoiceEngine(value)}
+                className="rounded-full px-3 py-1 transition-all"
+                style={active ? { background: "var(--ac)", color: "#04222a" } : { color: "rgba(255,255,255,0.6)" }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Input-mode toggle: hands-free VAD ↔ Enter push-to-talk. Persisted. */}
       <div className="absolute bottom-28 left-0 right-0 z-20 flex items-center justify-center">
         <div className="glass flex items-center gap-1 rounded-full p-1 text-[10px]">

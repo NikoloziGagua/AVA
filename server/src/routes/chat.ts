@@ -20,6 +20,7 @@ import { killTree } from "../process/kill-tree.js";
 import type { Approval } from "../state/approvals.js";
 import type { LLMProvider, Message as LLMMessage } from "../orchestrator/llm/types.js";
 import { buildShellTool } from "../tools/shell-tool.js";
+import { buildControlAppTool } from "../tools/control-app-mcp.js";
 import { buildFilesystem } from "../tools/filesystem.js";
 import { buildFilesystemTools } from "../tools/filesystem-mcp.js";
 import { buildClaudeCode } from "../tools/claude-code.js";
@@ -340,6 +341,7 @@ export function chatRoutes(
           });
           tools = [
             buildShellTool({ signal: abort.signal }),
+            buildControlAppTool({ signal: abort.signal }),
             ...(buildFilesystemTools({ fs, emit: noop }) as ToolDef[]),
             buildClaudeCodeTool({ cc, emit: noop }) as ToolDef,
             ...(buildChromeTools({ getChrome: agentDeps.getChrome, emit: noop }) as ToolDef[]),
@@ -363,7 +365,14 @@ export function chatRoutes(
         } else {
           // Voice/conversation must also reach the update log, since Sir asks
           // "what's happening" by voice — and can confer with Claude by voice.
-          tools = [...discussTools, ...memoryTools, ...buildUpdateLogTools({ dataDir: agentDeps.dataDir })];
+          // control_app is included so Sir can drive native apps by voice (focus
+          // a window, type, hotkeys) — local PowerShell, no API cost.
+          tools = [
+            buildControlAppTool({ signal: abort.signal }),
+            ...discussTools,
+            ...memoryTools,
+            ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
+          ];
         }
         await impl({
           prompt: promptForAgent,

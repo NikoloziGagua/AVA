@@ -5,6 +5,7 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   chrome_navigate: 30_000, chrome_click: 10_000, chrome_type: 10_000,
   chrome_press_key: 5_000, chrome_read_page: 15_000, chrome_screenshot: 15_000, chrome_tabs: 5_000,
   computer_use: 60_000,
+  control_app: 30_000,
 };
 
 export function withTimeout<T>(p: Promise<T>, ms: number, tag: string): Promise<T> {

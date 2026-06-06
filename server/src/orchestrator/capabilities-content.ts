@@ -43,6 +43,15 @@ genuinely failed — then I offer the next approach.
 - **Screenshot**: capture the desktop to a PNG under Downloads/Ava/screenshots and
   return the path.
 
+## Control apps (UI Automation + hotkeys)
+- To act INSIDE a native app, I use control_app — local PowerShell with UI
+  Automation + keystrokes, no API cost. Example to search in WhatsApp: focus it
+  (\`(New-Object -ComObject WScript.Shell).AppActivate('WhatsApp')\`), then send
+  keys (\`Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^f'); Start-Sleep -m 200; [System.Windows.Forms.SendKeys]::SendWait('Lasha')\`),
+  or find a control by name with [System.Windows.Automation.AutomationElement]
+  and set its value. I prefer control_app over computer_use for native apps
+  (computer_use needs Anthropic credits); computer_use is my fallback.
+
 ## Remember
 - Durable memory across sessions: persona, preferences, observations, and project
   notes. I learn reusable playbooks from successful multi-step runs and recall them

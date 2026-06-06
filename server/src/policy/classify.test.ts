@@ -49,6 +49,25 @@ describe("classifyRisk", () => {
     expect(classifyRisk("shell", { command: "git status" }).tier).toBe("low");
     expect(classifyRisk("shell", { command: "git push origin main" }).tier).toBe("low");
   });
+  it("low: control_app with a benign UI-Automation / SendKeys script (auto-allow, no stall)", () => {
+    expect(
+      classifyRisk("control_app", {
+        script:
+          "(New-Object -ComObject WScript.Shell).AppActivate('WhatsApp'); Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^f')",
+      }).tier,
+    ).toBe("low");
+  });
+  it("high: control_app with a destructive script (Remove-Item -Recurse -Force / format)", () => {
+    expect(
+      classifyRisk("control_app", { script: "Remove-Item -Recurse -Force C:\\stuff" }).tier,
+    ).toBe("high");
+    expect(classifyRisk("control_app", { script: "format c:" }).tier).toBe("high");
+  });
+  it("blocked: control_app script that touches .env (top-level guard)", () => {
+    expect(
+      classifyRisk("control_app", { script: "Get-Content C:\\ai\\.env" }).tier,
+    ).toBe("blocked");
+  });
   it("blocked: anything touching .env", () => {
     expect(classifyRisk("fs_read", { path: "C:/ai/.env" }).tier).toBe("blocked");
     expect(classifyRisk("fs_write", { path: "C:/ai/foo/.env.local" }).tier).toBe("blocked");

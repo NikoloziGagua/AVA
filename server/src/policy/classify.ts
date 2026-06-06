@@ -79,6 +79,17 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (tool === "computer_use") return { tier: "medium", reason: "computer_use is GUI scripting" };
 
+  if (tool === "control_app") {
+    // control_app runs PowerShell (UI Automation + SendKeys) locally. The
+    // top-level ENV_RE guard already blocks `.env`. Reuse the shell safety net:
+    // a destructive script keeps Sir's veto (high); anything else auto-allows
+    // instantly (low) so local app control has no 15s approval stall.
+    const script = String((args as { script?: unknown })?.script ?? "");
+    const destructive = matchDestructive(script);
+    if (destructive) return { tier: "high", reason: "destructive control_app script" };
+    return { tier: "low", reason: "local app control" };
+  }
+
   // Desktop capture writes only inside the Downloads/Ava/screenshots dir (the tool
   // rejects any other output path), so it is a low-risk local write — available
   // without a high-risk gate, but not silent/read-only since it captures the screen.

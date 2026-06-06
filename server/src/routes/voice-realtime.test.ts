@@ -16,6 +16,7 @@ import {
   decideTranscriptForward,
   forwardFrame,
   chooseResumeOrNew,
+  seedContentType,
 } from "./voice-realtime.js";
 import { DEFAULT_TRANSCRIPT_GATE } from "../voice/transcript-gate.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
@@ -91,6 +92,16 @@ describe("chooseResumeOrNew — voice session continuity", () => {
   });
   it("creates a new session when there is no prior conversation to resume", () => {
     expect(chooseResumeOrNew(false, null)).toEqual({ resumeId: null });
+  });
+});
+
+describe("seedContentType — GA realtime content-part type for seeded turns", () => {
+  it("uses output_text for assistant turns (GA rejects 'text')", () => {
+    expect(seedContentType("assistant")).toBe("output_text");
+  });
+  it("uses input_text for user and system turns", () => {
+    expect(seedContentType("user")).toBe("input_text");
+    expect(seedContentType("system")).toBe("input_text");
   });
 });
 

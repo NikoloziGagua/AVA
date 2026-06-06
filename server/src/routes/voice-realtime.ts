@@ -259,6 +259,14 @@ export function chooseResumeOrNew(wantNew: boolean, mostRecentId: string | null)
   return { resumeId: wantNew ? null : mostRecentId };
 }
 
+/** Content-part type for seeding a stored turn into the realtime model via
+ *  `conversation.item.create`. The GA realtime schema is asymmetric: user/system
+ *  turns use `input_text`, assistant turns use `output_text` (sending `text` for
+ *  an assistant turn is rejected with "Value must be 'output_text'"). */
+export function seedContentType(role: string): "input_text" | "output_text" {
+  return role === "assistant" ? "output_text" : "input_text";
+}
+
 /** Sent (hybrid) when do_on_computer starts so the UI shows progress, not dead air. */
 export function actionStartedFrame(task: string): string {
   return JSON.stringify({ type: "ava.action", task });
@@ -537,9 +545,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             item: {
               type: "message",
               role: m.role,
-              // Realtime content-part types are asymmetric: user turns use
-              // `input_text`, assistant turns use `text`.
-              content: [{ type: m.role === "assistant" ? "text" : "input_text", text: m.content }],
+              // Asymmetric GA content-part type (input_text vs output_text). The
+              // old `text` was rejected — "Value must be 'output_text'" — and only
+              // surfaced once voice started RESUMING a session with assistant turns
+              // to seed; a fresh session had nothing to seed, so it stayed hidden.
+              content: [{ type: seedContentType(m.role), text: m.content }],
             },
           }));
         }

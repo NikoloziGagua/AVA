@@ -15,6 +15,14 @@ import { getVoiceEngine } from "../state/voice-engine-pref.js";
 import { formatSpeechText } from "../voice/speechText.js";
 import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
+import {
+  resolveVoiceProvider,
+  describeVoiceProvider,
+  redactSecrets,
+  buildHumeRealtimeUrl,
+  type VoiceProviderConfig,
+  type HumeProviderConfig,
+} from "./voice-provider-config.js";
 
 // ─── OpenAI Realtime API: TRANSCRIBE-ONLY proxy ──────────────────────────────
 //
@@ -158,6 +166,25 @@ export function buildRealtimeSessionUpdate(
 // (full tools), and feeds the result back so the model speaks it. Silence
 // hallucination stays gated by the same VAD tuning + input-transcript gate.
 
+/**
+ * Spoken-conversation persona, appended to the base system prompt for any
+ * speaking provider (OpenAI hybrid + Hume). Tuned for warm, curious, natural
+ * talk with snappy pacing: short replies, no long pauses, and "Sir" said
+ * smoothly as part of the phrase rather than as a dramatic, comma-walled aside.
+ */
+export const VOICE_PERSONA_INSTRUCTIONS =
+  "\n\n[VOICE] You're speaking aloud in a live conversation. Be warm, curious, and natural — " +
+  "like a sharp friend, not a formal assistant. Keep replies short and conversational, and keep " +
+  "your pacing quick: start talking right away, don't leave long pauses before or after you speak. " +
+  "Say \"Sir\" naturally, woven smoothly into the phrase without a comma pause or dramatic emphasis " +
+  "around it (\"Yes Sir\", not \"Yes, Sir,\"). When the owner asks you to DO something on the " +
+  "computer (open/find files, run commands, browse, control apps, remember something), CALL " +
+  "do_on_computer with a clear task and do NOT speak the steps or the result yourself — the system " +
+  "narrates each step and speaks the result aloud. After the tool returns, stay silent unless Sir " +
+  "asks a follow-up. If Sir asks how it went WHILE the task is still running, say you're still " +
+  "working on it — never say it's \"done\" and never invent results before the system has actually " +
+  "spoken them. For everything else (chit-chat, questions), just reply directly in your own voice.";
+
 export const DO_ON_COMPUTER_TOOL = {
   type: "function" as const,
   name: "do_on_computer",
@@ -234,6 +261,117 @@ export function toolResultFrames(callId: string, output: string): string[] {
     JSON.stringify({ type: "conversation.item.create", item: { type: "function_call_output", call_id: callId, output } }),
     JSON.stringify({ type: "response.create" }),
   ];
+}
+
+// ─── Hume EVI provider (alternative upstream, selected via AVA_VOICE_PROVIDER) ─
+//
+// When AVA_VOICE_PROVIDER=hume (and HUME_API_KEY is set) the proxy speaks Hume's
+// EVI websocket instead of OpenAI's. Hume has a different wire protocol, so the
+// proxy translates the events the browser cares about into the SAME OpenAI-shaped
+// frames the web client already understands (classifyRealtimeEvent), keeping the
+// front-end provider-agnostic. If the Hume socket can't be established, the proxy
+// falls back to the proven OpenAI path. NOTHING here logs a secret value.
+
+/**
+ * Build Hume EVI `session_settings`: the system prompt and the chosen voice. The
+ * voice is pinned by exact id when `HUME_VOICE_ID` is set (most reliable),
+ * otherwise by name (defaults to "Alice Bennett"). PCM16 @ 24k matches the audio
+ * format the browser path already uses for OpenAI, so playback is unchanged.
+ */
+export function buildHumeSessionSettings(instructions: string, hume: HumeProviderConfig) {
+  const voice = hume.voiceId
+    ? { provider: "HUME_AI" as const, id: hume.voiceId }
+    : { provider: "HUME_AI" as const, name: hume.voiceName };
+  return {
+    type: "session_settings" as const,
+    system_prompt: instructions,
+    voice,
+    audio: { encoding: "linear16" as const, sample_rate: 24000, channels: 1 },
+  };
+}
+
+/** What a translated Hume event tells the proxy to do. `frames` are JSON strings
+ *  in the OpenAI-shaped client protocol; the optional fields drive persistence /
+ *  the gate / the action handoff, mirroring the OpenAI branch's side effects. */
+export interface HumeTranslation {
+  /** Client-bound frames (already OpenAI-shaped) to forward verbatim. */
+  frames: string[];
+  /** A finished user utterance (subject to the same transcript gate). */
+  userTranscript?: string;
+  /** A finished assistant spoken turn (to persist). */
+  assistantText?: string;
+  /** The model asked to act on the computer. */
+  toolCall?: { callId: string; name: string; args: Record<string, unknown> };
+}
+
+/**
+ * Translate one inbound Hume EVI message into the OpenAI-shaped frames the web
+ * client already handles, plus any side-effect signals. Unknown/irrelevant
+ * messages translate to no frames. Pure + total so it is unit-testable without a
+ * live Hume socket.
+ */
+export function translateHumeEvent(evt: {
+  type?: string;
+  data?: string;
+  message?: { role?: string; content?: string };
+  tool_call_id?: string;
+  name?: string;
+  parameters?: string;
+  slug?: string;
+}): HumeTranslation {
+  switch (evt.type) {
+    case "audio_output": {
+      // Base64 PCM chunk → the GA audio-delta frame the client plays.
+      const b64 = evt.data ?? "";
+      return { frames: b64 ? [JSON.stringify({ type: "response.output_audio.delta", delta: b64 })] : [] };
+    }
+    case "user_message": {
+      const text = evt.message?.content ?? "";
+      // Surface as the OpenAI input-transcription event; the proxy still runs it
+      // through the transcript gate before it becomes a real turn.
+      return { frames: [], userTranscript: text };
+    }
+    case "assistant_message": {
+      const text = evt.message?.content ?? "";
+      return {
+        frames: text ? [JSON.stringify({ type: "response.output_audio_transcript.done", transcript: text })] : [],
+        assistantText: text,
+      };
+    }
+    case "assistant_end":
+      return { frames: [JSON.stringify({ type: "response.done" })] };
+    case "tool_call": {
+      let args: Record<string, unknown> = {};
+      try { args = evt.parameters ? (JSON.parse(evt.parameters) as Record<string, unknown>) : {}; } catch { args = {}; }
+      return { frames: [], toolCall: { callId: evt.tool_call_id ?? "", name: evt.name ?? "", args } };
+    }
+    case "error":
+      return { frames: [JSON.stringify({ type: "error", error: { message: evt.message?.content ?? evt.slug ?? "hume error" } })] };
+    default:
+      // user_interruption, assistant_prosody, chat_metadata, etc. — nothing the
+      // client needs.
+      return { frames: [] };
+  }
+}
+
+/** Hume's tool-result frame: report a tool_response back so the model can speak it. */
+export function humeToolResultFrame(callId: string, output: string): string {
+  return JSON.stringify({ type: "tool_response", tool_call_id: callId, content: output });
+}
+
+/**
+ * Translate a browser → proxy frame (OpenAI-shaped) into the Hume input frame.
+ * The mic audio arrives as `input_audio_buffer.append` with base64 PCM; Hume
+ * wants `audio_input` with `data`. Control frames Hume doesn't need (commit,
+ * etc.) translate to null and are simply dropped. Pure for unit-testing.
+ */
+export function translateClientFrameToHume(raw: string): string | null {
+  let evt: { type?: string; audio?: unknown } | null = null;
+  try { evt = JSON.parse(raw); } catch { return null; }
+  if (evt?.type === "input_audio_buffer.append" && typeof evt.audio === "string") {
+    return JSON.stringify({ type: "audio_input", data: evt.audio });
+  }
+  return null;
 }
 
 // ─── Client-bound control frames (Ava-specific, not OpenAI events) ───────────
@@ -402,6 +540,12 @@ export interface RealtimeProxyDeps {
   runAction?: (sessionId: string | null, task: string, onStep?: (tool: string, args: unknown) => void, signal?: AbortSignal) => Promise<{ text: string; sessionId: string | null }>;
   /** Voice for the realtime model's spoken output (hybrid mode). */
   voice?: string;
+  /**
+   * Which realtime upstream to speak. Defaults to resolving from the environment
+   * (`AVA_VOICE_PROVIDER`, Hume keys) at proxy-build time. OpenAI is the default
+   * and the fallback; Hume is used only when fully configured.
+   */
+  providerConfig?: VoiceProviderConfig;
   log?: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 }
 
@@ -418,6 +562,9 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
   const log = deps.log ?? { info: () => {}, warn: () => {}, error: () => {} };
   const gateConfig = deps.gateConfig ?? loadTranscriptGateConfig();
   const vadConfig = deps.vadConfig ?? loadRealtimeVadConfig();
+  const providerConfig = deps.providerConfig ?? resolveVoiceProvider();
+  // Log only the NON-secret shape of the provider choice (never the API key).
+  log.info("realtime: voice provider", describeVoiceProvider(providerConfig));
   const wss = new WebSocketServer({ noServer: true });
 
   function handleUpgrade(httpServer: import("node:http").Server) {
@@ -455,6 +602,15 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
   }
 
   async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string, pushToTalk = false, wantNew = false) {
+    // PROVIDER BRANCH. When Hume is selected AND configured, try it first. If its
+    // socket can't be established, fall through to the proven OpenAI path below.
+    // No client handlers are attached until Hume actually opens, so a failed
+    // attempt leaves the connection clean for the OpenAI fallback.
+    if (providerConfig.provider === "hume" && providerConfig.hume) {
+      const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume);
+      if (opened) return;
+      log.warn("realtime: hume upstream did not establish — falling back to OpenAI");
+    }
     // The realtime model speaks only when the engine is NOT "chatterbox". In
     // "chatterbox" mode it stays transcribe-only (the client routes transcripts
     // to /api/chat and speaks via /api/speak=Chatterbox), so ALL voice is the
@@ -503,17 +659,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       });
       const sessionUpdate = hybrid
         ? buildHybridSessionUpdate(
-            system +
-              "\n\n[VOICE] You are speaking aloud — keep replies short and natural. Say \"Sir\" " +
-              "smoothly, as part of the phrase, without a comma pause around it (\"Yes Sir\", not " +
-              "\"Yes, Sir,\"). When the owner " +
-              "asks you to DO something on the computer (open/find files, run commands, browse, " +
-              "control apps, remember something), CALL do_on_computer with a clear task and do NOT " +
-              "speak the steps or the result yourself — the system narrates each step and speaks the " +
-              "result aloud. After the tool returns, stay silent unless Sir asks a follow-up. If Sir " +
-              "asks how it went WHILE the task is still running, say you're still working on it — never " +
-              "say it's \"done\" and never invent results before the system has actually spoken them. " +
-              "For everything else (chit-chat, questions), just reply directly in your own voice.",
+            system + VOICE_PERSONA_INSTRUCTIONS,
             vad,
             deps.voice ?? DEFAULT_VOICE,
             { pushToTalk },
@@ -758,6 +904,165 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       log.warn("realtime client error:", err.message);
       try { actionAbort.abort(); } catch { /* ignore */ }
       try { upstream.close(); } catch { /* ignore */ }
+    });
+  }
+
+  /**
+   * Attempt a Hume EVI session. Resolves `true` once the Hume socket OPENS and
+   * the bridge is wired (the session then runs independently); resolves `false`
+   * if the socket errors/closes before opening, so the caller can fall back to
+   * OpenAI. No client handlers are attached until the socket opens, leaving the
+   * connection pristine for the fallback. Never logs a secret — upstream errors
+   * are redacted with the API key before they reach a log or the client.
+   */
+  function tryStartHumeSession(
+    client: WebSocket,
+    requestedSessionId: string | null,
+    hume: HumeProviderConfig,
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const hybrid = getVoiceEngine(deps.db) !== "chatterbox" && !!deps.runAction;
+      let sessionId = requestedSessionId;
+      const actionAbort = new AbortController();
+      let opened = false;
+      const redact = (m: string) => redactSecrets(m, [hume.apiKey, hume.configId, hume.voiceId]);
+
+      let upstream: WebSocket;
+      try {
+        upstream = new WebSocket(buildHumeRealtimeUrl(hume));
+      } catch (e) {
+        log.warn("realtime: hume connect threw:", redact(e instanceof Error ? e.message : String(e)));
+        resolve(false);
+        return;
+      }
+
+      const pendingFromClient: string[] = [];
+
+      upstream.on("open", () => {
+        opened = true;
+        const system = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation" });
+        // Configure the Hume session: persona + chosen voice. Hume auto-speaks,
+        // so there is no separate response.create step.
+        try { upstream.send(JSON.stringify(buildHumeSessionSettings(system + VOICE_PERSONA_INSTRUCTIONS, hume))); } catch { /* */ }
+        // Same resume-or-new continuity as the OpenAI hybrid path.
+        if (hybrid && !sessionId) {
+          const { resumeId } = chooseResumeOrNew(false, listSessions(deps.db)[0]?.id ?? null);
+          sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
+        }
+        try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
+        log.info("realtime: hume session open (voice via Hume EVI)");
+        // Drain client frames buffered before open, translating mic audio.
+        for (const raw of pendingFromClient) {
+          const f = translateClientFrameToHume(raw);
+          if (f) try { upstream.send(f); } catch { /* */ }
+        }
+        pendingFromClient.length = 0;
+        resolve(true); // session now runs independently
+      });
+
+      // Client → Hume: translate OpenAI-shaped mic frames to Hume audio_input.
+      client.on("message", (data, isBinary) => {
+        const raw = isBinary ? data.toString("utf8") : (typeof data === "string" ? data : data.toString("utf8"));
+        if (!opened) { pendingFromClient.push(raw); return; }
+        const f = translateClientFrameToHume(raw);
+        if (f) try { upstream.send(f); } catch { /* */ }
+      });
+
+      // Hume → Client: translate to the OpenAI-shaped frames the browser handles.
+      upstream.on("message", (data) => {
+        let evt: Parameters<typeof translateHumeEvent>[0] | null = null;
+        try { evt = JSON.parse(typeof data === "string" ? data : data.toString("utf8")); } catch { evt = null; }
+        if (!evt) return;
+        const t = translateHumeEvent(evt);
+
+        // Gated user turn (same chokepoint as OpenAI): reject silence/noise.
+        if (t.userTranscript != null) {
+          const decision = decideTranscriptForward(
+            { type: "conversation.item.input_audio_transcription.completed", transcript: t.userTranscript },
+            null,
+            gateConfig,
+          );
+          if (!decision.forward) {
+            log.info(`realtime(hume): dropped transcript reason=${decision.reason} text=${JSON.stringify(decision.text)}`);
+            return;
+          }
+          if (hybrid && sessionId) {
+            appendMessage(deps.db, { sessionId, role: "user", content: decision.text });
+            touchSession(deps.db, sessionId);
+          }
+          try {
+            if (client.readyState === WebSocket.OPEN) {
+              client.send(JSON.stringify({ type: "conversation.item.input_audio_transcription.completed", transcript: decision.text }));
+            }
+          } catch { /* */ }
+          return;
+        }
+
+        // Action handoff: the model called do_on_computer → run the real agent.
+        if (t.toolCall && t.toolCall.name === "do_on_computer" && deps.runAction) {
+          const task = String((t.toolCall.args as { task?: unknown }).task ?? "");
+          const callId = t.toolCall.callId;
+          try { client.send(actionStartedFrame(task)); } catch { /* */ }
+          void (async () => {
+            try {
+              const r = await deps.runAction!(sessionId, task, (tool, args) => {
+                try { client.send(stepFrame(tool, args)); } catch { /* */ }
+              }, actionAbort.signal);
+              sessionId = r.sessionId ?? sessionId;
+              try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
+              if (sessionId) {
+                appendMessage(deps.db, { sessionId, role: "assistant", content: r.text || "Done." });
+                touchSession(deps.db, sessionId);
+              }
+              try { client.send(actionResultFrame(formatSpeechText(r.text || "Done."))); } catch { /* */ }
+              try { upstream.send(humeToolResultFrame(callId, r.text || "Done.")); } catch { /* */ }
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              try { client.send(actionResultFrame(formatSpeechText(`That didn't work, Sir — ${msg}`))); } catch { /* */ }
+              if (sessionId) {
+                appendMessage(deps.db, { sessionId, role: "assistant", content: `That didn't work, Sir — ${msg}` });
+                touchSession(deps.db, sessionId);
+              }
+              try { upstream.send(humeToolResultFrame(callId, `error: ${msg}`)); } catch { /* */ }
+            }
+          })();
+          return;
+        }
+
+        // Persist Ava's spoken reply (chitchat).
+        if (t.assistantText && hybrid && sessionId && t.assistantText.trim()) {
+          appendMessage(deps.db, { sessionId, role: "assistant", content: t.assistantText });
+          touchSession(deps.db, sessionId);
+        }
+
+        // Forward translated frames (audio, captions, errors) to the client.
+        for (const frame of t.frames) {
+          try { if (client.readyState === WebSocket.OPEN) client.send(frame); } catch { /* */ }
+        }
+      });
+
+      upstream.on("error", (err) => {
+        const msg = redact(err.message);
+        if (!opened) { log.warn("realtime: hume upstream error before open:", msg); resolve(false); return; }
+        log.error("realtime: hume upstream error:", msg);
+        try { client.send(JSON.stringify({ type: "error", error: { message: msg } })); } catch { /* */ }
+        try { client.close(1011, "upstream error"); } catch { /* */ }
+      });
+      upstream.on("close", (code, reason) => {
+        if (!opened) { resolve(false); return; }
+        const r = redact(reason?.toString() || "(no reason)");
+        try { client.send(JSON.stringify({ type: "error", error: { message: `upstream closed (code=${code}): ${r}` } })); } catch { /* */ }
+        try { client.close(code, r); } catch { /* */ }
+      });
+
+      client.on("close", () => {
+        try { actionAbort.abort(); } catch { /* */ }
+        try { upstream.close(); } catch { /* */ }
+      });
+      client.on("error", () => {
+        try { actionAbort.abort(); } catch { /* */ }
+        try { upstream.close(); } catch { /* */ }
+      });
     });
   }
 

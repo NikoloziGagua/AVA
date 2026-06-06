@@ -17,6 +17,11 @@ import {
   forwardFrame,
   chooseResumeOrNew,
   seedContentType,
+  buildHumeSessionSettings,
+  translateHumeEvent,
+  translateClientFrameToHume,
+  humeToolResultFrame,
+  VOICE_PERSONA_INSTRUCTIONS,
 } from "./voice-realtime.js";
 import { DEFAULT_TRANSCRIPT_GATE } from "../voice/transcript-gate.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
@@ -313,6 +318,70 @@ describe("decideTranscriptForward — the silence/hallucination chokepoint", () 
     expect(d.forward).toBe(true);
     expect(d.accept).toBe(true);
     expect(d.text).toBe("open chrome and search my downloads");
+  });
+});
+
+describe("Hume EVI provider helpers", () => {
+  it("buildHumeSessionSettings pins the voice by id when present", () => {
+    const s = buildHumeSessionSettings("be ava", { apiKey: "k", configId: null, voiceId: "vid-1", voiceName: "Alice Bennett" });
+    expect(s.type).toBe("session_settings");
+    expect(s.system_prompt).toBe("be ava");
+    expect(s.voice).toEqual({ provider: "HUME_AI", id: "vid-1" });
+    expect(s.audio).toEqual({ encoding: "linear16", sample_rate: 24000, channels: 1 });
+  });
+
+  it("buildHumeSessionSettings falls back to the voice name (Alice Bennett) when no id", () => {
+    const s = buildHumeSessionSettings("be ava", { apiKey: "k", configId: null, voiceId: null, voiceName: "Alice Bennett" });
+    expect(s.voice).toEqual({ provider: "HUME_AI", name: "Alice Bennett" });
+  });
+
+  it("translateHumeEvent maps audio_output to the GA audio-delta frame", () => {
+    const t = translateHumeEvent({ type: "audio_output", data: "BASE64PCM" });
+    expect(JSON.parse(t.frames[0]!)).toEqual({ type: "response.output_audio.delta", delta: "BASE64PCM" });
+  });
+
+  it("translateHumeEvent surfaces a user transcript (for the gate) without a frame", () => {
+    const t = translateHumeEvent({ type: "user_message", message: { role: "user", content: "open chrome" } });
+    expect(t.userTranscript).toBe("open chrome");
+    expect(t.frames).toEqual([]);
+  });
+
+  it("translateHumeEvent emits an assistant caption + assistantText to persist", () => {
+    const t = translateHumeEvent({ type: "assistant_message", message: { role: "assistant", content: "On it Sir" } });
+    expect(t.assistantText).toBe("On it Sir");
+    expect(JSON.parse(t.frames[0]!)).toEqual({ type: "response.output_audio_transcript.done", transcript: "On it Sir" });
+  });
+
+  it("translateHumeEvent parses a tool_call", () => {
+    const t = translateHumeEvent({ type: "tool_call", tool_call_id: "tc1", name: "do_on_computer", parameters: '{"task":"open downloads"}' });
+    expect(t.toolCall).toEqual({ callId: "tc1", name: "do_on_computer", args: { task: "open downloads" } });
+  });
+
+  it("translateHumeEvent maps assistant_end to response.done and errors to an error frame", () => {
+    expect(JSON.parse(translateHumeEvent({ type: "assistant_end" }).frames[0]!)).toEqual({ type: "response.done" });
+    const err = JSON.parse(translateHumeEvent({ type: "error", slug: "bad_request" }).frames[0]!);
+    expect(err.type).toBe("error");
+  });
+
+  it("translateHumeEvent ignores irrelevant messages", () => {
+    expect(translateHumeEvent({ type: "user_interruption" }).frames).toEqual([]);
+    expect(translateHumeEvent({ type: "chat_metadata" }).frames).toEqual([]);
+  });
+
+  it("translateClientFrameToHume converts mic append frames and drops the rest", () => {
+    expect(JSON.parse(translateClientFrameToHume('{"type":"input_audio_buffer.append","audio":"AAA"}')!))
+      .toEqual({ type: "audio_input", data: "AAA" });
+    expect(translateClientFrameToHume('{"type":"input_audio_buffer.commit"}')).toBeNull();
+    expect(translateClientFrameToHume("not json")).toBeNull();
+  });
+
+  it("humeToolResultFrame reports a tool_response", () => {
+    expect(JSON.parse(humeToolResultFrame("tc1", "done"))).toEqual({ type: "tool_response", tool_call_id: "tc1", content: "done" });
+  });
+
+  it("VOICE_PERSONA_INSTRUCTIONS keeps 'Sir' natural and pacing snappy", () => {
+    expect(VOICE_PERSONA_INSTRUCTIONS).toContain("Sir");
+    expect(VOICE_PERSONA_INSTRUCTIONS.toLowerCase()).toContain("warm");
   });
 });
 

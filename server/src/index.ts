@@ -11,6 +11,7 @@ import { buildLogger } from "./logs/logger.js";
 import { openDb } from "./state/db.js";
 import { purgeDeletedSessions } from "./state/sessions.js";
 import { buildRealtimeProxy } from "./routes/voice-realtime.js";
+import { resolveVoiceProvider } from "./routes/voice-provider-config.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
 import { issueToken, revokeTokensByLabel } from "./auth/tokens.js";
@@ -457,12 +458,15 @@ async function runVoiceAction(
 // (getVoiceEngine, read at connect) — "openai"/"hybrid" speak, "chatterbox" stays
 // transcribe-only. This is what lets the engine toggle switch speak↔transcribe
 // without REALTIME_HYBRID being set.
+// AVA_VOICE_PROVIDER selects the realtime upstream (openai default | hume). Hume
+// is used only when fully configured; otherwise the proxy falls back to OpenAI.
 const realtimeProxy = buildRealtimeProxy({
   db,
   apiKey: cfg.openaiApiKey,
   memoryDir: cfg.memoryDir,
   runAction: runVoiceAction,
   voice: process.env.REALTIME_VOICE || undefined,
+  providerConfig: resolveVoiceProvider(),
   log,
 });
 realtimeProxy.attach(httpServer);

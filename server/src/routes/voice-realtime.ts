@@ -304,6 +304,67 @@ export interface HumeTranslation {
   toolCall?: { callId: string; name: string; args: Record<string, unknown> };
 }
 
+/** The sample rate the browser audio player assumes for the PCM16 deltas it
+ *  plays (same rate the OpenAI realtime path uses). */
+export const CLIENT_PCM_RATE = 24000;
+
+/** Box-filter resample mono PCM16 from srcRate to dstRate. Averages the source
+ *  samples spanned by each output sample, so a 2:1 downsample (Hume's 48k→24k)
+ *  also low-passes instead of bare decimation (less aliasing). */
+export function resamplePcm16(pcm: Buffer, srcRate: number, dstRate: number): Buffer {
+  const n = Math.floor(pcm.length / 2);
+  if (n === 0) return Buffer.alloc(0);
+  if (srcRate === dstRate) return pcm.subarray(0, n * 2);
+  const dstN = Math.max(1, Math.floor((n * dstRate) / srcRate));
+  const out = Buffer.alloc(dstN * 2);
+  const step = srcRate / dstRate;
+  for (let i = 0; i < dstN; i++) {
+    const s0 = Math.floor(i * step);
+    const s1 = Math.min(n, Math.max(s0 + 1, Math.ceil((i + 1) * step)));
+    let sum = 0, cnt = 0;
+    for (let j = s0; j < s1; j++) { sum += pcm.readInt16LE(j * 2); cnt++; }
+    let v = cnt > 0 ? Math.round(sum / cnt) : 0;
+    if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+    out.writeInt16LE(v, i * 2);
+  }
+  return out;
+}
+
+/**
+ * Hume EVI returns each `audio_output` as a self-contained WAV clip at 48 kHz
+ * 16-bit mono. The browser plays raw PCM16 at {@link CLIENT_PCM_RATE} (24 kHz), so
+ * playing the WAV bytes verbatim makes Ava sound an octave low and half speed (and
+ * clicks on the header). This strips the WAV container, reads its real sample rate,
+ * and resamples the PCM to 24 kHz — returning base64 raw PCM16 the client plays
+ * correctly. Non-WAV input (already raw PCM) passes through unchanged. Pure.
+ */
+export function humeAudioChunkToClientPcm(b64: string): string {
+  if (!b64) return "";
+  const buf = Buffer.from(b64, "base64");
+  // Not a WAV → assume it is already client-rate PCM16; pass through.
+  if (buf.length < 12 || buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WAVE") {
+    return b64;
+  }
+  let sampleRate = 48000;
+  let dataOff = -1, dataLen = 0;
+  let off = 12;
+  while (off + 8 <= buf.length) {
+    const id = buf.toString("ascii", off, off + 4);
+    const size = buf.readUInt32LE(off + 4);
+    if (id === "fmt " && off + 24 <= buf.length) {
+      sampleRate = buf.readUInt32LE(off + 12);
+    } else if (id === "data") {
+      dataOff = off + 8;
+      dataLen = size;
+      break;
+    }
+    off += 8 + size + (size & 1); // chunks are word-aligned
+  }
+  if (dataOff < 0) return ""; // malformed — drop rather than play garbage
+  const pcm = buf.subarray(dataOff, Math.min(dataOff + dataLen, buf.length));
+  return resamplePcm16(pcm, sampleRate, CLIENT_PCM_RATE).toString("base64");
+}
+
 /**
  * Translate one inbound Hume EVI message into the OpenAI-shaped frames the web
  * client already handles, plus any side-effect signals. Unknown/irrelevant
@@ -321,9 +382,10 @@ export function translateHumeEvent(evt: {
 }): HumeTranslation {
   switch (evt.type) {
     case "audio_output": {
-      // Base64 PCM chunk → the GA audio-delta frame the client plays.
-      const b64 = evt.data ?? "";
-      return { frames: b64 ? [JSON.stringify({ type: "response.output_audio.delta", delta: b64 })] : [] };
+      // Hume sends a 48kHz WAV clip; convert to the 24kHz raw PCM16 the client
+      // plays, or it comes out an octave low and half speed.
+      const delta = humeAudioChunkToClientPcm(evt.data ?? "");
+      return { frames: delta ? [JSON.stringify({ type: "response.output_audio.delta", delta })] : [] };
     }
     case "user_message": {
       const text = evt.message?.content ?? "";

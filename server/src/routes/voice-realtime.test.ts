@@ -19,6 +19,9 @@ import {
   seedContentType,
   buildHumeSessionSettings,
   translateHumeEvent,
+  humeAudioChunkToClientPcm,
+  resamplePcm16,
+  CLIENT_PCM_RATE,
   translateClientFrameToHume,
   humeToolResultFrame,
   VOICE_PERSONA_INSTRUCTIONS,
@@ -97,6 +100,65 @@ describe("chooseResumeOrNew — voice session continuity", () => {
   });
   it("creates a new session when there is no prior conversation to resume", () => {
     expect(chooseResumeOrNew(false, null)).toEqual({ resumeId: null });
+  });
+});
+
+describe("Hume audio conversion (48k WAV → 24k client PCM)", () => {
+  // Build a minimal PCM16 mono WAV at the given rate from int16 samples.
+  function makeWav(rate: number, samples: number[]): Buffer {
+    const data = Buffer.alloc(samples.length * 2);
+    samples.forEach((s, i) => data.writeInt16LE(s, i * 2));
+    const header = Buffer.alloc(44);
+    header.write("RIFF", 0, "ascii");
+    header.writeUInt32LE(36 + data.length, 4);
+    header.write("WAVE", 8, "ascii");
+    header.write("fmt ", 12, "ascii");
+    header.writeUInt32LE(16, 16); // fmt chunk size
+    header.writeUInt16LE(1, 20); // PCM
+    header.writeUInt16LE(1, 22); // mono
+    header.writeUInt32LE(rate, 24);
+    header.writeUInt32LE(rate * 2, 28); // byte rate
+    header.writeUInt16LE(2, 32); // block align
+    header.writeUInt16LE(16, 34); // bits
+    header.write("data", 36, "ascii");
+    header.writeUInt32LE(data.length, 40);
+    return Buffer.concat([header, data]);
+  }
+
+  it("strips the WAV header and downsamples 48k→24k (half the samples, averaged pairs)", () => {
+    const wav = makeWav(48000, [0, 100, 200, 300, 400, 500, 600, 700]);
+    const outB64 = humeAudioChunkToClientPcm(wav.toString("base64"));
+    const out = Buffer.from(outB64, "base64");
+    expect(out.length).toBe(8); // 8 src samples → 4 dst samples → 8 bytes
+    expect(out.toString("ascii", 0, 4)).not.toBe("RIFF"); // header stripped
+    const got = [out.readInt16LE(0), out.readInt16LE(2), out.readInt16LE(4), out.readInt16LE(6)];
+    expect(got).toEqual([50, 250, 450, 650]); // pairwise averages
+  });
+
+  it("passes raw (non-WAV) PCM through unchanged", () => {
+    const raw = Buffer.from([1, 2, 3, 4]).toString("base64");
+    expect(humeAudioChunkToClientPcm(raw)).toBe(raw);
+  });
+
+  it("returns empty for empty input", () => {
+    expect(humeAudioChunkToClientPcm("")).toBe("");
+  });
+
+  it("translateHumeEvent audio_output yields a 24k PCM delta, not the raw WAV", () => {
+    const wav = makeWav(48000, [1000, -1000, 2000, -2000]);
+    const t = translateHumeEvent({ type: "audio_output", data: wav.toString("base64") });
+    expect(t.frames.length).toBe(1);
+    const frame = JSON.parse(t.frames[0]!) as { type: string; delta: string };
+    expect(frame.type).toBe("response.output_audio.delta");
+    const pcm = Buffer.from(frame.delta, "base64");
+    expect(pcm.length).toBe(4); // 4 src → 2 dst samples
+  });
+
+  it("resamplePcm16 is a no-op at the same rate and halves at 2:1", () => {
+    const pcm = Buffer.alloc(8); // 4 samples
+    [10, 20, 30, 40].forEach((v, i) => pcm.writeInt16LE(v, i * 2));
+    expect(resamplePcm16(pcm, CLIENT_PCM_RATE, CLIENT_PCM_RATE).equals(pcm)).toBe(true);
+    expect(resamplePcm16(pcm, 48000, 24000).length).toBe(4); // 4 → 2 samples
   });
 });
 

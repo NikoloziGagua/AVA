@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "../state/db.js";
-import { issueToken, validateToken, listTokens, revokeToken } from "./tokens.js";
+import { issueToken, validateToken, listTokens, revokeToken, revokeTokensByLabel } from "./tokens.js";
 
 describe("device tokens", () => {
   let db: Db;
@@ -34,5 +34,25 @@ describe("device tokens", () => {
     revokeToken(db, b.id);
     const list = listTokens(db);
     expect(list.map((t) => t.id)).toEqual([a.id]);
+  });
+
+  it("revokeTokensByLabel retires all live tokens of a label and returns the count", () => {
+    issueToken(db, { label: "voice-internal" });
+    issueToken(db, { label: "voice-internal" });
+    const keep = issueToken(db, { label: "iPhone" });
+    const n = revokeTokensByLabel(db, "voice-internal");
+    expect(n).toBe(2);
+    // a second call retires nothing (already revoked)
+    expect(revokeTokensByLabel(db, "voice-internal")).toBe(0);
+    // unrelated tokens are untouched
+    expect(validateToken(db, keep.secret)).toBe(keep.id);
+  });
+
+  it("hides internal (voice-internal) tokens from the user-facing device list", () => {
+    const phone = issueToken(db, { label: "iPhone" });
+    issueToken(db, { label: "voice-internal" });
+    const list = listTokens(db);
+    expect(list.map((t) => t.label)).toEqual(["iPhone"]);
+    expect(list.map((t) => t.id)).toEqual([phone.id]);
   });
 });

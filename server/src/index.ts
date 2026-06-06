@@ -13,7 +13,7 @@ import { purgeDeletedSessions } from "./state/sessions.js";
 import { buildRealtimeProxy } from "./routes/voice-realtime.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
-import { issueToken } from "./auth/tokens.js";
+import { issueToken, revokeTokensByLabel } from "./auth/tokens.js";
 import { authRoutes } from "./routes/auth.js";
 import { chatRoutes } from "./routes/chat.js";
 import { healthRoutes } from "./routes/health.js";
@@ -369,6 +369,13 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
 // whether the realtime model speaks (openai/hybrid) or stays transcribe-only
 // (chatterbox). The internal token must therefore always exist.
 const hybridVoice = !!process.env.REALTIME_HYBRID;
+// Retire any prior run's internal token(s) before minting this run's, so the
+// device_tokens table holds exactly one live voice-internal credential instead of
+// accumulating an unbounded set of standing god-tokens (one per restart/reload).
+{
+  const retired = revokeTokensByLabel(db, "voice-internal");
+  if (retired > 0) log.info({ retired }, "auth: revoked stale voice-internal tokens at boot");
+}
 const voiceInternalToken = issueToken(db, { label: "voice-internal" }).secret;
 async function runVoiceAction(
   sessionId: string | null,

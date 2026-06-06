@@ -38,12 +38,18 @@ export function validateToken(db: Db, secret: string): string | null {
   return null;
 }
 
+// Internal (loopback) token labels are hidden from the user-facing device list:
+// they are not real devices Sir manages, and listing them invited an accidental
+// revoke that would break loopback auth (e.g. hybrid-voice actions) until restart.
+const INTERNAL_LABELS = new Set(["voice-internal"]);
+
 export function listTokens(db: Db): DeviceToken[] {
-  return db
+  const rows = db
     .prepare(
       "SELECT id, label, created_at, last_seen_at FROM device_tokens WHERE revoked_at IS NULL ORDER BY created_at DESC"
     )
     .all() as DeviceToken[];
+  return rows.filter((r) => !INTERNAL_LABELS.has(r.label));
 }
 
 export function revokeToken(db: Db, id: string): void {
@@ -51,4 +57,16 @@ export function revokeToken(db: Db, id: string): void {
     Date.now(),
     id
   );
+}
+
+/** Revoke every still-live token with the given label. Used at boot to retire the
+ *  previous run's internal tokens before minting a fresh one, so the table can't
+ *  accumulate an unbounded set of standing full-privilege credentials (one per
+ *  restart) — each of which also slows the bcrypt-over-all-rows validate scan.
+ *  Returns the number revoked. */
+export function revokeTokensByLabel(db: Db, label: string): number {
+  const info = db
+    .prepare("UPDATE device_tokens SET revoked_at = ? WHERE label = ? AND revoked_at IS NULL")
+    .run(Date.now(), label);
+  return info.changes ?? 0;
 }

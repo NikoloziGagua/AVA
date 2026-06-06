@@ -104,7 +104,7 @@ export async function runComputerUse(
       betas: ["computer-use-2025-01-24"],
       messages,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } as any);
+    } as any, signal ? { signal } : undefined);
 
     const content: ContentBlock[] = response.content ?? [];
 
@@ -296,7 +296,7 @@ export async function runComputerUseOpenAI(
     ],
     truncation: "auto",
     reasoning: { summary: "concise" },
-  })) as ResponsesPayload;
+  }, signal ? { signal } : undefined)) as ResponsesPayload;
 
   for (let iter = 0; iter < maxIterations; iter++) {
     // Stop reaches the GUI loop here: abort between turns so an in-flight
@@ -409,7 +409,7 @@ export async function runComputerUseOpenAI(
       tools: [tool],
       input: outputs,
       truncation: "auto",
-    })) as ResponsesPayload;
+    }, signal ? { signal } : undefined)) as ResponsesPayload;
   }
 
   return { ok: false, reason: "max iterations reached" };

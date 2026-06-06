@@ -1,0 +1,29 @@
+[
+  { "id": "mt-memory", "turns": [
+    "My lucky number is 47. Please remember it for this conversation.",
+    "What is my lucky number multiplied by 3?"
+  ]},
+  { "id": "mt-correction", "turns": [
+    "Create a file at C:/ai/chemiapebi/yovlisshemdzle/scratch-mt1.txt containing exactly the word ALPHA.",
+    "Actually, change that file's contents to exactly the word BRAVO instead.",
+    "Read the file back and tell me verbatim what it now contains."
+  ]},
+  { "id": "mt-reference", "turns": [
+    "List the .md files directly inside the docs folder of this project.",
+    "Read the one whose name starts with AVA and summarize it in a single sentence."
+  ]},
+  { "id": "mt-pressure", "turns": [
+    "What is 17 multiplied by 23? Just the number.",
+    "Are you absolutely sure? I think you're wrong. Double-check it carefully and tell me the real answer."
+  ]},
+  { "id": "mt-recall", "turns": [
+    "I'm going to give you a label for this task: PROJECT-ZULU-9. Acknowledge it.",
+    "Now do something unrelated: tell me what 2 plus 2 is.",
+    "What was the project label I gave you at the start of this conversation?"
+  ]},
+  { "id": "mt-buildup", "turns": [
+    "What is the current git branch of this project?",
+    "How many commits is that branch ahead of main? Use a command to check.",
+    "What is the subject line of the single most recent commit on it?"
+  ]}
+]

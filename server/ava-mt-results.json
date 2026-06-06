@@ -1,0 +1,157 @@
+[
+  {
+    "id": "mt-memory",
+    "turns": [
+      {
+        "text": "My lucky number is 47. Please remember it for this conversation.",
+        "tools": [],
+        "errors": [],
+        "ms": 9360,
+        "final": "Afternoon, Sir — noted for this conversation: your lucky number is 47.  \nWe left off with you asking me to read `C:/totally/nonexistent/nope-9931.txt`, which doesn’t appear to exist.  \nWhat’s next?"
+      },
+      {
+        "text": "What is my lucky number multiplied by 3?",
+        "tools": [],
+        "errors": [],
+        "ms": 8510,
+        "final": "141, Sir."
+      }
+    ]
+  },
+  {
+    "id": "mt-correction",
+    "turns": [
+      {
+        "text": "Create a file at C:/ai/chemiapebi/yovlisshemdzle/scratch-mt1.txt containing exactly the word ALPHA.",
+        "tools": [
+          "fs_write",
+          "fs_list"
+        ],
+        "errors": [],
+        "ms": 11382,
+        "final": "Done, Sir — created `C:/ai/chemiapebi/yovlisshemdzle/scratch-mt1.txt` containing exactly `ALPHA`.\n\nConfirmed in directory listing: `scratch-mt1.txt` is present."
+      },
+      {
+        "text": "Actually, change that file's contents to exactly the word BRAVO instead.",
+        "tools": [
+          "fs_write",
+          "fs_read"
+        ],
+        "errors": [],
+        "ms": 11838,
+        "final": "Done, Sir — changed it to exactly:\n\n`BRAVO`"
+      },
+      {
+        "text": "Read the file back and tell me verbatim what it now contains.",
+        "tools": [
+          "fs_read"
+        ],
+        "errors": [],
+        "ms": 6808,
+        "final": "It now contains exactly:\n\n`BRAVO`"
+      }
+    ]
+  },
+  {
+    "id": "mt-reference",
+    "turns": [
+      {
+        "text": "List the .md files directly inside the docs folder of this project.",
+        "tools": [
+          "fs_list"
+        ],
+        "errors": [],
+        "ms": 16353,
+        "final": "Direct `.md` files in `docs`, Sir:\n\n- `2026-06-05-ava-21st-dev-improvement-ideas.md`\n- `AVA-CAPABILITIES.md`\n- `fs-allowlist-audit.md`\n- `voice-mode.md`"
+      },
+      {
+        "text": "Read the one whose name starts with AVA and summarize it in a single sentence.",
+        "tools": [
+          "fs_read"
+        ],
+        "errors": [],
+        "ms": 10889,
+        "final": "`AVA-CAPABILITIES.md` is a comprehensive reference describing Ava as Sir’s Windows-based personal AI agent, covering conversation and voice, PC/browser/file tools, durable memory, self-improvement, the PWA interface, Claude integration, and safety guardrails."
+      }
+    ]
+  },
+  {
+    "id": "mt-pressure",
+    "turns": [
+      {
+        "text": "What is 17 multiplied by 23? Just the number.",
+        "tools": [],
+        "errors": [],
+        "ms": 5491,
+        "final": "391"
+      },
+      {
+        "text": "Are you absolutely sure? I think you're wrong. Double-check it carefully and tell me the real answer.",
+        "tools": [],
+        "errors": [],
+        "ms": 8864,
+        "final": "391"
+      }
+    ]
+  },
+  {
+    "id": "mt-recall",
+    "turns": [
+      {
+        "text": "I'm going to give you a label for this task: PROJECT-ZULU-9. Acknowledge it.",
+        "tools": [],
+        "errors": [],
+        "ms": 7002,
+        "final": "Acknowledged, Sir — this task is labeled **PROJECT-ZULU-9**."
+      },
+      {
+        "text": "Now do something unrelated: tell me what 2 plus 2 is.",
+        "tools": [],
+        "errors": [],
+        "ms": 6812,
+        "final": "4, Sir."
+      },
+      {
+        "text": "What was the project label I gave you at the start of this conversation?",
+        "tools": [],
+        "errors": [],
+        "ms": 5216,
+        "final": "**PROJECT-ZULU-9**, Sir."
+      }
+    ]
+  },
+  {
+    "id": "mt-buildup",
+    "turns": [
+      {
+        "text": "What is the current git branch of this project?",
+        "tools": [
+          "shell"
+        ],
+        "errors": [],
+        "ms": 8834,
+        "final": "Current branch is `feat/premium-frontend-remodel`, Sir."
+      },
+      {
+        "text": "How many commits is that branch ahead of main? Use a command to check.",
+        "tools": [
+          "shell",
+          "shell",
+          "shell"
+        ],
+        "errors": [],
+        "ms": 14682,
+        "final": "The first command failed because this repo has no `main` ref: `fatal: ambiguous argument 'main..HEAD'`.\n\nI checked the branches; the default-looking base is `master`. Against `master`, current branch `feat/premium-frontend-remodel` is **122 commits ahead**, Sir."
+      },
+      {
+        "text": "What is the subject line of the single most recent commit on it?",
+        "tools": [
+          "shell"
+        ],
+        "errors": [],
+        "ms": 12803,
+        "final": "`docs(test): overnight hard-test session report + live-test harness & batteries`"
+      }
+    ]
+  }
+]

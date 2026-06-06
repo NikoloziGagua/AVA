@@ -1,6 +1,7 @@
 // server/src/tools/filesystem-mcp.ts
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Filesystem } from "./filesystem.js";
+import { scrubSecrets } from "../security/scrub.js";
 
 const MAX_TEXT = 8192;
 function truncate(s: string): string {
@@ -47,7 +48,10 @@ export function buildFilesystemTools(opts: {
       run: wrap("fs_read", async (args) => {
         const path = String(args.path ?? "");
         const r = await fs.read(path);
-        if (r.ok) return { ok: true, text: truncate(r.content) };
+        // Scrub secrets from file contents before the model sees them — the
+        // same backstop every other tool applies. Covers the case where a secret
+        // slips past the path hard-block (e.g. an unlisted credential file).
+        if (r.ok) return { ok: true, text: truncate(scrubSecrets(r.content)) };
         return { ok: false, text: `error: ${r.reason}` };
       }),
     },

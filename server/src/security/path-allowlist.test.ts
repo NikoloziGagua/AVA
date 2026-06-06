@@ -1,4 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildPathAllowlist } from "./path-allowlist.js";
 
 describe("buildPathAllowlist", () => {
@@ -58,6 +61,81 @@ describe("buildPathAllowlist", () => {
     expect(check("C:/ai/monkey.json").ok).toBe(true);
     expect(check("C:/ai/awsome-notes.md").ok).toBe(true);
     expect(check("C:/ai/credentials-helper.ts").ok).toBe(true);
+  });
+
+  it("does not false-positive on id_rsa-prefixed or git-credentials-prefixed names", () => {
+    // FP regression: the old /(^|[\\/])id_rsa/ prefix and unanchored
+    // /\.git-credentials/ blocked ordinary files. Broad access must be kept.
+    expect(check("C:/ai/id_rsa_setup_guide.md").ok).toBe(true);
+    expect(check("C:/ai/id_rsannouncement.txt").ok).toBe(true);
+    expect(check("C:/ai/.git-credentials-helper.md").ok).toBe(true);
+    expect(check("C:/ai/git-credentials-notes.txt").ok).toBe(true);
+  });
+
+  it("blocks all SSH private-key types (rsa/dsa/ecdsa/ed25519, +.pub) by filename", () => {
+    for (const p of [
+      "C:/ai/keys/id_rsa",
+      "C:/ai/keys/id_dsa",
+      "C:/ai/keys/id_ecdsa",
+      "C:/ai/keys/id_ed25519",
+      "C:/ai/keys/id_ed25519.pub",
+    ]) {
+      expect(check(p).ok, `expected blocked: ${p}`).toBe(false);
+    }
+  });
+
+  it("blocks additional high-value credential stores", () => {
+    for (const p of [
+      "C:/Users/nikug/.npmrc",
+      "C:/Users/nikug/AppData/Roaming/npm/.npmrc",
+      "C:/Users/nikug/.docker/config.json",
+      "C:/Users/nikug/.kube/config",
+      "C:/Users/nikug/.pgpass",
+      "C:/Users/nikug/.netrc",
+      "C:/Users/nikug/_netrc",
+      "C:/ai/keystore.p12",
+      "C:/ai/AuthKey.p8",
+      "C:/ai/app.jks",
+      "C:/Users/nikug/AppData/Roaming/gcloud/access_tokens.db",
+    ]) {
+      const r = check(p);
+      expect(r.ok, `expected blocked: ${p}`).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/secret/i);
+    }
+  });
+
+  it("does not block ordinary files that merely resemble the new patterns", () => {
+    expect(check("C:/ai/my.npmrc.bak").ok).toBe(true); // not the live .npmrc
+    expect(check("C:/ai/config.json").ok).toBe(true); // not .docker/config.json
+    expect(check("C:/ai/netrc-parser.ts").ok).toBe(true); // not _netrc/.netrc
+    expect(check("C:/ai/notes/access_tokens.md").ok).toBe(true); // not access_tokens.db
+  });
+
+  it("blocks a secret reached through a junction/symlink (realpath canonicalization)", () => {
+    // The link's OWN path looks innocent; only the canonical target is a secret
+    // dir. A purely lexical check would allow it.
+    let dir: string | null = null;
+    try {
+      dir = mkdtempSync(join(tmpdir(), "ava-pathsec-"));
+      const sshDir = join(dir, ".ssh");
+      mkdirSync(sshDir);
+      writeFileSync(join(sshDir, "known_hosts"), "x"); // not a secret *name*
+      const link = join(dir, "innocent");
+      try {
+        symlinkSync(sshDir, link, "junction"); // dir junction: no admin needed on Windows
+      } catch {
+        return; // platform can't make the link (non-Windows/perms) — skip
+      }
+      // roots include the temp dir so a NON-secret file there would be allowed —
+      // proving it is the canonical .ssh resolution (not the allowlist) that blocks.
+      const c = buildPathAllowlist({ roots: [dir.replace(/\\/g, "/") + "/**"] });
+      expect(c(join(dir, "plain.txt")).ok).toBe(true); // sanity: root works
+      const r = c(join(link, "known_hosts")); // lexical: .../innocent/known_hosts (innocent)
+      expect(r.ok, "junctioned .ssh path must be blocked").toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/secret/i);
+    } finally {
+      if (dir) try { rmSync(dir, { recursive: true, force: true }); } catch { /* */ }
+    }
   });
 
   it("denies path-traversal attempts", () => {

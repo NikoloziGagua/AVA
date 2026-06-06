@@ -33,7 +33,7 @@ function setup() {
     db, runs, auth,
     {
       pidfiles: { register: () => {}, unregister: () => {} } as any,
-      fsRoots: [], memoryDir,
+      fsRoots: [], memoryDir, dataDir: dir,
       getChrome: async () => ({} as any),
       provider, runAgentImpl,
     },

@@ -31,6 +31,7 @@ import { buildSelfImproveTool, buildSelfImproveStatusTool, type IntentStatusSumm
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
+import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
 import { getReasoningLevel } from "../state/reasoning-pref.js";
 import { mapReasoning } from "../orchestrator/reasoning.js";
 import { detectCorrection, formatCorrection } from "../orchestrator/correction-detector.js";
@@ -58,6 +59,7 @@ export type AgentDeps = {
   pidfiles: PidfileRegistry;
   fsRoots: string[];
   memoryDir: string;
+  dataDir: string;
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
   notifyDone?: (summary: string) => void;
@@ -318,9 +320,12 @@ export function chatRoutes(
             ...(agentDeps.listSelfImprovements ? [buildSelfImproveStatusTool({ list: agentDeps.listSelfImprovements })] : []),
             ...(agentDeps.logsDir ? [buildReadLogsTool({ logsDir: agentDeps.logsDir })] : []),
             ...memoryTools,
+            ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
           ];
         } else {
-          tools = memoryTools;
+          // Voice/conversation must also reach the update log, since Sir asks
+          // "what's happening" by voice.
+          tools = [...memoryTools, ...buildUpdateLogTools({ dataDir: agentDeps.dataDir })];
         }
         await impl({
           prompt: promptForAgent,

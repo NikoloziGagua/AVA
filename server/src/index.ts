@@ -193,6 +193,7 @@ const agentDeps = {
   pidfiles,
   fsRoots: cfg.fsRoots,
   memoryDir: cfg.memoryDir,
+  dataDir: cfg.dataDir,
   getChrome,
   pushDeliver,
   notifyDone,

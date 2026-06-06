@@ -32,7 +32,7 @@ function setup(over: { provider?: LLMProvider; runAgentImpl?: (opts: any) => Pro
   const app = express(); app.use(express.json());
   app.use((req: any, _res, next) => { req.deviceId = "d"; next(); });
   app.use("/api/chat", chatRoutes(db, new ActiveRuns(), (_q, _s, n) => n(),
-    { pidfiles: { register() {}, unregister() {} } as any, fsRoots: [], memoryDir, getChrome: async () => ({} as any), provider, runAgentImpl },
+    { pidfiles: { register() {}, unregister() {} } as any, fsRoots: [], memoryDir, dataDir: dir, getChrome: async () => ({} as any), provider, runAgentImpl },
     { anthropic: null, openai: null }));
   return { app, memoryDir, db };
 }

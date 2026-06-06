@@ -39,8 +39,9 @@ Typed messages always run in **action mode** (full tools).
 
 ## 2. Acting on the PC — Tools
 
-Tools are exposed only in **action mode** (conversation mode sees memory tools
-only). The agent loop runs up to 48 turns, each tool with a timeout budget. Every
+Most tools are exposed only in **action mode** (conversation mode sees the memory
+tools plus `read_claude_updates`). The agent loop runs up to 48 turns, each tool
+with a timeout budget. Every
 call passes a risk policy: read-only/low → run; medium/high → **ask first** (an
 approval row + a push notification, blocking up to 10 minutes). `.env` access and
 `--dangerously-skip-permissions` are hard-blocked regardless.
@@ -55,6 +56,7 @@ approval row + a push notification, blocking up to 10 minutes). `.env` access an
 | **take_screenshot** | Capture a PNG of the Windows desktop under `Downloads/Ava/screenshots`, return the path (PowerShell + System.Drawing, PNG-validated). | Low. |
 | **memory_read / memory_remember / memory_forget** | Durable cross-session memory (see §3). | Low; secrets scrubbed on write. |
 | **self_improve / self_improve_status** | Queue an autonomous change to Ava's own code / report task states (see §4). | Gated pipeline. |
+| **read_claude_updates** | Read the notes Claude — Sir's developer/coding agent — leaves about changes to Ava's own code (a started/shipped/note JSON-lines log at `<dataDir>/claude-updates.jsonl`). Used when Sir asks what's happening / what changed / what Claude did; surfaces any in-flight update. Available in **both** action and conversation/voice mode. Attribution stays honest — Claude's work is Claude's. | Read-only. |
 
 **Rules.** Sir can write natural-language autonomy rules (in the Rules screen)
 that pre-allow, pre-deny, or force-ask specific kinds of actions, overriding the

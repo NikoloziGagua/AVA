@@ -102,6 +102,29 @@ describe("claude_code tool", () => {
     expect(reg.list("r4").length).toBe(0);
   });
 
+  it("kills a never-closing child and resolves a timeout reason", async () => {
+    const reg = new PidfileRegistry(pidDir);
+    const cc = buildClaudeCode({
+      pidfiles: reg,
+      check: buildPathAllowlist({ roots: [`${root.replace(/\\/g, "/")}/**`] }),
+      claudeBinary: process.execPath,
+      // A child that never closes on its own (keeps the event loop alive). On
+      // SIGTERM it chdir's out of the temp cwd and exits, so Windows releases
+      // the directory handle and afterEach's rmSync can't EPERM-race the kill.
+      claudeArgs: () => [
+        "-e",
+        "process.on('SIGTERM',()=>{try{process.chdir(require('os').tmpdir())}catch{};process.exit(0)});setInterval(()=>{},1000)",
+      ],
+    });
+    const r = await cc.run({ prompt: "x", cwd: root, runId: "rT", timeoutMs: 80 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/timed out after 80ms/);
+    // pid is released even on the timeout path so it doesn't leak/zombie.
+    expect(reg.list("rT").length).toBe(0);
+    // Let the SIGTERM'd child fully exit before afterEach removes the temp cwd.
+    await new Promise((res) => setTimeout(res, 200));
+  });
+
   it("scrubs secrets from output", async () => {
     const cc = buildClaudeCode({
       pidfiles: new PidfileRegistry(pidDir),

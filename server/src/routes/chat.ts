@@ -28,6 +28,8 @@ import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
 import { buildScreenshotTool } from "../tools/screenshot/screenshot-mcp.js";
 import { buildReadLogsTool } from "../tools/activity-log-mcp.js";
 import { buildSelfImproveTool, buildSelfImproveStatusTool, type IntentStatusSummary } from "../tools/self-improve-mcp.js";
+import { buildDiscussTools } from "../tools/discuss-mcp.js";
+import type { Discussion } from "../state/discussions.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
@@ -66,6 +68,10 @@ export type AgentDeps = {
   provider: LLMProvider | null;
   queueSelfImprove?: (goal: string) => string;
   listSelfImprovements?: () => IntentStatusSummary[];
+  /** Discuss-with-Claude: queue a background, read-only consult and recount past ones. */
+  queueDiscussion?: (topic: string, sessionId: string | null) => string;
+  listDiscussions?: () => Discussion[];
+  getDiscussion?: (id: string) => Discussion | null;
   logsDir?: string;
   /** Optional override; lets tests substitute a fake agent loop. Defaults to runAgent. */
   runAgentImpl?: typeof runAgent;
@@ -290,6 +296,19 @@ export function chatRoutes(
         // builders, but memory tools stay available so the agent can still
         // record observations or recall facts mid-conversation.
         const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
+        // Discuss-with-Claude is available in BOTH modes (Sir may ask by voice):
+        // it queues a background, read-only consult bound to THIS session (sid),
+        // returns immediately, and can recount past discussions. Only wired when
+        // the deps are present (they are in production via index.ts).
+        const discussTools =
+          agentDeps.queueDiscussion && agentDeps.listDiscussions && agentDeps.getDiscussion
+            ? buildDiscussTools({
+                queue: agentDeps.queueDiscussion,
+                list: agentDeps.listDiscussions,
+                get: agentDeps.getDiscussion,
+                sessionId: sid,
+              })
+            : [];
         let tools: ToolDef[];
         if (mode === "action") {
           // Chromium is NOT booted here. The chrome/computer_use builders close
@@ -319,13 +338,14 @@ export function chatRoutes(
             ...(agentDeps.queueSelfImprove ? [buildSelfImproveTool({ queue: agentDeps.queueSelfImprove })] : []),
             ...(agentDeps.listSelfImprovements ? [buildSelfImproveStatusTool({ list: agentDeps.listSelfImprovements })] : []),
             ...(agentDeps.logsDir ? [buildReadLogsTool({ logsDir: agentDeps.logsDir })] : []),
+            ...discussTools,
             ...memoryTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
           ];
         } else {
           // Voice/conversation must also reach the update log, since Sir asks
-          // "what's happening" by voice.
-          tools = [...memoryTools, ...buildUpdateLogTools({ dataDir: agentDeps.dataDir })];
+          // "what's happening" by voice — and can confer with Claude by voice.
+          tools = [...discussTools, ...memoryTools, ...buildUpdateLogTools({ dataDir: agentDeps.dataDir })];
         }
         await impl({
           prompt: promptForAgent,

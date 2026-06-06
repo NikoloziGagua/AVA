@@ -130,3 +130,13 @@ CREATE TABLE IF NOT EXISTS self_improvements (
   error TEXT
 );
 
+CREATE TABLE IF NOT EXISTS discussions (
+  id TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  topic TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',   -- running | done | failed
+  result TEXT,
+  error TEXT,
+  session_id TEXT
+);
+

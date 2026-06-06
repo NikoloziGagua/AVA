@@ -8,6 +8,9 @@ export type ClaudeCodeRunArgs = {
   /** Persistent conversation. Create it (`--session-id`) on first use, then
    *  `--resume` it so Ava and Claude keep one ongoing chat across calls. */
   session?: { id: string; resume: boolean };
+  /** Hard cap on the run. If set, the child is killed and the call resolves
+   *  `{ ok: false, reason: "timed out after <ms>ms" }` so it can never hang. */
+  timeoutMs?: number;
 };
 export type ClaudeCodeResult =
   | { ok: true; output: string; exitCode: number }
@@ -71,7 +74,7 @@ export function buildClaudeCode(cfg: ClaudeCodeConfig): ClaudeCode {
   const buildArgs = cfg.claudeArgs ?? defaultClaudeArgs;
 
   return {
-    async run({ prompt, cwd, runId, model, session }) {
+    async run({ prompt, cwd, runId, model, session, timeoutMs }) {
       if (DANGEROUS_FLAG.test(prompt)) {
         return { ok: false, reason: "prompt contains --dangerously-skip-permissions (hard-blocked)" };
       }
@@ -101,11 +104,36 @@ export function buildClaudeCode(cfg: ClaudeCodeConfig): ClaudeCode {
       child.stderr?.on("data", append);
 
       return await new Promise<ClaudeCodeResult>((resolve) => {
+        let settled = false;
+        // Hard timeout: SIGTERM, then SIGKILL after 1s if it ignores the term.
+        // Resolve immediately with the timeout reason so the caller never hangs;
+        // the later kill-induced "close" is ignored via `settled`.
+        let timer: NodeJS.Timeout | undefined;
+        let killTimer: NodeJS.Timeout | undefined;
+        if (typeof timeoutMs === "number") {
+          timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            try { child.kill("SIGTERM"); } catch { /* already gone */ }
+            killTimer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already gone */ } }, 1000);
+            killTimer.unref?.();
+            if (typeof childPid === "number") cfg.pidfiles.remove(runId, childPid);
+            resolve({ ok: false, reason: `timed out after ${timeoutMs}ms` });
+          }, timeoutMs);
+          timer.unref?.();
+        }
+        const clear = () => { if (timer) clearTimeout(timer); if (killTimer) clearTimeout(killTimer); };
         child.on("error", (err) => {
+          if (settled) return;
+          settled = true;
+          clear();
           if (typeof childPid === "number") cfg.pidfiles.remove(runId, childPid);
           resolve({ ok: false, reason: String(err.message) });
         });
         child.on("close", (code) => {
+          if (settled) return;
+          settled = true;
+          clear();
           if (typeof childPid === "number") cfg.pidfiles.remove(runId, childPid);
           const output = scrubSecrets(buf.trim());
           resolve({ ok: true, output, exitCode: code ?? 0 });

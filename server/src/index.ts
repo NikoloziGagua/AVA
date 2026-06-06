@@ -47,6 +47,9 @@ import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
 import { runImprovement, type ImproverDeps } from "./self/improver.js";
 import { createIntent, getIntent, listIntents, failStaleIntents } from "./self/intents.js";
+import { createDiscussion, getDiscussion, listDiscussions, failStaleDiscussions } from "./state/discussions.js";
+import { runDiscussion } from "./self/discuss.js";
+import { appendMessage } from "./state/messages.js";
 import { selfRoutes } from "./routes/self.js";
 
 const startedAt = Date.now();
@@ -59,6 +62,12 @@ const db = openDb(cfg.dbPath);
 {
   const reconciled = failStaleIntents(db);
   if (reconciled > 0) log.info({ reconciled }, "self: failed stale intents orphaned by restart");
+}
+// Same for background Claude consults: none is in flight at boot, so any left
+// 'running' was orphaned by a restart — mark them failed.
+{
+  const reconciled = failStaleDiscussions(db);
+  if (reconciled > 0) log.info({ reconciled }, "discuss: failed stale discussions orphaned by restart");
 }
 const purgedCount = purgeDeletedSessions(db, Date.now() - 24 * 60 * 60 * 1000);
 if (purgedCount > 0) log.info({ purgedCount }, "purged soft-deleted sessions older than 24h");
@@ -201,6 +210,42 @@ function queueSelfImprove(goal: string): string {
   return id;
 }
 
+// ─── Discuss-with-Claude wiring ──────────────────────────────────────────
+// A READ-ONLY claude instance for consults. The default (defaultClaudeArgs)
+// adds `--permission-mode acceptEdits`, which would let Claude edit files; here
+// we pass only `-p` so the consult can READ the repo but never modify it (Sir
+// said "discuss, don't change anything"). It runs in the real repo, so the
+// allowlist permits cfg.repoRoot.
+const consultClaude = buildClaudeCode({
+  pidfiles,
+  check: (p) => p.startsWith(cfg.repoRoot) ? { ok: true } : { ok: false, reason: "consult must run in the repo" },
+  claudeArgs: (prompt) => ["-p", prompt],   // NO acceptEdits → read-only
+});
+
+async function consult(topic: string, id: string): Promise<{ ok: boolean; text: string }> {
+  const prompt = `Sir asked Ava to discuss this with you (Claude): "${topic}". Read the repo as needed and give your honest, concrete input — concise: a short list of specific ideas/tradeoffs and a recommendation. DO NOT modify any files; this is analysis only.`;
+  const r = await consultClaude.run({ prompt, cwd: cfg.repoRoot, runId: `discuss-${id}`, timeoutMs: 5 * 60 * 1000 });
+  return { ok: r.ok, text: r.ok ? r.output : (r.reason || "consult failed") };
+}
+
+// When a consult finishes, relay it back HONESTLY (Claude's input credited to
+// Claude): append Ava's relay into the session it was started from, and push Sir.
+function deliverDiscussion(o: { sessionId: string | null; topic: string; ok: boolean; result: string }): void {
+  const msg = o.ok
+    ? `I checked with Claude about "${o.topic}", Sir. Here's what he came back with:\n\n${o.result}`
+    : `I tried to confer with Claude about "${o.topic}", Sir, but it didn't complete — ${o.result}`;
+  if (o.sessionId) appendMessage(db, { sessionId: o.sessionId, role: "assistant", content: msg });
+  notifyDone?.(`Claude and I finished discussing: ${o.topic}`);
+}
+
+function queueDiscussion(topic: string, sessionId: string | null): string {
+  const id = createDiscussion(db, { topic, sessionId });
+  // Fire-and-forget: the consult runs in the background so Ava keeps talking.
+  void runDiscussion(db, id, { consult: (t) => consult(t, id), deliver: deliverDiscussion })
+    .catch((e) => log.error({ err: e instanceof Error ? e.message : String(e), id }, "discussion crashed"));
+  return id;
+}
+
 const agentDeps = {
   pidfiles,
   fsRoots: cfg.fsRoots,
@@ -212,6 +257,10 @@ const agentDeps = {
   provider,  // LLMProvider | null
   logsDir: cfg.logsDir,
   queueSelfImprove,
+  // Discuss-with-Claude: queue a background consult, and read past ones back.
+  queueDiscussion,
+  listDiscussions: () => listDiscussions(db),
+  getDiscussion: (id: string) => getDiscussion(db, id),
   // Lets Ava report the live state of each self-improvement task (queued →
   // reflecting → implementing → verifying → swapped/failed/rolled_back).
   listSelfImprovements: () =>

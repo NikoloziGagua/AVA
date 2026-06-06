@@ -42,6 +42,7 @@ import { loadSelfKnowledge } from "./self/identity.js";
 import { addWorktree, removeWorktree } from "./self/worktree.js";
 import { headSha, swapTo, revertTo } from "./self/swap.js";
 import { verify } from "./self/verify.js";
+import { flightcheck } from "./self/flightcheck.js";
 import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
 import { runImprovement, type ImproverDeps } from "./self/improver.js";
@@ -141,7 +142,18 @@ function buildImproverDeps(): ImproverDeps {
       const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12) });
       return r.ok ? { ok: true, output: r.output } : { ok: false, output: r.reason };
     },
-    verify: (cwd) => verify({ cwd, run: selfRunner, bootSmoke }),
+    verify: async (cwd) => {
+      const v = await verify({ cwd, run: selfRunner, bootSmoke });
+      let fcLine = "";
+      try {
+        const fc = await flightcheck({ cwd });
+        log.info({ flightcheck: fc.ok ? "passed report-only" : "failed report-only" }, "flightcheck");
+        fcLine = `\n\n[flightcheck ${fc.ok ? "PASSED" : "FAILED"} report-only]\n${fc.report}`;
+      } catch (e) {
+        fcLine = `\n\n[flightcheck ERROR report-only] ${e instanceof Error ? e.message : String(e)}`;
+      }
+      return { ok: v.ok, log: v.log + fcLine };   // v.ok UNCHANGED — flightcheck NEVER gates the swap
+    },
     headSha: () => headSha(cfg.repoRoot),
     commitWorktree: (cwd, msg) => {
       execFileSync("git", ["add", "-A"], { cwd });

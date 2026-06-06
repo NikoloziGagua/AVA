@@ -2,6 +2,8 @@ import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Db } from "../state/db.js";
 import { buildSystemPrompt } from "../orchestrator/system-prompt.js";
 import { validateToken } from "../auth/tokens.js";
+import { createSession, touchSession } from "../state/sessions.js";
+import { appendMessage, listMessages } from "../state/messages.js";
 import {
   gateTranscript,
   loadTranscriptGateConfig,
@@ -484,6 +486,31 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           )
         : buildRealtimeSessionUpdate(system, vad, { pushToTalk });
       upstream.send(JSON.stringify(sessionUpdate));
+      // HYBRID: unify voice with chat. Voice from the orb may have no session
+      // (requestedSessionId === null), so mint one now — the hello below sends it
+      // and the client latches `ava.session`, adopting the real id. This makes the
+      // spoken turns land in the SAME persistent conversation as typed messages.
+      if (hybrid && !sessionId) sessionId = createSession(deps.db, { title: "Voice chat" }).id;
+      // Seed the realtime model with recent conversation history so voice no
+      // longer forgets what was typed (and vice-versa). Context only — NO
+      // response.create — and bounded by N (env-tunable) because every seeded
+      // item is OpenAI cost per connect, so the default stays small.
+      if (hybrid && sessionId) {
+        const N = Number(process.env.REALTIME_SEED_TURNS ?? 12);
+        for (const m of listMessages(deps.db, sessionId).slice(-N)) {
+          if (m.role !== "user" && m.role !== "assistant") continue;
+          upstream.send(JSON.stringify({
+            type: "conversation.item.create",
+            item: {
+              type: "message",
+              role: m.role,
+              // Realtime content-part types are asymmetric: user turns use
+              // `input_text`, assistant turns use `text`.
+              content: [{ type: m.role === "assistant" ? "text" : "input_text", text: m.content }],
+            },
+          }));
+        }
+      }
       // Echo the client's current session id back, and tell it the proxy mode so
       // it knows whether to play audio (hybrid) or own the reply (transcribe).
       try {
@@ -539,6 +566,20 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           );
         } else if (evt.type === "session.created" || evt.type === "session.updated") {
           log.info(`realtime ${evt.type} (model=${REALTIME_MODEL})`);
+        } else if (
+          evt.type === "response.output_audio_transcript.done" ||
+          evt.type === "response.audio_transcript.done"
+        ) {
+          // Persist Ava's SPOKEN reply (chitchat). This fires only when the model
+          // actually speaks — during a do_on_computer task it stays silent
+          // (silentToolResultFrame omits response.create → no output transcript),
+          // so this never overlaps the do_on_computer result stored in (E). Do
+          // NOT return: keep forwarding so the client's captions still update.
+          const t = (evt as { transcript?: string }).transcript ?? "";
+          if (hybrid && sessionId && t.trim()) {
+            appendMessage(deps.db, { sessionId, role: "assistant", content: t });
+            touchSession(deps.db, sessionId);
+          }
         }
       }
 
@@ -560,6 +601,14 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               });
               sessionId = r.sessionId ?? sessionId;
               try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
+              // Persist the action RESULT as Ava's turn. The user's raw words were
+              // already stored as the accepted transcript (C), so we do NOT store
+              // the task here — doing so would double the user turn. The internal
+              // /api/chat run that executed the tools stores nothing (persist:false).
+              if (sessionId) {
+                appendMessage(deps.db, { sessionId, role: "assistant", content: r.text || "Done." });
+                touchSession(deps.db, sessionId);
+              }
               // The client speaks the result via TTS; the realtime model stays
               // silent (silentToolResultFrame omits response.create). One voice
               // per task. formatSpeechText smooths "Sir" punctuation for speech.
@@ -568,6 +617,13 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             } catch (e) {
               const msg = e instanceof Error ? e.message : String(e);
               try { client.send(actionResultFrame(formatSpeechText(`That didn't work, Sir — ${msg}`))); } catch { /* */ }
+              // Store the failure as Ava's turn too, so the conversation reflects
+              // what was spoken aloud (same single-source-of-truth as the success
+              // path; the user turn is still only stored once, in C).
+              if (sessionId) {
+                appendMessage(deps.db, { sessionId, role: "assistant", content: `That didn't work, Sir — ${msg}` });
+                touchSession(deps.db, sessionId);
+              }
               upstream.send(silentToolResultFrame(call.callId, `error: ${msg}`));
             }
           })();
@@ -599,6 +655,17 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           return;
         }
         log.info(`realtime: accepted transcript text=${JSON.stringify(decision.text)}`);
+        // SINGLE place the spoken USER turn is stored. Both earlier branches
+        // (rejected transcript, "Ava is speaking") have already returned, so this
+        // runs once per real utterance — no phantom turns. The internal /api/chat
+        // run (do_on_computer) stores nothing (persist:false), so this is the one
+        // source of truth for the user's words whether they chitchat or trigger
+        // an action. HYBRID only: transcribe-only persists via /api/chat, so
+        // storing here too would double the user turn.
+        if (hybrid && sessionId) {
+          appendMessage(deps.db, { sessionId, role: "user", content: decision.text });
+          touchSession(deps.db, sessionId);
+        }
         if (hybrid) {
           // Model didn't auto-reply (create_response:false). Now that the
           // transcript passed the gate, ask it to respond — speak or call a tool.

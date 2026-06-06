@@ -51,6 +51,11 @@ const Body = z.object({
   // Voice turns ask for minimal reasoning so spoken replies come back fast.
   // Capability is unchanged — the full tool stack still runs.
   voice: z.boolean().optional(),
+  // When false, this run executes tools but persists NO messages. Used by the
+  // HYBRID voice proxy's do_on_computer handoff: the realtime proxy already owns
+  // the voice-turn storage (user transcript + spoken result), so the internal
+  // /api/chat run must not double-store. Independent of `voice`. Defaults to true.
+  persist: z.boolean().optional(),
 });
 
 // Upper bound on how long pre-run playbook recall may block a turn. Recall is a
@@ -154,7 +159,11 @@ export function chatRoutes(
     // reply — the exact "voice session goes silent / second job won't run"
     // symptom (a stuck run 409s every later turn while history fills with
     // unanswered user lines).
-    appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
+    // persist:false (HYBRID voice handoff) runs the tools but stores nothing —
+    // the realtime proxy is the single source of truth for voice turns.
+    if (parsed.data.persist !== false) {
+      appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
+    }
 
     if (agentDeps.provider) {
       await maybeSummarize({ db, sessionId, provider: agentDeps.provider });
@@ -276,16 +285,21 @@ export function chatRoutes(
           }
         }
         const id = buffer.append({ kind: e.kind, payload: e.payload });
-        if (e.kind === "final") {
-          appendMessage(db, { sessionId: sid, role: "assistant", content: e.payload.text });
-        } else if (e.kind === "error") {
-          // Surface a run-ending error (LLM quota/timeout, stream failure) in the
-          // transcript instead of leaving the chat silent — the run otherwise
-          // returns with no persisted message and the user sees nothing.
-          appendMessage(db, {
-            sessionId: sid, role: "assistant",
-            content: `That didn't work, Sir — ${e.payload.message}`,
-          });
+        // persist:false (HYBRID voice handoff) still streams final/error over SSE
+        // so the proxy can speak the result — but it stores NO assistant message
+        // here; the realtime proxy persists the spoken turn instead (no double-store).
+        if (parsed.data.persist !== false) {
+          if (e.kind === "final") {
+            appendMessage(db, { sessionId: sid, role: "assistant", content: e.payload.text });
+          } else if (e.kind === "error") {
+            // Surface a run-ending error (LLM quota/timeout, stream failure) in the
+            // transcript instead of leaving the chat silent — the run otherwise
+            // returns with no persisted message and the user sees nothing.
+            appendMessage(db, {
+              sessionId: sid, role: "assistant",
+              content: `That didn't work, Sir — ${e.payload.message}`,
+            });
+          }
         }
         return id;
       };

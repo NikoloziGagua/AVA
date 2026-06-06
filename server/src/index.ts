@@ -350,7 +350,11 @@ async function runVoiceAction(
     const postChat = () => fetch(`${base}/api/chat`, {
       method: "POST",
       headers: { "content-type": "application/json", ...auth },
-      body: JSON.stringify({ sessionId, text: task }),
+      // persist:false — the realtime proxy already stores the spoken user turn and
+      // the spoken result, so this internal run executes tools but persists nothing
+      // (single source of truth for voice turns; no double-store). Independent of
+      // `voice` (do NOT overload it): this flag only gates message storage.
+      body: JSON.stringify({ sessionId, text: task, persist: false }),
     });
     let post = await postChat();
     // A previous action may still hold this session (a long-running or stuck

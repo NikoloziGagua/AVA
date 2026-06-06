@@ -14,7 +14,11 @@ export function buildShellTool(opts: { signal: AbortSignal }): ToolDef {
     tool: {
       name: "shell",
       description:
-        "Run a shell command (allowlisted commands only). Use this for read-only inspection of the user's machine: ls, cat, git status, etc. Do not attempt destructive operations.",
+        "Run commands and launch apps on Sir's Windows PC (cmd.exe). You can launch apps " +
+        "(e.g. `start whatsapp:`, `start spotify:`, `start \"\" \"C:\\path\\App.exe\"`), open " +
+        "files/folders (`start <file>`, `explorer <dir>`), and run system commands (dir, git, " +
+        "npm, etc.); chaining and piping work. Destructive operations (deleting/formatting/" +
+        "registry/shutdown) require Sir's approval; .env/secrets are blocked.",
       inputSchema: {
         type: "object",
         properties: {

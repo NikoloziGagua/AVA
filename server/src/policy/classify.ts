@@ -1,3 +1,5 @@
+import { matchDestructive, isAllowed as shellAllowed } from "../tools/shell-allowlist.js";
+
 export type Tier = "read-only" | "low" | "medium" | "high" | "blocked";
 
 export type Classification = { tier: Tier; reason: string };
@@ -11,12 +13,10 @@ const READ_ONLY_TOOLS = new Set([
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
 const HARD_BLOCKED_FLAGS = ["--dangerously-skip-permissions"];
 
-const HIGH_RISK_SHELL = [
-  /\brm\s+-rf?\b/i,
-  /\bgit\s+push\b/i,
-  /\bcurl\s+.*\|.*sh\b/i,
-  /\bsudo\b/i,
-];
+// App-launch / file-open idioms Sir uses constantly (WhatsApp, Spotify, opening a
+// folder, launching VS Code). These are classified "low" so enforce.ts auto-allows
+// them instantly — no 15s approval stall.
+const LAUNCH_SHELL = /^\s*(start\b|explorer\b|code\b)/i;
 
 const SUBMIT_LIKE = /button\[type=['"]?submit['"]?\]|#checkout|\.checkout|submit-?btn|place-?order|buy-?now|add-?payment/i;
 
@@ -61,10 +61,20 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (tool === "shell") {
     const cmd = strs.join(" ");
-    for (const re of HIGH_RISK_SHELL) {
-      if (re.test(cmd)) return { tier: "high", reason: `shell pattern: ${re.source}` };
+    // .env / secret access is hard-blocked at the shell gate; mirror that here so
+    // an undecided approval can never auto-allow it (defense in depth — the top
+    // ENV_RE only catches path-shaped .env, this also catches bare `cat .env`).
+    const gate = shellAllowed(cmd);
+    if (!gate.allowed && /\.env/i.test(gate.reason)) {
+      return { tier: "blocked", reason: gate.reason };
     }
-    return { tier: "medium", reason: "non-allowlisted shell" };
+    // Destructive ops stay high-risk so "ask" keeps Sir's veto.
+    const destructive = matchDestructive(cmd);
+    if (destructive) return { tier: "high", reason: `destructive shell pattern: ${destructive.source}` };
+    // Launching apps / opening files is instant, no friction.
+    if (LAUNCH_SHELL.test(cmd)) return { tier: "low", reason: "app-launch / open command" };
+    // Sir authorized full machine access — all other shell auto-allows.
+    return { tier: "low", reason: "shell on Sir's authorized machine" };
   }
 
   if (tool === "computer_use") return { tier: "medium", reason: "computer_use is GUI scripting" };

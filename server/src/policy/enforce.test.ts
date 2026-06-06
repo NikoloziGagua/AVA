@@ -64,23 +64,25 @@ describe("enforce", () => {
   });
 
   it("disabled rule is ignored", () => {
+    // Use claude_code (stays "medium" → ask) so an ignored rule falls through to
+    // the default ask. Plain shell now classifies "low" and would auto-allow.
     const rule = createRule(db, {
-      source: "deny shell",
-      parsed: JSON.stringify({ match: { tool: "shell" }, action: "deny" }),
+      source: "deny claude_code",
+      parsed: JSON.stringify({ match: { tool: "claude_code" }, action: "deny" }),
       status: "active",
     });
     updateRule(db, rule.id, { enabled: false });
-    const r = enforce({ tool: "shell", args: { command: "ls" }, db });
+    const r = enforce({ tool: "claude_code", args: { prompt: "fix" }, db });
     expect(r.decision).toBe("ask");
   });
 
   it("pending-status rule is ignored", () => {
     createRule(db, {
       source: "pending rule",
-      parsed: JSON.stringify({ match: { tool: "shell" }, action: "deny" }),
+      parsed: JSON.stringify({ match: { tool: "claude_code" }, action: "deny" }),
       status: "pending",
     });
-    const r = enforce({ tool: "shell", args: { command: "ls" }, db });
+    const r = enforce({ tool: "claude_code", args: { prompt: "fix" }, db });
     expect(r.decision).toBe("ask");
   });
 

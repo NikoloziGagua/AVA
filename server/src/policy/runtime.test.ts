@@ -59,7 +59,8 @@ describe("buildPolicyHook", () => {
         if (e.kind === "approval_required") setTimeout(() => decide(db, e.payload.id, "denied"), 5);
       },
     });
-    const r = await hook("shell", { command: "git push" });
+    // Destructive shell still classifies "high" → ask, so the approval flow runs.
+    const r = await hook("shell", { command: "rm -rf /tmp/x" });
     expect(r.allow).toBe(false);
     if (!r.allow) expect(r.message).toMatch(/DENIED \(denied\)/);
   });
@@ -71,7 +72,8 @@ describe("buildPolicyHook", () => {
       emit: (e) => events.push(e),
       approvalTimeoutMs: 50, // tiny veto window for the test
     });
-    const r = await hook("shell", { command: "git push" });
+    // Destructive shell still classifies "high" → ask, so the veto window applies.
+    const r = await hook("shell", { command: "rm -rf /tmp/x" });
     expect(r).toEqual({ allow: true });
     const resolved = events.find((e) => e.kind === "approval_resolved");
     expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("approved");

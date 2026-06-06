@@ -29,16 +29,33 @@ describe("classifyRisk", () => {
     expect(classifyRisk("chrome_click", { selector: "button[type='submit']" }).tier).toBe("high");
     expect(classifyRisk("chrome_click", { selector: "#checkout-btn" }).tier).toBe("high");
   });
-  it("high: shell with rm -rf", () => {
+  it("high: shell with destructive op (rm -rf)", () => {
     expect(classifyRisk("shell", { command: "rm -rf /tmp/x" }).tier).toBe("high");
   });
-  it("high: shell with git push", () => {
-    expect(classifyRisk("shell", { command: "git push origin main" }).tier).toBe("high");
+  it("high: shell with format / reg delete / shutdown", () => {
+    expect(classifyRisk("shell", { command: "format c:" }).tier).toBe("high");
+    expect(classifyRisk("shell", { command: "reg delete HKLM\\Software\\Foo /f" }).tier).toBe("high");
+    expect(classifyRisk("shell", { command: "shutdown /s /t 0" }).tier).toBe("high");
+  });
+  it("low: app-launch / open commands (start, explorer, code) auto-allow instantly", () => {
+    expect(classifyRisk("shell", { command: "start whatsapp:" }).tier).toBe("low");
+    expect(classifyRisk("shell", { command: "start spotify:" }).tier).toBe("low");
+    expect(classifyRisk("shell", { command: 'start "" "C:\\x\\App.exe"' }).tier).toBe("low");
+    expect(classifyRisk("shell", { command: "explorer ." }).tier).toBe("low");
+    expect(classifyRisk("shell", { command: "code ." }).tier).toBe("low");
+  });
+  it("low: ordinary shell (dir, git status, git push) — Sir wants no friction", () => {
+    expect(classifyRisk("shell", { command: "dir" }).tier).toBe("low");
+    expect(classifyRisk("shell", { command: "git status" }).tier).toBe("low");
+    expect(classifyRisk("shell", { command: "git push origin main" }).tier).toBe("low");
   });
   it("blocked: anything touching .env", () => {
     expect(classifyRisk("fs_read", { path: "C:/ai/.env" }).tier).toBe("blocked");
     expect(classifyRisk("fs_write", { path: "C:/ai/foo/.env.local" }).tier).toBe("blocked");
     expect(classifyRisk("shell", { command: "cat /tmp/.env" }).tier).toBe("blocked");
+    // bare `cat .env` (no leading slash) is also blocked via the shell gate
+    expect(classifyRisk("shell", { command: "cat .env" }).tier).toBe("blocked");
+    expect(classifyRisk("shell", { command: "type .env" }).tier).toBe("blocked");
   });
   it("blocked: --dangerously-skip-permissions in claude_code prompt or args", () => {
     expect(classifyRisk("claude_code", { prompt: "--dangerously-skip-permissions" }).tier).toBe("blocked");

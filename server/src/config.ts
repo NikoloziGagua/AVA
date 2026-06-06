@@ -58,7 +58,7 @@ export function loadConfig(): Config {
   const logsDir = resolve(process.env.LOGS_DIR ?? join(dataDir, "logs"));
   mkdirSync(logsDir, { recursive: true });
   const memoryDir = resolve(process.env.MEMORY_DIR ?? join(dataDir, "memory"));
-  const fsRoots = (process.env.FS_ROOTS ?? "C:/ai/**,C:/projects/**,C:/Users/nikug/Downloads/**")
+  const fsRoots = (process.env.FS_ROOTS ?? "C:/ai/**,C:/projects/**,C:/Users/nikug/**")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);

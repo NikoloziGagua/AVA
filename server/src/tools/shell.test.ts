@@ -8,10 +8,10 @@ describe("runShell", () => {
     expect(r.stdout.trim()).toBe("hello");
   });
 
-  it("rejects a non-allowlisted command", async () => {
+  it("rejects a destructive command", async () => {
     const r = await runShell({ command: "rm -rf .", timeoutMs: 5000 });
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toMatch(/allowlist/);
+    if (!r.ok) expect(r.error).toMatch(/destructive/i);
   });
 
   it("rejects a .env access attempt", async () => {

@@ -25,4 +25,20 @@ describe("runShell", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toMatch(/timeout/i);
   });
+
+  it("registers the child PID on spawn and unregisters it on exit", async () => {
+    // This is what lets the Stop button's killTree() loop reach a shell child.
+    const spawned: number[] = [];
+    const exited: number[] = [];
+    const r = await runShell({
+      command: "echo hi",
+      timeoutMs: 5000,
+      onSpawn: (pid) => spawned.push(pid),
+      onExit: (pid) => exited.push(pid),
+    });
+    expect(r.ok).toBe(true);
+    expect(spawned.length).toBe(1);
+    expect(spawned[0]).toBeGreaterThan(0);
+    expect(exited).toEqual(spawned); // same PID unregistered after the run settles
+  });
 });

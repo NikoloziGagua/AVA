@@ -2,6 +2,7 @@ import type { ToolDef } from "./ava-mcp.js";
 import { runShell } from "./shell.js";
 import { scrubSecrets } from "../security/scrub.js";
 import { TOOL_BUDGET_MS } from "../orchestrator/timeout.js";
+import type { PidfileRegistry } from "../process/pidfile.js";
 
 const MAX_STREAM_CHARS = 4096;
 
@@ -10,7 +11,7 @@ function truncate(s: string): string {
   return s.slice(0, MAX_STREAM_CHARS) + `\n... [truncated, ${s.length - MAX_STREAM_CHARS} more chars]`;
 }
 
-export function buildShellTool(opts: { signal: AbortSignal }): ToolDef {
+export function buildShellTool(opts: { signal: AbortSignal; pidfiles?: PidfileRegistry }): ToolDef {
   return {
     tool: {
       name: "shell",
@@ -28,9 +29,19 @@ export function buildShellTool(opts: { signal: AbortSignal }): ToolDef {
         required: ["command"],
       },
     },
-    run: async (args) => {
+    run: async (args, ctx) => {
       const command = String(args.command ?? "");
-      const r = await runShell({ command, timeoutMs: TOOL_BUDGET_MS["shell"] ?? 30_000, signal: opts.signal });
+      const runId = ctx?.runId;
+      const reg = opts.pidfiles;
+      const r = await runShell({
+        command,
+        timeoutMs: TOOL_BUDGET_MS["shell"] ?? 30_000,
+        signal: opts.signal,
+        // Register/unregister the child PID so the Stop button's killTree() loop
+        // tree-kills this shell (and its descendants), not just claude_code.
+        onSpawn: reg && runId ? (pid) => reg.add(runId, pid) : undefined,
+        onExit: reg && runId ? (pid) => reg.remove(runId, pid) : undefined,
+      });
       // Scrub secrets BEFORE truncating so a token can't be split mid-pattern,
       // then truncate the redacted text. The model never sees raw credentials.
       const stdout = truncate(scrubSecrets(r.stdout));

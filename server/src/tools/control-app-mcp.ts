@@ -24,6 +24,8 @@ import type { ToolDef } from "./ava-mcp.js";
 import { TOOL_BUDGET_MS } from "../orchestrator/timeout.js";
 import { isAllowed } from "./shell-allowlist.js";
 import { scrubSecrets } from "../security/scrub.js";
+import { killTree } from "../process/kill-tree.js";
+import type { PidfileRegistry } from "../process/pidfile.js";
 
 const MAX_OUT_CHARS = 6000;
 
@@ -47,35 +49,63 @@ export function controlScriptPath(runId: string): string {
 
 type RunResult = { ok: boolean; stdout: string; stderr: string; error?: string };
 
-function runPowerShellFile(file: string, timeoutMs: number, signal?: AbortSignal): Promise<RunResult> {
+function runPowerShellFile(
+  file: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  hooks?: { onSpawn?: (pid: number) => void; onExit?: (pid: number) => void },
+): Promise<RunResult> {
   return new Promise((resolve) => {
     // Spawn powershell.exe DIRECTLY as argv (never via cmd /c). This is what
     // avoids the `$`-stripping and "Illegal characters in path" failures.
+    // No { signal } here: as with the shell tool, Node's spawn-abort only kills
+    // the direct powershell.exe and orphans anything it launched (Start-Process,
+    // a focused app). We tree-kill on both abort and timeout instead so Stop
+    // reaches the whole subtree.
     const child = spawn(
       "powershell.exe",
       ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", file],
-      { windowsHide: true, signal },
+      { windowsHide: true },
     );
+    const pid = child.pid;
+    if (typeof pid === "number") hooks?.onSpawn?.(pid);
 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let aborted = false;
 
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, timeoutMs);
+    const treeKill = () => {
+      if (typeof pid === "number") void killTree(pid, "SIGTERM");
+      else child.kill();
+    };
+
+    const timer = setTimeout(() => { timedOut = true; treeKill(); }, timeoutMs);
+    const onAbort = () => { aborted = true; treeKill(); };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (typeof pid === "number") hooks?.onExit?.(pid);
+    };
 
     child.stdout.on("data", (b) => { stdout += b.toString(); });
     child.stderr.on("data", (b) => { stderr += b.toString(); });
     child.on("error", (e) => {
-      clearTimeout(timer);
+      cleanup();
       resolve({ ok: false, stdout, stderr, error: String(e) });
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      cleanup();
       if (timedOut) {
         resolve({ ok: false, stdout, stderr, error: "timeout exceeded" });
+        return;
+      }
+      if (aborted) {
+        resolve({ ok: false, stdout, stderr, error: "aborted" });
         return;
       }
       resolve({ ok: code === 0, stdout, stderr, ...(code === 0 ? {} : { error: `exit ${code}` }) });
@@ -83,7 +113,7 @@ function runPowerShellFile(file: string, timeoutMs: number, signal?: AbortSignal
   });
 }
 
-export function buildControlAppTool(deps: { signal?: AbortSignal }): ToolDef {
+export function buildControlAppTool(deps: { signal?: AbortSignal; pidfiles?: PidfileRegistry }): ToolDef {
   return {
     tool: {
       name: "control_app",
@@ -136,7 +166,14 @@ export function buildControlAppTool(deps: { signal?: AbortSignal }): ToolDef {
       writeFileSync(file, Buffer.concat([BOM, Buffer.from(utf8Out + script, "utf8")]));
 
       const timeoutMs = TOOL_BUDGET_MS["control_app"] ?? 30_000;
-      const r = await runPowerShellFile(file, timeoutMs, deps.signal ?? ctx.signal);
+      const reg = deps.pidfiles;
+      const runId = ctx.runId;
+      const r = await runPowerShellFile(file, timeoutMs, deps.signal ?? ctx.signal, {
+        // Register/unregister the PowerShell PID so Stop's killTree() reaches it
+        // (and any app/process the script launched), like claude_code/shell.
+        onSpawn: reg && runId ? (pid) => reg.add(runId, pid) : undefined,
+        onExit: reg && runId ? (pid) => reg.remove(runId, pid) : undefined,
+      });
 
       // Scrub secrets BEFORE truncating so the model never sees raw credentials
       // a UI-Automation/PowerShell read might surface.

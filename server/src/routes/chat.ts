@@ -364,8 +364,8 @@ export function chatRoutes(
             check: buildPathAllowlist({ roots: agentDeps.fsRoots }),
           });
           tools = [
-            buildShellTool({ signal: abort.signal }),
-            buildControlAppTool({ signal: abort.signal }),
+            buildShellTool({ signal: abort.signal, pidfiles: agentDeps.pidfiles }),
+            buildControlAppTool({ signal: abort.signal, pidfiles: agentDeps.pidfiles }),
             ...(buildFilesystemTools({ fs, emit: noop }) as ToolDef[]),
             buildClaudeCodeTool({ cc, emit: noop }) as ToolDef,
             ...(buildChromeTools({ getChrome: agentDeps.getChrome, emit: noop }) as ToolDef[]),
@@ -392,7 +392,7 @@ export function chatRoutes(
           // control_app is included so Sir can drive native apps by voice (focus
           // a window, type, hotkeys) — local PowerShell, no API cost.
           tools = [
-            buildControlAppTool({ signal: abort.signal }),
+            buildControlAppTool({ signal: abort.signal, pidfiles: agentDeps.pidfiles }),
             ...discussTools,
             ...memoryTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),

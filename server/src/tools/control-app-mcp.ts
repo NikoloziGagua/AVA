@@ -22,6 +22,8 @@ import os from "node:os";
 import path from "node:path";
 import type { ToolDef } from "./ava-mcp.js";
 import { TOOL_BUDGET_MS } from "../orchestrator/timeout.js";
+import { isAllowed } from "./shell-allowlist.js";
+import { scrubSecrets } from "../security/scrub.js";
 
 const MAX_OUT_CHARS = 6000;
 
@@ -111,6 +113,15 @@ export function buildControlAppTool(deps: { signal?: AbortSignal }): ToolDef {
       const script = String(args.script ?? "");
       if (!script) return { ok: false, text: "missing script" };
 
+      // Gate the arbitrary PowerShell through the same destructive/secret safety
+      // net as the shell tool. A blocked script (force-delete, .env/secret-file
+      // read, exfil, etc.) is refused WITHOUT running — control_app must not be a
+      // bypass around the shell gate.
+      const verdict = isAllowed(script);
+      if (!verdict.allowed) {
+        return { ok: false, text: `blocked: ${verdict.reason}` };
+      }
+
       // Write the script to a `.ps1` under Sir's home profile (writable fsRoot),
       // then spawn powershell.exe -File against it. The file is kept (not
       // deleted) — handy for debugging a failed control sequence.
@@ -127,13 +138,15 @@ export function buildControlAppTool(deps: { signal?: AbortSignal }): ToolDef {
       const timeoutMs = TOOL_BUDGET_MS["control_app"] ?? 30_000;
       const r = await runPowerShellFile(file, timeoutMs, deps.signal ?? ctx.signal);
 
-      const out = truncate(r.stdout);
-      const err = truncate(r.stderr);
+      // Scrub secrets BEFORE truncating so the model never sees raw credentials
+      // a UI-Automation/PowerShell read might surface.
+      const out = truncate(scrubSecrets(r.stdout));
+      const err = truncate(scrubSecrets(r.stderr));
       if (r.ok) {
         return { ok: true, text: out || "done" };
       }
       // On failure surface stderr (then stdout) so the model can see what broke.
-      const detail = err || out || r.error || "control_app failed";
+      const detail = err || out || (r.error ? scrubSecrets(r.error) : "") || "control_app failed";
       return { ok: false, text: detail };
     },
   };

@@ -1,5 +1,6 @@
 import type { ToolDef } from "./ava-mcp.js";
 import { runShell } from "./shell.js";
+import { scrubSecrets } from "../security/scrub.js";
 import { TOOL_BUDGET_MS } from "../orchestrator/timeout.js";
 
 const MAX_STREAM_CHARS = 4096;
@@ -30,8 +31,10 @@ export function buildShellTool(opts: { signal: AbortSignal }): ToolDef {
     run: async (args) => {
       const command = String(args.command ?? "");
       const r = await runShell({ command, timeoutMs: TOOL_BUDGET_MS["shell"] ?? 30_000, signal: opts.signal });
-      const stdout = truncate(r.stdout);
-      const stderr = truncate(r.stderr);
+      // Scrub secrets BEFORE truncating so a token can't be split mid-pattern,
+      // then truncate the redacted text. The model never sees raw credentials.
+      const stdout = truncate(scrubSecrets(r.stdout));
+      const stderr = truncate(scrubSecrets(r.stderr));
       if (r.ok) {
         return { ok: true, text: `EXIT 0\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}` };
       }

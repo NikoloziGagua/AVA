@@ -13,20 +13,33 @@
 // source of truth. The full command string is scanned (not just the first
 // token) so a destructive op hidden after a pipe/`&&` is still caught.
 
+import { matchSecretFile } from "../security/path-allowlist.js";
+
 /** Genuinely destructive / dangerous operations. Scanned case-insensitively
  *  against the FULL command string. Keep this curated and conservative — it is
  *  the real safety net, so do not let normal launches/commands match. */
 export const DESTRUCTIVE_PATTERNS: RegExp[] = [
-  // recursive / force delete
+  // recursive / force delete (POSIX rm)
   /\brm\s+-[a-z]*r[a-z]*f|\brm\s+-[a-z]*f[a-z]*r/i, // rm -rf, -fr, -r -f collapsed
   /\brm\s+(-\S+\s+)*-r\b(.*\s)?-f\b/i, // rm -r ... -f (separate flags)
   /\brm\s+(-\S+\s+)*-f\b(.*\s)?-r\b/i, // rm -f ... -r (separate flags)
-  /\bdel\s+.*\/[sq]\b/i, // del /s or /q
-  /\brd\s+\/s\b/i, // rd /s
-  /\brmdir\s+\/s\b/i, // rmdir /s
-  /\bRemove-Item\b[\s\S]*-Recurse[\s\S]*-Force|\bRemove-Item\b[\s\S]*-Force[\s\S]*-Recurse/i,
-  // disk / format
-  /\bformat\b/i,
+  // PowerShell delete cmdlet/aliases with a Force OR Recurse flag (either alone
+  // is destructive — the old rule wrongly required BOTH). Accepts abbreviations
+  // -Force/-fo/-f and -Recurse/-rec/-r. Verb must be a delete verb so a bare
+  // single-file `rm foo.txt` (no flag) stays allowed.
+  /\b(Remove-Item|ri|rm|del)\b[\s\S]*?\s-(Force|Recurse|rec|r|fo|f)\b/i,
+  // cmd delete/dir-remove targeting a wildcard or a path (no /s /q required):
+  // `del C:\Users\nikug\Documents\*.docx`, `rd C:\path`, `rmdir .\sub`.
+  /\b(del|erase|rd|rmdir)\b\s+(?:[^\r\n]*?)(\*|[A-Za-z]:|[\\/])/i,
+  // .NET file/directory delete via reflection.
+  /\[IO\.(File|Directory)\]::Delete/i,
+  // Clear-Content truncates a file's contents in place.
+  /\bClear-Content\b/i,
+  // Redirection truncation overwriting a file by absolute path (`> C:\...`).
+  />\s*["']?[A-Za-z]:/,
+  // disk / format — only a drive target (format C:), NOT Format-Table/-List,
+  // `--pretty=format:`, `npm run format`, etc.
+  /\bformat\s+[A-Za-z]:/i,
   /\bdiskpart\b/i,
   /\bcipher\s+\/w/i,
   /\bmkfs/i,
@@ -38,13 +51,29 @@ export const DESTRUCTIVE_PATTERNS: RegExp[] = [
   /\bStop-Computer\b/i,
   // remote code execution
   /\b(curl|wget|iwr|invoke-webrequest)\b[\s\S]*\|\s*(sh|bash|iex|invoke-expression)\b/i,
-  /\bpowershell\b[\s\S]*-e(nc|ncodedcommand)\b/i,
+  // PowerShell encoded command via -e/-en/-enc/.../-encodedcommand (short flag).
+  // Negative lookahead skips the benign -e* parameters that share the prefix:
+  // -ExecutionPolicy (-ex…), -ErrorAction/-ErrorVariable (-err…), -Encoding
+  // (-encodi…). -EncodedCommand diverges at "-encode" so it is still caught.
+  /\b(powershell|pwsh)\b[\s\S]*\s-e(?!x|rr|ncodi)[a-z]*\s/i,
   /\bcertutil\b[\s\S]*-urlcache\b/i,
+  // outbound data-upload exfiltration (curl/wget/iwr/irm uploading a file).
+  /\b(curl|wget|iwr|invoke-webrequest|invoke-restmethod)\b[\s\S]*(-d\s*@|--data\s*@|-T\s|-InFile\b|@[A-Za-z]:)/i,
+  // secret env-var reads and credential dumps (block; also flags control_app high)
+  /\$env:[A-Z_]*KEY\b/i,
+  /\$env:[A-Z_]*TOKEN\b/i,
+  /\$env:[A-Z_]*SECRET\b/i,
+  /\bGet-ChildItem\s+Env:/i,
+  /\bgh\s+auth\s+token\b/i,
+  /\bgit\s+config\s+(--global\s+)?--list\b/i,
   // fork bomb
   /:\s*\(\s*\)\s*\{/,
 ];
 
-const ENV_PATH = /(^|[\\/\s])([^\s\\/]*\.env(\.[a-zA-Z0-9]+)?(\s|$))/i;
+// .env hard-block: any literal ".env" substring (case-insensitive) — covers a
+// trailing quote/wildcard/separator (`"C:\app\.env"`, `.env*`, `.env.production`)
+// that the old anchored rule let slip past.
+const ENV_PATH = /\.env/i;
 
 export type AllowedResult = { allowed: true } | { allowed: false; reason: string };
 
@@ -60,9 +89,16 @@ export function isAllowed(input: string): AllowedResult {
   const cmd = input.trim();
   if (cmd.length === 0) return { allowed: false, reason: "empty" };
 
-  // .env / secret access stays hard-blocked.
-  if (ENV_PATH.test(" " + cmd + " ")) {
+  // .env / secret access stays hard-blocked (any ".env" substring).
+  if (ENV_PATH.test(cmd)) {
     return { allowed: false, reason: ".env file access blocked" };
+  }
+
+  // Secret files (cloud creds, SSH/private keys, gh token store, git creds) are
+  // hard-blocked even within Sir's broad roots — broad access, never exfil.
+  const secret = matchSecretFile(cmd);
+  if (secret) {
+    return { allowed: false, reason: `secret file access blocked (matched ${secret.source})` };
   }
 
   // Destructive / dangerous operations are refused outright.

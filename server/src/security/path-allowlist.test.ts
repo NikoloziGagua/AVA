@@ -22,6 +22,44 @@ describe("buildPathAllowlist", () => {
     expect(check("C:/ai/secrets.env.production").ok).toBe(false);
   });
 
+  it("hard-blocks secret files even inside an allowlisted root", () => {
+    // These all live under C:/ai/** (an allowed root) yet must be refused.
+    const blocked = [
+      "C:/ai/.credentials.json",
+      "C:/ai/gcloud/legacy_credentials/.credentials.json",
+      "C:/ai/.aws/credentials",
+      "C:/ai/.aws/config",
+      "C:/ai/.ssh/known_hosts",
+      "C:/ai/.ssh/id_rsa",
+      "C:/ai/keys/id_rsa",
+      "C:/ai/id_rsa.pub",
+      "C:/ai/gh/hosts.yml",
+      "C:/ai/.git-credentials",
+      "C:/ai/server.pem",
+      "C:/ai/cert.pfx",
+      "C:/ai/private.key",
+      "C:/ai/sub/dir/leaf.PEM",
+    ];
+    for (const p of blocked) {
+      const r = check(p);
+      expect(r.ok, `expected blocked: ${p}`).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/secret/i);
+    }
+  });
+
+  it("hard-blocks secret files with backslash separators too", () => {
+    expect(check("C:\\ai\\.aws\\credentials").ok).toBe(false);
+    expect(check("C:\\ai\\.ssh\\id_rsa").ok).toBe(false);
+  });
+
+  it("still allows ordinary files whose names merely resemble secret tokens", () => {
+    // broad access preserved: these are NOT secret files.
+    expect(check("C:/ai/keymap.ts").ok).toBe(true);
+    expect(check("C:/ai/monkey.json").ok).toBe(true);
+    expect(check("C:/ai/awsome-notes.md").ok).toBe(true);
+    expect(check("C:/ai/credentials-helper.ts").ok).toBe(true);
+  });
+
   it("denies path-traversal attempts", () => {
     expect(check("C:/ai/../Windows/system.ini").ok).toBe(false);
   });

@@ -58,6 +58,36 @@ describe("chat playbook capture", () => {
     await request(app).post("/api/chat").send({ text: "do the seeded task" }).expect(200);
   });
 
+  it("does NOT capture a playbook when a tool in the run failed (succeeded=false)", async () => {
+    // Two tools, but the second FAILS. A failed procedure must not be learned.
+    const { app, memoryDir } = setup({
+      runAgentImpl: async (opts) => {
+        opts.emit({ kind: "tool_call", payload: { tool: "chrome_navigate", args: {} } });
+        opts.emit({ kind: "tool_result", payload: { tool: "chrome_navigate", ok: true, result: "" } });
+        opts.emit({ kind: "tool_call", payload: { tool: "fs_write", args: { path: "C:/ai/x" } } });
+        opts.emit({ kind: "tool_result", payload: { tool: "fs_write", ok: false, result: "EACCES" } });
+        opts.emit({ kind: "final", payload: { text: "couldn't finish" } });
+      },
+    });
+    await request(app).post("/api/chat").send({ text: "do the thing on my pc" }).expect(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(listPlaybooks(memoryDir).length).toBe(0);
+  });
+
+  it("an empty final persists the graceful text, not a blank assistant turn", async () => {
+    const { app, db } = setup({
+      runAgentImpl: async (opts) => {
+        opts.emit({ kind: "final", payload: { text: "   " } });
+      },
+    });
+    await request(app).post("/api/chat").send({ text: "do something" }).expect(200);
+    await new Promise((r) => setTimeout(r, 50));
+    const sid = (db.prepare("SELECT id FROM sessions LIMIT 1").get() as { id: string }).id;
+    const assistant = listMessages(db, sid).find((m) => m.role === "assistant");
+    expect(assistant).toBeTruthy();
+    expect(assistant!.content.trim().length).toBeGreaterThan(0);
+  });
+
   it("persists an assistant message when the run errors (visible, not silent)", async () => {
     const { app, db } = setup({
       runAgentImpl: async (opts) => {

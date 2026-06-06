@@ -64,6 +64,12 @@ const Body = z.object({
 // the playbook hint. Normal side-model matches return in ~1-2s.
 const PLAYBOOK_MATCH_TIMEOUT_MS = 8_000;
 
+// Shown/persisted in place of a blank assistant turn when the model produces an
+// empty final (it acted but wrote no closing text). Never store an empty reply —
+// the chat would render a silent bubble and the turn would look broken.
+const GRACEFUL_FINAL =
+  "Done, Sir — though I didn't have anything further to add.";
+
 export type AgentDeps = {
   pidfiles: PidfileRegistry;
   fsRoots: string[];
@@ -166,8 +172,13 @@ export function chatRoutes(
       appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
     }
 
+    // Fire-and-forget: summarization must NOT block the response. Awaiting it
+    // here added latency before the client could open the stream, widening the
+    // fast-finish/connect race. It already guards duplicate work via
+    // summary_through_message_id, and the current turn built its context from
+    // existing state below — so a late summary only affects FUTURE turns.
     if (agentDeps.provider) {
-      await maybeSummarize({ db, sessionId, provider: agentDeps.provider });
+      void maybeSummarize({ db, sessionId, provider: agentDeps.provider }).catch(() => {});
     }
 
     const buffer = new SseBuffer({ maxEvents: 500, maxBytes: 5 * 1024 * 1024 });
@@ -265,13 +276,24 @@ export function chatRoutes(
       // Collect the run's tool steps so a successful >=2-tool run can be
       // distilled into a reusable playbook (best-effort, fire-and-forget).
       const runSteps: RunStep[] = [];
+      // Track whether ANY tool result in this run failed. A run that ends with a
+      // failed/partial tool must NOT be learned as a succeeded playbook.
+      let anyToolFailed = false;
       const emit = (e: AgentEvent) => {
         if (e.kind === "tool_call") {
           runSteps.push({ tool: e.payload.tool, args: e.payload.args, ok: true });
         } else if (e.kind === "tool_result") {
           const s = runSteps[runSteps.length - 1];
           if (s && s.tool === e.payload.tool) s.ok = e.payload.ok;
-        } else if (e.kind === "final") {
+          if (!e.payload.ok) anyToolFailed = true;
+        }
+        // Normalize an empty/whitespace final to a graceful message so we never
+        // stream or persist a blank assistant turn (the run did something — the
+        // model just produced no closing text).
+        if (e.kind === "final" && !e.payload.text.trim()) {
+          e = { kind: "final", payload: { text: GRACEFUL_FINAL } };
+        }
+        if (e.kind === "final") {
           const prov = agentDeps.provider;
           if (prov) {
             void maybeCapture({
@@ -280,7 +302,9 @@ export function chatRoutes(
               goal: parsed.data.text,
               steps: runSteps,
               outcome: e.payload.text,
-              succeeded: true,
+              // Only learn a playbook when no tool failed — capturing failed
+              // procedures as succeeded teaches Ava broken steps.
+              succeeded: !anyToolFailed,
               today: new Date().toISOString().slice(0, 10),
             });
           }
@@ -414,7 +438,23 @@ export function chatRoutes(
     const lastEventId = Number(req.headers["last-event-id"] ?? req.query.lastEventId ?? 0);
     const run = runs.get(sessionId);
     if (!run) {
-      res.status(404).json({ error: "no_active_run" });
+      // No active run for this session. A fast turn can finish + unregister
+      // BEFORE the client opens this stream (POST returns first, the EventSource
+      // connects after). 404-ing here makes the browser EventSource retry
+      // forever and `busy` never clears. Instead, terminate cleanly: replay the
+      // session's latest assistant reply as a `final`, then `done`, then end —
+      // exactly the shape the live loop emits, so the client finishes the turn.
+      const sink = createSink(res);
+      // Ids just need to be > what the client already has so they aren't deduped.
+      let id = lastEventId;
+      const latest = latestAssistantAfterLastUser(db, sessionId);
+      if (latest) {
+        sink.write({ id: ++id, kind: "final", payload: { text: latest }, bytes: 0, ts: Date.now() });
+      }
+      // Always emit `done` so the EventSource finishes (sets finished, clears
+      // busy) even when there is no assistant message yet.
+      sink.write({ id: ++id, kind: "done", payload: {}, bytes: 0, ts: Date.now() });
+      sink.close();
       return;
     }
     const sink = createSink(res);
@@ -425,11 +465,23 @@ export function chatRoutes(
     for (const ev of replay.events) sink.write(ev);
 
     let lastSeen = replay.events.at(-1)?.id ?? lastEventId;
+    // Heartbeat: a long single-tool turn (claude_code, computer_use) can emit
+    // zero events for minutes, and idle intermediaries drop a silent connection.
+    // If a tick flushes nothing, send a comment ping ~every 15s to keep it open.
+    // Comments carry no event id, so replay/dedup is undisturbed.
+    const HEARTBEAT_MS = 15_000;
+    let lastWriteAt = Date.now();
     const interval = setInterval(() => {
       if (sink.closed) { clearInterval(interval); return; }
       const more = run.buffer.since(lastSeen);
       for (const ev of more.events) sink.write(ev);
-      if (more.events.length > 0) lastSeen = more.events.at(-1)!.id;
+      if (more.events.length > 0) {
+        lastSeen = more.events.at(-1)!.id;
+        lastWriteAt = Date.now();
+      } else if (Date.now() - lastWriteAt >= HEARTBEAT_MS) {
+        sink.comment("ping");
+        lastWriteAt = Date.now();
+      }
       if (!runs.get(sessionId)) {
         clearInterval(interval);
         sink.close();
@@ -464,4 +516,25 @@ export function chatRoutes(
   });
 
   return r;
+}
+
+/**
+ * The text of the most recent assistant message that follows the last user
+ * message in this session, or null. Used by the stream endpoint when a fast turn
+ * finished and unregistered before the client connected: we replay this as the
+ * `final` so a late connect still terminates with the answer instead of looping
+ * on 404. Requiring it to come AFTER the last user turn avoids replaying a stale
+ * reply from a previous exchange when the new turn produced nothing yet.
+ */
+function latestAssistantAfterLastUser(db: Db, sessionId: string): string | null {
+  const msgs = listMessages(db, sessionId);
+  let lastUserIdx = -1;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i]!.role === "user") { lastUserIdx = i; break; }
+  }
+  for (let i = msgs.length - 1; i > lastUserIdx; i--) {
+    const m = msgs[i]!;
+    if (m.role === "assistant" && m.content.trim()) return m.content;
+  }
+  return null;
 }

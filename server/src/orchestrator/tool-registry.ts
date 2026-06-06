@@ -7,6 +7,16 @@ export type ToolRegistry = {
   has(name: string): boolean;
 };
 
+/**
+ * True when args is the parse-failure sentinel both LLM providers emit for
+ * unparseable tool-call JSON: an object whose only own key is `_raw`.
+ */
+function isRawArgsSentinel(args: unknown): args is { _raw: unknown } {
+  if (typeof args !== "object" || args === null) return false;
+  const keys = Object.keys(args as Record<string, unknown>);
+  return keys.length === 1 && keys[0] === "_raw";
+}
+
 export function buildToolRegistry(opts: { tools: ToolDef[]; ctx: RunCtx }): ToolRegistry {
   const byName = new Map(opts.tools.map((t) => [t.tool.name, t]));
 
@@ -35,6 +45,19 @@ export function buildToolRegistry(opts: { tools: ToolDef[]; ctx: RunCtx }): Tool
       const td = byName.get(call.name);
       if (!td) {
         return { call_id: call.id, output: `unknown tool: ${call.name}`, is_error: true };
+      }
+      // Malformed tool-args JSON: both providers surface an unparseable args blob
+      // as the `{ _raw: "..." }` sentinel. Dispatching that runs the tool with
+      // garbage (e.g. shell with an empty command). Instead, return a tool ERROR
+      // the model can read and recover from — without ever invoking the tool.
+      if (isRawArgsSentinel(call.args)) {
+        const raw = String((call.args as { _raw: unknown })._raw ?? "");
+        const truncated = raw.length > 200 ? raw.slice(0, 200) + "…" : raw;
+        return {
+          call_id: call.id,
+          output: `malformed tool arguments: ${truncated}`,
+          is_error: true,
+        };
       }
       try {
         const args = (typeof call.args === "object" && call.args !== null)

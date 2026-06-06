@@ -1,6 +1,18 @@
 // server/src/tools/claude-code-mcp.ts
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { ClaudeCode } from "./claude-code.js";
+import { TOOL_BUDGET_MS } from "../orchestrator/timeout.js";
+
+// Hard-kill the worker slightly BEFORE the orchestrator's withTimeout budget
+// fires. withTimeout can only reject the pending promise — it cannot kill the
+// spawned `claude -p` child — so without an internal timeout the child becomes a
+// zombie. Arming claude-code's own SIGTERM→SIGKILL ladder a hair under the
+// budget guarantees the child is actually reaped at the budget.
+const CLAUDE_CODE_KILL_MARGIN_MS = 5_000;
+function claudeCodeTimeoutMs(): number {
+  const budget = TOOL_BUDGET_MS.claude_code ?? 600_000;
+  return Math.max(1_000, budget - CLAUDE_CODE_KILL_MARGIN_MS);
+}
 
 export type ClaudeCodeToolEvent =
   | { kind: "claude_code.call"; args: unknown }
@@ -41,6 +53,9 @@ export function buildClaudeCodeTool(opts: {
         model: typeof args.model === "string" ? args.model : undefined,
         runId: ctx.runId,
         signal: ctx.signal,
+        // Hard cap so the child is actually killed at the budget (not just the
+        // un-killable withTimeout). Kept slightly under the orchestrator budget.
+        timeoutMs: claudeCodeTimeoutMs(),
       });
       if (r.ok) {
         const summary = `EXIT ${r.exitCode}\n${r.output}`;

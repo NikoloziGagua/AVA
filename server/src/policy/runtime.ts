@@ -18,6 +18,10 @@ export type PolicyHookArgs = {
   /** The veto window before an undecided approval auto-approves. Default 15s
    *  (override with APPROVAL_AUTO_APPROVE_MS). */
   approvalTimeoutMs?: number;
+  /** The run's abort signal. Threaded into waitForDecision so a Stop during the
+   *  veto window resolves immediately as expired (not auto-approved) — Stop must
+   *  cancel a pending approval, never run the tool. */
+  signal?: AbortSignal;
 };
 
 export type PolicyHook = (toolName: string, args: unknown) => Promise<PolicyOutcome>;
@@ -67,7 +71,11 @@ export function buildPolicyHook(opts: PolicyHookArgs): PolicyHook {
       });
     }
     // Sir gets a veto window; if he doesn't decline in time, it auto-approves.
-    const r = await waitForDecision(opts.db, approval.id, opts.approvalTimeoutMs ?? autoApproveMs(), "approve");
+    // A Stop mid-window aborts the signal, which resolves this as expired (not
+    // approved) so the pending tool is cancelled rather than run.
+    const r = await waitForDecision(
+      opts.db, approval.id, opts.approvalTimeoutMs ?? autoApproveMs(), "approve", opts.signal,
+    );
     opts.emit({ kind: "approval_resolved", payload: { id: approval.id, status: r.status as "approved" | "denied" | "expired" } });
     if (r.status === "approved") return { allow: true };
     return { allow: false, message: `DENIED (${r.status})` };

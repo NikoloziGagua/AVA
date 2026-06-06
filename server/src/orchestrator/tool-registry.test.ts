@@ -51,6 +51,36 @@ describe("buildToolRegistry", () => {
     expect(r).toEqual({ call_id: "c1", output: expect.stringContaining("unknown tool: ghost"), is_error: true });
   });
 
+  it("malformed tool args ({_raw}) return an error WITHOUT running the tool", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "ran", ok: true });
+    const reg = buildToolRegistry({ tools: [defOf("a", run)], ctx: { runId: "r1" } });
+    const r = await reg.dispatch({ id: "c1", name: "a", args: { _raw: '{"x": "broke' } });
+    expect(run).not.toHaveBeenCalled();
+    expect(r.is_error).toBe(true);
+    expect(r.output).toContain("malformed tool arguments");
+    expect(r.output).toContain('{"x": "broke');
+    expect(r.call_id).toBe("c1");
+  });
+
+  it("truncates a very long _raw blob in the error message", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "ran", ok: true });
+    const reg = buildToolRegistry({ tools: [defOf("a", run)], ctx: { runId: "r1" } });
+    const big = "x".repeat(500);
+    const r = await reg.dispatch({ id: "c1", name: "a", args: { _raw: big } });
+    expect(run).not.toHaveBeenCalled();
+    expect(r.output).toContain("…");
+    expect(r.output.length).toBeLessThan(300);
+  });
+
+  it("a legitimate arg literally named _raw alongside others still dispatches", async () => {
+    // The sentinel is ONLY an object whose sole key is _raw. A real arg that
+    // happens to include _raw among other keys must not be misclassified.
+    const run = vi.fn().mockResolvedValue({ text: "ran", ok: true });
+    const reg = buildToolRegistry({ tools: [defOf("a", run)], ctx: { runId: "r1" } });
+    await reg.dispatch({ id: "c1", name: "a", args: { _raw: "v", x: "y" } });
+    expect(run).toHaveBeenCalledWith({ _raw: "v", x: "y" }, { runId: "r1" });
+  });
+
   it("fills inputSchema defaults when the ToolDef has no properties key", () => {
     const td: ToolDef = {
       tool: { name: "z", description: "z", inputSchema: { type: "object" } as const },

@@ -101,6 +101,9 @@ export async function runAgent(opts: RunOpts): Promise<void> {
   const policy: PolicyHook = buildPolicyHook({
     db: opts.db, sessionId: opts.sessionId, emit,
     pushDeliver: deps.pushDeliver,
+    // Stop during a pending approval must cancel, not auto-approve: the signal
+    // resolves the veto-window wait immediately as expired.
+    signal: abort.signal,
   });
 
   const mode = opts.mode ?? "action";
@@ -218,6 +221,9 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       }
 
       const decision = await policy(call.name, call.args);
+      // policy() can block for the full veto window. If Stop fired during it, bail
+      // before dispatching — otherwise a cancelled run still executes this tool.
+      if (abort.signal.aborted) break;
       if (!decision.allow) {
         const result = { call_id: call.id, output: decision.message, is_error: true };
         emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: result.output } });
@@ -229,6 +235,9 @@ export async function runAgent(opts: RunOpts): Promise<void> {
 
       const budget = TOOL_BUDGET_MS[call.name] ?? 30_000;
       try {
+        // Final guard immediately before dispatch: covers a Stop that lands in the
+        // narrow gap between the policy decision and the tool actually running.
+        if (abort.signal.aborted) break;
         const r = await withTimeout(registry.dispatch(call), budget, call.name);
         emit({ kind: "tool_result", payload: { tool: call.name, ok: !r.is_error, result: r.output } });
         messages.push({ role: "tool", content: r });

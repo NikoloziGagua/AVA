@@ -133,6 +133,38 @@ describe("approvals repo", () => {
     expect(result.status).toBe("denied");
   });
 
+  it("an abort signal mid-wait resolves 'expired' even when onTimeout='approve' (Stop cancels)", async () => {
+    const approval = createApproval(db, { sessionId, tool: "bash", args: {}, summary: "s" });
+    const ac = new AbortController();
+    // Fire Stop shortly after we start waiting; the veto window would otherwise
+    // auto-APPROVE on timeout. The abort must win and resolve as expired.
+    setTimeout(() => ac.abort(), 20);
+    const result = await waitForDecision(db, approval.id, 1000, "approve", ac.signal);
+    expect(result.status).toBe("expired");
+    const row = getApproval(db, approval.id);
+    expect(row!.status).toBe("expired");
+    expect(row!.decided_at).not.toBeNull();
+  });
+
+  it("an already-aborted signal resolves 'expired' immediately without auto-approving", async () => {
+    const approval = createApproval(db, { sessionId, tool: "bash", args: {}, summary: "s" });
+    const ac = new AbortController();
+    ac.abort();
+    const result = await waitForDecision(db, approval.id, 1000, "approve", ac.signal);
+    expect(result.status).toBe("expired");
+    expect(getApproval(db, approval.id)!.status).toBe("expired");
+  });
+
+  it("an explicit approve still wins if it lands before the abort", async () => {
+    const approval = createApproval(db, { sessionId, tool: "bash", args: {}, summary: "s" });
+    const ac = new AbortController();
+    decide(db, approval.id, "approved");
+    // Abort after the decision — the decided status must stand.
+    setTimeout(() => ac.abort(), 20);
+    const result = await waitForDecision(db, approval.id, 1000, "approve", ac.signal);
+    expect(result.status).toBe("approved");
+  });
+
   it("expirePending(olderThanMs) flips old pending rows to expired", () => {
     const approval = createApproval(db, { sessionId, tool: "bash", args: {}, summary: "s" });
 

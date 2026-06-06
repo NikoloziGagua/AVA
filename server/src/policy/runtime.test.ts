@@ -79,6 +79,27 @@ describe("buildPolicyHook", () => {
     expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("approved");
   });
 
+  it("Stop during the veto window cancels (not allow): aborting the signal blocks the tool", async () => {
+    const events: PolicyEvent[] = [];
+    const ac = new AbortController();
+    const hook = buildPolicyHook({
+      db, sessionId,
+      emit: (e) => {
+        events.push(e);
+        // Press Stop while the approval is pending (long veto window otherwise
+        // auto-approves). The abort must resolve it as expired → not allowed.
+        if (e.kind === "approval_required") setTimeout(() => ac.abort(), 10);
+      },
+      approvalTimeoutMs: 5_000,
+      signal: ac.signal,
+    });
+    const r = await hook("shell", { command: "rm -rf /tmp/x" });
+    expect(r.allow).toBe(false);
+    if (!r.allow) expect(r.message).toMatch(/DENIED \(expired\)/);
+    const resolved = events.find((e) => e.kind === "approval_resolved");
+    expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("expired");
+  });
+
   it("active deny rule short-circuits to blocked without approval", async () => {
     createRule(db, {
       source: "no shell",

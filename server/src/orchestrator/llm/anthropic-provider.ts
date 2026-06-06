@@ -74,7 +74,7 @@ export class AnthropicProvider implements LLMProvider {
       system: [{ type: "text", text: input.system, cache_control: { type: "ephemeral" } }],
       messages: toAnthropicMessages(input.messages),
       ...(tools ? { tools } : {}),
-    });
+    }, { signal: input.abort });
     type Block = { kind: "text" } | { kind: "tool_use"; id: string; name: string; argsBuf: string };
     const blocks = new Map<number, Block>();
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error" = "end_turn";

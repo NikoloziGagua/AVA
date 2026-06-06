@@ -4,6 +4,9 @@ import type { SseEvent } from "./buffer.js";
 export type SseSink = {
   write(ev: SseEvent): void;
   writeGap(from: number, oldestBuffered: number): void;
+  /** Write an SSE comment line (`: text`). Comments carry no event id and are
+   *  ignored by EventSource — used for keep-alive heartbeats on idle streams. */
+  comment(text: string): void;
   close(): void;
   closed: boolean;
 };
@@ -32,6 +35,10 @@ export function createSink(res: Response): SseSink {
       const payload = { from, to: oldestBuffered - 1 };
       res.write(`event: gap\n`);
       res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    },
+    comment(text) {
+      if (closed) return;
+      res.write(`: ${text}\n\n`);
     },
     close() {
       if (closed) return;

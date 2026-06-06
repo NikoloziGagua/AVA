@@ -78,6 +78,13 @@ export function waitForDecision(
    * proceed (the 15s veto-window behaviour).
    */
   onTimeout: "expire" | "approve" = "expire",
+  /**
+   * The run's abort signal. When the red Stop button fires mid-approval, resolve
+   * immediately as "expired" (NOT approved) so a Stop during the veto window
+   * cancels the tool instead of auto-approving and running it. Without this the
+   * approve-on-timeout path blocks the full window and Stop is ignored.
+   */
+  signal?: AbortSignal,
 ): Promise<{ status: ApprovalStatus }> {
   return new Promise((resolve) => {
     // Resolve immediately if already decided.
@@ -87,12 +94,38 @@ export function waitForDecision(
       return;
     }
 
+    let timer: NodeJS.Timeout | undefined;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      approvalEvents.off("decided", onDecided);
+      if (signal) signal.removeEventListener("abort", onAbort);
+    };
+
     const onDecided = (e: DecisionEvent) => {
       if (e.id !== id) return;
       cleanup();
       resolve({ status: e.status });
     };
-    const timer = setTimeout(() => {
+
+    // Stop fired (before or during the wait): mark the pending approval expired
+    // and resolve as expired regardless of onTimeout, so the tool does NOT run.
+    const expireNow = () => {
+      cleanup();
+      const r = db.prepare(
+        "UPDATE approvals SET status = 'expired', decided_at = ? WHERE id = ? AND status = 'pending'",
+      ).run(Date.now(), id);
+      if (r.changes > 0) approvalEvents.emit("decided", { id, status: "expired" } satisfies DecisionEvent);
+      resolve({ status: "expired" });
+    };
+    const onAbort = () => expireNow();
+
+    // Resolve immediately if Stop already fired before we started waiting.
+    if (signal?.aborted) {
+      expireNow();
+      return;
+    }
+
+    timer = setTimeout(() => {
       cleanup();
       const finalStatus: ApprovalStatus = onTimeout === "approve" ? "approved" : "expired";
       // Record the timeout outcome in DB; emit so any other waiter resolves too.
@@ -103,11 +136,7 @@ export function waitForDecision(
       resolve({ status: finalStatus });
     }, timeoutMs);
 
-    const cleanup = () => {
-      clearTimeout(timer);
-      approvalEvents.off("decided", onDecided);
-    };
-
     approvalEvents.on("decided", onDecided);
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
   });
 }

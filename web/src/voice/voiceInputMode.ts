@@ -139,16 +139,10 @@ export function shouldReconnectForModeChange(
 /**
  * Whether changing the voice ENGINE must reconnect the realtime session.
  *
- * The engine value alone decides the realtime session shape: "chatterbox" makes
- * the realtime model transcribe-only (the client routes transcripts to /api/chat
- * and speaks via Chatterbox /api/speak), while "openai"/"hybrid" make the model
- * speak directly with the do_on_computer tool. Crucially, "openai" and "hybrid"
- * build an IDENTICAL realtime session — they differ only in the per-request
- * /api/speak TTS for narrated steps/results, which needs no reconnect. So the
- * ONLY engine change that alters the live realtime session is one that crosses
- * the chatterbox boundary; openai↔hybrid must NOT reconnect (it would needlessly
- * tear down a working session). As with the mode reconnect, an idle session needs
- * nothing — the next connect reads the engine server-side.
+ * The engine is now the PROVIDER toggle ("openai" vs "hume"). The two providers
+ * speak over entirely different upstream sockets (OpenAI GA realtime vs Hume EVI),
+ * so ANY change between them must tear down and reopen the session to take effect.
+ * An idle session needs nothing — the next connect reads the engine server-side.
  */
 export function shouldReconnectForEngineChange(
   prev: VoiceEngine,
@@ -157,9 +151,8 @@ export function shouldReconnectForEngineChange(
 ): boolean {
   if (prev === next) return false;
   if (state === "idle") return false;
-  // Crossing the chatterbox boundary in either direction is the only switch that
-  // changes the realtime "speaks vs transcribe" session.
-  return (prev === "chatterbox") !== (next === "chatterbox");
+  // openai↔hume changes the upstream provider — always reconnect.
+  return true;
 }
 
 /**

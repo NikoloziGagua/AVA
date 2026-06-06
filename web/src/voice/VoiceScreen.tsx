@@ -134,8 +134,7 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         <div className="glass flex items-center gap-1 rounded-full p-1 text-[10px]">
           {([
             ["openai", "OpenAI"],
-            ["chatterbox", "Chatterbox"],
-            ["hybrid", "Hybrid"],
+            ["hume", "Hume"],
           ] as const).map(([value, label]) => {
             const active = v.voiceEngine === value;
             return (

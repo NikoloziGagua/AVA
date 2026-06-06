@@ -664,21 +664,20 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
   }
 
   async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string, pushToTalk = false, wantNew = false) {
-    // PROVIDER BRANCH. When Hume is selected AND configured, try it first. If its
-    // socket can't be established, fall through to the proven OpenAI path below.
-    // No client handlers are attached until Hume actually opens, so a failed
-    // attempt leaves the connection clean for the OpenAI fallback.
-    if (providerConfig.provider === "hume" && providerConfig.hume) {
+    // PROVIDER BRANCH. The dashboard voice toggle (voice_engine_pref) selects the
+    // provider, read here at connect so a toggle change takes effect on reconnect.
+    // When the toggle is "hume" AND Hume is configured (HUME_API_KEY in env), try
+    // Hume first; if its socket can't be established, fall through to the proven
+    // OpenAI path below. No client handlers are attached until Hume actually opens,
+    // so a failed attempt leaves the connection clean for the OpenAI fallback.
+    if (getVoiceEngine(deps.db) === "hume" && providerConfig.hume) {
       const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume);
       if (opened) return;
       log.warn("realtime: hume upstream did not establish — falling back to OpenAI");
     }
-    // The realtime model speaks only when the engine is NOT "chatterbox". In
-    // "chatterbox" mode it stays transcribe-only (the client routes transcripts
-    // to /api/chat and speaks via /api/speak=Chatterbox), so ALL voice is the
-    // cloned voice. "openai"/"hybrid" keep the realtime model speaking. Read at
-    // connect time so a mid-session engine switch takes effect on reconnect.
-    const hybrid = getVoiceEngine(deps.db) !== "chatterbox" && !!deps.runAction;
+    // The realtime model always speaks for the OpenAI provider (hybrid: it speaks
+    // chitchat AND routes do_on_computer to the full agent).
+    const hybrid = !!deps.runAction;
     // In hybrid mode the proxy owns the action handoff; the session id is tracked
     // here and may be (re)assigned when an action turn creates one.
     let sessionId = requestedSessionId;
@@ -983,7 +982,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     hume: HumeProviderConfig,
   ): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
-      const hybrid = getVoiceEngine(deps.db) !== "chatterbox" && !!deps.runAction;
+      const hybrid = !!deps.runAction;
       let sessionId = requestedSessionId;
       const actionAbort = new AbortController();
       let opened = false;

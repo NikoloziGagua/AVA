@@ -1,23 +1,21 @@
 import type { Db } from "./db.js";
 
-// How Ava's voice is PRODUCED — a single global preference, mirroring
-// reasoning-pref.ts:
+// Which voice PROVIDER speaks for Ava — a single global preference, mirroring
+// reasoning-pref.ts. This is the dashboard's voice toggle:
 //
-//   "openai"     (default) — the realtime model speaks (OpenAI voice) AND
-//                            /api/speak uses OpenAI gpt-4o-mini-tts. The current,
-//                            unchanged behaviour.
-//   "chatterbox"           — the realtime model does NOT speak (transcribe-only)
-//                            AND /api/speak uses the LOCAL Chatterbox TTS server,
-//                            so ALL of Ava's voice is the local cloned voice.
-//   "hybrid"               — the realtime model speaks chitchat (OpenAI voice)
-//                            AND /api/speak uses Chatterbox, so task narration /
-//                            results come back in the cloned voice.
-export type VoiceEngine = "openai" | "chatterbox" | "hybrid";
+//   "openai" (default) — the OpenAI GA realtime model speaks; /api/speak uses
+//                        OpenAI gpt-4o-mini-tts.
+//   "hume"             — Hume EVI speaks (the "Alice Bennett" voice); requires
+//                        HUME_API_KEY in env, else the proxy falls back to OpenAI.
+//
+// (The older "chatterbox"/"hybrid" local-clone options were retired from the UI;
+// a stale row with either value falls back to "openai".)
+export type VoiceEngine = "openai" | "hume";
 
 const SCOPE = "global";
 
 function isVoiceEngine(v: unknown): v is VoiceEngine {
-  return v === "openai" || v === "chatterbox" || v === "hybrid";
+  return v === "openai" || v === "hume";
 }
 
 export function getVoiceEngine(db: Db): VoiceEngine {

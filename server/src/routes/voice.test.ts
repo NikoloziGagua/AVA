@@ -156,49 +156,12 @@ describe("voiceRoutes /api/speak", () => {
   });
 });
 
-describe("voiceRoutes /api/speak — Chatterbox engine routing", () => {
-  const realFetch = global.fetch;
-  afterEach(() => { global.fetch = realFetch; vi.restoreAllMocks(); });
+describe("voiceRoutes /api/speak — always OpenAI TTS (chatterbox/hybrid retired)", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
 
-  it("chatterbox engine: POSTs {text} to Chatterbox and returns audio/wav", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(new Uint8Array([7, 8, 9]).buffer, { status: 200, headers: { "content-type": "audio/wav" } }),
-    );
-    global.fetch = fetchMock as unknown as typeof fetch;
-    // OpenAI speak must NOT be called when Chatterbox succeeds.
-    const speak = vi.fn();
-    const app = setup(mockClients({ speak }), "chatterbox");
-    const res = await request(app).post("/api/speak").send({ text: "Yes, Sir, done." });
-    expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toMatch(/audio\/wav/);
-    expect(Array.from(res.body as Buffer)).toEqual([7, 8, 9]);
-    expect(speak).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledOnce();
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("8123");
-    // Body carries the "Sir"-smoothed text.
-    expect(JSON.parse(init.body as string)).toEqual({ text: "Yes Sir done." });
-  });
-
-  it("hybrid engine also synthesizes /api/speak via Chatterbox", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(new Uint8Array([1]).buffer, { status: 200 }),
-    );
-    global.fetch = fetchMock as unknown as typeof fetch;
-    const app = setup(mockClients({}), "hybrid");
-    const res = await request(app).post("/api/speak").send({ text: "hi" });
-    expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toMatch(/audio\/wav/);
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
-  it("falls back to OpenAI (mpeg) when Chatterbox fails and a client is configured", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
-    global.fetch = fetchMock as unknown as typeof fetch;
-    const speak = vi.fn().mockResolvedValue({
-      arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer,
-    });
-    const app = setup(mockClients({ speak }), "chatterbox");
+  it("uses OpenAI gpt-4o-mini-tts and returns audio/mpeg", async () => {
+    const speak = vi.fn().mockResolvedValue({ arrayBuffer: async () => new Uint8Array([4, 5, 6]).buffer });
+    const app = setup(mockClients({ speak }));
     const res = await request(app).post("/api/speak").send({ text: "hello" });
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/audio\/mpeg/);
@@ -206,18 +169,19 @@ describe("voiceRoutes /api/speak — Chatterbox engine routing", () => {
     expect(speak).toHaveBeenCalledOnce();
   });
 
-  it("returns 502 when Chatterbox fails and no OpenAI client is configured", async () => {
-    const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
-    global.fetch = fetchMock as unknown as typeof fetch;
-    // clients=null AND chatterbox engine → no fallback possible.
-    const app = express();
-    app.use(express.json());
-    const auth = (_req: any, _res: any, next: any) => next();
-    const db = openInMemoryDb();
-    setVoiceEngine(db, "chatterbox");
-    app.use("/api", voiceRoutes({ clients: null, requireToken: auth, db }));
+  it("the voice toggle (even 'hume') does NOT change /api/speak — it stays OpenAI", async () => {
+    const speak = vi.fn().mockResolvedValue({ arrayBuffer: async () => new Uint8Array([9]).buffer });
+    const app = setup(mockClients({ speak }), "hume");
+    const res = await request(app).post("/api/speak").send({ text: "hi" });
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/audio\/mpeg/);
+    expect(speak).toHaveBeenCalledOnce();
+  });
+
+  it("returns 503 when no OpenAI client is configured", async () => {
+    const app = setup(null);
     const res = await request(app).post("/api/speak").send({ text: "hello" });
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(503);
   });
 });
 

@@ -5,8 +5,6 @@ import type { VoiceClients } from "../tools/voice-clients.js";
 import type { Db } from "../state/db.js";
 import { formatSpeechText } from "../voice/speechText.js";
 import { resolveSpeechRate } from "../voice/voiceConfig.js";
-import { chatterboxSpeak, chatterboxUrl } from "../voice/chatterbox.js";
-import { getVoiceEngine } from "../state/voice-engine-pref.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
 
 const ALLOWED_MIMES = new Set([
@@ -82,46 +80,19 @@ export function voiceRoutes(deps: VoiceRoutesDeps): ExpressRouter {
     const voice = typeof req.body?.voice === "string" ? req.body.voice : DEFAULT_VOICE;
     if (!text.trim()) return res.status(400).json({ error: "text required" });
 
-    const engine = getVoiceEngine(deps.db);
-
-    // engine="openai" (default): UNCHANGED — OpenAI gpt-4o-mini-tts.
-    if (engine === "openai") {
-      if (!deps.clients) {
-        return res.status(503).json({ error: "OPENAI_API_KEY not configured" });
-      }
-      try {
-        const buf = await speakOpenAi(text, voice, req.body?.speed);
-        res.setHeader("Content-Type", "audio/mpeg");
-        return res.send(buf!);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return res.status(502).json({ error: `tts failed: ${msg}` });
-      }
+    // Voice is produced by OpenAI gpt-4o-mini-tts. In Hume mode the EVI socket
+    // (voice-realtime.ts) speaks Ava's turns directly; this /api/speak path is the
+    // client-side TTS primitive for narration and always uses OpenAI.
+    if (!deps.clients) {
+      return res.status(503).json({ error: "OPENAI_API_KEY not configured" });
     }
-
-    // engine="chatterbox" | "hybrid": synthesize via the LOCAL Chatterbox server
-    // so Ava's narrated/spoken /api/speak output is the cloned voice. Same "Sir"
-    // smoothing is applied so the spoken form doesn't stutter on the vocative.
     try {
-      const buf = await chatterboxSpeak(formatSpeechText(text));
-      res.setHeader("Content-Type", "audio/wav");
-      return res.send(buf);
+      const buf = await speakOpenAi(text, voice, req.body?.speed);
+      res.setHeader("Content-Type", "audio/mpeg");
+      return res.send(buf!);
     } catch (err) {
-      // RESILIENCE: Chatterbox is down / errored / timed out. Fall back to OpenAI
-      // (if configured) so voice never fully breaks; otherwise 502.
       const msg = err instanceof Error ? err.message : String(err);
-      deps.log?.warn(`/api/speak: Chatterbox TTS failed (${chatterboxUrl()}): ${msg} — falling back to OpenAI`);
-      if (!deps.clients) {
-        return res.status(502).json({ error: `chatterbox tts failed: ${msg}` });
-      }
-      try {
-        const buf = await speakOpenAi(text, voice, req.body?.speed);
-        res.setHeader("Content-Type", "audio/mpeg");
-        return res.send(buf!);
-      } catch (err2) {
-        const msg2 = err2 instanceof Error ? err2.message : String(err2);
-        return res.status(502).json({ error: `tts failed: ${msg2}` });
-      }
+      return res.status(502).json({ error: `tts failed: ${msg}` });
     }
   });
 

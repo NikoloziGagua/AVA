@@ -150,32 +150,23 @@ describe("shouldReconnectForModeChange — PTT must re-apply server turn_detecti
   });
 });
 
-describe("shouldReconnectForEngineChange — only the chatterbox boundary matters", () => {
-  // openai and hybrid produce an IDENTICAL realtime session (the model speaks +
-  // gets do_on_computer); they differ only in the per-request /api/speak TTS, which
-  // needs no reconnect. chatterbox alone flips the realtime session to
-  // transcribe-only, so only crossing that boundary must reconnect.
-  it("reconnects only when crossing the chatterbox boundary", () => {
-    expect(shouldReconnectForEngineChange("openai", "chatterbox", "listening")).toBe(true);
-    expect(shouldReconnectForEngineChange("chatterbox", "openai", "responding")).toBe(true);
-    expect(shouldReconnectForEngineChange("hybrid", "chatterbox", "listening")).toBe(true);
-    expect(shouldReconnectForEngineChange("chatterbox", "hybrid", "thinking")).toBe(true);
-  });
-
-  it("does NOT reconnect for openai <-> hybrid (identical realtime session)", () => {
-    expect(shouldReconnectForEngineChange("openai", "hybrid", "listening")).toBe(false);
-    expect(shouldReconnectForEngineChange("hybrid", "openai", "responding")).toBe(false);
+describe("shouldReconnectForEngineChange — openai<->hume changes the provider", () => {
+  // The engine is now the provider toggle: openai (GA realtime) vs hume (Hume EVI)
+  // speak over different upstream sockets, so any change must reconnect.
+  it("reconnects on any openai<->hume change while live", () => {
+    expect(shouldReconnectForEngineChange("openai", "hume", "listening")).toBe(true);
+    expect(shouldReconnectForEngineChange("hume", "openai", "responding")).toBe(true);
+    expect(shouldReconnectForEngineChange("hume", "openai", "thinking")).toBe(true);
   });
 
   it("does NOT reconnect when the engine is unchanged", () => {
     expect(shouldReconnectForEngineChange("openai", "openai", "listening")).toBe(false);
-    expect(shouldReconnectForEngineChange("chatterbox", "chatterbox", "listening")).toBe(false);
-    expect(shouldReconnectForEngineChange("hybrid", "hybrid", "responding")).toBe(false);
+    expect(shouldReconnectForEngineChange("hume", "hume", "responding")).toBe(false);
   });
 
   it("does NOT reconnect when idle — the next connect reads the engine server-side", () => {
-    expect(shouldReconnectForEngineChange("openai", "chatterbox", "idle")).toBe(false);
-    expect(shouldReconnectForEngineChange("chatterbox", "openai", "idle")).toBe(false);
+    expect(shouldReconnectForEngineChange("openai", "hume", "idle")).toBe(false);
+    expect(shouldReconnectForEngineChange("hume", "openai", "idle")).toBe(false);
   });
 });
 

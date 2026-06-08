@@ -101,6 +101,8 @@ describe("runAgent (v2 loop)", () => {
     // The model asks for a tool every turn and never concludes, exhausting the
     // loop cap. Each tool result is substantially different so the stuck-loop
     // detector doesn't halt first — we want the turn-budget path specifically.
+    // Pin the (now env-overridable) cap low so this stays fast + deterministic.
+    process.env.AVA_MAX_AGENT_TURNS = "48";
     let n = 0;
     const looper: ToolDef = {
       tool: { name: "shell", description: "shell",
@@ -128,10 +130,11 @@ describe("runAgent (v2 loop)", () => {
         memoryDir: makeMemDir(), provider, tools: [looper],
       } as never,
     } as never);
+    delete process.env.AVA_MAX_AGENT_TURNS;
     const final = events.find((e) => e.kind === "final");
     expect(final).toBeDefined();
     expect((final!.payload as { text: string }).text).toMatch(/step limit/i);
-    // Capped at MAX_AGENT_TURNS (48) tool calls, then a graceful final, then done.
+    // Capped at MAX_AGENT_TURNS (pinned to 48 above) tool calls, then a graceful final, then done.
     expect(events.filter((e) => e.kind === "tool_call").length).toBe(48);
     expect(events.at(-1)?.kind).toBe("done");
   });

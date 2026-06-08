@@ -138,10 +138,14 @@ export async function runAgent(opts: RunOpts): Promise<void> {
   let finalText = "";
   let toolsUsed = 0;
   let killed = false;
-  // Cap the agentic loop. Long research tasks (browsing many pages) are
-  // turn-hungry; 48 gives room while still bounding cost. On exhaustion we emit
-  // a graceful final below rather than ending the run silently.
-  const MAX_AGENT_TURNS = 48;
+  // Backstop for a truly runaway loop — NOT a task budget. Real tasks (multi-item
+  // edits, browsing many pages) are turn-hungry and must never be cut off mid-work:
+  // a 48-turn cap couldn't even finish one Shopify product edit. The actual brakes
+  // are the Stop button (aborts in <=1 turn), the 5-min no-progress stuck-loop
+  // detector, per-tool timeouts, and approval gates — so this is set high
+  // (effectively unlimited for human-scale tasks) and is env-overridable. On
+  // exhaustion we still emit a graceful final below rather than ending silently.
+  const MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS) || 1000;
   let concluded = false;
 
   for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {

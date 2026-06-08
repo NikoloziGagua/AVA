@@ -59,7 +59,7 @@ export async function runComputerUse(
   }
 
   const { client, surface, signal } = deps;
-  const maxIterations = deps.maxIterations ?? 25;
+  const maxIterations = deps.maxIterations ?? 100;
   const screenshots: string[] = [];
 
   // Bail before any work (screenshot or model call) if Stop already fired.
@@ -260,7 +260,7 @@ export async function runComputerUseOpenAI(
     return { ok: false, reason: "task required" };
   }
   const { client, surface, signal } = deps;
-  const maxIterations = deps.maxIterations ?? 25;
+  const maxIterations = deps.maxIterations ?? 100;
   const screenshots: string[] = [];
 
   // Bail before any work (screenshot or model call) if Stop already fired.

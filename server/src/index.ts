@@ -48,7 +48,7 @@ import { verify } from "./self/verify.js";
 import { flightcheck } from "./self/flightcheck.js";
 import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
-import { runImprovement, type ImproverDeps } from "./self/improver.js";
+import { runImprovement, cancelImprovement, type ImproverDeps } from "./self/improver.js";
 import { createIntent, getIntent, listIntents, failStaleIntents } from "./self/intents.js";
 import { createDiscussion, getDiscussion, listDiscussions, failStaleDiscussions } from "./state/discussions.js";
 import { runDiscussion } from "./self/discuss.js";
@@ -149,22 +149,23 @@ const selfRunner = buildRunner();
 
 function buildImproverDeps(): ImproverDeps {
   return {
-    reflect: (goal, failureLog) =>
+    reflect: (goal, failureLog, signal) =>
       provider
-        ? reflect({ provider, goal, knowledge: loadSelfKnowledge({ repoRoot: cfg.repoRoot }), failureLog })
+        ? reflect({ provider, goal, knowledge: loadSelfKnowledge({ repoRoot: cfg.repoRoot }), failureLog, abort: signal })
         : Promise.resolve("CHANGE: (no LLM provider configured)"),
     addWorktree: (id) => addWorktree(cfg.repoRoot, id),
     removeWorktree: (wt) => removeWorktree(cfg.repoRoot, wt),
-    implement: async (brief, cwd) => {
+    implement: async (brief, cwd, signal) => {
       // The edit worker runs in a throwaway worktree (a new directory each run),
       // and Claude sessions are directory-scoped — so this step does NOT use the
       // persistent session (resuming it from a different worktree fails). Ava's
       // persistent chat lives in the stable-cwd advisory/planning conversation.
-      const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12) });
+      // `signal` lets a Stop/Cancel kill the claude worker mid-edit.
+      const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12), signal });
       return r.ok ? { ok: true, output: r.output } : { ok: false, output: r.reason };
     },
-    verify: async (cwd) => {
-      const v = await verify({ cwd, run: selfRunner, bootSmoke });
+    verify: async (cwd, signal) => {
+      const v = await verify({ cwd, run: selfRunner, bootSmoke, signal });
       let fcLine = "";
       try {
         const fc = await flightcheck({ cwd });
@@ -315,6 +316,7 @@ app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir
 app.use("/api/self", selfRoutes(db, requireToken(db), {
   startImprovement,
   revert: (id) => { const row = getIntent(db, id); if (row?.last_known_good) revertTo(cfg.repoRoot, row.last_known_good); },
+  cancel: (id) => cancelImprovement(db, id),
 }));
 
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });

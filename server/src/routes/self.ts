@@ -5,7 +5,12 @@ import { createIntent, listIntents, getIntent, updateIntent } from "../self/inte
 
 const Body = z.object({ goal: z.string().min(1).max(2000) });
 
-export type SelfRouteDeps = { startImprovement: (id: string) => void; revert: (id: string) => void };
+export type SelfRouteDeps = {
+  startImprovement: (id: string) => void;
+  revert: (id: string) => void;
+  /** Cancel a running/queued self-improvement. Returns true if one was cancelled. */
+  cancel: (id: string) => boolean;
+};
 
 export function selfRoutes(db: Db, auth: RequestHandler, deps: SelfRouteDeps): Router {
   const r = Router();
@@ -17,6 +22,12 @@ export function selfRoutes(db: Db, auth: RequestHandler, deps: SelfRouteDeps): R
     res.json({ id });
   });
   r.get("/", auth, (_req, res) => { res.json({ intents: listIntents(db) }); });
+  r.post("/:id/cancel", auth, (req, res) => {
+    const id = req.params.id;
+    if (typeof id !== "string") { res.status(400).json({ error: "bad_request" }); return; }
+    const cancelled = deps.cancel(id);
+    res.json({ ok: true, cancelled });
+  });
   r.post("/:id/revert", auth, (req, res) => {
     const id = req.params.id;
     if (typeof id !== "string") { res.status(400).json({ error: "bad_request" }); return; }

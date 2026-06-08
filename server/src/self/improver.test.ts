@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
 import { createIntent, getIntent } from "./intents.js";
-import { runImprovement } from "./improver.js";
+import { runImprovement, cancelImprovement, cancelAllImprovements } from "./improver.js";
 
 function db() { return openDb(join(mkdtempSync(join(tmpdir(), "ava-imp-")), "x.db")); }
 const deps = (over: Partial<any> = {}) => ({
@@ -81,5 +81,54 @@ describe("runImprovement", () => {
     }));
     expect(getIntent(d, id)!.status).toBe("failed");
     expect(getIntent(d, id)!.error).toContain("produced no changes");
+  });
+
+  // `implement` that blocks until the run's abort signal fires (mimics the claude
+  // worker being killed), telling the test once it has started so cancels are
+  // deterministic — no timers.
+  function blockingDeps(over: Partial<any> = {}) {
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((r) => { resolveStarted = r; });
+    return {
+      deps: deps({
+        implement: (_b: string, _c: string, signal?: AbortSignal) =>
+          new Promise((resolve) => {
+            resolveStarted();
+            signal!.addEventListener("abort", () => resolve({ ok: false, output: "aborted" }), { once: true });
+          }),
+        ...over,
+      }),
+      started,
+    };
+  }
+
+  it("cancelImprovement aborts the RUNNING improvement and marks it cancelled (no swap)", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    let swapped = false;
+    const { deps: bd, started } = blockingDeps({ swapTo: () => { swapped = true; } });
+    const run = runImprovement(d, id, bd);
+    await started; // it's now blocked inside implement
+    expect(cancelImprovement(d, id)).toBe(true);
+    await run;
+    expect(swapped).toBe(false);
+    expect(getIntent(d, id)!.status).toBe("failed");
+    expect(getIntent(d, id)!.outcome).toBe("cancelled");
+  });
+
+  it("cancelAllImprovements stops the running one (the red-button path)", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    const { deps: bd, started } = blockingDeps();
+    const run = runImprovement(d, id, bd);
+    await started;
+    expect(cancelAllImprovements(d)).toBe(1);
+    await run;
+    expect(getIntent(d, id)!.outcome).toBe("cancelled");
+  });
+
+  it("cancelImprovement on an unknown id returns false", () => {
+    const d = db();
+    expect(cancelImprovement(d, "nope")).toBe(false);
   });
 });

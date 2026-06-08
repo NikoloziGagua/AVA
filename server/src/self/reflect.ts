@@ -3,6 +3,8 @@ import type { SelfKnowledge } from "./identity.js";
 
 export async function reflect(o: {
   provider: LLMProvider; goal: string; knowledge: SelfKnowledge; failureLog: string | null;
+  /** Cancels the reflect LLM call when the improvement is stopped. */
+  abort?: AbortSignal;
 }): Promise<string> {
   const system =
     "You are Ava planning a change to your OWN codebase. Produce a concise change brief:\n" +
@@ -16,7 +18,7 @@ export async function reflect(o: {
   for await (const ev of o.provider.stream({
     model: o.provider.defaultOrchestratorModel,
     system, messages: [{ role: "user", content: user }], tools: [],
-    abort: new AbortController().signal, reasoningEffort: "medium",
+    abort: o.abort ?? new AbortController().signal, reasoningEffort: "medium",
   })) {
     if (ev.kind === "delta") text += ev.text;
   }

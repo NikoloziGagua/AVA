@@ -12,9 +12,10 @@ function setup() {
   const db = openDb(join(mkdtempSync(join(tmpdir(), "ava-selfroute-")), "x.db"));
   const start = vi.fn((_id: string) => {});
   const revert = vi.fn((_id: string) => {});
+  const cancel = vi.fn((_id: string) => true);
   const app = express(); app.use(express.json());
-  app.use("/api/self", selfRoutes(db, (_q, _s, n) => n(), { startImprovement: start, revert }));
-  return { app, db, start, revert };
+  app.use("/api/self", selfRoutes(db, (_q, _s, n) => n(), { startImprovement: start, revert, cancel }));
+  return { app, db, start, revert, cancel };
 }
 
 describe("/api/self", () => {
@@ -49,5 +50,12 @@ describe("/api/self", () => {
     const { app, db } = setup();
     const id = createIntent(db, { trigger: "explicit", goal: "g" });
     await request(app).post(`/api/self/${id}/revert`).expect(404);
+  });
+
+  it("POST /:id/cancel calls cancel and reports the result", async () => {
+    const { app, cancel } = setup();
+    const res = await request(app).post("/api/self/some-id/cancel").expect(200);
+    expect(cancel).toHaveBeenCalledWith("some-id");
+    expect(res.body).toEqual({ ok: true, cancelled: true });
   });
 });

@@ -13,21 +13,35 @@ const RUN_TIMEOUT_MS = 10 * 60_000;
 // "npm test" resolve on Windows + POSIX. Never rejects — a spawn error or a
 // timeout becomes a nonzero RunResult so verify() treats it as a failed check.
 export function buildRunner(timeoutMs: number = RUN_TIMEOUT_MS): RunFn {
-  return (cmd: string, cwd: string): Promise<RunResult> =>
+  return (cmd: string, cwd: string, signal?: AbortSignal): Promise<RunResult> =>
     new Promise<RunResult>((resolve) => {
+      // Already cancelled before we even spawn → don't start.
+      if (signal?.aborted) { resolve({ code: 1, output: "cancelled" }); return; }
       const child = spawn(cmd, { cwd, shell: true, windowsHide: true });
       let output = "";
       let settled = false;
-      const done = (r: RunResult) => { if (settled) return; settled = true; clearTimeout(timer); resolve(r); };
+      const treeKill = () => {
+        if (typeof child.pid === "number") void killTree(child.pid, "SIGTERM");
+        else child.kill();
+      };
+      const done = (r: RunResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+        resolve(r);
+      };
       const cap = (d: Buffer) => { output += d.toString(); if (output.length > 16_384) output = output.slice(-16_384); };
       // Tree-kill on timeout so the npm.cmd -> node subtree dies (a bare kill
       // would orphan node), then resolve a failed check.
       const timer = setTimeout(() => {
-        if (typeof child.pid === "number") void killTree(child.pid, "SIGTERM");
-        else child.kill();
+        treeKill();
         done({ code: 1, output: `${output}\n[verify check timed out after ${timeoutMs}ms]` });
       }, timeoutMs);
       timer.unref?.();
+      // Cancel mid-run: tree-kill the test/build subtree and resolve a failed check.
+      const onAbort = () => { treeKill(); done({ code: 1, output: `${output}\n[verify check cancelled]` }); };
+      if (signal) signal.addEventListener("abort", onAbort, { once: true });
       child.stdout?.on("data", cap);
       child.stderr?.on("data", cap);
       child.on("error", (err) => done({ code: 1, output: `${output}\nspawn error: ${err.message}` }));

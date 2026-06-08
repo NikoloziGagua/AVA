@@ -17,6 +17,7 @@ import { maybeSummarize } from "../orchestrator/auto-summary.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 import { killTree } from "../process/kill-tree.js";
+import { cancelAllImprovements } from "../self/improver.js";
 import type { Approval } from "../state/approvals.js";
 import type { LLMProvider, Message as LLMMessage } from "../orchestrator/llm/types.js";
 import { buildShellTool } from "../tools/shell-tool.js";
@@ -512,7 +513,11 @@ export function chatRoutes(
       }
     }
     runs.unregister(sessionId); // free the slot immediately so a new turn can start (preempt)
-    res.json({ aborted: ok });
+    // 3. Stop ALSO halts any background self-improvement — a self-improvement isn't
+    //    a session run (it runs detached in a worktree), so without this the red
+    //    button couldn't reach a runaway self-edit. Cancel them all here.
+    const cancelledImprovements = cancelAllImprovements(db);
+    res.json({ aborted: ok, cancelledImprovements });
   });
 
   return r;

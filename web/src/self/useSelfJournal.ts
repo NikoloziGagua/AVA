@@ -56,5 +56,21 @@ export function useSelfJournal() {
     await refresh();
   }, [refresh]);
 
-  return { intents, paused, setPaused, revertLast };
+  // Cancel a running/queued self-improvement (the Stop for self-dev). The server
+  // aborts the worker + verify subprocess; refresh reflects the cancelled state.
+  const cancel = useCallback(async (id: string) => {
+    try {
+      await fetch(`/api/self/${id}/cancel`, { method: "POST", headers: authHeaders() });
+    } catch {
+      /* server truth surfaces on refresh */
+    }
+    await refresh();
+  }, [refresh]);
+
+  return { intents, paused, setPaused, revertLast, cancel };
+}
+
+/** A self-improvement is still in flight (cancellable) in these states. */
+export function isRunningStatus(status: string): boolean {
+  return status === "queued" || status === "reflecting" || status === "implementing" || status === "verifying";
 }

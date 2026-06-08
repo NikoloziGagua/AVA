@@ -65,17 +65,17 @@ const advisor = buildClaudeCode({
 const selfRunner = buildRunner();
 
 const deps: ImproverDeps = {
-  reflect: (goal, failureLog) =>
+  reflect: (goal, failureLog, signal) =>
     provider
-      ? reflect({ provider, goal, knowledge: loadSelfKnowledge({ repoRoot: cfg.repoRoot }), failureLog })
+      ? reflect({ provider, goal, knowledge: loadSelfKnowledge({ repoRoot: cfg.repoRoot }), failureLog, abort: signal })
       : Promise.resolve("CHANGE: (no provider)"),
   addWorktree: (id) => addWorktree(cfg.repoRoot, id),
   removeWorktree: (wt) => removeWorktree(cfg.repoRoot, wt),
-  implement: async (brief, cwd) => {
-    const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12) });
+  implement: async (brief, cwd, signal) => {
+    const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12), signal });
     return r.ok ? { ok: true, output: r.output } : { ok: false, output: r.reason };
   },
-  verify: (cwd) => verify({ cwd, run: selfRunner, bootSmoke }),
+  verify: (cwd, signal) => verify({ cwd, run: selfRunner, bootSmoke, signal }),
   headSha: () => headSha(cfg.repoRoot),
   commitWorktree: (cwd, msg) => {
     execFileSync("git", ["add", "-A"], { cwd });

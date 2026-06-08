@@ -1,8 +1,8 @@
 import { ChevronLeft } from "lucide-react";
-import { useSelfJournal } from "./useSelfJournal.js";
+import { useSelfJournal, isRunningStatus } from "./useSelfJournal.js";
 
 export function SelfScreen({ onClose }: { onClose: () => void }) {
-  const { intents, paused, setPaused, revertLast } = useSelfJournal();
+  const { intents, paused, setPaused, revertLast, cancel } = useSelfJournal();
   const canRevert = intents.some((i) => i.status === "swapped");
 
   return (
@@ -68,7 +68,17 @@ export function SelfScreen({ onClose }: { onClose: () => void }) {
               key={i.id}
               className="border border-white/8 rounded-md px-3 py-2 hover:border-[rgba(92,242,255,0.3)] transition-colors"
             >
-              <div className="text-sm text-white/85">{i.goal}</div>
+              <div className="flex items-start justify-between gap-2">
+                <div className="text-sm text-white/85">{i.goal}</div>
+                {isRunningStatus(i.status) && (
+                  <button
+                    onClick={() => cancel(i.id)}
+                    className="shrink-0 px-2 py-1 text-[10px] rounded-md border border-[rgba(255,90,90,0.4)] text-[rgba(255,140,140,0.95)] hover:bg-[rgba(255,90,90,0.12)] active:scale-95 transition-all"
+                  >
+                    Stop
+                  </button>
+                )}
+              </div>
               <div className="text-[10px] uppercase tracking-widest text-white/40 mt-1">
                 {i.status}
                 {i.outcome ? ` · ${i.outcome}` : ""}

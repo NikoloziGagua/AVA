@@ -129,4 +129,21 @@ describe("buildSystemPrompt (layered)", () => {
       expect(iCap).toBeLessThan(iIndex);
     }
   });
+
+  it("compact mode omits the capability map + memory index but keeps persona/prefs/observations", () => {
+    writeFileSync(join(dir, "personality.md"), "PERSONA-BLOCK\n", "utf8");
+    writeFileSync(join(dir, "MEMORY.md"), "INDEX-BLOCK\n", "utf8");
+    writeFileSync(join(dir, "preferences.md"), "PREFS-BLOCK\n", "utf8");
+    writeFileSync(join(dir, "observations.md"), "OBS-BLOCK\n", "utf8");
+
+    const compact = buildSystemPrompt({ memoryDir: dir, mode: "conversation", compact: true });
+    expect(compact).not.toContain("# Capabilities"); // the 4.4k tool map is dropped
+    expect(compact).not.toContain("INDEX-BLOCK"); // memory index dropped
+    expect(compact).toContain("PERSONA-BLOCK"); // identity kept
+    expect(compact).toContain("PREFS-BLOCK"); // prefs kept
+    expect(compact).toContain("OBS-BLOCK"); // facts kept
+    // and it's smaller than the full conversation prompt
+    const full = buildSystemPrompt({ memoryDir: dir, mode: "conversation" });
+    expect(compact.length).toBeLessThan(full.length);
+  });
 });

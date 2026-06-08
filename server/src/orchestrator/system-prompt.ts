@@ -18,6 +18,13 @@ export type BuildSystemPromptOpts = {
    */
   mode?: "conversation" | "action";
   /**
+   * Compact build for the Hume voice prompt, which has a hard ~12k truncation
+   * budget. Omits the big capability map + memory index (dead weight when the
+   * model can't run tools anyway) so persona/prefs/observations fit. Identity and
+   * recollection are layered ahead of this by the caller.
+   */
+  compact?: boolean;
+  /**
    * Allowlisted filesystem roots. Rendered (action mode only) so the agent
    * writes to a path that will actually be accepted instead of guessing one
    * outside the allowlist. Config-fixed, so it stays byte-stable across turns.
@@ -66,9 +73,10 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
   if (persona.trim()) layers.push(persona.replace(/\s+$/, "") + "\n");
   // Canonical capability map — present in both modes so Ava recalls its own reach
   // in voice/conversation as well as action. Static text, kept in the stable cache
-  // prefix right after the persona.
-  layers.push(CAPABILITIES_MD.replace(/\s+$/, "") + "\n");
-  if (memoryIndex.trim()) layers.push(block("Memory index", memoryIndex));
+  // prefix right after the persona. Skipped in `compact` (Hume voice) — the model
+  // there can't run tools, so the 4.4k map is dead prefill that crowds out identity.
+  if (!opts.compact) layers.push(CAPABILITIES_MD.replace(/\s+$/, "") + "\n");
+  if (!opts.compact && memoryIndex.trim()) layers.push(block("Memory index", memoryIndex));
   if (preferences.trim()) layers.push(block("Preferences", preferences));
   if (observations.trim()) layers.push(block("Observations", observations));
   if (opts.mode !== "conversation") {

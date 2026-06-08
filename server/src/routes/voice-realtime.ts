@@ -316,11 +316,12 @@ export function buildHumeSessionSettings(
 }
 
 /**
- * Build a "recent conversation" block to append to Hume's system prompt so Hume
- * has the SAME recollection as the OpenAI path (which seeds the last-N turns as
- * conversation items). Hume EVI doesn't reliably honor session_settings.context,
- * but it DOES honor system_prompt — so we fold the recent turns straight into the
- * prompt. Pure + testable. Returns "" when there's nothing to seed.
+ * Build a "recent conversation" block so Hume has the SAME recollection as the
+ * OpenAI path (which seeds the last-N turns as conversation items). Whether Hume
+ * honors session_settings.context is unverified, so the caller now seeds this block
+ * BOTH ways — folded into the (compact, identity-first, budget-capped) system_prompt
+ * AND in the `context` field — so recollection survives regardless. Pure + testable.
+ * Returns "" when there's nothing to seed.
  */
 export function buildHumeHistoryBlock(
   messages: Array<{ role: string; content: string }>,
@@ -356,6 +357,31 @@ export function buildVoiceUpdatesBlock(entries: DevLogEntry[]): string {
     "Sir asks about your latest update or self-improvement, answer from THIS list:\n" +
     lines
   );
+}
+
+/** Hume EVI truncates the system prompt at ~12k chars, silently dropping whatever
+ *  is past the cut. The OLD assembly put the big base prompt FIRST, so the things
+ *  that actually fix the recall/identity bug — the voice persona (anti-confabulation
+ *  + "you are AVA"), the real changelog, and recent history — were appended last and
+ *  cut away. This assembles the prompt in PRIORITY order under a safe budget so the
+ *  critical front always survives: identity → real updates → recent history → the
+ *  (compact) persona/prefs/observations base, which absorbs the trim. Pure + testable. */
+export function buildHumeVoicePrompt(
+  parts: { voicePersona: string; updates: string; history: string; base: string },
+  budget = 11000,
+): string {
+  const ordered = [parts.voicePersona, parts.updates, parts.history, parts.base]
+    .map((s) => s.trim())
+    .filter(Boolean);
+  let out = "";
+  for (const blk of ordered) {
+    if (!out) { out = blk.slice(0, budget); continue; }
+    const room = budget - out.length - 2; // 2 for the "\n\n" join
+    if (room <= 0) break;
+    out += "\n\n" + (blk.length <= room ? blk : blk.slice(0, room));
+    if (blk.length > room) break; // budget exhausted mid-block
+  }
+  return out;
 }
 
 /** What a translated Hume event tells the proxy to do. `frames` are JSON strings
@@ -1084,13 +1110,20 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           const { resumeId } = chooseResumeOrNew(false, listSessions(deps.db)[0]?.id ?? null);
           sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
         }
-        const system = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation" });
+        // Hume truncates the prompt at ~12k, so build it COMPACT + identity-first
+        // (buildHumeVoicePrompt): drop the tool-map Hume can't use, and order the
+        // anti-confabulation persona + real changelog + recent history AHEAD of the
+        // persona base so the things that fix recall/identity always survive the cut.
+        // Recollection ALSO goes in Hume's separate `context` field — belt-and-
+        // suspenders, since whether Hume honors `context` is unverified and the
+        // (now-surviving) prompt is the guaranteed channel.
+        const compactBase = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation", compact: true });
         const seedN = Number(process.env.REALTIME_SEED_TURNS ?? 12);
         const history = hybrid && sessionId ? buildHumeHistoryBlock(listMessages(deps.db, sessionId), seedN) : "";
         const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
-        // Configure the Hume session: persona + real changelog + recent history +
-        // chosen voice. Hume auto-speaks, so there is no separate response.create.
-        try { upstream.send(JSON.stringify(buildHumeSessionSettings(system + VOICE_PERSONA_INSTRUCTIONS + updates + history, hume))); } catch { /* */ }
+        const humePrompt = buildHumeVoicePrompt({ voicePersona: VOICE_PERSONA_INSTRUCTIONS, updates, history, base: compactBase });
+        const contextText = (updates + history).trim();
+        try { upstream.send(JSON.stringify(buildHumeSessionSettings(humePrompt, hume, contextText))); } catch { /* */ }
         try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
         log.info("realtime: hume session open (voice via Hume EVI)");
         // Drain client frames buffered before open, translating mic audio.

@@ -19,6 +19,7 @@ import {
   seedContentType,
   buildHumeSessionSettings,
   buildHumeHistoryBlock,
+  buildHumeVoicePrompt,
   buildVoiceUpdatesBlock,
   translateHumeEvent,
   humeAudioChunkToClientPcm,
@@ -152,6 +153,56 @@ describe("buildHumeHistoryBlock — seed recollection into Hume's prompt", () =>
     expect(out).not.toContain("u1");
     expect(out).toContain("u2");
     expect(out).toContain("a2");
+  });
+});
+
+describe("buildHumeVoicePrompt — identity-first, budget-capped (survives Hume truncation)", () => {
+  const persona = "[VOICE] You are AVA. Never describe yourself by a training cutoff.";
+  const updates = "\n\n# Your ACTUAL recent updates\n- shipped the API tools";
+  const history = "\n\n# Recent conversation\nSir: hi\nYou (Ava): hey Sir";
+
+  it("orders identity → updates → history → base", () => {
+    const out = buildHumeVoicePrompt({ voicePersona: persona, updates, history, base: "BIG BASE PROMPT" });
+    const iPersona = out.indexOf("You are AVA");
+    const iUpdates = out.indexOf("ACTUAL recent updates");
+    const iHistory = out.indexOf("Recent conversation");
+    const iBase = out.indexOf("BIG BASE PROMPT");
+    expect(iPersona).toBeGreaterThanOrEqual(0);
+    expect(iPersona).toBeLessThan(iUpdates);
+    expect(iUpdates).toBeLessThan(iHistory);
+    expect(iHistory).toBeLessThan(iBase);
+  });
+
+  it("keeps identity + updates + history even when the base is huge — only the base is trimmed", () => {
+    const hugeBase = "X".repeat(50_000); // far over budget
+    const out = buildHumeVoicePrompt({ voicePersona: persona, updates, history, base: hugeBase }, 11_000);
+    expect(out.length).toBeLessThanOrEqual(11_000);
+    expect(out).toContain("You are AVA"); // identity survived
+    expect(out).toContain("ACTUAL recent updates"); // changelog survived
+    expect(out).toContain("Recent conversation"); // recollection survived
+    expect(out).toContain("X"); // some base made it in
+    expect(out).not.toContain("X".repeat(50_000)); // but it was trimmed
+  });
+
+  it("skips empty blocks", () => {
+    const out = buildHumeVoicePrompt({ voicePersona: persona, updates: "", history: "", base: "base" });
+    expect(out).toContain("You are AVA");
+    expect(out).toContain("base");
+  });
+});
+
+describe("buildHumeSessionSettings — recollection goes in the untruncated context field", () => {
+  it("sets the persistent context field when contextText is passed", () => {
+    const s = buildHumeSessionSettings(
+      "be ava",
+      { apiKey: "k", secretKey: null, configId: null, voiceId: null, voiceName: "Alice Bennett" },
+      "# Recent conversation\nSir: hi",
+    );
+    expect(s.context).toEqual({ text: "# Recent conversation\nSir: hi", type: "persistent" });
+  });
+  it("omits context when there's nothing to seed", () => {
+    const s = buildHumeSessionSettings("be ava", { apiKey: "k", secretKey: null, configId: null, voiceId: null, voiceName: "Alice Bennett" }, "  ");
+    expect(s.context).toBeUndefined();
   });
 });
 

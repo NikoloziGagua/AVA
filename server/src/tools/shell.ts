@@ -24,10 +24,21 @@ export async function runShell(opts: {
   }
   return await new Promise((resolve) => {
     const isWin = process.platform === "win32";
-    const shell = isWin ? "cmd.exe" : "bash";
-    const args = isWin ? ["/c", opts.command] : ["-c", opts.command];
+    // Windows: run via PowerShell, NOT cmd.exe. Routing through `cmd.exe /c` mangled
+    // PowerShell commands — stripped `$` variables, broke nested quotes — the exact
+    // failures Sir hit ("my diagnostic commands failed because of Windows quoting").
+    // Spawning powershell.exe DIRECTLY with the command as a single argv element
+    // (never through cmd) avoids both. This is Windows PowerShell 5.1 (no pwsh 7 on
+    // this machine), so `&&`/`||` chaining is unavailable — the tool description tells
+    // the model to use `;`. Flags mirror control_app: -NoProfile (fast, no profile
+    // side-effects), -NonInteractive (a prompt fails fast instead of hanging the tool),
+    // -ExecutionPolicy Bypass (so it can run).
+    const shell = isWin ? "powershell.exe" : "bash";
+    const args = isWin
+      ? ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", opts.command]
+      : ["-c", opts.command];
     // No { signal } here: Node's spawn-abort only kills the DIRECT child
-    // (cmd.exe/bash), orphaning any grandchildren it launched. We handle both
+    // (powershell/bash), orphaning any grandchildren it launched. We handle both
     // abort and timeout below with a TREE kill (taskkill /T on Windows) so the
     // whole subtree dies — this is what makes the Stop button actually stop work.
     const child = spawn(shell, args, { cwd: opts.cwd });

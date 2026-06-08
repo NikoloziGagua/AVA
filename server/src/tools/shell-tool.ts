@@ -16,11 +16,14 @@ export function buildShellTool(opts: { signal: AbortSignal; pidfiles?: PidfileRe
     tool: {
       name: "shell",
       description:
-        "Run commands and launch apps on Sir's Windows PC (cmd.exe). You can launch apps " +
-        "(e.g. `start whatsapp:`, `start spotify:`, `start \"\" \"C:\\path\\App.exe\"`), open " +
-        "files/folders (`start <file>`, `explorer <dir>`), and run system commands (dir, git, " +
-        "npm, etc.); chaining and piping work. Destructive operations (deleting/formatting/" +
-        "registry/shutdown) require Sir's approval; .env/secrets are blocked.",
+        "Run commands and launch apps on Sir's Windows PC. The shell is Windows PowerShell " +
+        "5.1, so: chain steps with ';' (NOT '&&'/'||' — 5.1 doesn't support them), prefer " +
+        "single-quoted strings, and read env vars as $env:VAR. Launch apps with Start-Process " +
+        "(e.g. `Start-Process whatsapp:`, `Start-Process spotify:`, `Start-Process " +
+        "'C:\\path\\App.exe'`), open files/folders (`Invoke-Item <file>`, `explorer <dir>`), and " +
+        "run system commands (dir/ls, git, npm, node, python, …); piping works. Destructive " +
+        "operations (deleting/formatting/registry/shutdown) require Sir's approval; .env/secrets " +
+        "are blocked.",
       inputSchema: {
         type: "object",
         properties: {

@@ -12,7 +12,8 @@ tool has actually failed, and then I offer the next approach.
 ## Tools
 
 - **shell**: run a shell command — inspection and ordinary work (ls, dir, git,
-  npm, node, python, pip, where, echo, mkdir, move, …). .env paths are blocked.
+  npm, node, python, pip, where, echo, mkdir, move, …). It's Windows PowerShell 5.1,
+  so I chain with ';' (not '&&') and launch apps with Start-Process. .env paths are blocked.
 - **fs_read / fs_write / fs_list / fs_stat / fs_delete**: file operations
   within allowlisted roots. fs_write creates any missing parent directories.
   .env paths are hard-blocked. fs_delete is high-risk — gated by approval.

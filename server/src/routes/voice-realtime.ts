@@ -291,6 +291,31 @@ export function buildHumeSessionSettings(instructions: string, hume: HumeProvide
   };
 }
 
+/**
+ * Build a "recent conversation" block to append to Hume's system prompt so Hume
+ * has the SAME recollection as the OpenAI path (which seeds the last-N turns as
+ * conversation items). Hume EVI doesn't reliably honor session_settings.context,
+ * but it DOES honor system_prompt — so we fold the recent turns straight into the
+ * prompt. Pure + testable. Returns "" when there's nothing to seed.
+ */
+export function buildHumeHistoryBlock(
+  messages: Array<{ role: string; content: string }>,
+  maxTurns: number,
+): string {
+  const turns = messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .slice(-maxTurns);
+  if (turns.length === 0) return "";
+  const lines = turns
+    .map((m) => `${m.role === "user" ? "Sir" : "You (Ava)"}: ${m.content}`)
+    .join("\n");
+  return (
+    "\n\n# Recent conversation (most recent last) — you remember all of this; " +
+    "continue it naturally and never act like it's a fresh start:\n" +
+    lines
+  );
+}
+
 /** What a translated Hume event tells the proxy to do. `frames` are JSON strings
  *  in the OpenAI-shaped client protocol; the optional fields drive persistence /
  *  the gate / the action handoff, mirroring the OpenAI branch's side effects. */
@@ -1007,15 +1032,19 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
       upstream.on("open", () => {
         opened = true;
-        const system = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation" });
-        // Configure the Hume session: persona + chosen voice. Hume auto-speaks,
-        // so there is no separate response.create step.
-        try { upstream.send(JSON.stringify(buildHumeSessionSettings(system + VOICE_PERSONA_INSTRUCTIONS, hume))); } catch { /* */ }
-        // Same resume-or-new continuity as the OpenAI hybrid path.
+        // Resolve the session FIRST (resume the latest, like the OpenAI path) so we
+        // can seed its recent history into Hume's prompt. Without this Hume starts
+        // blank on every connect — no recollection of prior voice/chat turns.
         if (hybrid && !sessionId) {
           const { resumeId } = chooseResumeOrNew(false, listSessions(deps.db)[0]?.id ?? null);
           sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
         }
+        const system = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation" });
+        const seedN = Number(process.env.REALTIME_SEED_TURNS ?? 12);
+        const history = hybrid && sessionId ? buildHumeHistoryBlock(listMessages(deps.db, sessionId), seedN) : "";
+        // Configure the Hume session: persona + recent history + chosen voice. Hume
+        // auto-speaks, so there is no separate response.create step.
+        try { upstream.send(JSON.stringify(buildHumeSessionSettings(system + VOICE_PERSONA_INSTRUCTIONS + history, hume))); } catch { /* */ }
         try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
         log.info("realtime: hume session open (voice via Hume EVI)");
         // Drain client frames buffered before open, translating mic audio.

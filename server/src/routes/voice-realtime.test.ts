@@ -18,6 +18,7 @@ import {
   chooseResumeOrNew,
   seedContentType,
   buildHumeSessionSettings,
+  buildHumeHistoryBlock,
   translateHumeEvent,
   humeAudioChunkToClientPcm,
   resamplePcm16,
@@ -100,6 +101,38 @@ describe("chooseResumeOrNew — voice session continuity", () => {
   });
   it("creates a new session when there is no prior conversation to resume", () => {
     expect(chooseResumeOrNew(false, null)).toEqual({ resumeId: null });
+  });
+});
+
+describe("buildHumeHistoryBlock — seed recollection into Hume's prompt", () => {
+  it("returns empty when there are no user/assistant turns", () => {
+    expect(buildHumeHistoryBlock([], 12)).toBe("");
+    expect(buildHumeHistoryBlock([{ role: "system", content: "x" }], 12)).toBe("");
+  });
+
+  it("formats user as Sir and assistant as You (Ava), most recent last", () => {
+    const out = buildHumeHistoryBlock(
+      [{ role: "user", content: "my number is 47" }, { role: "assistant", content: "noted, Sir" }],
+      12,
+    );
+    expect(out).toContain("Sir: my number is 47");
+    expect(out).toContain("You (Ava): noted, Sir");
+    expect(out.toLowerCase()).toContain("recent conversation");
+  });
+
+  it("keeps only the last maxTurns and drops system turns", () => {
+    const msgs = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "a1" },
+      { role: "user", content: "u2" },
+      { role: "assistant", content: "a2" },
+    ];
+    const out = buildHumeHistoryBlock(msgs, 2);
+    expect(out).not.toContain("sys");
+    expect(out).not.toContain("u1");
+    expect(out).toContain("u2");
+    expect(out).toContain("a2");
   });
 });
 

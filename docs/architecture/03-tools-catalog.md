@@ -2,7 +2,7 @@
 
 This document is the in-depth reference for **every tool Ava can call**. Ava is the runtime assistant; Claude is the developer who builds her. The tools here are the hands Ava acts with on the owner's Windows PC — running commands, driving a browser, reading and writing files, controlling native apps, capturing the screen, spawning a Claude Code worker, conferring with Claude, remembering things, calling a couple of vendor APIs directly, and improving her own code.
 
-Everything below was read directly from source under `server/src/tools/` and verified against the wiring in `server/src/routes/chat.ts`, the gating in `server/src/policy/`, and the process/kill machinery in `server/src/process/`. Where a tool has a known fragility (e.g. cmd.exe quoting) or a real cost (e.g. Anthropic credits), it is flagged honestly.
+Everything below was read directly from source under `server/src/tools/` and verified against the wiring in `server/src/routes/chat.ts`, the gating in `server/src/policy/`, and the process/kill machinery in `server/src/process/`. Where a tool has a known fragility or a real cost (e.g. Anthropic credits), it is flagged honestly. (The old `shell`-via-`cmd.exe` quoting fragility was **resolved** in commit `28aa353` — `shell` now spawns PowerShell directly; see [§5.1](#51-shell--run-commands--launch-apps).)
 
 ---
 
@@ -15,7 +15,7 @@ Two columns need a word of explanation:
 
 | Tool | Source file | What it does | API cost | Gating tier |
 |---|---|---|---|---|
-| `shell` | `tools/shell-tool.ts` + `tools/shell.ts` | Run any command / launch any app via `cmd.exe /c` | none | `low` (destructive → `high`; `.env`/secrets → `blocked`) |
+| `shell` | `tools/shell-tool.ts` + `tools/shell.ts` | Run any command / launch any app via **PowerShell 5.1** (`powershell.exe -Command`) | none | `low` (destructive → `high`; `.env`/secrets → `blocked`) |
 | `control_app` | `tools/control-app-mcp.ts` | Drive native Windows apps: UI Automation + SendKeys via PowerShell | none | `low` (destructive script → `high`) |
 | `fs_read` | `tools/filesystem-mcp.ts` + `tools/filesystem.ts` | Read a UTF-8 text file inside an allowlisted root | none | `read-only` |
 | `fs_write` | same | Write/overwrite a UTF-8 file (creates parent dirs) | none | `low` |
@@ -123,7 +123,7 @@ The two metered LLM clients are created once at boot in `server/src/index.ts:297
 
 ## 3. Child processes, PIDs, and the Stop button
 
-Several tools spawn OS processes (`shell` → `cmd.exe`; `control_app` → `powershell.exe`; `claude_code` → `claude`; `take_screenshot` → a short-lived `powershell.exe`). Two pieces of machinery make those safe to interrupt:
+Several tools spawn OS processes (`shell` → `powershell.exe`; `control_app` → `powershell.exe`; `claude_code` → `claude`; `take_screenshot` → a short-lived `powershell.exe`). Two pieces of machinery make those safe to interrupt:
 
 ### The PID registry — `server/src/process/pidfile.ts`
 
@@ -131,14 +131,14 @@ Several tools spawn OS processes (`shell` → `cmd.exe`; `control_app` → `powe
 
 ### Tree-kill — `server/src/process/kill-tree.ts`
 
-`killTree(pid, signal)` wraps the `tree-kill` npm package, which on Windows shells out to `taskkill /T` to kill a process **and all its descendants**. This matters because `cmd.exe /c some.exe` or `Start-Process` create grandchildren that Node's own `child.kill()` would orphan.
+`killTree(pid, signal)` wraps the `tree-kill` npm package, which on Windows shells out to `taskkill /T` to kill a process **and all its descendants**. This matters because `powershell.exe -Command some.exe` or `Start-Process` create grandchildren that Node's own `child.kill()` would orphan.
 
 ### How Stop reaches running work
 
 When the user presses Stop, `POST /api/chat/:sessionId/kill` (`chat.ts:494–516`) does three things in order:
 
 1. **Abort the model loop** (`runs.abort` → `AbortController.abort()`), which also fires the `signal` inside any in-flight tool.
-2. **Tree-kill the run's PID subtree**: `for (pid of pidfiles.listForRun(runId)) killTree(pid)` — so `claude_code`'s `claude -p` child, `shell`'s `cmd.exe` subtree, and `control_app`'s PowerShell subtree all die, not just the next model turn.
+2. **Tree-kill the run's PID subtree**: `for (pid of pidfiles.listForRun(runId)) killTree(pid)` — so `claude_code`'s `claude -p` child, `shell`'s `powershell.exe` subtree, and `control_app`'s PowerShell subtree all die, not just the next model turn.
 3. **Unregister the run** so a new turn can start immediately (preempt).
 
 This is belt-and-suspenders: the spawning tools *also* listen to `signal` and kill their own child (see each tool below). Either path alone halts the work; together they make Stop reliable.
@@ -179,22 +179,25 @@ There are also two **hard, non-bypassable safety nets** below the tier system, e
 
 **Files:** `server/src/tools/shell-tool.ts` (MCP wrapper), `server/src/tools/shell.ts` (executor), `server/src/tools/shell-allowlist.ts` (gate).
 
-**Purpose.** Ava's primary hand on the machine. Runs any `cmd.exe` command: launch apps (`start whatsapp:`, `start spotify:`, `start "" "C:\path\App.exe"`), open files/folders (`start <file>`, `explorer <dir>`), and run system commands (`dir`, `git`, `npm`, `node`, `python`, `where`, `echo`, `mkdir`, `move`, …). Chaining (`&&`) and piping (`|`) work.
+**Purpose.** Ava's primary hand on the machine. Runs commands through **Windows PowerShell 5.1**: launch apps (`Start-Process whatsapp:`, `Start-Process spotify:`, `Start-Process 'C:\path\App.exe'`), open files/folders (`Invoke-Item <file>`, `explorer <dir>`), and run system commands (`dir`/`ls`, `git`, `npm`, `node`, `python`, `where`, `echo`, `mkdir`, `move`, …). Piping (`|`) works; multi-step commands chain with **`;`** (PowerShell 5.1 has no `&&`/`||`).
 
 **Input.** `{ command: string }` (required).
 
 **Output.** On success: `EXIT 0\nSTDOUT:\n<stdout>\nSTDERR:\n<stderr>`. On failure: `ERROR: <reason>\nSTDOUT:…\nSTDERR:…`. Both streams are secret-scrubbed then truncated to **4096 chars** each (`MAX_STREAM_CHARS`).
 
-**How it executes.** `runShell` (`shell.ts`) spawns `cmd.exe /c <command>` on Windows (`bash -c` elsewhere). The child PID is registered with the run via `onSpawn`/`onExit` callbacks wired to the `PidfileRegistry`. Timeout is `TOOL_BUDGET_MS.shell` = **30 s**.
+**How it executes.** `runShell` (`shell.ts:36`) spawns **`powershell.exe`** on Windows with the command as a **single argv element** — `["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", <command>]` — never through `cmd.exe` (`bash -c` elsewhere). Passing the command as one discrete argv element means no intermediate shell re-parses it, so PowerShell `$` variables and nested quotes survive (`$u = $env:USERNAME; Write-Output "user=$u"` returns `user=nikug`). The flags mirror `control_app`: `-NoProfile` (fast, no profile side effects), `-NonInteractive` (a prompt fails fast instead of hanging the tool), `-ExecutionPolicy Bypass` (run regardless of policy). The child PID is registered with the run via `onSpawn`/`onExit` callbacks wired to the `PidfileRegistry`. Timeout is `TOOL_BUDGET_MS.shell` = **30 s**. (Changed in commit `28aa353`; see [`features/shell-powershell.md`](../features/shell-powershell.md).)
 
 **API cost.** None — local process.
 
 **Safety gating.** Two layers: (a) `isAllowed(command)` inside `runShell` refuses `.env`/secret access and the `DESTRUCTIVE_PATTERNS` blocklist *before spawning*; (b) `classifyRisk` marks destructive commands `high` (approval veto) and everything else `low` (auto-allow). The blocklist scans the **full** command string (not just the first token), so a destructive op hidden after a `|` or `&&` is still caught. Examples blocked: `rm -rf`, `Remove-Item -Recurse`, `del C:\…\*.docx`, `format C:`, `diskpart`, `reg delete`, `shutdown`, `Restart-Computer`, `curl … | iex`, encoded PowerShell (`-enc`), `$env:*KEY/TOKEN/SECRET`, `Get-ChildItem Env:`, `gh auth token`, `git config --list`, fork bombs.
 
-**Child-process / PID handling.** On timeout **or** abort, `treeKill()` calls `killTree(pid, "SIGTERM")` — a `taskkill /T` subtree kill — so grandchildren die too. The comment in `shell.ts:29–32` is explicit that Node's `{ signal }` spawn-abort is *not* used because it would orphan the subtree.
+**Child-process / PID handling.** On timeout **or** abort, `treeKill()` calls `killTree(pid, "SIGTERM")` — a `taskkill /T` subtree kill — so grandchildren die too. The comment in `shell.ts:40–43` is explicit that Node's `{ signal }` spawn-abort is *not* used because it would orphan the subtree (it kills only the direct `powershell.exe` child). This path was **unchanged** by the PowerShell switch.
 
 **Edge cases / honest notes.**
-- **cmd-quoting fragility.** Because commands go through `cmd.exe /c`, anything with characters `cmd` interprets (`$`, complex quoting, embedded PowerShell) is fragile. This is the exact failure that motivated the separate `control_app` tool: routing PowerShell through `cmd /c` stripped `$`-variables and threw "Illegal characters in path". **For native-app PowerShell, use `control_app`, not `shell`.** (Documented in `control-app-mcp.ts:6–13`.)
+- **cmd-quoting fragility — RESOLVED (commit `28aa353`).** `shell` previously routed commands through `cmd.exe /c`, which re-parsed them and stripped PowerShell `$` variables and mangled nested quotes — the exact failure the owner hit ("my diagnostic commands failed because of Windows quoting"). It now spawns `powershell.exe` directly with the command as a single argv element, so `$` variables and quotes survive. The fragility that previously made authors prefer `control_app` for `$`-variable PowerShell is gone for ordinary commands. See [`features/shell-powershell.md`](../features/shell-powershell.md).
+- **PowerShell 5.1 chaining.** The shell is Windows PowerShell 5.1 (no `pwsh` 7 on the machine), which has no `&&`/`||` — chain steps with `;` instead. The tool description tells the model this; a literal `&&` is a PowerShell parse error.
+- **`-NonInteractive` fails fast on prompts.** A command that pauses for input errors out rather than hanging the tool (intentional — a hung tool is worse).
+- **`control_app` is still the tool for native-app scripts.** For UI Automation / SendKeys (with their `.ps1`-file + UTF-8 handling), use `control_app`; `shell` runs inline commands via `-Command`.
 - Empty command → refused (`{ allowed:false, reason:"empty" }`).
 - A non-zero exit yields `ok:false` with `error: "exit <code>"`.
 
@@ -210,7 +213,7 @@ There are also two **hard, non-bypassable safety nets** below the tier system, e
 
 **Output.** On success: scrubbed stdout (or `"done"` if empty). On failure: scrubbed stderr → stdout → error. Truncated to **6000 chars** (`MAX_OUT_CHARS`).
 
-**How it executes — and the hard-won lesson.** This tool exists because routing PowerShell through `cmd.exe /c` failed two ways in a real session: inline `$wshell` had its `$` stripped, and a saved `.ps1` failed "Illegal characters in path" from cmd's quoting. The enforced fix (`control-app-mcp.ts:6–13, 59–69`):
+**How it executes — and the hard-won lesson.** This tool first hit the `cmd.exe /c` problem in a real session, which failed two ways: inline `$wshell` had its `$` stripped, and a saved `.ps1` failed "Illegal characters in path" from cmd's quoting. The enforced fix — spawn `powershell.exe` directly, never through `cmd` — is the same pattern `shell` later adopted in commit `28aa353` (`shell.ts:36`); see [§5.1](#51-shell--run-commands--launch-apps). Here it is (`control-app-mcp.ts:7–13, 59–69`):
 1. **Write the script to a `.ps1` file** under `%USERPROFILE%\AppData\Local\Ava\scripts\` (inside the writable fsRoot; `os.tmpdir()` is deliberately avoided because it's outside fsRoots). The file is written **BOM-first** (`EF BB BF`) and prefixed with `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8` so PowerShell 5.1 reads it as UTF-8 and emits UTF-8 — otherwise non-ASCII names/search terms corrupt.
 2. **Spawn `powershell.exe` directly as an argv array** (`["-NoProfile","-ExecutionPolicy","Bypass","-File", file]`), never through `cmd`, never inlining a `$`-string. The file is **kept** (not deleted) for debugging a failed sequence.
 
@@ -545,7 +548,7 @@ flowchart TD
 - **Direct API vs. browser (for the two covered jobs):** for a **Shopify product name/description edit** prefer `shopify_*` (one Admin API call), and for **finding real businesses** prefer `find_places` (Google Places API) — both are reliable, fast, and don't burn agent turns, and their descriptions tell the model to use them over browsing/scraping. They only exist when their `.env` credentials are set; absent that, fall back to the browser tools.
 - **Native app vs. vision:** prefer **`control_app`** (local PowerShell, free) over **`computer_use`** (vision, costs credits). The rubric and the `control_app` description both say so explicitly. `computer_use` is the *last* resort "for anything the other tools cannot reach."
 - **Web by selector vs. by vision:** prefer **`chrome_*`** (free, deterministic) and fall to **`computer_use`** only when the page needs visual reasoning. Note `computer_use` drives the **browser surface**, so it composes with the chrome session.
-- **`shell` vs. `control_app` for PowerShell:** if the PowerShell uses `$`-variables or complex quoting, **use `control_app`** — `shell` routes through `cmd.exe /c` and mangles those (the documented "Illegal characters in path" / `$`-strip failure).
+- **`shell` vs. `control_app` for PowerShell:** `shell` now runs PowerShell 5.1 directly (commit `28aa353`), so `$`-variables and quoting work in plain `shell` commands — the old "route everything `$`-heavy through `control_app`" rule no longer applies. Use **`control_app`** when you need its specifics: **native-app UI Automation / SendKeys** scripts, or a multi-line `.ps1` with non-ASCII text (it writes a UTF-8 `.ps1` and runs it with `-File`). For ordinary inline commands, `shell` is fine.
 - **Edits vs. chat for `claude_code`:** `claude_code` is for *actual edits* (`--permission-mode acceptEdits`), not free-form Q&A. For Claude's *opinion* without touching files, use **`discuss_with_claude`** (read-only, background).
 - **API over browser for the two covered jobs:** when their credentials are set, **`shopify_update_product`** (one Admin API `PUT`) beats clicking through the Shopify admin, and **`find_places`** (Google Places API) beats scraping Google Maps — both tool descriptions tell the model so explicitly ("do NOT scrape Google Maps", "directly, no clicking"). When the creds are absent the tools aren't offered and the browser path is used as before.
 - **Cost-awareness:** every path except `computer_use` (and the background pipelines behind `self_improve`/`discuss`) is **free of metered-LLM cost per call**. The Shopify/Places tools make no LLM call, but do spend the owner's own Shopify/Google billing. `computer_use` is the one tool to think twice about on **LLM** cost — it needs **Anthropic credits** (preferred) or OpenAI credits, and burns one vision call per loop iteration (up to 100).

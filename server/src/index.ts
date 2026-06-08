@@ -48,7 +48,7 @@ import { verify } from "./self/verify.js";
 import { flightcheck } from "./self/flightcheck.js";
 import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
-import { runImprovement, cancelImprovement, type ImproverDeps } from "./self/improver.js";
+import { runImprovement, cancelImprovement, approveImprovement, rejectImprovement, type ImproverDeps } from "./self/improver.js";
 import { createIntent, getIntent, listIntents, failStaleIntents } from "./self/intents.js";
 import { createDiscussion, getDiscussion, listDiscussions, failStaleDiscussions } from "./state/discussions.js";
 import { runDiscussion } from "./self/discuss.js";
@@ -149,6 +149,13 @@ const selfRunner = buildRunner();
 
 function buildImproverDeps(): ImproverDeps {
   return {
+    // User-triggered self-improvements pause for plan approval; the unattended
+    // overnight loop (trigger "schedule") runs without a human in the loop.
+    requireApproval: (intent) => intent.trigger === "explicit",
+    onAwaitingApproval: (_id, plan) => {
+      const first = plan.split("\n").find((l) => l.trim().length > 0)?.slice(0, 140) ?? "a change";
+      notifyDone?.(`A self-improvement plan is ready for your review: ${first}`);
+    },
     reflect: (goal, failureLog, signal) =>
       provider
         ? reflect({ provider, goal, knowledge: loadSelfKnowledge({ repoRoot: cfg.repoRoot }), failureLog, abort: signal })
@@ -317,6 +324,8 @@ app.use("/api/self", selfRoutes(db, requireToken(db), {
   startImprovement,
   revert: (id) => { const row = getIntent(db, id); if (row?.last_known_good) revertTo(cfg.repoRoot, row.last_known_good); },
   cancel: (id) => cancelImprovement(db, id),
+  approve: (id) => approveImprovement(id),
+  reject: (id) => rejectImprovement(id),
 }));
 
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });

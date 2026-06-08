@@ -3,7 +3,7 @@ import type { Db } from "../state/db.js";
 
 export type IntentTrigger = "explicit" | "failure" | "friction" | "schedule";
 export type IntentStatus =
-  | "queued" | "reflecting" | "implementing" | "verifying"
+  | "queued" | "reflecting" | "awaiting_approval" | "implementing" | "verifying"
   | "swapped" | "failed" | "rolled_back";
 
 export type Intent = {
@@ -39,7 +39,7 @@ export function failStaleIntents(db: Db): number {
   const r = db
     .prepare(
       "UPDATE self_improvements SET status = 'failed', error = COALESCE(error, 'interrupted by a server restart') " +
-        "WHERE status IN ('queued','reflecting','implementing','verifying')",
+        "WHERE status IN ('queued','reflecting','awaiting_approval','implementing','verifying')",
     )
     .run();
   return r.changes;

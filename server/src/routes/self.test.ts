@@ -13,9 +13,11 @@ function setup() {
   const start = vi.fn((_id: string) => {});
   const revert = vi.fn((_id: string) => {});
   const cancel = vi.fn((_id: string) => true);
+  const approve = vi.fn((_id: string) => true);
+  const reject = vi.fn((_id: string) => true);
   const app = express(); app.use(express.json());
-  app.use("/api/self", selfRoutes(db, (_q, _s, n) => n(), { startImprovement: start, revert, cancel }));
-  return { app, db, start, revert, cancel };
+  app.use("/api/self", selfRoutes(db, (_q, _s, n) => n(), { startImprovement: start, revert, cancel, approve, reject }));
+  return { app, db, start, revert, cancel, approve, reject };
 }
 
 describe("/api/self", () => {
@@ -57,5 +59,19 @@ describe("/api/self", () => {
     const res = await request(app).post("/api/self/some-id/cancel").expect(200);
     expect(cancel).toHaveBeenCalledWith("some-id");
     expect(res.body).toEqual({ ok: true, cancelled: true });
+  });
+
+  it("POST /:id/approve calls approve", async () => {
+    const { app, approve } = setup();
+    const res = await request(app).post("/api/self/some-id/approve").expect(200);
+    expect(approve).toHaveBeenCalledWith("some-id");
+    expect(res.body).toEqual({ ok: true, approved: true });
+  });
+
+  it("POST /:id/reject calls reject", async () => {
+    const { app, reject } = setup();
+    const res = await request(app).post("/api/self/some-id/reject").expect(200);
+    expect(reject).toHaveBeenCalledWith("some-id");
+    expect(res.body).toEqual({ ok: true, rejected: true });
   });
 });

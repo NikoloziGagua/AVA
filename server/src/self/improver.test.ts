@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
 import { createIntent, getIntent } from "./intents.js";
-import { runImprovement, cancelImprovement, cancelAllImprovements } from "./improver.js";
+import { runImprovement, cancelImprovement, cancelAllImprovements, approveImprovement, rejectImprovement } from "./improver.js";
 
 function db() { return openDb(join(mkdtempSync(join(tmpdir(), "ava-imp-")), "x.db")); }
 const deps = (over: Partial<any> = {}) => ({
@@ -130,5 +130,77 @@ describe("runImprovement", () => {
   it("cancelImprovement on an unknown id returns false", () => {
     const d = db();
     expect(cancelImprovement(d, "nope")).toBe(false);
+  });
+
+  // ── Plan-approval gate (Part B) ──────────────────────────────────────────
+  // Deps that park at awaiting_approval and signal the test once parked, so the
+  // approve/reject is deterministic.
+  function gatedDeps(over: Partial<any> = {}) {
+    let resolveParked!: (plan: string) => void;
+    const parked = new Promise<string>((r) => { resolveParked = r; });
+    let implemented = false;
+    return {
+      deps: deps({
+        requireApproval: () => true,
+        onAwaitingApproval: (_id: string, plan: string) => resolveParked(plan),
+        implement: async () => { implemented = true; return { ok: true, output: "" }; },
+        ...over,
+      }),
+      parked,
+      wasImplemented: () => implemented,
+    };
+  }
+
+  it("a gated improvement parks at awaiting_approval, then approve runs it through", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    const { deps: gd, parked, wasImplemented } = gatedDeps();
+    const run = runImprovement(d, id, gd);
+    const plan = await parked;
+    expect(plan).toContain("CHANGE"); // the drafted plan was surfaced for review
+    expect(getIntent(d, id)!.status).toBe("awaiting_approval");
+    expect(getIntent(d, id)!.diff_summary).toContain("PLAN");
+    expect(wasImplemented()).toBe(false); // nothing written before approval
+    expect(approveImprovement(id)).toBe(true);
+    await run;
+    expect(wasImplemented()).toBe(true);
+    expect(getIntent(d, id)!.status).toBe("swapped");
+  });
+
+  it("reject stops a gated improvement before any code is written", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    const { deps: gd, parked, wasImplemented } = gatedDeps();
+    const run = runImprovement(d, id, gd);
+    await parked;
+    expect(rejectImprovement(id)).toBe(true);
+    await run;
+    expect(wasImplemented()).toBe(false);
+    expect(getIntent(d, id)!.status).toBe("failed");
+    expect(getIntent(d, id)!.outcome).toBe("rejected");
+  });
+
+  it("cancel while awaiting approval marks it cancelled (not rejected)", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    const { deps: gd, parked, wasImplemented } = gatedDeps();
+    const run = runImprovement(d, id, gd);
+    await parked;
+    expect(cancelImprovement(d, id)).toBe(true);
+    await run;
+    expect(wasImplemented()).toBe(false);
+    expect(getIntent(d, id)!.outcome).toBe("cancelled");
+  });
+
+  it("without requireApproval (the overnight loop) it does NOT gate", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "schedule", goal: "g" });
+    await runImprovement(d, id, deps()); // no requireApproval dep → straight through
+    expect(getIntent(d, id)!.status).toBe("swapped");
+  });
+
+  it("approve/reject on an id that isn't waiting returns false", () => {
+    expect(approveImprovement("nope")).toBe(false);
+    expect(rejectImprovement("nope")).toBe(false);
   });
 });

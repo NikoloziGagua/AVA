@@ -1,8 +1,15 @@
 import type { Db } from "../state/db.js";
-import { getIntent, updateIntent } from "./intents.js";
+import { getIntent, updateIntent, type Intent } from "./intents.js";
 
 export type ImproverDeps = {
   reflect: (goal: string, failureLog: string | null, signal?: AbortSignal) => Promise<string>;
+  /** Gate: when this returns true, the improvement PAUSES after the plan is drafted
+   *  and waits for the user to approve it before any code is written. User-triggered
+   *  improvements gate; the unattended overnight loop does not. */
+  requireApproval?: (intent: Intent) => boolean;
+  /** Fired when an improvement parks at awaiting_approval — used to push the user so
+   *  they know a plan is waiting for review. `plan` is the drafted change brief. */
+  onAwaitingApproval?: (id: string, plan: string) => void;
   addWorktree: (id: string) => { path: string; branch: string };
   removeWorktree: (wt: { path: string; branch: string }) => void;
   implement: (brief: string, cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; output: string }>;
@@ -29,10 +36,30 @@ const pending: string[] = []; // intents waiting their turn (FIFO), drained on c
 // Stop). A pending (not-yet-running) improvement has no controller — it's cancelled
 // by removing it from `pending`.
 const controllers = new Map<string, AbortController>();
+// Resolver per improvement currently parked at awaiting_approval. approve/reject (or
+// a cancel via the abort signal) settles the promise the run is blocked on.
+const planDecisions = new Map<string, (approved: boolean) => void>();
 
 /** True if any self-improvement is running or queued. */
 export function hasActiveImprovement(): boolean {
   return inFlight || pending.length > 0;
+}
+
+/** Approve a plan parked at awaiting_approval → the run proceeds to implement.
+ *  Returns true if an improvement was actually waiting for this id. */
+export function approveImprovement(id: string): boolean {
+  const decide = planDecisions.get(id);
+  if (!decide) return false;
+  decide(true);
+  return true;
+}
+
+/** Reject a plan parked at awaiting_approval → the run stops without writing code. */
+export function rejectImprovement(id: string): boolean {
+  const decide = planDecisions.get(id);
+  if (!decide) return false;
+  decide(false);
+  return true;
 }
 
 /** Cancel one self-improvement by id — whether it's the running one (abort its
@@ -84,6 +111,31 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     updateIntent(db, id, { status: "reflecting" }); deps.emit({ intentId: id, step: "reflecting" });
     const brief = await deps.reflect(intent.goal, null, signal);
     throwIfAborted();
+
+    // PLAN GATE: user-triggered improvements show the drafted plan and wait for the
+    // user to approve it BEFORE any code is written — so nothing runs away unseen.
+    // (The unattended overnight loop sets requireApproval=false and skips this.)
+    if (deps.requireApproval?.(intent)) {
+      updateIntent(db, id, { status: "awaiting_approval", diff_summary: `PLAN:\n${brief}`.slice(0, 4000) });
+      deps.emit({ intentId: id, step: "awaiting_approval" });
+      deps.onAwaitingApproval?.(id, brief);
+      const approved = await new Promise<boolean>((resolve) => {
+        planDecisions.set(id, resolve);
+        // A cancel (abort) while parked counts as "do not proceed".
+        signal.addEventListener("abort", () => resolve(false), { once: true });
+      });
+      planDecisions.delete(id);
+      if (!approved) {
+        const cancelled = signal.aborted;
+        updateIntent(db, id, {
+          status: "failed",
+          outcome: cancelled ? "cancelled" : "rejected",
+          error: cancelled ? "cancelled by user" : "plan rejected by user",
+        });
+        deps.emit({ intentId: id, step: cancelled ? "cancelled" : "rejected", ok: false });
+        return; // no worktree created yet; finally just frees the slot
+      }
+    }
 
     updateIntent(db, id, { status: "implementing" }); deps.emit({ intentId: id, step: "implementing" });
     wt = deps.addWorktree(id);

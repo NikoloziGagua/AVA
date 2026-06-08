@@ -10,6 +10,10 @@ export type SelfRouteDeps = {
   revert: (id: string) => void;
   /** Cancel a running/queued self-improvement. Returns true if one was cancelled. */
   cancel: (id: string) => boolean;
+  /** Approve a plan parked at awaiting_approval → it proceeds to implement. */
+  approve: (id: string) => boolean;
+  /** Reject a plan parked at awaiting_approval → it stops without writing code. */
+  reject: (id: string) => boolean;
 };
 
 export function selfRoutes(db: Db, auth: RequestHandler, deps: SelfRouteDeps): Router {
@@ -27,6 +31,18 @@ export function selfRoutes(db: Db, auth: RequestHandler, deps: SelfRouteDeps): R
     if (typeof id !== "string") { res.status(400).json({ error: "bad_request" }); return; }
     const cancelled = deps.cancel(id);
     res.json({ ok: true, cancelled });
+  });
+  r.post("/:id/approve", auth, (req, res) => {
+    const id = req.params.id;
+    if (typeof id !== "string") { res.status(400).json({ error: "bad_request" }); return; }
+    const approved = deps.approve(id);
+    res.json({ ok: true, approved });
+  });
+  r.post("/:id/reject", auth, (req, res) => {
+    const id = req.params.id;
+    if (typeof id !== "string") { res.status(400).json({ error: "bad_request" }); return; }
+    const rejected = deps.reject(id);
+    res.json({ ok: true, rejected });
   });
   r.post("/:id/revert", auth, (req, res) => {
     const id = req.params.id;

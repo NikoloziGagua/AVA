@@ -1,8 +1,8 @@
 import { ChevronLeft } from "lucide-react";
-import { useSelfJournal, isRunningStatus } from "./useSelfJournal.js";
+import { useSelfJournal, isRunningStatus, planText } from "./useSelfJournal.js";
 
 export function SelfScreen({ onClose }: { onClose: () => void }) {
-  const { intents, paused, setPaused, revertLast, cancel } = useSelfJournal();
+  const { intents, paused, setPaused, revertLast, cancel, approve, reject } = useSelfJournal();
   const canRevert = intents.some((i) => i.status === "swapped");
 
   return (
@@ -80,9 +80,31 @@ export function SelfScreen({ onClose }: { onClose: () => void }) {
                 )}
               </div>
               <div className="text-[10px] uppercase tracking-widest text-white/40 mt-1">
-                {i.status}
+                {i.status === "awaiting_approval" ? "awaiting your approval" : i.status}
                 {i.outcome ? ` · ${i.outcome}` : ""}
               </div>
+              {i.status === "awaiting_approval" && (
+                <div className="mt-2 rounded-md border border-[rgba(92,242,255,0.22)] bg-[rgba(92,242,255,0.05)] p-2">
+                  <div className="hud text-[10px] text-white/50 mb-1">Plan — review before it runs</div>
+                  <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug text-white/80 max-h-44 overflow-y-auto no-scrollbar">
+                    {planText(i.diff_summary) || "(no plan text)"}
+                  </pre>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      onClick={() => approve(i.id)}
+                      className="px-3 py-1.5 text-xs rounded-md border border-[rgba(92,242,255,0.5)] text-[rgba(92,242,255,0.95)] hover:bg-[rgba(92,242,255,0.12)] active:scale-95 transition-all"
+                    >
+                      Approve & run
+                    </button>
+                    <button
+                      onClick={() => reject(i.id)}
+                      className="px-3 py-1.5 text-xs rounded-md border border-[rgba(255,90,90,0.4)] text-[rgba(255,140,140,0.95)] hover:bg-[rgba(255,90,90,0.12)] active:scale-95 transition-all"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              )}
             </li>
           ))}
         </ul>

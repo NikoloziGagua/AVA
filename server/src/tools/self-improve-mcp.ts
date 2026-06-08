@@ -5,14 +5,17 @@ export function buildSelfImproveTool(deps: { queue: (goal: string) => string }):
     tool: {
       name: "self_improve",
       description:
-        "Queue an autonomous improvement to Ava's OWN code. Use when Sir says 'improve yourself' or asks Ava to change its own behavior/capabilities. Args: { goal }.",
+        "Queue an improvement to Ava's OWN code. Use when Sir says 'improve yourself' or asks Ava to change its own behavior/capabilities. It will draft a PLAN and PAUSE for Sir's approval (in the Self screen) before writing any code — so tell him a plan is coming for his review, don't claim it's done. Args: { goal }.",
       inputSchema: { type: "object", properties: { goal: { type: "string" } }, required: ["goal"] },
     },
     run: async (args) => {
       const goal = String(args.goal ?? "").trim();
       if (!goal) return { ok: false, text: "missing goal" };
       const id = deps.queue(goal);
-      return { ok: true, text: `queued self-improvement ${id}: ${goal}` };
+      return {
+        ok: true,
+        text: `Queued self-improvement ${id}: "${goal}". I'll draft a plan and pause for your approval before changing any code — review and approve it in the Self screen.`,
+      };
     },
   };
 }

@@ -307,10 +307,13 @@ export function buildHumeSessionSettings(
     voice,
     audio: { encoding: "linear16", sample_rate: 24000, channels: 1 },
   };
-  // Recollection goes in Hume's `context`, NOT appended to system_prompt: Hume
-  // TRUNCATES the long (~12k char) system prompt, so appended history is silently
-  // dropped (verified: it failed to recall a seeded fact). The separate `context`
-  // field is honored (verified: it recalls). type:"persistent" keeps it across turns.
+  // `context` is an UNVERIFIED backup channel for recollection. What IS verified:
+  // Hume TRUNCATES the long (~12k char) system prompt, so anything past the cut is
+  // silently dropped. The caller now defends against that in the prompt itself
+  // (buildHumeVoicePrompt puts identity + updates + history first, under budget) and
+  // ALSO mirrors the recollection here — whether Hume honors `context` is unconfirmed,
+  // so the prompt is the guaranteed channel and this is belt-and-suspenders.
+  // type:"persistent" keeps it across turns if Hume does honor it.
   if (contextText.trim()) settings.context = { text: contextText, type: "persistent" };
   return settings;
 }

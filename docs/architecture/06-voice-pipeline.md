@@ -379,7 +379,7 @@ flowchart LR
   SEED{{provider?}}
   COMBINE --> SEED
   SEED -->|OpenAI| ITEMS["conversation.item.create × N<br/>(seedContentType: input_text / output_text)"]
-  SEED -->|Hume| BLOCK["buildHumeHistoryBlock → fold into system_prompt"]
+  SEED -->|Hume| BLOCK["buildHumeVoicePrompt (identity-first, budget 11k)<br/>+ context field"]
 
   ITEMS --> RT[gpt-realtime session]
   BLOCK --> HUME[Hume EVI session]
@@ -390,12 +390,18 @@ On connect the proxy seeds the realtime session with:
 1. **The base system prompt** in *conversation* mode (`buildSystemPrompt`,
    tools rubric omitted since tools aren't exposed to the realtime model
    directly), plus the spoken-conversation persona (`VOICE_PERSONA_INSTRUCTIONS`).
-2. **Ava's real changelog** — `buildVoiceUpdatesBlock` (`voice-realtime.ts:349`)
+   For **Hume** this base is built **compact** (`buildSystemPrompt({ compact: true })`,
+   `voice-realtime.ts:1120`): the ~4.4k capability/tool map and the memory index
+   are dropped, because Hume EVI is given no tools and can't act on a tool map
+   anyway — see §8c.
+2. **Ava's real changelog** — `buildVoiceUpdatesBlock` (`voice-realtime.ts:350`)
    reads the Claude→Ava dev log and folds in the last 6 shipped/note entries.
    This is why, when you ask "what's your latest update?", the persona forces a
    `do_on_computer` call to *read the authoritative changelog* rather than
    confabulating LLM-training facts. The block in the prompt is just a summary;
-   the tool has the current list.
+   the tool has the current list. **Caveat for Hume:** Hume has no tools, so it
+   *can't* make that `do_on_computer` call — it answers from this in-prompt
+   snapshot only (§8c, §9).
 3. **Recent conversation turns**, so voice no longer forgets what was typed (and
    vice-versa). The two providers seed differently:
    - **OpenAI**: the last *N* turns (`REALTIME_SEED_TURNS`, default 12) are
@@ -411,9 +417,44 @@ On connect the proxy seeds the realtime session with:
        assistant turns to seed — a fresh session had nothing to seed, so it
        stayed hidden.
    - **Hume**: recent turns are rendered as a text block by
-     `buildHumeHistoryBlock` (`voice-realtime.ts:325`) and **folded straight into
-     the system prompt** (`voice-realtime.ts:1093`). See the next section for why
-     Hume can't use the cleaner item-seeding the way OpenAI does.
+     `buildHumeHistoryBlock` (`voice-realtime.ts:326`) and seeded **two ways** —
+     folded into the system prompt (via the priority-ordered build in §8c) **and**
+     into Hume's separate persistent `context` field. Hume can't consume the
+     `conversation.item.create` items OpenAI uses; the next section covers why the
+     prompt must be assembled identity-first to survive Hume's truncation.
+
+### 8c. Hume prompt assembly — identity-first under a budget (survives truncation)
+
+Hume EVI **silently truncates `system_prompt` at ~12k chars**. The old Hume seed
+concatenated the *full* base prompt **first** (≈13k, including the ~4.4k tool map)
+and only then appended the persona, changelog, and history — so those three blocks
+fell **past the cut and were dropped**. The symptom: Hume "drew a blank" on the
+recent conversation and **confabulated its identity** (a generic LLM "training
+cutoff late 2024" and an invented self-improvement story) because it never saw the
+"you are AVA / no training cutoff" persona or the real changelog.
+
+The fix (`buildHumeVoicePrompt`, `voice-realtime.ts:369`) assembles the Hume prompt
+in **priority order under an 11k budget** so the bug-fixing front always survives,
+and only the lowest-priority block (the base) absorbs the trim:
+
+```mermaid
+flowchart TD
+  P1["1. VOICE_PERSONA_INSTRUCTIONS<br/>(you are AVA / never a training cutoff)"] --> ORD["buildHumeVoicePrompt<br/>priority order, budget 11k"]
+  P2["2. real changelog (buildVoiceUpdatesBlock)"] --> ORD
+  P3["3. recent history (buildHumeHistoryBlock)"] --> ORD
+  P4["4. COMPACT base (no tool map, no memory index)"] --> ORD
+  ORD --> CUT["Hume truncates ~12k"]
+  CUT --> KEEP["KEPT: identity + changelog + history (always first)"]
+  CUT --> TRIM["only the base is trimmed"]
+  ORD -.->|"backup channel"| CTX["context field (persistent)<br/>buildHumeSessionSettings, voice-realtime.ts:314"]
+```
+
+The recollection (changelog + history) is **also** written to Hume's separate
+persistent `context` field (`contextText` arg to `buildHumeSessionSettings`,
+`voice-realtime.ts:1125`). Whether Hume reliably honors `context` is **unverified**,
+so this is belt-and-suspenders: the now-surviving **prompt** is the guaranteed
+channel, `context` is a cheap second one. Full write-up in
+`docs/features/hume-voice-memory-fix.md`.
 
 **Single source of truth for turns.** Across both providers, the spoken **user**
 turn is stored exactly once (at gate-accept) and the spoken **assistant** turn
@@ -440,20 +481,35 @@ verified against the code and its comments:
   key problem. The code does not special-case `E0300`; it treats any pre-open
   failure as "fall back to OpenAI," and any post-open failure as an error to the
   client.
-- **Weaker conversational model.** Hume EVI's LLM is tuned for emotional/affective
-  speech, not for the reasoning Ava's text agent does. For real work it still
-  routes through `do_on_computer` → the same agent, so capability is preserved;
-  but its *own* chit-chat replies are less sharp than `gpt-realtime`.
-- **Loose at reciting the prompt.** Hume **truncates** the long (~12k char)
-  system prompt. The code comments document a *verified* consequence: history
-  appended to `system_prompt` via the dedicated `context` field was silently
-  dropped (Hume failed to recall a seeded fact). The workaround is documented in
-  `buildHumeSessionSettings` (`voice-realtime.ts:290`) and
-  `buildHumeHistoryBlock`: put recollection where Hume actually honors it. The
-  code currently seeds history by folding it into the system prompt
-  (`voice-realtime.ts:1093`); `buildHumeSessionSettings` also supports the
-  separate persistent `context` field. Either way, **expect Hume to be less
-  reliable than OpenAI at obeying the persona and recalling history.**
+- **No tools — answers update questions from a prompt snapshot, not live.** This
+  is the key asymmetry with OpenAI. The Hume EVI session is given **no tools** (no
+  `do_on_computer`). So for *real work* Hume **cannot** route to the agent the way
+  the OpenAI path does, and it **cannot** call `read_claude_updates` to fetch the
+  authoritative changelog when asked "what's your latest update?" — it answers from
+  the changelog **snapshot folded into its prompt at connect time**
+  (`buildVoiceUpdatesBlock`). That snapshot is real and now survives truncation
+  (next bullet), but it is only as fresh as the connect and won't reflect a change
+  shipped mid-session. The persona still *tells* Hume to call `do_on_computer`, but
+  with no tool bound the call can't happen. Wiring the tool into the Hume branch is
+  a separate, unshipped fix. (Hume EVI's LLM is also tuned for affective speech, so
+  its own chit-chat is less sharp than `gpt-realtime`.)
+- **Truncates the prompt — fixed by an identity-first, budgeted assembly.** Hume
+  silently truncates `system_prompt` at **~12k chars**. The old seed put the full
+  base prompt first, so the persona ("you are AVA / no training cutoff"), the real
+  changelog, and recent history were appended last and **cut away** — which is why
+  Hume used to confabulate a "training cutoff" identity and forget the
+  conversation. The fix (`buildHumeVoicePrompt`, `voice-realtime.ts:369`; §8c)
+  assembles the prompt **identity → changelog → history → compact base** under an
+  **11k budget**, so the bug-fixing front always survives and only the base is
+  trimmed. Recollection is **also** written to Hume's separate persistent `context`
+  field (`buildHumeSessionSettings`, `voice-realtime.ts:314`) as a backup, because
+  **whether Hume honors `context` is unverified** — the surviving prompt is the
+  guaranteed channel. Full write-up:
+  `docs/features/hume-voice-memory-fix.md`. **Note:** one inline comment in
+  `buildHumeSessionSettings` (`voice-realtime.ts:310`–`:313`) still asserts `context`
+  was *verified* honored; the function/caller comments treat it as **unverified**
+  — trust the latter. **Expect Hume to be less reliable than OpenAI at obeying the
+  persona and recalling history regardless.**
 
 **Wire translation.** Hume speaks a different protocol; the proxy bridges it so
 the browser stays provider-agnostic:
@@ -625,10 +681,20 @@ assume `/api/speak` can produce the cloned voice.
   code does not parse the specific error code. If you want a clearer user-facing
   "Hume is out of credits" message (vs the generic "auth failed"), that would be
   a small enhancement in the Hume error branches (`voice-realtime.ts:1193`+).
-- **Hume history seeding is prompt-folded.** `buildHumeSessionSettings` supports a
-  persistent `context` field, but the live seed folds history into the (truncated)
-  system prompt via `buildHumeHistoryBlock`. Given Hume's documented truncation,
-  recollection on Hume is best-effort and may degrade with long histories.
+- **Hume has no `do_on_computer` tool (known gap).** Unlike OpenAI, the Hume EVI
+  session is given no tools, so Hume answers "what's your latest update?" from the
+  in-prompt changelog **snapshot** (fresh only as of connect), and can't run the
+  real `read_claude_updates`. Binding the tool into the Hume branch is the
+  follow-up fix (§9, §8c; `docs/features/hume-voice-memory-fix.md`).
+- **Hume recollection now survives truncation, but `context` is unverified.** The
+  Hume prompt is assembled identity-first under an 11k budget so persona +
+  changelog + history survive Hume's ~12k cut (`buildHumeVoicePrompt`), and the
+  same recollection is mirrored into the persistent `context` field. Whether Hume
+  honors `context` is unverified, and the whole fix was **not exercised against a
+  live Hume session** (the account hit a zero-credits `E0300`) — only by logic +
+  unit tests. A stale inline comment at `voice-realtime.ts:310`–`:313` still claims
+  `context` was verified; the surrounding function comments correctly call it
+  unverified.
 - **`docs/voice-mode.md` is partially stale.** That older doc describes the
   pipeline as *transcribe-only* (realtime model never speaks). That was true at
   one point, but the current default is the **hybrid speak** path driven by the

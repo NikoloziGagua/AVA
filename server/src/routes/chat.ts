@@ -37,6 +37,8 @@ import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
 import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
+import { buildShopifyTools } from "../tools/shopify-mcp.js";
+import { buildPlacesTools } from "../tools/places-mcp.js";
 import { getReasoningLevel } from "../state/reasoning-pref.js";
 import { mapReasoning } from "../orchestrator/reasoning.js";
 import { detectCorrection, formatCorrection } from "../orchestrator/correction-detector.js";
@@ -87,6 +89,10 @@ export type AgentDeps = {
   listDiscussions?: () => Discussion[];
   getDiscussion?: (id: string) => Discussion | null;
   logsDir?: string;
+  /** Shopify Admin API creds — when present, the shopify_* product tools are offered. */
+  shopify?: { store: string; token: string } | null;
+  /** Google Places API key — when present, the find_places tool is offered. */
+  googlePlacesApiKey?: string | null;
   /** Optional override; lets tests substitute a fake agent loop. Defaults to runAgent. */
   runAgentImpl?: typeof runAgent;
 };
@@ -383,6 +389,10 @@ export function chatRoutes(
             ...(agentDeps.queueSelfImprove ? [buildSelfImproveTool({ queue: agentDeps.queueSelfImprove })] : []),
             ...(agentDeps.listSelfImprovements ? [buildSelfImproveStatusTool({ list: agentDeps.listSelfImprovements })] : []),
             ...(agentDeps.logsDir ? [buildReadLogsTool({ logsDir: agentDeps.logsDir })] : []),
+            // Reliable API integrations — offered only when their credentials are set.
+            // These edit/query directly over HTTP instead of driving the browser.
+            ...(agentDeps.shopify ? buildShopifyTools(agentDeps.shopify) : []),
+            ...(agentDeps.googlePlacesApiKey ? buildPlacesTools({ apiKey: agentDeps.googlePlacesApiKey }) : []),
             ...discussTools,
             ...memoryTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),

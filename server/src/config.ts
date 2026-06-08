@@ -21,6 +21,11 @@ export type Config = {
   llmProvider: "openai" | "anthropic";
   vapidPublicKey: string | null;
   vapidPrivateKey: string | null;
+  /** Shopify Admin API — store domain (my-store.myshopify.com) + access token (shpat_…). */
+  shopifyStore: string | null;
+  shopifyAdminToken: string | null;
+  /** Google Places API (New) key — for the find_places tool. */
+  googlePlacesApiKey: string | null;
 };
 
 const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -83,5 +88,8 @@ export function loadConfig(): Config {
     llmProvider,
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY ?? null,
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY ?? null,
+    shopifyStore: process.env.SHOPIFY_STORE ?? null,
+    shopifyAdminToken: process.env.SHOPIFY_ADMIN_TOKEN ?? null,
+    googlePlacesApiKey: process.env.GOOGLE_PLACES_API_KEY ?? null,
   };
 }

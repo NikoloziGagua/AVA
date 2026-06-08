@@ -283,6 +283,10 @@ const agentDeps = {
   notifyDone,
   provider,  // LLMProvider | null
   logsDir: cfg.logsDir,
+  // Reliable API integrations — wired only when BOTH/the needed creds are set in .env.
+  shopify: cfg.shopifyStore && cfg.shopifyAdminToken
+    ? { store: cfg.shopifyStore, token: cfg.shopifyAdminToken } : null,
+  googlePlacesApiKey: cfg.googlePlacesApiKey,
   queueSelfImprove,
   // Discuss-with-Claude: queue a background consult, and read past ones back.
   queueDiscussion,

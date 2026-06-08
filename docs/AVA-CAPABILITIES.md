@@ -40,8 +40,11 @@ Typed messages always run in **action mode** (full tools).
 ## 2. Acting on the PC — Tools
 
 Most tools are exposed only in **action mode** (conversation mode sees the memory
-tools plus `read_claude_updates`). The agent loop runs up to 48 turns, each tool
-with a timeout budget. Every
+tools plus `read_claude_updates`). The agent loop runs until the task is done; a
+high turn cap (default 1000, env-overridable via `AVA_MAX_AGENT_TURNS`) is only a
+runaway backstop — the real brakes are the Stop button, a 5-minute no-progress
+stuck-loop detector, and per-tool timeout budgets. (The old hard 48-turn cap was
+lifted because it cut off real multi-step tasks mid-work.) Every
 call passes a risk policy: read-only/low → run; medium/high → **ask first** (an
 approval row + a push notification, blocking up to 10 minutes). `.env` access and
 `--dangerously-skip-permissions` are hard-blocked regardless.
@@ -57,6 +60,8 @@ approval row + a push notification, blocking up to 10 minutes). `.env` access an
 | **memory_read / memory_remember / memory_forget** | Durable cross-session memory (see §3). | Low; secrets scrubbed on write. |
 | **self_improve / self_improve_status** | Queue an autonomous change to Ava's own code / report task states (see §4). | Gated pipeline. |
 | **read_claude_updates** | Read the notes Claude — Sir's developer/coding agent — leaves about changes to Ava's own code (a started/shipped/note JSON-lines log at `<dataDir>/claude-updates.jsonl`). Used when Sir asks what's happening / what changed / what Claude did; surfaces any in-flight update. Available in **both** action and conversation/voice mode. Attribution stays honest — Claude's work is Claude's. | Read-only. |
+| **shopify_list_products / shopify_get_product / shopify_update_product** | Edit a product's name + description over the **Shopify Admin API** — one `PUT`, no browser. Never sends the `images` array (a name/description edit can't disturb the pictures), and instructs the model to keep any `<img>` tags inside the description. Registered only when `SHOPIFY_STORE` + `SHOPIFY_ADMIN_TOKEN` are set. | No LLM cost (uses Shopify billing). |
+| **find_places** | Find real businesses via the **Google Places API** — name/address/phone/website/Maps link, with a precise "without a website" filter. Replaces blocked Google-Maps scraping. Registered only when `GOOGLE_PLACES_API_KEY` is set. | No LLM cost (uses Google billing). |
 
 **Rules.** Sir can write natural-language autonomy rules (in the Rules screen)
 that pre-allow, pre-deny, or force-ask specific kinds of actions, overriding the

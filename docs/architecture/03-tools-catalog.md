@@ -1,6 +1,6 @@
 # 03 — The Complete Tools Catalog
 
-This document is the in-depth reference for **every tool Ava can call**. Ava is the runtime assistant; Claude is the developer who builds her. The tools here are the hands Ava acts with on the owner's Windows PC — running commands, driving a browser, reading and writing files, controlling native apps, capturing the screen, spawning a Claude Code worker, conferring with Claude, remembering things, and improving her own code.
+This document is the in-depth reference for **every tool Ava can call**. Ava is the runtime assistant; Claude is the developer who builds her. The tools here are the hands Ava acts with on the owner's Windows PC — running commands, driving a browser, reading and writing files, controlling native apps, capturing the screen, spawning a Claude Code worker, conferring with Claude, remembering things, calling a couple of vendor APIs directly, and improving her own code.
 
 Everything below was read directly from source under `server/src/tools/` and verified against the wiring in `server/src/routes/chat.ts`, the gating in `server/src/policy/`, and the process/kill machinery in `server/src/process/`. Where a tool has a known fragility (e.g. cmd.exe quoting) or a real cost (e.g. Anthropic credits), it is flagged honestly.
 
@@ -41,6 +41,10 @@ Two columns need a word of explanation:
 | `self_improve` | `tools/self-improve-mcp.ts` | Queue an autonomous change to Ava's OWN code | (queue only; worker later uses Claude subscription) | n/a (queue) |
 | `self_improve_status` | same | Report state of self-improvement tasks | none | n/a (read) |
 | `read_logs` | `tools/activity-log-mcp.ts` + `tools/activity-log.ts` | Read Ava's own activity/error logs | none | n/a (read) |
+| `shopify_list_products` / `shopify_get_product` / `shopify_update_product` | `tools/shopify-mcp.ts` | List/read/edit Shopify products' name + description over the **Admin API** (no browser) | none (vendor API; no metered LLM call) | n/a — only registered when `SHOPIFY_*` creds set |
+| `find_places` | `tools/places-mcp.ts` | Find real businesses via the **Google Places API** (structured data, website-presence filter) | none (vendor API; no metered LLM call) | n/a — only registered when `GOOGLE_PLACES_API_KEY` set |
+
+> The Shopify/Places tools call **vendor HTTP APIs** (Shopify Admin, Google Places), not a metered LLM, so the "API cost" column reads "none" in the LLM-credit sense used here — but they do consume the owner's own Shopify/Google billing. They are **credential-gated**: each is added to the catalog only when its `.env` credentials are present (`chat.ts:392–393`), so they're absent on a fresh checkout. See [§5.13](#513-shopify_-shopify-admin-api-product-tools) and [§5.14](#514-find_places-google-places-api).
 
 > Tools with "n/a" gating are not enumerated in `classifyRisk`, so they hit the `classify.ts` default of `medium` *only if* they were ever routed through `enforce`. In practice the read/queue tools (`read_logs`, `read_claude_updates`, `self_improve*`, `discuss*`) are benign wrappers — `read_*` only read local files/state, and `self_improve`/`discuss_*` only enqueue background work. The heavy, consequential work they trigger (the self-improve worker, the discuss worker) runs out-of-band with its own guards, not through the per-call tool gate.
 
@@ -106,8 +110,12 @@ buildComputerUseTool  → computer_use
 buildScreenshotTool   → take_screenshot
 buildSelfImproveTool / buildSelfImproveStatusTool (if deps present)
 buildReadLogsTool     (if logsDir present)
+buildShopifyTools     → shopify_* (if SHOPIFY_* creds present)
+buildPlacesTools      → find_places (if GOOGLE_PLACES_API_KEY present)
 …discuss tools, …memory tools, …update-log tools
 ```
+
+The Shopify/Places builders are spread in conditionally — `...(agentDeps.shopify ? buildShopifyTools(agentDeps.shopify) : [])` and `...(agentDeps.googlePlacesApiKey ? buildPlacesTools({ apiKey: agentDeps.googlePlacesApiKey }) : [])` (`chat.ts:392–393`). `agentDeps.shopify` is itself only non-null when **both** `SHOPIFY_STORE` and `SHOPIFY_ADMIN_TOKEN` are set (`index.ts:287–288`), so the three Shopify tools appear as a set or not at all.
 
 The two metered LLM clients are created once at boot in `server/src/index.ts:297–298` from config keys, and passed to `chatRoutes` as `{ anthropic, openai }`; only `computer_use` consumes them.
 
@@ -291,15 +299,15 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 **Output.** On success: `<summary>\n\n[<n> screenshot(s) saved]`. On failure: `error: <reason>`.
 
 **How it executes.** `buildComputerUseTool` picks a provider at call time (`computer-use-mcp.ts:48–82`):
-- **Anthropic, if configured** (preferred — the more battle-tested loop). `runComputerUse` runs an agentic loop (≤ **25 iterations**) against `claude-sonnet-4-5` with the `computer_20250124` tool / `computer-use-2025-01-24` beta. Each turn: send the current screenshot, receive a `tool_use` action (`left_click`/`type`/`key`/`scroll`/`screenshot`), execute it against the Chrome surface (`mouseClick`/`keyboardType`/`keyboardPress`/`mouseWheel`), take a fresh screenshot, loop. Ends on `end_turn` with a text summary.
+- **Anthropic, if configured** (preferred — the more battle-tested loop). `runComputerUse` runs an agentic loop (≤ **100 iterations**, `computer-use.ts:62`; raised from 25 so one invocation can finish a real sub-task) against `claude-sonnet-4-5` with the `computer_20250124` tool / `computer-use-2025-01-24` beta. Each turn: send the current screenshot, receive a `tool_use` action (`left_click`/`type`/`key`/`scroll`/`screenshot`), execute it against the Chrome surface (`mouseClick`/`keyboardType`/`keyboardPress`/`mouseWheel`), take a fresh screenshot, loop. Ends on `end_turn` with a text summary.
 - **OpenAI, else.** `runComputerUseOpenAI` uses the Responses API with the `computer_use_preview` tool / `computer-use-preview` model, chaining turns via `previous_response_id`. It auto-acknowledges `pending_safety_checks` (the user is operating their own machine; outer policy gates approvals).
 - **Neither configured →** returns `computer_use unavailable: no Anthropic or OpenAI API key configured.`
 
-**API cost — flag it honestly.** **This tool costs money on every call.** It makes repeated vision-model calls (one per loop iteration, up to 25), each sending a full PNG screenshot. With the **preferred Anthropic path it needs Anthropic credits**; if those are exhausted you'll get credit/auth errors from the model, not from Ava. The OpenAI path needs OpenAI credits instead. There is no local/free mode. Tool budget is `TOOL_BUDGET_MS.computer_use` = **60 s**, classified `medium` (approval veto).
+**API cost — flag it honestly.** **This tool costs money on every call.** It makes repeated vision-model calls (one per loop iteration, up to 100), each sending a full PNG screenshot. With the **preferred Anthropic path it needs Anthropic credits**; if those are exhausted you'll get credit/auth errors from the model, not from Ava. The OpenAI path needs OpenAI credits instead. There is no local/free mode. Tool budget is `TOOL_BUDGET_MS.computer_use` = **60 s**, classified `medium` (approval veto).
 
-**Abort handling.** The run's `signal` is checked **before every model turn** in both loops (`computer-use.ts:66, 90, 267, 304`), so Stop halts the GUI loop promptly instead of grinding through all 25 iterations. The signal is also passed into the SDK call (`{ signal }`) so an in-flight HTTP request is cancelled.
+**Abort handling.** The run's `signal` is checked **before every model turn** in both loops, so Stop halts the GUI loop promptly instead of grinding through all 100 iterations. The signal is also passed into the SDK call (`{ signal }`) so an in-flight HTTP request is cancelled.
 
-**Edge cases.** It drives the **Chrome surface** (`environment: "browser"`), not the whole OS desktop — the tool description says "the active Chrome browser tab". Missing/invalid action params (e.g. a click with no coordinate) end the loop with a precise `reason`. "max iterations reached" is returned if it can't finish in 25 turns.
+**Edge cases.** It drives the **Chrome surface** (`environment: "browser"`), not the whole OS desktop — the tool description says "the active Chrome browser tab". Missing/invalid action params (e.g. a click with no coordinate) end the loop with a precise `reason`. "max iterations reached" is returned if it can't finish in 100 turns.
 
 ---
 
@@ -451,6 +459,54 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 
 ---
 
+### 5.13 `shopify_*` — Shopify Admin API product tools
+
+**File:** `server/src/tools/shopify-mcp.ts` (154 lines).
+
+**Purpose.** Edit a Shopify product's **name (`title`) and description (`body_html`) directly over the Admin REST API**, instead of clicking through the admin UI in a browser (which was slow and kept failing mid-task on the turn cap). Replaces fragile UI automation for one of the two task types the agent repeatedly couldn't finish. Full feature write-up: [`features/reliable-task-execution.md`](../features/reliable-task-execution.md).
+
+**The three tools.**
+
+| Tool | Input | Action | Output |
+|---|---|---|---|
+| `shopify_list_products` | `{ limit?, query? }` | `GET products.json?fields=id,title,handle` (limit default 100, cap 250); optional in-memory case-insensitive title `contains` filter | `id — title` per line |
+| `shopify_get_product` | `{ id }` | `GET products/<id>.json?fields=id,title,body_html,images` | id, name, image **count**, and the full `body_html` with a note to keep any `<img>` tags intact |
+| `shopify_update_product` | `{ id, title?, body_html? }` | **one** `PUT products/<id>.json` with a body of only the fields you pass | `Updated product <id>: "<title>". Images untouched.` |
+
+**The "don't touch the pictures" rule — two enforced layers.**
+1. **Structural:** the PUT body is `{ product: { id, title?, body_html? } }` — built from only the changed fields (`shopify-mcp.ts:132–134`). The product's `images` array is **never** included in any request, so a name/description edit **cannot** alter the image gallery. This is a hard guarantee, independent of model behavior.
+2. **Instructional:** for pictures embedded *inside* the description HTML, `shopify_update_product`'s description tells the model in capitals to keep the exact `<img>` tags when rewriting `body_html` (`shopify-mcp.ts:115–117`), and `shopify_get_product` exists so the model first sees precisely what to preserve. This layer depends on the model following the instruction.
+
+**How it executes.** `buildShopifyTools(deps)` closes over `{ store, token }`. Every call goes through `api()` (`shopify-mcp.ts:25`), which targets `https://<store>/admin/api/2024-10/<path>` with the `X-Shopify-Access-Token` header and a **20 s** `AbortSignal.timeout`. `fetchImpl` is injectable for tests.
+
+**API cost.** No metered LLM call. It spends the owner's **Shopify** account (Admin API quota); requires the token's app to hold the `read_products` + `write_products` scopes.
+
+**Gating.** Not in `classifyRisk` — these are credential-gated HTTP wrappers, registered only when `agentDeps.shopify` is set (i.e. both `SHOPIFY_STORE` + `SHOPIFY_ADMIN_TOKEN` present). There is no per-call approval veto on them today.
+
+**Edge cases.** Missing `id` → `missing id`. `shopify_update_product` with neither `title` nor `body_html` → `nothing to update …` (the body would be just `{ id }`). A non-2xx response surfaces the status + first 300 chars of the body (e.g. a `403` from a token missing `write_products`). `shopify_list_products`' `query` filters only the fetched page in memory, so a product past the scanned limit won't be found by it.
+
+---
+
+### 5.14 `find_places` — Google Places API
+
+**File:** `server/src/tools/places-mcp.ts` (101 lines).
+
+**Purpose.** Find real businesses with **structured data** (name, address, phone, website, Maps link, rating) via the **Google Places API (New) Text Search**, instead of scraping Google Maps (blocked and fragile). Its signature feature is filtering by **website presence** — making "businesses *without* a website" a precise query — which is the other task type the agent kept failing. Full feature write-up: [`features/reliable-task-execution.md`](../features/reliable-task-execution.md).
+
+**Input.** `{ query, maxResults?, websiteFilter? }` (`query` required). `maxResults` default 20, cap 60. `websiteFilter` ∈ `any` (default) | `without` | `with`.
+
+**Output.** A numbered list — `name — address · phone`, then a `website:` line (`NO WEBSITE` when absent) and a `maps:` link — or `No places found …`.
+
+**How it executes.** `POST https://places.googleapis.com/v1/places:searchText` with `X-Goog-Api-Key` and an `X-Goog-FieldMask` selecting exactly the fields above (`places-mcp.ts:8–12,61`). It **pages** (passing `nextPageToken`) until it has `≥ want × 2` raw results or Google stops returning a token, **capped at 4 pages** so it never loops (`places-mcp.ts:58`). Then it applies the `websiteFilter` (`without` → keep only places with no `websiteUri`; `with` → only those that have one) and slices to `maxResults` (`places-mcp.ts:82–85`). Each request has a **20 s** timeout; `fetchImpl` is injectable for tests.
+
+**API cost.** No metered LLM call. It spends the owner's **Google Cloud** billing — the Places API (New) is a billed service and must be enabled with billing on the project.
+
+**Gating.** Not in `classifyRisk` — a credential-gated HTTP wrapper, registered only when `GOOGLE_PLACES_API_KEY` is set. No per-call approval veto today.
+
+**Edge cases.** Missing `query` → `missing query`. A non-2xx response returns `Places search failed: <status> <body…>` (e.g. when billing isn't enabled, or the key lacks Places API access). Because the website filter can drop many results, the over-fetch (`want × 2`, up to 4 pages) is what keeps a `without` query from coming back short.
+
+---
+
 ## 6. Decision workflow: given a task, which tool does Ava pick?
 
 This is the practical rubric, reconciled from `server/src/orchestrator/tool-rubric.ts` (the layer-5 system-prompt text the model actually reads) and the per-tool gating. Ava is biased toward **acting immediately** and **composing tools** — "if a direct tool is missing I reach the goal another way."
@@ -463,7 +519,9 @@ flowchart TD
     Q2 -- yes --> SI[self_improve<br/>queued, worktree, auto-verify/revert]
     Q2 -- no --> Q3{Pure file op<br/>read/write/list/stat/delete?}
     Q3 -- yes --> FS[fs_read / fs_write / fs_list /<br/>fs_stat / fs_delete]
-    Q3 -- no --> Q4{Web / a site the owner<br/>is signed into?}
+    Q3 -- no --> Q3b{"Shopify product edit, or<br/>find real businesses?"}
+    Q3b -- "yes + API creds set" --> API["shopify_* / find_places<br/>(direct vendor API, no browser)"]
+    Q3b -- "no, or creds absent" --> Q4{Web / a site the owner<br/>is signed into?}
     Q4 -- yes --> Q4a{Reachable by<br/>selector/URL?}
     Q4a -- yes --> CH[chrome_navigate / click /<br/>type / read_page / …]
     Q4a -- "no, needs visual reasoning" --> CU[computer_use<br/>⚠ costs model credits]
@@ -484,11 +542,13 @@ flowchart TD
 
 **Key tie-breakers, verified against code and rubric:**
 
+- **Direct API vs. browser (for the two covered jobs):** for a **Shopify product name/description edit** prefer `shopify_*` (one Admin API call), and for **finding real businesses** prefer `find_places` (Google Places API) — both are reliable, fast, and don't burn agent turns, and their descriptions tell the model to use them over browsing/scraping. They only exist when their `.env` credentials are set; absent that, fall back to the browser tools.
 - **Native app vs. vision:** prefer **`control_app`** (local PowerShell, free) over **`computer_use`** (vision, costs credits). The rubric and the `control_app` description both say so explicitly. `computer_use` is the *last* resort "for anything the other tools cannot reach."
 - **Web by selector vs. by vision:** prefer **`chrome_*`** (free, deterministic) and fall to **`computer_use`** only when the page needs visual reasoning. Note `computer_use` drives the **browser surface**, so it composes with the chrome session.
 - **`shell` vs. `control_app` for PowerShell:** if the PowerShell uses `$`-variables or complex quoting, **use `control_app`** — `shell` routes through `cmd.exe /c` and mangles those (the documented "Illegal characters in path" / `$`-strip failure).
 - **Edits vs. chat for `claude_code`:** `claude_code` is for *actual edits* (`--permission-mode acceptEdits`), not free-form Q&A. For Claude's *opinion* without touching files, use **`discuss_with_claude`** (read-only, background).
-- **Cost-awareness:** every path except `computer_use` (and the background pipelines behind `self_improve`/`discuss`) is **free per call**. `computer_use` is the one tool to think twice about — it needs **Anthropic credits** (preferred) or OpenAI credits, and burns one vision call per loop iteration (up to 25).
+- **API over browser for the two covered jobs:** when their credentials are set, **`shopify_update_product`** (one Admin API `PUT`) beats clicking through the Shopify admin, and **`find_places`** (Google Places API) beats scraping Google Maps — both tool descriptions tell the model so explicitly ("do NOT scrape Google Maps", "directly, no clicking"). When the creds are absent the tools aren't offered and the browser path is used as before.
+- **Cost-awareness:** every path except `computer_use` (and the background pipelines behind `self_improve`/`discuss`) is **free of metered-LLM cost per call**. The Shopify/Places tools make no LLM call, but do spend the owner's own Shopify/Google billing. `computer_use` is the one tool to think twice about on **LLM** cost — it needs **Anthropic credits** (preferred) or OpenAI credits, and burns one vision call per loop iteration (up to 100).
 
 ---
 
@@ -509,6 +569,8 @@ flowchart TD
 | Tool contract / MCP server | `server/src/tools/ava-mcp.ts` |
 | Agent-side registry + dispatch | `server/src/orchestrator/tool-registry.ts` |
 | Per-request tool assembly (the wiring) | `server/src/routes/chat.ts` (`chatRoutes`, ~L341–399) |
+| Shopify / Places API tools | `server/src/tools/shopify-mcp.ts`, `server/src/tools/places-mcp.ts` |
+| Their credentials / deps wiring | `server/src/config.ts` (`SHOPIFY_STORE`/`SHOPIFY_ADMIN_TOKEN`/`GOOGLE_PLACES_API_KEY`), `server/src/index.ts:287–289` (`agentDeps.shopify` / `agentDeps.googlePlacesApiKey`) |
 | Rubric (system-prompt layer 5) | `server/src/orchestrator/tool-rubric.ts` |
 | Risk tiers / approval gating | `server/src/policy/classify.ts`, `server/src/policy/enforce.ts` |
 | Shell gate (allow-by-default + blocklist) | `server/src/tools/shell-allowlist.ts` |

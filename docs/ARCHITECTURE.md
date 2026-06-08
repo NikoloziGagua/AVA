@@ -137,7 +137,7 @@ sequenceDiagram
   U->>C: { text }
   C->>A: register run, build prompt (+playbook)
   U->>S: open EventSource
-  loop up to 48 turns
+  loop until done (turn cap is a high backstop, not a budget)
     A->>L: stream(system, messages, tools)
     L-->>A: plan + tool calls
     A->>G: classify + enforce each call
@@ -214,7 +214,9 @@ stateDiagram-v2
 - **SSE buffer** = an in-memory ring of events for the run so a reconnecting browser can replay what it missed (`sse/buffer.ts`).
 - **Persist flag** = `persist:false` runs the tools but stores no messages — used only by the hybrid-voice handoff, which stores the turn itself.
 
-**Lifecycle of one typed turn** (`routes/chat.ts` + `orchestrator/agent.ts`): POST validates + gates concurrency → stores the user message → registers a run (fresh `runId`, `AbortController`, SSE buffer) and returns the `sessionId` immediately → the browser opens the stream and replays the buffer, then tails live events (a 15s heartbeat keeps the connection alive during long single-tool turns) → `runAgent` loops up to **48 turns** (stream model → collect tool calls → gate each through policy → dispatch → feed results back) → on the final answer, `maybeCapture` may distil a successful ≥2-tool run into a playbook.
+**Lifecycle of one typed turn** (`routes/chat.ts` + `orchestrator/agent.ts`): POST validates + gates concurrency → stores the user message → registers a run (fresh `runId`, `AbortController`, SSE buffer) and returns the `sessionId` immediately → the browser opens the stream and replays the buffer, then tails live events (a 15s heartbeat keeps the connection alive during long single-tool turns) → `runAgent` loops (stream model → collect tool calls → gate each through policy → dispatch → feed results back) → on the final answer, `maybeCapture` may distil a successful ≥2-tool run into a playbook.
+
+The loop is bounded by `MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS) || 1000` (`agent.ts:148`) — a **runaway backstop, not a task budget** (the old hard 48-turn cap was lifted in commit `e340c92` because it cut off real multi-step tasks mid-work — it couldn't even finish one Shopify product edit). The actual brakes on a run are the **Stop** button (aborts in ≤1 turn), the **5-minute no-progress stuck-loop detector** (`orchestrator/stuck-loop.ts`), **per-tool timeouts**, and **approval gates**. On the rare exhaustion of the backstop the loop still emits a graceful final rather than ending silently. See [`features/reliable-task-execution.md`](features/reliable-task-execution.md).
 
 **Provider abstraction:** the loop talks to a normalized provider interface (`orchestrator/llm/`). Default is **OpenAI** (`gpt-5.5`/`gpt-5` family) via the Responses API; **Anthropic** is an alternate (Messages API; note it ignores the reasoning-effort knob and caps `max_tokens` at 4096); a mock provider backs tests. [02]
 
@@ -224,9 +226,9 @@ stateDiagram-v2
 
 ## 4. The tool layer
 
-**What it is:** the set of capabilities the action-mode agent can call. Tools are assembled per-run and registered into a `ToolRegistry` that emits `tool_call`/`tool_result` centrally. The Stop signal is threaded into every tool's context so it can be interrupted mid-flight. **→ Full catalog (25 tools, one subsection each): [03](architecture/03-tools-catalog.md).**
+**What it is:** the set of capabilities the action-mode agent can call. Tools are assembled per-run and registered into a `ToolRegistry` that emits `tool_call`/`tool_result` centrally. The Stop signal is threaded into every tool's context so it can be interrupted mid-flight. **→ Full catalog (one subsection per tool family): [03](architecture/03-tools-catalog.md).**
 
-**Cost note:** the local tools cost **nothing** — they drive your own machine. Only `computer_use` hits a metered API per call.
+**Cost note:** the local tools cost **nothing** — they drive your own machine. Only `computer_use` hits a **metered LLM** API per call. The Shopify and Places tools make no LLM call either, but they do spend your own Shopify / Google Cloud billing.
 
 | Tool | File | What it does | API cost |
 |------|------|--------------|----------|
@@ -242,6 +244,10 @@ stateDiagram-v2
 | `self_improve` / `self_improve_status` | `tools/self-improve-mcp.ts` | Queues a self-improvement and reports status. | none (subscription worker) |
 | `read_claude_updates` | `tools/update-log-mcp.ts` | Reads Claude's dev-log so Ava can honestly say what changed. | none |
 | `read_logs` | `tools/activity-log.ts` | Reads the server's own activity logs. | none |
+| `shopify_list_products / _get_product / _update_product` | `tools/shopify-mcp.ts` | Edits a product's name + description over the **Shopify Admin API** (one `PUT`, no browser); never sends the `images` array. Registered only when `SHOPIFY_STORE` + `SHOPIFY_ADMIN_TOKEN` are set. | none (LLM); uses your Shopify billing |
+| `find_places` | `tools/places-mcp.ts` | Finds real businesses via the **Google Places API** (name/address/phone/website/Maps link) with a "without a website" filter. Registered only when `GOOGLE_PLACES_API_KEY` is set. | none (LLM); uses your Google billing |
+
+> The Shopify/Places tools call **vendor HTTP APIs**, not a metered LLM — they replace fragile browser automation for two task types the agent kept failing (a Shopify product rename, a "find salons without a website" search). They're **credential-gated**, so a fresh checkout ships with them off. Full write-up: [`features/reliable-task-execution.md`](features/reliable-task-execution.md).
 
 **Voice/conversation mode** exposes only a thin subset (`control_app`, discuss, memory, the update log) so a spoken "hi Ava" stays fast.
 

@@ -226,7 +226,7 @@ sequenceDiagram
   SSE->>Buf: since(0) → replay (empty so far) + tail
 
   rect rgb(238,244,255)
-  note over Loop,LLM: agent loop — up to 48 turns
+  note over Loop,LLM: agent loop — until done (turn cap is a high backstop, default 1000)
   Loop->>Prov: stream(system, messages, tools)
   Prov->>LLM: Responses API (stream:true)
   LLM-->>Prov: deltas + function_call(shell)
@@ -258,10 +258,10 @@ sequenceDiagram
 5. **Register the run.** Fresh `SseBuffer`, `AbortController`, `runId`; bundled and registered (`:184-191`). Context is assembled (§3.4): typed → **action mode**, full tool stack built (§3.5).
 6. **`POST` returns `{ sessionId }` immediately** (`:429`). The loop continues in a detached IIFE.
 7. **Browser opens the SSE stream** at `GET /:id/stream?lastEventId=0` (`web/src/chat/useChatStream.ts:32-38`). The server replays the buffer from id 0 and starts tailing (`routes/chat.ts:460-489`).
-8. **`runAgent` starts** (`orchestrator/agent.ts:78`). It builds the system prompt (persona + memory + tool rubric, §7), wraps the tools in a `ToolRegistry` carrying `{ runId, signal }` (`:125`), picks the **orchestrator model** (`gpt-5.5` for OpenAI — `:130-132`), and seeds `messages = [...priorMessages, { role:"user", content: prompt }]` (`:134-137`).
-9. **Turn loop begins** (`:147`), capped at **`MAX_AGENT_TURNS = 48`** (`:144`). Each turn first checks `abort.signal.aborted` and bails if set (`:148`).
-10. **Stream the model** (`:154-159`). The provider yields `delta` (text), `tool_call`, `thought`, and a terminal `done` with a `stop_reason`. Text deltas are emitted as `thought` events → they flow through the buffer → SSE → render live as Ava "thinking/typing" (`:160-162`).
-11. **Model asks for a tool.** Here it emits a `function_call` for `shell` with `{ command: "grep -rn TODO ." }` (or similar). The provider parses the streamed JSON args and yields one `tool_call` (`openai-provider.ts:179-195`). The loop collects it into `pendingCalls` (`agent.ts:163-164`).
+8. **`runAgent` starts** (`orchestrator/agent.ts:78`). It builds the system prompt (persona + memory + tool rubric, §7), wraps the tools in a `ToolRegistry` carrying `{ runId, signal }` (`:125`), picks the **orchestrator model** (`gpt-5.5` for OpenAI — `:130-132`), and seeds `messages = [...priorMessages, { role:"user", content: prompt }]` (`:135-137`).
+9. **Turn loop begins** (`:151`), capped at **`MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS) || 1000`** (`:148`). This is a **runaway backstop, not a task budget** — the old hard cap of 48 was lifted in commit `e340c92` because it cut off real multi-step tasks (it couldn't finish one Shopify product edit); the real brakes are Stop, the stuck-loop detector, per-tool timeouts, and approvals. Each turn first checks `abort.signal.aborted` and bails if set (`:152`).
+10. **Stream the model** (`:158-176`). The provider yields `delta` (text), `tool_call`, `thought`, and a terminal `done` with a `stop_reason`. Text deltas are emitted as `thought` events → they flow through the buffer → SSE → render live as Ava "thinking/typing" (`:164-166`).
+11. **Model asks for a tool.** Here it emits a `function_call` for `shell` with `{ command: "grep -rn TODO ." }` (or similar). The provider parses the streamed JSON args and yields one `tool_call` (`openai-provider.ts:179-195`). The loop collects it into `pendingCalls` (`agent.ts:167-168`).
 12. **Stream ends with `stop_reason: "tool_use"`** (the model wants results before continuing). Because there are pending calls and it's not `end_turn`, the loop does **not** finalize — it appends the assistant turn (text + tool_calls) to `messages` (`:201`) and dispatches.
 13. **Per-call dispatch** (`:207-251`):
     - Emit `tool_call` (`:209`) → SSE → the UI shows "running shell…".
@@ -293,7 +293,7 @@ Each turn ends by inspecting `stopReason` (`:178-199`), in this priority:
 3. **`end_turn`, or no pending tool calls** (`:194-199`) → the normal finish: emit `final`, break.
 4. **Otherwise** (`tool_use` with pending calls) → run the tools and loop again (`:201-260`).
 
-If the loop hits all 48 turns without `concluded` (`:263-274`), it emits a graceful `final` ("I reached my step limit before finishing… tell me to continue and I'll pick up where I left off") so you're never left with nothing, and the work can be resumed.
+If the loop ever exhausts the full backstop (default 1000 turns) without `concluded` (`:267-278`), it emits a graceful `final` ("I reached my step limit before finishing… tell me to continue and I'll pick up where I left off") so you're never left with nothing, and the work can be resumed. In practice this is almost never reached — Stop, the stuck-loop detector, and timeouts end a run long before — but it's there so the rare exhaustion still ends cleanly rather than silently.
 
 ### 6.1 `ToolRegistry` — dispatch + the malformed-args guard
 
@@ -305,7 +305,7 @@ If the loop hits all 48 turns without `concluded` (`:263-274`), it emits a grace
 
 ### 6.2 `stuck-loop` — detecting a spinning agent
 
-`orchestrator/stuck-loop.ts` (107 lines) watches tool results to halt a run that's making no progress, so a confused agent doesn't burn 48 turns (and your money). It's driven from the wrapped `emit` in `runAgent` (`agent.ts:83-99`): every `tool_result` calls `stuckLoop.observe`, every `thought` calls `observeThought`.
+`orchestrator/stuck-loop.ts` (107 lines) watches tool results to halt a run that's making no progress (and burning your money). With the turn cap now a high backstop rather than a hard 48, this detector — plus Stop and the per-tool timeouts — is the **primary** brake on a confused agent, not a fallback. It's driven from the wrapped `emit` in `runAgent` (`agent.ts:83-99`): every `tool_result` calls `stuckLoop.observe`, every `thought` calls `observeThought`.
 
 Two halt conditions (`:64-98`):
 
@@ -433,7 +433,7 @@ sequenceDiagram
 1. **You press Stop.** The UI `POST`s `/api/chat/:sessionId/kill` (`routes/chat.ts:494-516`).
 2. **Grab the `runId` *before* unregistering** (`:501`). Order matters — once the slot is freed, the registry can't tell you which PIDs belonged to it.
 3. **Abort the run** (`:504`): `runs.abort(sessionId)` fires the run's `AbortController`. This reaches **two** places at once:
-   - **The model read-loop** — the provider's stream sees `signal.aborted` and ends; the next turn-top check in `runAgent` (`agent.ts:148` / `:178-183`) emits `killed` and breaks.
+   - **The model read-loop** — the provider's stream sees `signal.aborted` and ends; the next turn-top check in `runAgent` (`agent.ts:152` / `:182-187`) emits `killed` and breaks.
    - **In-flight tools** — every tool was built with this run's `signal` in its ctx (`agent.ts:125`), so a running `claude_code` child or `computer_use` desktop loop is signalled to stop *now*, not after the current step.
 4. **Tree-kill the child processes** (`:509-513`): for each PID `pidfiles.listForRun(runId)` returns, `killTree(pid)` SIGKILLs the whole subtree (via `tree-kill`). This is what makes Stop *actually* halt a `claude -p` worker and everything it spawned — aborting the JS loop alone wouldn't reap OS child processes. Each kill is best-effort (a dead/missing PID never fails the request).
 5. **Unregister to free the slot immediately** (`:514`) — note this is the no-`run` "force-free" form (§4), so a new turn can preempt right away even before the aborted loop's own `finally` runs.
@@ -514,7 +514,7 @@ flowchart LR
 
 | Constant | Value | Where |
 |----------|-------|-------|
-| Max agent turns | 48 | `agent.ts:144` |
+| Max agent turns (runaway backstop, env-overridable via `AVA_MAX_AGENT_TURNS`) | 1000 | `agent.ts:148` |
 | SSE buffer cap | 500 events / 5 MB | `routes/chat.ts:184` |
 | Heartbeat interval | 15 s | `routes/chat.ts:472` |
 | Stream poll tick | 100 ms | `routes/chat.ts:489` |

@@ -395,8 +395,12 @@ export interface HumeTranslation {
   frames: string[];
   /** A finished user utterance (subject to the same transcript gate). */
   userTranscript?: string;
-  /** A finished assistant spoken turn (to persist). */
+  /** One SEGMENT of the assistant's spoken turn (Hume emits several per turn). The
+   *  proxy buffers these and persists the whole turn as one message on `turnEnd`. */
   assistantText?: string;
+  /** The spoken turn finished (assistant_end) or was cut off (user_interruption) —
+   *  flush the buffered assistant segments to one message row. */
+  turnEnd?: boolean;
   /** The model asked to act on the computer. */
   toolCall?: { callId: string; name: string; args: Record<string, unknown> };
 }
@@ -498,7 +502,11 @@ export function translateHumeEvent(evt: {
       };
     }
     case "assistant_end":
-      return { frames: [JSON.stringify({ type: "response.done" })] };
+      return { frames: [JSON.stringify({ type: "response.done" })], turnEnd: true };
+    case "user_interruption":
+      // Barge-in: the spoken turn was cut off. Flush whatever Ava already said as
+      // one row (it WAS spoken) so it isn't lost or merged into the next turn.
+      return { frames: [], turnEnd: true };
     case "tool_call": {
       let args: Record<string, unknown> = {};
       try { args = evt.parameters ? (JSON.parse(evt.parameters) as Record<string, unknown>) : {}; } catch { args = {}; }
@@ -806,6 +814,19 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     // A transcript that lands during this window is almost always a hallucination
     // / echo, and starting a new response would cut Ava off — so we ignore it.
     let responseActive = false;
+    // One spoken reply arrives as SEVERAL `…audio_transcript.done` segments (one per
+    // sentence). Buffer them and persist the whole turn as ONE message on
+    // `response.done`, so chat history (and the voice recollection that re-seeds it)
+    // sees coherent turns instead of clause-fragments.
+    let assistantTurnBuf = "";
+    const flushAssistantTurn = () => {
+      const text = assistantTurnBuf.trim();
+      assistantTurnBuf = "";
+      if (hybrid && sessionId && text) {
+        appendMessage(deps.db, { sessionId, role: "assistant", content: text });
+        touchSession(deps.db, sessionId);
+      }
+    };
     const pendingFromClient: Array<{ data: RawData; isBinary: boolean }> = [];
     log.info("realtime: client connected, opening upstream to gpt-realtime (transcribe-only)");
 
@@ -914,6 +935,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           responseActive = true;
         } else if (evt.type === "response.done") {
           responseActive = false;
+          flushAssistantTurn(); // persist the whole spoken turn as one message
         } else if (evt.type === "error") {
           log.warn(
             `realtime upstream error event: code=${evt.error?.code} type=${evt.error?.type} message=${evt.error?.message}`,
@@ -924,15 +946,16 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           evt.type === "response.output_audio_transcript.done" ||
           evt.type === "response.audio_transcript.done"
         ) {
-          // Persist Ava's SPOKEN reply (chitchat). This fires only when the model
-          // actually speaks — during a do_on_computer task it stays silent
-          // (silentToolResultFrame omits response.create → no output transcript),
-          // so this never overlaps the do_on_computer result stored in (E). Do
-          // NOT return: keep forwarding so the client's captions still update.
+          // BUFFER one segment of Ava's SPOKEN reply (chitchat). The model emits
+          // several of these per spoken turn (one per sentence); we accumulate and
+          // persist the whole turn as ONE message on response.done (above). This
+          // fires only when the model actually speaks — during a do_on_computer task
+          // it stays silent (silentToolResultFrame omits response.create → no output
+          // transcript), so it never overlaps the do_on_computer result stored in (E).
+          // Do NOT return: keep forwarding so the client's captions still update.
           const t = (evt as { transcript?: string }).transcript ?? "";
           if (hybrid && sessionId && t.trim()) {
-            appendMessage(deps.db, { sessionId, role: "assistant", content: t });
-            touchSession(deps.db, sessionId);
+            assistantTurnBuf += (assistantTurnBuf ? " " : "") + t.trim();
           }
         }
       }
@@ -1041,6 +1064,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
     // ─── Lifecycle ────────────────────────────────────────────────────
     upstream.on("close", (code, reason) => {
+      flushAssistantTurn(); // don't lose a turn the model spoke before the socket dropped
       const r = reason?.toString() || "(no reason)";
       log.info(`realtime upstream closed: code=${code} reason="${r}" model=${REALTIME_MODEL}`);
       // Forward the close reason to the client so the user sees something
@@ -1091,6 +1115,19 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       let sessionId = requestedSessionId;
       const actionAbort = new AbortController();
       let opened = false;
+      // Hume emits one `assistant_message` per sentence; buffer the segments and
+      // persist the whole spoken turn as ONE message on `assistant_end` (turnEnd),
+      // so history isn't a pile of clause-fragments (which also poisons the recall
+      // we seed back into the prompt).
+      let assistantTurnBuf = "";
+      const flushAssistantTurn = () => {
+        const text = assistantTurnBuf.trim();
+        assistantTurnBuf = "";
+        if (hybrid && sessionId && text) {
+          appendMessage(deps.db, { sessionId, role: "assistant", content: text });
+          touchSession(deps.db, sessionId);
+        }
+      };
       const redact = (m: string) => redactSecrets(m, [hume.apiKey, hume.secretKey, hume.configId, hume.voiceId]);
 
       let upstream: WebSocket;
@@ -1207,11 +1244,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           return;
         }
 
-        // Persist Ava's spoken reply (chitchat).
+        // Buffer Ava's spoken reply segment (chitchat); persist the whole turn as
+        // one message on turnEnd (assistant_end / barge-in) below.
         if (t.assistantText && hybrid && sessionId && t.assistantText.trim()) {
-          appendMessage(deps.db, { sessionId, role: "assistant", content: t.assistantText });
-          touchSession(deps.db, sessionId);
+          assistantTurnBuf += (assistantTurnBuf ? " " : "") + t.assistantText.trim();
         }
+        if (t.turnEnd) flushAssistantTurn();
 
         // Forward translated frames (audio, captions, errors) to the client.
         for (const frame of t.frames) {
@@ -1235,6 +1273,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       });
       upstream.on("close", (code, reason) => {
         if (!opened) { resolve(false); return; }
+        flushAssistantTurn(); // don't lose a turn Ava spoke before the socket dropped
         const r = redact(reason?.toString() || "(no reason)");
         try { client.send(JSON.stringify({ type: "error", error: { message: `upstream closed (code=${code}): ${r}` } })); } catch { /* */ }
         try { client.close(code, r); } catch { /* */ }

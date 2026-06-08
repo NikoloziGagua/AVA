@@ -515,6 +515,7 @@ describe("Hume EVI provider helpers", () => {
     const t = translateHumeEvent({ type: "assistant_message", message: { role: "assistant", content: "On it Sir" } });
     expect(t.assistantText).toBe("On it Sir");
     expect(JSON.parse(t.frames[0]!)).toEqual({ type: "response.output_audio_transcript.done", transcript: "On it Sir" });
+    expect(t.turnEnd).toBeFalsy(); // a SEGMENT, not the end of the turn — must not flush yet
   });
 
   it("translateHumeEvent parses a tool_call", () => {
@@ -522,15 +523,20 @@ describe("Hume EVI provider helpers", () => {
     expect(t.toolCall).toEqual({ callId: "tc1", name: "do_on_computer", args: { task: "open downloads" } });
   });
 
-  it("translateHumeEvent maps assistant_end to response.done and errors to an error frame", () => {
-    expect(JSON.parse(translateHumeEvent({ type: "assistant_end" }).frames[0]!)).toEqual({ type: "response.done" });
+  it("translateHumeEvent maps assistant_end to response.done (+turnEnd) and errors to an error frame", () => {
+    const end = translateHumeEvent({ type: "assistant_end" });
+    expect(JSON.parse(end.frames[0]!)).toEqual({ type: "response.done" });
+    expect(end.turnEnd).toBe(true); // flush the buffered turn to one message
     const err = JSON.parse(translateHumeEvent({ type: "error", slug: "bad_request" }).frames[0]!);
     expect(err.type).toBe("error");
   });
 
-  it("translateHumeEvent ignores irrelevant messages", () => {
-    expect(translateHumeEvent({ type: "user_interruption" }).frames).toEqual([]);
+  it("translateHumeEvent flags user_interruption as turnEnd (flush what was spoken) and ignores other noise", () => {
+    const interrupt = translateHumeEvent({ type: "user_interruption" });
+    expect(interrupt.frames).toEqual([]);
+    expect(interrupt.turnEnd).toBe(true); // barge-in: flush partial turn, don't merge into next
     expect(translateHumeEvent({ type: "chat_metadata" }).frames).toEqual([]);
+    expect(translateHumeEvent({ type: "chat_metadata" }).turnEnd).toBeFalsy();
   });
 
   it("translateClientFrameToHume converts mic append frames and drops the rest", () => {

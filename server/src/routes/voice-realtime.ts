@@ -4,6 +4,8 @@ import { buildSystemPrompt } from "../orchestrator/system-prompt.js";
 import { validateToken } from "../auth/tokens.js";
 import { createSession, touchSession, listSessions } from "../state/sessions.js";
 import { appendMessage, listMessages } from "../state/messages.js";
+import { readDevLog, type DevLogEntry } from "../self/dev-log.js";
+import { dirname } from "node:path";
 import {
   gateTranscript,
   loadTranscriptGateConfig,
@@ -184,7 +186,13 @@ export const VOICE_PERSONA_INSTRUCTIONS =
   "narrates each step and speaks the result aloud. After the tool returns, stay silent unless Sir " +
   "asks a follow-up. If Sir asks how it went WHILE the task is still running, say you're still " +
   "working on it — never say it's \"done\" and never invent results before the system has actually " +
-  "spoken them. For everything else (chit-chat, questions), just reply directly in your own voice.";
+  "spoken them. You are AVA — a specific AI agent living on Sir's Windows PC, not a generic chatbot: " +
+  "NEVER describe yourself in terms of an LLM 'training cutoff' or 'my training data'. When Sir asks " +
+  "about your latest update, recent changes, self-improvement, or what Claude has been building, CALL " +
+  "do_on_computer with the task 'read and summarize my recent Claude update log' — the system has your " +
+  "exact changelog; never recite from memory or guess (a short summary is in this prompt for context, " +
+  "but the tool has the authoritative, current list). For everything else (chit-chat, questions), just " +
+  "reply directly in your own voice.";
 
 export const DO_ON_COMPUTER_TOOL = {
   type: "function" as const,
@@ -279,16 +287,32 @@ export function toolResultFrames(callId: string, output: string): string[] {
  * otherwise by name (defaults to "Alice Bennett"). PCM16 @ 24k matches the audio
  * format the browser path already uses for OpenAI, so playback is unchanged.
  */
-export function buildHumeSessionSettings(instructions: string, hume: HumeProviderConfig) {
+export function buildHumeSessionSettings(
+  instructions: string,
+  hume: HumeProviderConfig,
+  contextText = "",
+) {
   const voice = hume.voiceId
     ? { provider: "HUME_AI" as const, id: hume.voiceId }
     : { provider: "HUME_AI" as const, name: hume.voiceName };
-  return {
-    type: "session_settings" as const,
+  const settings: {
+    type: "session_settings";
+    system_prompt: string;
+    voice: { provider: "HUME_AI"; id?: string; name?: string };
+    audio: { encoding: "linear16"; sample_rate: number; channels: number };
+    context?: { text: string; type: "persistent" };
+  } = {
+    type: "session_settings",
     system_prompt: instructions,
     voice,
-    audio: { encoding: "linear16" as const, sample_rate: 24000, channels: 1 },
+    audio: { encoding: "linear16", sample_rate: 24000, channels: 1 },
   };
+  // Recollection goes in Hume's `context`, NOT appended to system_prompt: Hume
+  // TRUNCATES the long (~12k char) system prompt, so appended history is silently
+  // dropped (verified: it failed to recall a seeded fact). The separate `context`
+  // field is honored (verified: it recalls). type:"persistent" keeps it across turns.
+  if (contextText.trim()) settings.context = { text: contextText, type: "persistent" };
+  return settings;
 }
 
 /**
@@ -312,6 +336,24 @@ export function buildHumeHistoryBlock(
   return (
     "\n\n# Recent conversation (most recent last) — you remember all of this; " +
     "continue it naturally and never act like it's a fresh start:\n" +
+    lines
+  );
+}
+
+/**
+ * Build a "your actual recent updates" block from the Claude→Ava dev log so the
+ * voice model can answer "what's your latest update / self-improvement?" with
+ * Ava's REAL changelog instead of confabulating LLM-training facts. Pure +
+ * testable. Returns "" when the log has no shipped entries.
+ */
+export function buildVoiceUpdatesBlock(entries: DevLogEntry[]): string {
+  const shipped = entries.filter((e) => e.phase === "shipped" || e.phase === "note");
+  if (shipped.length === 0) return "";
+  const lines = shipped.slice(-6).map((e) => `- ${e.title}`).join("\n");
+  return (
+    "\n\n# Your ACTUAL recent updates (real changes Claude — Sir's coding agent — " +
+    "shipped to your code; THIS is your changelog, not your training data). When " +
+    "Sir asks about your latest update or self-improvement, answer from THIS list:\n" +
     lines
   );
 }
@@ -748,9 +790,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         memoryDir: deps.memoryDir,
         mode: "conversation",
       });
+      // Ava's real changelog so "what's your latest update?" isn't confabulated.
+      // (Recent conversation history is seeded below as conversation items.)
+      const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
       const sessionUpdate = hybrid
         ? buildHybridSessionUpdate(
-            system + VOICE_PERSONA_INSTRUCTIONS,
+            system + VOICE_PERSONA_INSTRUCTIONS + updates,
             vad,
             deps.voice ?? DEFAULT_VOICE,
             { pushToTalk },
@@ -1042,9 +1087,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         const system = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation" });
         const seedN = Number(process.env.REALTIME_SEED_TURNS ?? 12);
         const history = hybrid && sessionId ? buildHumeHistoryBlock(listMessages(deps.db, sessionId), seedN) : "";
-        // Configure the Hume session: persona + recent history + chosen voice. Hume
-        // auto-speaks, so there is no separate response.create step.
-        try { upstream.send(JSON.stringify(buildHumeSessionSettings(system + VOICE_PERSONA_INSTRUCTIONS + history, hume))); } catch { /* */ }
+        const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
+        // Configure the Hume session: persona + real changelog + recent history +
+        // chosen voice. Hume auto-speaks, so there is no separate response.create.
+        try { upstream.send(JSON.stringify(buildHumeSessionSettings(system + VOICE_PERSONA_INSTRUCTIONS + updates + history, hume))); } catch { /* */ }
         try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
         log.info("realtime: hume session open (voice via Hume EVI)");
         // Drain client frames buffered before open, translating mic audio.

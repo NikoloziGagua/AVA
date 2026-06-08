@@ -19,6 +19,7 @@ import {
   seedContentType,
   buildHumeSessionSettings,
   buildHumeHistoryBlock,
+  buildVoiceUpdatesBlock,
   translateHumeEvent,
   humeAudioChunkToClientPcm,
   resamplePcm16,
@@ -101,6 +102,24 @@ describe("chooseResumeOrNew — voice session continuity", () => {
   });
   it("creates a new session when there is no prior conversation to resume", () => {
     expect(chooseResumeOrNew(false, null)).toEqual({ resumeId: null });
+  });
+});
+
+describe("buildVoiceUpdatesBlock — seed Ava's real changelog into the voice prompt", () => {
+  it("returns empty when there are no shipped entries", () => {
+    expect(buildVoiceUpdatesBlock([])).toBe("");
+    expect(buildVoiceUpdatesBlock([{ ts: "t", phase: "started", title: "wip" }])).toBe("");
+  });
+  it("lists shipped titles and frames them as the real changelog (not training)", () => {
+    const out = buildVoiceUpdatesBlock([
+      { ts: "t1", phase: "shipped", title: "Integrated Hume voice" },
+      { ts: "t2", phase: "started", title: "in progress" },
+      { ts: "t3", phase: "shipped", title: "Fixed voice recollection" },
+    ]);
+    expect(out).toContain("- Integrated Hume voice");
+    expect(out).toContain("- Fixed voice recollection");
+    expect(out).not.toContain("in progress"); // started entries excluded
+    expect(out.toLowerCase()).toContain("changelog");
   });
 });
 

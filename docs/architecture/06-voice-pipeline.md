@@ -458,9 +458,89 @@ channel, `context` is a cheap second one. Full write-up in
 
 **Single source of truth for turns.** Across both providers, the spoken **user**
 turn is stored exactly once (at gate-accept) and the spoken **assistant** turn
-(chit-chat transcript *or* `do_on_computer` result) is stored once; the internal
-`/api/chat` run stores nothing (`persist:false`). This keeps the same session
-history coherent whether you typed or spoke.
+(chit-chat transcript *or* `do_on_computer` result) is stored as **one** message
+row; the internal `/api/chat` run stores nothing (`persist:false`). This keeps the
+same session history coherent whether you typed or spoke. For chit-chat the
+"one row per spoken turn" guarantee is non-trivial, because the realtime model
+delivers a single reply as **several** transcript segments — that's §8d.
+
+### 8d. One spoken reply = one message (segment buffering)
+
+A single spoken reply does **not** arrive as one transcript. Both upstreams emit
+the reply as **several segments — roughly one per sentence/clause**: OpenAI sends
+multiple `response.output_audio_transcript.done` (or the beta
+`response.audio_transcript.done`) events, and Hume sends multiple
+`assistant_message` events. The earlier code called `appendMessage` on **each**
+segment, so one spoken answer was stored as **4–5 separate `messages` rows**. That
+did two kinds of damage: chat history showed a reply shredded into clause-fragments,
+and — worse for voice — the recollection seed (§8b/§8c) re-fed those fragments back
+into the model on the next connect, so the "recent conversation" it remembered was
+itself a pile of half-sentences. This **undermined the Hume memory fix in §8c**: the
+prompt assembly was correct, but the *content* it carried was fragmented.
+
+The fix is **buffer-per-turn, flush-once**. Each provider branch keeps a
+per-connection string buffer (`assistantTurnBuf`) and a `flushAssistantTurn()`
+helper that trims the accumulated text, **clears the buffer**, and (only when
+`hybrid && sessionId && text`) writes **one** `appendMessage` + `touchSession`.
+Segments are appended to the buffer as they arrive; the buffer is flushed when the
+turn ends.
+
+```mermaid
+flowchart TD
+  subgraph Turn["One spoken reply"]
+    S1["segment 1 (audio_transcript.done / assistant_message)"] --> BUF
+    S2["segment 2"] --> BUF
+    S3["segment 3 ..."] --> BUF
+  end
+  BUF["assistantTurnBuf += segment<br/>(accumulate, no DB write)"]
+  END{{"turn-end signal?"}}
+  BUF --> END
+  END -->|"OpenAI: response.done<br/>Hume: turnEnd (assistant_end OR barge-in)<br/>OR upstream socket close"| FLUSH["flushAssistantTurn()<br/>trim, clear buffer, write ONCE"]
+  FLUSH --> ROW[("one assistant row in messages<br/>(appendMessage + touchSession)")]
+  ROW --> SEED["clean turn re-seeds the next-connect recollection (§8b/§8c)"]
+```
+
+**Per provider:**
+
+- **OpenAI** (`startSession`). Buffer + `flushAssistantTurn` declared at
+  `voice-realtime.ts:821`. Each transcript segment is appended at
+  `voice-realtime.ts:946`–`:959` (note: it deliberately does **not** `return`, so
+  captions keep forwarding to the client). The flush fires on `response.done`
+  (`voice-realtime.ts:938`).
+- **Hume** (`tryStartHumeSession`). Buffer + flush declared at
+  `voice-realtime.ts:1122`. `translateHumeEvent` reports each spoken segment via
+  `assistantText` and signals the turn boundary via the new `turnEnd?: boolean`
+  field on `HumeTranslation` (`voice-realtime.ts:403`). The event loop appends the
+  segment and flushes when `turnEnd` is set (`voice-realtime.ts:1249`–`:1252`).
+  `turnEnd` is set on **`assistant_end`** (`voice-realtime.ts:505`) **and on
+  `user_interruption`** (`voice-realtime.ts:506`–`:509`) — see barge-in below.
+
+**Turn-end / flush triggers and why each exists:**
+
+| Trigger | OpenAI | Hume | Why |
+|---|---|---|---|
+| Normal turn finished | `response.done` (`:938`) | `assistant_end` → `turnEnd` (`:505`) | The reply is complete — persist it as one row. |
+| **Barge-in** (you interrupt) | — | `user_interruption` → `turnEnd` (`:506`) | Ava *did* speak the buffered part; flush it so it isn't lost or silently merged into the **next** turn's buffer. |
+| **Upstream socket close** | close handler (`:1067`) | close handler (`:1276`) | Tail-safety: don't lose a turn the model spoke just before the socket dropped (e.g. a 1006). |
+
+**Why `do_on_computer` is unaffected.** During a task the realtime model is kept
+**silent** (`silentToolResultFrame` omits `response.create`, so no output
+transcript is produced — §7). The buffer therefore stays **empty**, the result is
+stored by the dedicated task path (`appendMessage` at `voice-realtime.ts:989`
+success / `:1004` failure for OpenAI; `:1229`/`:1238` for Hume), and a later flush
+of the empty buffer is a **no-op** (the `text` guard is falsy). So the
+coalescing buffer and the task-result store never double-write the same turn.
+
+**Why the flush clears the buffer.** `flushAssistantTurn()` resets
+`assistantTurnBuf = ""` *before* the write guard, so a **double-flush** (e.g.
+`response.done` immediately followed by an upstream close, or `assistant_end`
+followed by `user_interruption`) writes at most one row — the second call sees an
+empty buffer and does nothing.
+
+> **Recollection tie-in.** This is the fix that makes §8b/§8c's seed *coherent*. The
+> last-*N*-turns seed (`conversation.item.create` for OpenAI; `buildHumeHistoryBlock`
+> for Hume) now reads **whole assistant turns**, not clause-fragments, so what Ava
+> "remembers" on reconnect reads like the conversation actually happened.
 
 ---
 
@@ -514,12 +594,14 @@ verified against the code and its comments:
 **Wire translation.** Hume speaks a different protocol; the proxy bridges it so
 the browser stays provider-agnostic:
 
-- **Inbound** (`translateHumeEvent`, `voice-realtime.ts:442`): `audio_output` →
+- **Inbound** (`translateHumeEvent`, `voice-realtime.ts:475`): `audio_output` →
   `response.output_audio.delta`; `user_message` → gated user transcript;
-  `assistant_message` → `response.output_audio_transcript.done` (+ persist);
-  `assistant_end` → `response.done`; `tool_call` → the `do_on_computer` handoff;
-  `error` → an `error` frame. Everything else (prosody, metadata,
-  user_interruption) → no frames.
+  `assistant_message` → `response.output_audio_transcript.done` + **one buffered
+  segment** (`assistantText`, *not* persisted yet — see §8d);
+  `assistant_end` → `response.done` **and `turnEnd: true`** (flush the buffer to one
+  message); `user_interruption` (barge-in) → no client frame but **`turnEnd: true`**
+  (flush what was already spoken); `tool_call` → the `do_on_computer` handoff;
+  `error` → an `error` frame. Everything else (prosody, metadata) → no frames.
 - **Outbound** (`translateClientFrameToHume`, `voice-realtime.ts:498`): the
   browser's `input_audio_buffer.append` (mic PCM) → Hume's `audio_input`. Control
   frames Hume doesn't need are dropped.
@@ -660,7 +742,10 @@ assume `/api/speak` can produce the cloned voice.
 
 - `server/src/routes/voice-realtime.test.ts` — gate-forward decisions, tool-call
   parsing, Hume translation, resample/WAV handling, seed content-type, continuity
-  choice, frame builders.
+  choice, frame builders, and the **assistant-turn `turnEnd`** signal (§8d): an
+  `assistant_message` segment must **not** set `turnEnd`, while `assistant_end` and
+  `user_interruption` both must — so segments buffer and only a turn boundary flushes
+  (`voice-realtime.test.ts:518`, `:526`, `:534`).
 - `server/src/routes/voice-provider-config.test.ts` — provider resolution +
   fallback, redaction, URL building, token cache.
 - `server/src/voice/voiceConfig.test.ts` — speech-rate clamp/default.

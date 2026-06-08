@@ -515,8 +515,8 @@ export function translateHumeEvent(evt: {
     case "error":
       return { frames: [JSON.stringify({ type: "error", error: { message: evt.message?.content ?? evt.slug ?? "hume error" } })] };
     default:
-      // user_interruption, assistant_prosody, chat_metadata, etc. — nothing the
-      // client needs.
+      // assistant_prosody, chat_metadata, etc. — nothing the client needs.
+      // (user_interruption has its own case above.)
       return { frames: [] };
   }
 }

@@ -48,7 +48,7 @@ flowchart TD
 
 - **"Most recent" = the top of `listSessions`.** If Sir wants a different older conversation, he must open it explicitly; voice only auto-resumes the single latest.
 - **Seeding is bounded by `REALTIME_SEED_TURNS` (default 12).** Older turns beyond that window aren't seeded into the model on connect (though they remain in the DB). The bound exists because each seeded turn is per-connect OpenAI cost.
-- **Persisted turns avoid double-counting.** In hybrid/voice mode the spoken user turn and the action result are each stored exactly once (`voice-realtime.ts:993`, `:936`); the internal `/api/chat` run that executes tools persists nothing (`persist:false`), so resumed history isn't duplicated.
+- **Persisted turns avoid double-counting.** In hybrid/voice mode the spoken user turn and the action result are each stored exactly once; the internal `/api/chat` run that executes tools persists nothing (`persist:false`), so resumed history isn't duplicated. A **spoken chit-chat reply** is also stored as exactly **one** row even though the model emits it as several transcript segments — the proxy buffers the segments and flushes once on turn-end (`flushAssistantTurn`, `voice-realtime.ts:822` OpenAI / `:1123` Hume). This matters here because that one clean row is what gets **re-seeded** as recollection on the next connect; the older per-segment writes seeded clause-fragments. See `docs/features/voice-message-coalescing.md`.
 
 ## Decisions log
 

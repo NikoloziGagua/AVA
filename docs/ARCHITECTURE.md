@@ -167,20 +167,27 @@ sequenceDiagram
 
 1. `POST /api/chat/:id/kill` **aborts** the run's `AbortController` — which reaches both the model loop *and* in-flight tools through their abort listeners. [02]
 2. It looks up the run's child PIDs in the **pidfile registry** and **tree-kills** each subtree, so a `shell`/`control_app`/`claude_code` worker *and everything it spawned* die together. [02][03]
-3. ⚠️ **Known gap:** Stop halts **chat/voice runs**, but it does **not** reach the **self-improvement** pipeline — a self-improvement job, once running, can't be stopped from the UI (the implement step isn't wired to the run's abort signal). See [07]. (This is the cause of the "I pressed Stop and it kept going" case.)
+3. ✅ **Stop also reaches self-improvement** (resolved, commit 0bd8b93). The `/kill` handler additionally calls `cancelAllImprovements(db)` (`routes/chat.ts:519`), which aborts every running/queued self-improvement — the abort signal threads into the reflect call, the Claude worker, and the verify subprocess. So the red button now halts a runaway self-edit too, closing the old "I pressed Stop and it kept going" gap. See [07] and `features/self-improve-stop-and-gate.md`.
 
 ### W5 — A self-improvement ("add a WhatsApp integration")
 
 1. A goal is **queued** (you ask, or an overnight scheduler suggests one). [07]
 2. The LLM **reflects** the goal into a change brief. [07]
-3. **Claude Code** (your subscription) **implements** it in a throwaway **git worktree** — isolated from the live tree. [07][03]
-4. The change is **verified** (tests + build + boot-smoke). A `flightcheck` canary runs but is report-only. [07]
-5. If verification passes and a **safety guard** confirms the diff doesn't touch security/policy/auth/self code, the live tree is **fast-forwarded** to the new commit; a detached **watchdog** reverts it if the new build never gets healthy. [07]
+3. **Approval gate (user-asked improvements only).** The drafted plan is parked at `awaiting_approval` and pushed to you; **no code is written until you Approve & run** (or Reject). The unattended overnight scheduler is **not** gated and runs straight through. [07]
+4. **Claude Code** (your subscription) **implements** it in a throwaway **git worktree** — isolated from the live tree. [07][03]
+5. The change is **verified** (tests + build + boot-smoke). A `flightcheck` canary runs but is report-only. [07]
+6. If verification passes and a **safety guard** confirms the diff doesn't touch security/policy/auth/self code, the live tree is **fast-forwarded** to the new commit; a detached **watchdog** reverts it if the new build never gets healthy. [07]
+
+At any point in reflect → awaiting_approval → implement → verify, pressing **Stop** (the per-intent button, or the red global Stop) cancels the run — it ends `failed` with `outcome="cancelled"`. See W4 and [07].
 
 ```mermaid
 stateDiagram-v2
   [*] --> queued
   queued --> reflecting: slot free (single-flight)
+  reflecting --> awaiting_approval: "user-asked (explicit): park plan, wait"
+  reflecting --> implementing: "overnight (schedule): no gate"
+  awaiting_approval --> implementing: "Approve & run"
+  awaiting_approval --> failed: "Reject (outcome=rejected) / Stop (outcome=cancelled)"
   reflecting --> implementing: brief ready (LLM)
   implementing --> verifying: claude_code edits worktree (subscription)
   verifying --> failed: tests/build/boot fail OR touches safety-critical code
@@ -188,6 +195,9 @@ stateDiagram-v2
   swapped --> [*]: watchdog confirms /api/health
   swapped --> rolled_back: unhealthy in 45s → revert
   implementing --> failed: worker error / no changes
+  reflecting --> failed: "Stop → outcome=cancelled"
+  implementing --> failed: "Stop → outcome=cancelled"
+  verifying --> failed: "Stop → outcome=cancelled"
   failed --> [*]
   rolled_back --> [*]
 ```
@@ -311,13 +321,14 @@ flowchart TB
 
 **Who does what:** *reflect* uses the configured LLM (OpenAI by default); *implement* uses **Claude Code on your subscription**. This split is intentional — conserve OpenAI, lean on the abundant Claude subscription for the heavy code work. A **single-flight lock** means one improvement mutates the tree at a time; others queue FIFO.
 
-**The guardrails that make it safe to run unattended:** worktree isolation (a self-edit can't touch the live repo directly), the full verify+build+boot gate, a **safety-file refusal** (`assertSwapSafe` blocks any diff touching security/policy/auth or the self-improve machinery), and the rollback watchdog.
+**The guardrails that make it safe to run unattended:** worktree isolation (a self-edit can't touch the live repo directly), the full verify+build+boot gate, a **safety-file refusal** (`assertSwapSafe` blocks any diff touching security/policy/auth or the self-improve machinery), the rollback watchdog, a **plan-approval gate** on user-asked improvements (they park at `awaiting_approval` and write no code until you approve), and a **Stop path** that cancels a running improvement end-to-end. (See `features/self-improve-stop-and-gate.md`.)
 
 **Honest flags (important):**
-- ⚠️ **Stop cannot cancel an in-flight self-improvement** — the implement step isn't wired to an abort signal and the job isn't in `ActiveRuns`. Killing it today means killing the server process. (This is a real gap worth fixing — it's the "red button didn't work" case.)
-- Boot reconciliation bluntly marks **all** non-terminal self-improvements `failed` after a restart.
+- ✅ **Stop now cancels an in-flight self-improvement** (resolved, commit 0bd8b93). A per-improvement `AbortController` threads into reflect/implement/verify; `POST /api/self/:id/cancel` cancels one and the red global Stop (`/kill` → `cancelAllImprovements`) cancels all. A cancelled run is recorded `outcome="cancelled"`. *Remaining limit:* the live server can't reach a job running inside the **separate overnight-loop process**.
+- ✅ **User-asked improvements gate behind a plan** (commit c539c75): they pause at `awaiting_approval` until you Approve & run / Reject in the Self screen. The overnight scheduler is intentionally **not** gated. *Limit:* a parked plan **holds the single-flight slot**, so a forgotten plan stalls the queue until approved/rejected/stopped/restarted.
+- Boot reconciliation bluntly marks **all** non-terminal self-improvements `failed` after a restart (now including `awaiting_approval`).
 - The **trigger ledger** (`friction.ts`) and a couple of trigger types are built and tested but **not wired** — only explicit requests and the overnight scheduler actually create improvements.
-- The SelfScreen "Pause" button is currently a client-only no-op.
+- The SelfScreen "Pause" button is currently a client-only no-op (distinct from the working **Stop** button).
 
 ---
 

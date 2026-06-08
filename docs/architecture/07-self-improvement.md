@@ -51,6 +51,17 @@ stateDiagram-v2
     queued --> reflecting : runImprovement acquires the in-flight slot
     queued --> queued : another improvement in flight → wait (FIFO)
 
+    reflecting --> awaiting_approval : "requireApproval(intent) true (explicit trigger): park plan, push you"
+    reflecting --> implementing : "schedule trigger: no gate, straight through"
+    note right of awaiting_approval
+      User-triggered improvements PAUSE here
+      and wait for Approve & run / Reject.
+      The single-flight slot is HELD meanwhile.
+    end note
+
+    awaiting_approval --> implementing : "approveImprovement(id)"
+    awaiting_approval --> failed : "rejectImprovement(id) outcome=rejected, OR Stop/abort outcome=cancelled"
+
     reflecting --> implementing : provider.stream() returns a CHANGE/ACCEPTANCE brief
     note right of reflecting
       LLM PROVIDER (OpenAI/Anthropic API),
@@ -85,6 +96,10 @@ stateDiagram-v2
     implementing --> failed : worker no-op / error / non-zero
     verifying --> failed : any check fails
 
+    reflecting --> failed : "Stop / cancel -> outcome=cancelled (reflect LLM call aborted)"
+    implementing --> failed : "Stop / cancel -> outcome=cancelled (worker tree-killed)"
+    verifying --> failed : "Stop / cancel -> outcome=cancelled (verify subprocess tree-killed)"
+
     swapped --> rolled_back_manual : owner taps "Revert last" / POST /:id/revert
 
     committed --> [*]
@@ -93,14 +108,16 @@ stateDiagram-v2
     rolled_back_manual --> [*]
 ```
 
-> **Note on status vocabulary.** The DB/state machine only persists seven
-> statuses (`intents.ts:5-7`): `queued`, `reflecting`, `implementing`,
-> `verifying`, `swapped`, `failed`, `rolled_back`. The boxes above named
-> `swap_guard`, `watchdog`, `committed`, and `rolled_back_auto` are *moments in
-> the runtime*, not stored statuses — a successful run simply stays at `swapped`,
+> **Note on status vocabulary.** The DB/state machine persists eight
+> statuses (`intents.ts:5-7`): `queued`, `reflecting`, `awaiting_approval`,
+> `implementing`, `verifying`, `swapped`, `failed`, `rolled_back`. The boxes above
+> named `swap_guard`, `watchdog`, `committed`, and `rolled_back_auto` are *moments
+> in the runtime*, not stored statuses — a successful run simply stays at `swapped`,
 > and an automatic watchdog rollback rewrites git but does **not** currently write
 > a `rolled_back` row (see §9, "Honest caveats"). Only the manual revert route
-> sets `status = "rolled_back"`.
+> sets `status = "rolled_back"`. A **stopped** run and a **rejected** plan both end
+> at `status="failed"`, distinguished by the `outcome` column
+> (`"cancelled"` vs `"rejected"`); see §13.1.
 
 ---
 
@@ -114,14 +131,16 @@ is what lets the same orchestration run two ways — the **live interactive path
 loop** (wired in `server/scripts/auto-improve-loop.ts:67`) — with different
 implementations of `implement`, `restart`, `watch`, etc.
 
-### `ImproverDeps` (the seams), `improver.ts:4-23`
+### `ImproverDeps` (the seams), `improver.ts:4-30`
 
 | Dep | What it does | Live impl | Overnight impl |
 | --- | --- | --- | --- |
-| `reflect(goal, failureLog)` | goal → change brief via the **LLM provider** | `reflect({provider,…})` | same |
+| `requireApproval(intent)?` | **gate**: when true, park the drafted plan and wait for approval before writing code | `intent.trigger === "explicit"` | **omitted** (no gate) |
+| `onAwaitingApproval(id, plan)?` | fired when an improvement parks at `awaiting_approval` — push the user | `notifyDone(…)` | omitted |
+| `reflect(goal, failureLog, signal?)` | goal → change brief via the **LLM provider** | `reflect({provider,…,abort:signal})` | same |
 | `addWorktree(id)` / `removeWorktree(wt)` | git worktree create/destroy | `worktree.ts` | same |
-| `implement(brief, cwd)` | **Claude worker** edits files in the worktree | `selfClaudeCode.run` | `selfClaudeCode.run` |
-| `verify(cwd)` | tests + build + boot-smoke (+ report-only flightcheck) | `verify` (+ `flightcheck`) | `verify` (no flightcheck) |
+| `implement(brief, cwd, signal?)` | **Claude worker** edits files in the worktree | `selfClaudeCode.run` (passes `signal`) | `selfClaudeCode.run` (passes `signal`) |
+| `verify(cwd, signal?)` | tests + build + boot-smoke (+ report-only flightcheck) | `verify` (+ `flightcheck`) | `verify` (no flightcheck) |
 | `headSha()` | current live HEAD | `swap.headSha` | same |
 | `commitWorktree(cwd,msg)` | `git add -A` + commit; throws if no changes | inline | inline |
 | `swapTo(sha, lastKnownGood)` | **safety-guard** then fast-forward `git reset --hard` | `assertSwapSafe`+`swapTo` | same |
@@ -130,52 +149,92 @@ implementations of `implement`, `restart`, `watch`, etc.
 | `watch(knownGood, swapped)` | spawn detached watchdog | spawns `watchdog-main.ts` | same |
 | `emit(e)` | progress event for logs/journal | `log.*` | append to overnight log |
 
-### The single-flight lock + FIFO queue, `improver.ts:25-34, 68-74`
+### The single-flight lock + FIFO queue + cancel/decision registries, `improver.ts:32-41`
 
 ```ts
 let inFlight = false;            // one improvement mutates the tree at a time
 const pending: string[] = [];   // intents waiting their turn (FIFO)
+const controllers = new Map<string, AbortController>();   // per RUNNING improvement → its abort signal
+const planDecisions = new Map<string, (approved: boolean) => void>(); // per improvement parked at awaiting_approval
 ```
 
 Only one improvement may be in flight, because they all mutate the **same live
 git working tree**. A second concurrent request is **not failed** — it is pushed
 onto `pending`, keeps its `queued` status (so it stays visible to
 `self_improve_status`), and is drained in the `finally` block when the slot frees
-(`improver.ts:71-73`). This was a deliberate fix: an older version marked the
+(`improver.ts:180-181`). This was a deliberate fix: an older version marked the
 second intent "failed: another improvement is in progress"; the queue test
 (`improver.queue.test.ts`) locks in the new wait-your-turn behaviour.
 
-> **Caveat:** `inFlight` and `pending` are **module-level in-memory state**. They
-> do not survive a restart, and they are *not* shared between the live server and
-> the overnight loop — those are two separate processes. If both ran at once they
-> would each think they hold the only slot (the overnight loop is meant to be run
-> while the interactive path is idle).
+Two more module-level maps make a running improvement **controllable** (this is
+the fix for the old "Stop can't reach self-improvement" gap, §13.1):
 
-### The happy path, step by step (`improver.ts:35-63`)
+- **`controllers`** — one `AbortController` per *running* improvement, keyed by
+  intent id (`:38, 103-105`). The signal threads into `reflect`, `implement`, and
+  `verify` and is checked between stages via `throwIfAborted()`. A *queued* (not
+  yet running) improvement has no controller — it's cancelled by removing it from
+  `pending`.
+- **`planDecisions`** — one resolver per improvement currently *parked* at
+  `awaiting_approval` (`:41, 123`); `approveImprovement`/`rejectImprovement` (or an
+  abort) settle the promise the run is blocked on.
 
-1. `inFlight = true`; load the intent.
-2. `status = reflecting`; `brief = await deps.reflect(goal, null)`. (Note the
-   `failureLog` argument is always `null` here — there is no automatic
+Exported controls built on these:
+
+| Export | Effect |
+| --- | --- |
+| `cancelImprovement(db, id)` (`:68-78`) | Abort the running one, **or** drop a queued one from `pending` and mark it `failed`/`outcome="cancelled"`. Returns whether anything was cancelled. |
+| `cancelAllImprovements(db)` (`:82-91`) | Abort **every** controller + clear the whole `pending` queue. Returns the count. **This is what the red Stop button calls.** |
+| `approveImprovement(id)` (`:50-55`) | Settle a parked plan `true` → proceeds to implement. |
+| `rejectImprovement(id)` (`:58-63`) | Settle a parked plan `false` → stops with `outcome="rejected"`. |
+| `hasActiveImprovement()` (`:44-46`) | `inFlight || pending.length > 0`. |
+
+> **Caveat:** `inFlight`, `pending`, `controllers`, and `planDecisions` are all
+> **module-level in-memory state**. They do not survive a restart, and they are
+> *not* shared between the live server and the overnight loop — those are two
+> separate processes. So the live server's `cancelAllImprovements` cannot reach an
+> improvement running inside the overnight-loop process, and a parked plan's
+> resolver is lost on restart (the intent is reconciled to `failed` by
+> `failStaleIntents`, §8a). The overnight loop is meant to run while the
+> interactive path is idle.
+
+### The happy path, step by step (`improver.ts:93-183`)
+
+1. `inFlight = true`; construct a fresh `AbortController`, register it in
+   `controllers[id]`, and define `throwIfAborted()` (`:100-106`); load the intent.
+2. `status = reflecting`; `brief = await deps.reflect(goal, null, signal)`. (Note
+   the `failureLog` argument is always `null` here — there is no automatic
    reflect-on-failure retry loop in the current code, despite the parameter
    existing.)
-3. `status = implementing`; `wt = deps.addWorktree(id)`; `impl =
-   deps.implement(brief, wt.path)`. The brief **and** the worker's output are
-   recorded into `diff_summary` (capped 4 KB) *before* the ok-check, so even a
-   no-op or a bad edit is diagnosable from the intent. If `!impl.ok` → throw.
-4. `status = verifying`; `v = deps.verify(wt.path)`; store `verify_log`. If
-   `!v.ok` → throw.
-5. `knownGood = deps.headSha()` (captured **now**, just before swapping, so it is
+3. **Approval gate (`:118-138`).** If `deps.requireApproval?.(intent)` is true:
+   `status = awaiting_approval`; store the plan in `diff_summary` prefixed `PLAN:`
+   (capped 4 KB); call `deps.onAwaitingApproval?.(id, brief)` to push the user; then
+   `await` a `Promise<boolean>` whose resolver lives in `planDecisions[id]` (an
+   abort resolves it `false`). On resolve: if **not** approved, write `failed` with
+   `outcome = signal.aborted ? "cancelled" : "rejected"` and **return before any
+   worktree exists**. (The overnight loop omits `requireApproval`, so it skips this
+   entirely.)
+4. `status = implementing`; `wt = deps.addWorktree(id)`; `impl =
+   deps.implement(brief, wt.path, signal)`. The brief **and** the worker's output
+   are recorded into `diff_summary` (capped 4 KB) *before* the ok-check, so even a
+   no-op or a bad edit is diagnosable from the intent. If `!impl.ok` → throw;
+   `throwIfAborted()` after.
+5. `status = verifying`; `v = deps.verify(wt.path, signal)`; store `verify_log`. If
+   `!v.ok` → throw; `throwIfAborted()` after.
+6. `knownGood = deps.headSha()` (captured **now**, just before swapping, so it is
    the true pre-swap HEAD), then `sha = deps.commitWorktree(wt.path, "self: <goal>")`.
    Persist `last_known_good`, `commit_sha`, `branch`.
-6. `deps.swapTo(sha, knownGood)` — the guarded swap (see §6).
-7. `status = swapped`, `outcome = "shipped"`; **fire-and-forget**
+7. `deps.swapTo(sha, knownGood)` — the guarded swap (see §7).
+8. `status = swapped`, `outcome = "shipped"`; **fire-and-forget**
    `deps.watch(knownGood, sha)` (the watchdog); `await deps.restart()`.
-8. `finally`: `deps.removeWorktree(wt)`; `inFlight = false`; drain the next
-   `pending` id.
+9. `finally` (`:175-182`): `controllers.delete(id)`; `deps.removeWorktree(wt)` (if
+   one was created); `inFlight = false`; drain the next `pending` id.
 
-Any throw anywhere in 1–6 lands in the single `catch` (`improver.ts:64-67`):
-`status = failed`, `error = <message>`, emit `failed`. The worktree is still
-cleaned up in `finally`.
+Any throw anywhere lands in the single `catch` (`improver.ts:164-174`), which
+**distinguishes a cancel from a failure**: if `signal.aborted`, it writes
+`status = failed`, `outcome = "cancelled"` and emits `cancelled`; otherwise
+`status = failed`, `error = <message>`, emit `failed`. (A worker or verify
+subprocess killed by the signal surfaces here too.) The worktree is still cleaned
+up in `finally`.
 
 ---
 
@@ -216,8 +275,8 @@ but the wiring from "owner corrected Ava" → `recordMistake` → `mistakeToGoal
 
 ## 4. The reflect step — goal → change brief (`reflect.ts`)
 
-`reflect({ provider, goal, knowledge, failureLog })` asks the **LLM provider**
-(via `provider.stream`, `reflect.ts:16-22`, `reasoningEffort: "medium"`) to turn
+`reflect({ provider, goal, knowledge, failureLog, abort? })` asks the **LLM
+provider** (via `provider.stream`, `reflect.ts:18-22`, `reasoningEffort: "medium"`) to turn
 a one-line goal into a concise, minimal *change brief* — lines starting
 `CHANGE:` (what to edit, which files) and `ACCEPTANCE:` (how a test/build proves
 it). The system prompt is explicit: *"Do not write the code; describe the change
@@ -229,10 +288,13 @@ The `failureLog` parameter would let a retry feed the previous failure back in,
 but as noted in §2 the orchestrator always passes `null` — there is no automatic
 retry built on top of it yet.
 
-The `abort` signal handed to `provider.stream` is a freshly-constructed,
-never-aborted `new AbortController().signal` (`reflect.ts:19`). This is the first
-concrete sign of the Stop-button gap discussed in §9: nothing external can cancel
-the reflect call.
+`reflect` now accepts an optional `abort` signal and passes it straight to
+`provider.stream({ …, abort: o.abort ?? new AbortController().signal })`
+(`reflect.ts:7,21`). The orchestrator threads its per-improvement signal in here
+(`improver.ts:112`), so a Stop/cancel aborts the LLM reflect call mid-stream — the
+fallback throwaway controller is only used when no signal is supplied. (This was
+previously a never-aborted throwaway, and was the first sign of the old
+Stop-button gap; that gap is now closed — see §13.1.)
 
 ---
 
@@ -269,7 +331,7 @@ from `index.ts:73`.
 ## 6. The verify gate (`verify.ts` + `verify-runner.ts` + `boot-smoke.ts` + `flightcheck.ts`)
 
 This is the proof that the candidate is safe to ship. `verify({ cwd, run,
-bootSmoke })` (`verify.ts`) runs, **in order** (cheapest signal first):
+bootSmoke, signal? })` (`verify.ts`) runs, **in order** (cheapest signal first):
 
 1. `npm test`
 2. `npm -w web run build`
@@ -277,18 +339,23 @@ bootSmoke })` (`verify.ts`) runs, **in order** (cheapest signal first):
 4. `bootSmoke(cwd)` — boot the freshly-built candidate and hit `/api/health`.
 
 The first failing check short-circuits and returns `{ ok:false, log:"FAILED:
-<cmd>\n<output>" }`.
+<cmd>\n<output>" }`. It also checks `signal?.aborted` before each command and
+before the boot-smoke, returning `{ ok:false, log:"cancelled" }` early if a Stop
+landed between checks (`verify.ts:13,17`).
 
-### `verify-runner.ts` — the 10-minute wall + tree-kill
+### `verify-runner.ts` — the 10-minute wall + tree-kill + abort
 
-`buildRunner(timeoutMs = 10*60_000)` returns the production `RunFn`. Each check
-is `spawn(cmd, { shell:true })`; output is tail-capped at 16 KB. A
-`RUN_TIMEOUT_MS` of **10 minutes** caps each check so a slipped `--watch` flag or
-a test awaiting input can't hang the whole pipeline and pin its worktree forever.
-On timeout it **tree-kills** (`killTree(child.pid, "SIGTERM")`,
-`verify-runner.ts:25-29`) so the `npm.cmd → node` subtree dies instead of
-orphaning node, then resolves a **failed** RunResult (it never rejects — a
-timeout is just a failed check).
+`buildRunner(timeoutMs = 10*60_000)` returns the production `RunFn`, now
+`(cmd, cwd, signal?)`. Each check is `spawn(cmd, { shell:true })`; output is
+tail-capped at 16 KB. A `RUN_TIMEOUT_MS` of **10 minutes** caps each check so a
+slipped `--watch` flag or a test awaiting input can't hang the whole pipeline and
+pin its worktree forever. **On either a timeout or an external abort** it
+**tree-kills** (`killTree(child.pid, "SIGTERM")`, `verify-runner.ts:23-26`) so the
+`npm.cmd → node` subtree dies instead of orphaning node, then resolves a **failed**
+RunResult (it never rejects — a timeout or a Stop is just a failed check). If the
+signal is already aborted before the spawn, it resolves failed without starting
+(`verify-runner.ts:19`). The abort listener is registered with `{ once:true }` and
+removed on settle (`:31, 44`).
 
 ### `boot-smoke.ts` — does the built server actually start?
 
@@ -376,16 +443,24 @@ passes `expectedHead`; the manual revert route does **not** (see §9).
 ### 8a. Live / interactive (`server/src/index.ts`)
 
 - Boot reconciliation (`index.ts:62-83`): `failStaleIntents(db)` marks any intent
-  left non-terminal by a previous restart as `failed` (the in-flight lock is
-  in-memory, so at boot nothing is genuinely running); `pruneOrphanWorktrees`
-  cleans the leaked git state; `failStaleDiscussions` does the same for background
-  consults.
-- `buildImproverDeps()` (`index.ts:150-219`) wires the live deps. Notable:
-  `implement` runs the worker in the throwaway worktree and **does not** use the
-  persistent Claude session (sessions are directory-scoped; resuming from a fresh
-  worktree fails — `index.ts:158-165`); `verify` appends the report-only
+  left non-terminal by a previous restart as `failed` — and that set now includes
+  `awaiting_approval` (`intents.ts:42`), so a plan left waiting for approval when
+  the process died is reconciled rather than left forever-pending; the in-flight
+  lock and the parked-plan resolver are in-memory, so at boot nothing is genuinely
+  running. `pruneOrphanWorktrees` cleans the leaked git state; `failStaleDiscussions`
+  does the same for background consults.
+- `buildImproverDeps()` (`index.ts:150-227`) wires the live deps. Notable: it sets
+  `requireApproval = (intent) => intent.trigger === "explicit"` and an
+  `onAwaitingApproval` that pushes the user via `notifyDone` (`index.ts:154-158`),
+  so **user-triggered improvements gate behind plan approval**; `implement` passes
+  the abort `signal` and runs the worker in the throwaway worktree and **does not**
+  use the persistent Claude session (sessions are directory-scoped; resuming from a
+  fresh worktree fails — `index.ts:165-173`); `verify` appends the report-only
   flightcheck; `restart` is a no-op because `tsx watch` reloads when `swapTo`
   rewrites the working tree (pm2/prod restart is noted as a follow-up).
+- Self-route control wiring (`index.ts:323-329`): `cancel → cancelImprovement`,
+  `approve → approveImprovement`, `reject → rejectImprovement` are passed into
+  `selfRoutes` alongside `startImprovement` and `revert`.
 - Entry points: `queueSelfImprove(goal)` (`index.ts:226`) used by the
   `self_improve` tool, and `startImprovement(id)` (`index.ts:221`) used by the
   HTTP route. Both call `runImprovement` fire-and-forget, wrapped so a thrown
@@ -473,25 +548,41 @@ repo is actually laid out.
 
 ## 11. The UI (`web/src/self/` + `routes/self.ts`)
 
-- **`routes/self.ts`** exposes three endpoints (all token-auth'd):
+- **`routes/self.ts`** exposes six endpoints (all token-auth'd):
   `POST /api/self/improve` (create + start, `trigger:"explicit"`),
   `GET /api/self` (list all intents),
+  `POST /api/self/:id/cancel` (cancel a running/queued improvement →
+  `cancelImprovement`, `self.ts:29-34`),
+  `POST /api/self/:id/approve` and `POST /api/self/:id/reject` (settle a plan
+  parked at `awaiting_approval` → `approveImprovement`/`rejectImprovement`,
+  `self.ts:35-46`),
   `POST /api/self/:id/revert` (revert one intent to its `last_known_good`, set
   `status="rolled_back"`).
 - **`useSelfJournal.ts`** polls `GET /api/self` every 4 s and exposes
-  `revertLast()` (reverts the most recent `swapped` intent).
+  `revertLast()` (reverts the most recent `swapped` intent) plus `cancel` /
+  `approve` / `reject` (a generic `act(id, action)` that POSTs the matching route
+  then refreshes, `useSelfJournal.ts:63-77`). Two helpers: `isRunningStatus(status)`
+  (`:83-85`) gates the Stop button; `planText(diffSummary)` (`:88-91`) strips the
+  `PLAN:` prefix for display. The polled `Intent` type now carries `diff_summary`
+  so the parked plan is available client-side (`:9-11`).
 - **`SelfScreen.tsx`** (reachable from the app at `App.tsx:171`) shows the journal
   — each intent's goal + status + outcome — plus a "Pause/Resume" toggle and a
-  "Revert last" button.
+  "Revert last" button. New: a red **Stop** button on any running intent
+  (`SelfScreen.tsx:73-80`), and for an `awaiting_approval` intent a *"Plan — review
+  before it runs"* panel rendering the parked plan with **Approve & run** /
+  **Reject** buttons (`SelfScreen.tsx:86-107`); the status line reads "awaiting your
+  approval" for that state (`:83`).
 
 > **UI honesty caveats:**
-> - **"Pause" is a no-op on the backend.** `paused` is purely local React state
->   (`useSelfJournal.ts:27`); there is no `/pause` route and nothing on the server
->   reads it. Tapping Pause changes the label and the helper text, but does **not**
->   stop Ava from running a queued/triggered improvement. (Verified: no `pause`
->   handling in `routes/self.ts` or the server.)
+> - **"Pause" is still a no-op on the backend.** `paused` is purely local React
+>   state (`useSelfJournal.ts:29`); there is no `/pause` route and nothing on the
+>   server reads it. Tapping Pause changes the label and the helper text, but does
+>   **not** stop Ava from running a queued/triggered improvement. (Verified: no
+>   `pause` handling in `routes/self.ts` or the server.) Note this is **separate**
+>   from the new **Stop** button, which *does* really cancel a running improvement
+>   via `/cancel`.
 > - **"Revert last" is real but unguarded.** The route-level revert
->   (`index.ts:317`) and the `selfRoutes` revert both call `revertTo(repoRoot,
+>   (`index.ts:325`) and the `selfRoutes` revert both call `revertTo(repoRoot,
 >   last_known_good)` **without** `expectedHead`, so it is an unconditional
 >   `git reset --hard` back to last-known-good — it will happily reset over any
 >   newer commit. (Contrast the watchdog's guarded revert.) It also doesn't
@@ -512,15 +603,21 @@ doing X"):
    and stays `queued`; otherwise it takes the slot.
 3. **Reflect.** `status=reflecting`. The **LLM provider** turns "X" + `SELF.md`
    context into a `CHANGE:/ACCEPTANCE:` brief.
+3a. **Approval gate (explicit only).** Because `requireApproval(intent)` is true
+   for an explicit trigger, `status=awaiting_approval`: the plan is parked in
+   `diff_summary` (prefixed `PLAN:`), you get a push, and the run **waits**. The
+   single-flight slot is held meanwhile. You **Approve & run** (→ continue) or
+   **Reject** (→ `failed`, `outcome="rejected"`); a **Stop** here ends it with
+   `outcome="cancelled"`. (The overnight/`schedule` path skips this step.)
 4. **Worktree.** `status=implementing`. A temp worktree on branch `self/<id>` is
    created and `node_modules` junctioned in.
 5. **Implement.** The **subscription Claude worker** runs `claude -p "<brief>"
    --permission-mode acceptEdits` in that worktree, editing files. Brief + worker
    output are saved to `diff_summary`. A no-op/error fails the intent here.
 6. **Verify.** `status=verifying`. `npm test` → `web build` → `server build` →
-   boot-smoke, each capped at 10 min and tree-killed on timeout. Output saved to
-   `verify_log`. (flightcheck also runs, report-only, appended to the log.) Any
-   failure fails the intent.
+   boot-smoke, each capped at 10 min and tree-killed **on timeout or a Stop**.
+   Output saved to `verify_log`. (flightcheck also runs, report-only, appended to
+   the log.) Any failure fails the intent.
 7. **Capture + commit.** `knownGood = HEAD` (now); commit the worktree as
    `self: X` → `sha`. Persist `last_known_good`, `commit_sha`, `branch`.
 8. **Safety guard.** `assertSwapSafe(repoRoot, knownGood, sha)` — if the diff
@@ -534,8 +631,16 @@ doing X"):
     the change stays live (final state `swapped`). Never healthy → `revertTo
     knownGood` (skipped if newer work landed) — git is rolled back, but the DB row
     stays `swapped` (see caveat below).
-12. **Cleanup.** `finally` removes the worktree and frees the slot to the next
-    `pending` id.
+12. **Cleanup.** `finally` deletes the run's `AbortController`, removes the
+    worktree, and frees the slot to the next `pending` id.
+
+> **Stopping at any point.** During reflect/awaiting_approval/implement/verify
+> (steps 3–6), pressing **Stop** — the per-intent Stop button (`/cancel`) or the
+> red global Stop button (`/kill` → `cancelAllImprovements`) — aborts the run: the
+> reflect LLM call is cancelled, the Claude worker and the verify subprocess are
+> tree-killed, and the intent ends `status="failed"`, `outcome="cancelled"`. A
+> *queued* (not-yet-running) improvement is simply dropped from `pending` and
+> marked cancelled. See §13.1.
 
 ---
 
@@ -543,36 +648,53 @@ doing X"):
 
 These are real, current limitations — documented because precise > flattering.
 
-1. **The Stop / red button does NOT stop a self-improvement.** Chat runs register
-   an `AbortController` in `ActiveRuns` and the `POST /:sessionId/kill` endpoint
-   both aborts it and `killTree`s the child PIDs (`routes/chat.ts:494-515`), and
-   chat tools (`shell`, `claude_code`) are spawned **with** `abort.signal`
-   (`chat.ts:367`). The self-improvement pipeline does **none** of this:
-   - `runImprovement` takes no abort/signal parameter and is **not** registered in
-     `ActiveRuns`.
-   - Its `implement` step calls `selfClaudeCode.run({ prompt, cwd, runId })`
-     **without** a `signal` (`index.ts:158-165`, `auto-improve-loop.ts:74-77`),
-     even though `claude-code.ts` fully supports `signal`-based abort. So the long
-     pole — the Claude worker editing code — cannot be interrupted from the UI.
-   - `reflect` passes a throwaway `new AbortController().signal` (`reflect.ts:19`).
-   - There is no UI control that targets a running improvement at all (the
-     SelfScreen "Pause" is a backend no-op; "Revert" only acts *after* a swap).
+1. **~~The Stop / red button does NOT stop a self-improvement.~~ RESOLVED
+   (commits 0bd8b93 + c539c75).** This was the headline gap; it is now fixed in
+   both directions. See `docs/features/self-improve-stop-and-gate.md` for the full
+   feature write-up. Specifically:
+   - `runImprovement` now constructs a per-improvement `AbortController`, registers
+     it in a module-level `controllers` map by intent id (`improver.ts:103-105`),
+     and threads the signal into `reflect` (`:112`), `implement` (`:142`), and
+     `verify` (`:150`), with `throwIfAborted()` checks between stages.
+   - Its `implement` step passes the `signal` to `selfClaudeCode.run({ …, signal })`
+     (`index.ts:171`, `auto-improve-loop.ts:75`), so the long pole — the Claude
+     worker editing code — **can** be interrupted; the verify subprocess is
+     tree-killed on abort (`verify-runner.ts:43`); and `reflect` forwards the signal
+     to `provider.stream` instead of a throwaway (`reflect.ts:21`).
+   - The red Stop button reaches it: `POST /api/chat/:sessionId/kill` now calls
+     `cancelAllImprovements(db)` (`routes/chat.ts:519`), aborting every running
+     improvement and clearing the queue. There is also a per-intent cancel route
+     `POST /api/self/:id/cancel` (`routes/self.ts:29-34`) wired to
+     `cancelImprovement` (`index.ts:326`), surfaced as a **Stop** button on any
+     running improvement in the Self screen (`SelfScreen.tsx:73-80`).
+   - A cancel is recorded as `status="failed"`, `outcome="cancelled"`
+     (`improver.ts:168-170, 74, 87`) — distinct from an ordinary failure.
 
-   **Net:** once an improvement starts, it runs to completion (or its own internal
-   timeouts) — there is currently no way for the owner to cancel an in-flight
-   self-improvement. This is a known gap.
+   **Net:** an in-flight self-improvement can now be cancelled from the UI (the
+   per-intent Stop or the red global Stop). *Caveat:* the live server's
+   `cancelAllImprovements` only reaches improvements running **in its own process** —
+   it cannot stop a job inside the separate overnight-loop process (which is meant
+   to run while the interactive path is idle).
+
+   **And a new front-door guard:** a *user-triggered* improvement now drafts its
+   plan and **parks at `awaiting_approval`** until you approve it
+   (`improver.ts:118-138`; `requireApproval = trigger==="explicit"`,
+   `index.ts:154`), so a self-edit no longer even begins writing code unseen. The
+   unattended overnight loop is intentionally **not** gated. See §13.7 below and the
+   feature doc.
 
 2. **Boot reconciliation fails *stale* intents — including ones that may have
    actually shipped.** `failStaleIntents` (`intents.ts:38-46`) marks **every**
-   intent left in `queued/reflecting/implementing/verifying` as `failed` on boot,
-   on the assumption that the in-memory lock means nothing was truly running. That
-   is correct for genuinely-orphaned intents, but it is a blunt instrument: an
-   intent that was mid-`verifying` when the process died is marked `failed` even
-   if a partial effect occurred, and the error is a generic "interrupted by a
-   server restart". It only reconciles the four non-terminal states — an intent
-   already at `swapped` is left as-is. (Also note: if a restart happens *during*
-   the watchdog window, reconciliation does not re-arm a watchdog — the detached
-   watchdog process is the only thing tracking that swap.)
+   intent left in `queued/reflecting/awaiting_approval/implementing/verifying` as
+   `failed` on boot, on the assumption that the in-memory lock means nothing was
+   truly running. That is correct for genuinely-orphaned intents (including a plan
+   left parked at `awaiting_approval`, whose in-memory resolver is gone after a
+   restart), but it is a blunt instrument: an intent that was mid-`verifying` when
+   the process died is marked `failed` even if a partial effect occurred, and the
+   error is a generic "interrupted by a server restart". It only reconciles the five
+   non-terminal states — an intent already at `swapped` is left as-is. (Also note:
+   if a restart happens *during* the watchdog window, reconciliation does not re-arm
+   a watchdog — the detached watchdog process is the only thing tracking that swap.)
 
 3. **An automatic watchdog rollback does not update the intent status.** When the
    watchdog reverts an unhealthy build, it rewrites git (`revertTo`) but nothing
@@ -594,16 +716,30 @@ These are real, current limitations — documented because precise > flattering.
    intent; it is not automatically retried with the failure as context.
 
 6. **"Pause" gives a false sense of control.** As in §11, the SelfScreen Pause
-   toggle does nothing server-side.
+   toggle does nothing server-side. (The new **Stop** button *does* really cancel a
+   running improvement — Pause and Stop are different things; only Pause is the
+   no-op.)
+
+7. **The approval gate holds the single-flight slot while it waits.** While a
+   user-triggered improvement is parked at `awaiting_approval`, the run is blocked
+   on an `await` inside `runImprovement`, so `inFlight` stays `true` and **every
+   other improvement queues behind it** (`improver.ts:100, 122-126`). A plan you
+   leave un-actioned therefore **stalls the whole self-improvement queue** until you
+   approve, reject, Stop it, or restart (only then does the `finally` free the slot,
+   `:175-182`). This is deliberate — it keeps "one improvement touches the tree at a
+   time" true across the human pause — but a forgotten plan is a soft wedge. Reject,
+   cancel, and restart all release it promptly.
 
 ---
 
 ## 14. Unresolved questions / things to confirm with the owner
 
-- **Should the Stop button reach self-improvements?** Wiring `runImprovement` into
-  `ActiveRuns` and threading `abort.signal` into `selfClaudeCode.run` would make
-  it cancellable. Is that desired, or is "let a verified improvement finish"
-  intentional?
+- ~~**Should the Stop button reach self-improvements?**~~ **Answered: yes —
+  implemented** (commits 0bd8b93 + c539c75; see §13.1 and
+  `docs/features/self-improve-stop-and-gate.md`). The remaining open piece is
+  whether the *overnight-loop process* should also be remotely stoppable from the
+  live server (today `cancelAllImprovements` only reaches the live process's own
+  improvements).
 - **Should the watchdog rollback write `rolled_back`?** Today the journal can lie
   ("shipped") after an auto-revert. Likely a small, high-value fix.
 - **Is the friction ledger meant to be live?** It's built and tested but

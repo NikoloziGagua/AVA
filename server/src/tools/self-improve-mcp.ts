@@ -40,8 +40,9 @@ export function buildSelfImproveStatusTool(deps: { list: () => IntentStatusSumma
       name: "self_improve_status",
       description:
         "Report my self-improvement tasks and explain what each one involved. States: " +
-        "queued, reflecting, implementing, verifying, swapped (=shipped/live), failed, " +
-        "rolled_back. Use when Sir asks what self-development is running, pending, or " +
+        "queued, reflecting, awaiting_approval (=plan drafted, waiting for Sir to approve " +
+        "it before any code is written), implementing, verifying, swapped (=shipped/live), " +
+        "failed, rolled_back. Use when Sir asks what self-development is running, pending, or " +
         "finished, what I changed, or to recap improvements he missed while away. Pass " +
         "{ id } for the full detail of one task (what it changed + the commit).",
       inputSchema: {

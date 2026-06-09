@@ -33,9 +33,10 @@ export const SHADOW = {
  */
 export function buildPanelEnter(_root: HTMLElement, title: string): gsap.core.Timeline {
   const tl = gsap.timeline({ defaults: { ease: EASE } });
-  tl.fromTo("[data-panel-stage]",
-    { opacity: 0, scale: 0.97, y: 8, filter: "blur(10px)" },
-    { opacity: 1, scale: 1, y: 0, filter: "blur(0px)", duration: D.materialize }, 0);
+  // NOTE: no [data-panel-stage] opacity/blur/scale "materialize" — the panel root
+  // covers the screen opaque (App mounts it without an entrance opacity fade), and
+  // the section stagger below carries the content in. A stage-wide blur-fade on top
+  // of the panel's own fade read as a flash on every open.
   tl.fromTo("[data-panel-bloom]",
     { opacity: 0, scale: 1.12 }, { opacity: 1, scale: 1, duration: 0.7, ease: "power2.out" }, 0.04);
   tl.fromTo("[data-panel-titlewrap]",

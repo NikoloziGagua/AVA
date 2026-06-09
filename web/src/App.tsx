@@ -151,10 +151,10 @@ export function App() {
           <motion.div
             key="memory"
             className="absolute inset-0"
-            initial={{ opacity: 0 }}
+            initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.985, filter: "blur(6px)" }}
-            transition={{ duration: reduced ? 0.15 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduced ? 0.12 : 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
             <MemoryScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -163,10 +163,10 @@ export function App() {
           <motion.div
             key="rules"
             className="absolute inset-0"
-            initial={{ opacity: 0 }}
+            initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.985, filter: "blur(6px)" }}
-            transition={{ duration: reduced ? 0.15 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduced ? 0.12 : 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
             <RulesScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -175,10 +175,10 @@ export function App() {
           <motion.div
             key="self"
             className="absolute inset-0"
-            initial={{ opacity: 0 }}
+            initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.985, filter: "blur(6px)" }}
-            transition={{ duration: reduced ? 0.15 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduced ? 0.12 : 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
             <SelfScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -187,10 +187,10 @@ export function App() {
           <motion.div
             key="list"
             className="absolute inset-0"
-            initial={{ opacity: 0 }}
+            initial={{ opacity: 1 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.985, filter: "blur(6px)" }}
-            transition={{ duration: reduced ? 0.15 : 0.3, ease: [0.22, 1, 0.36, 1] }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduced ? 0.12 : 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
             <ChatListScreen
               onClose={() => setView({ name: "orbit" })}

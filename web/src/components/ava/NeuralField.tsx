@@ -28,7 +28,9 @@ attribute vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
 `;
 
-// fbm (3 octaves) neuro field, tinted by u_color with a mercury secondary mix.
+// Sharp "neuro" filament field (the rotating sine-accumulation pattern, NOT a soft
+// fbm cloud) — pow-sharpened into crisp threads, tinted cyan→mercury, vignetted,
+// gently pointer-reactive. 12 iterations (perf), mediump.
 const FRAG = `
 precision mediump float;
 uniform vec2  u_res;
@@ -38,32 +40,39 @@ uniform vec3  u_color;
 uniform vec3  u_color2;
 uniform float u_opacity;
 
-float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float noise(vec2 p){
-  vec2 i = floor(p), f = fract(p);
-  float a = hash(i);
-  float b = hash(i + vec2(1.0, 0.0));
-  float c = hash(i + vec2(0.0, 1.0));
-  float d = hash(i + vec2(1.0, 1.0));
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-}
-float fbm(vec2 p){
-  float v = 0.0, amp = 0.5;
-  for (int i = 0; i < 3; i++){ v += amp * noise(p); p *= 2.0; amp *= 0.5; }
-  return v;
+vec2 rot(vec2 uv, float th){ return mat2(cos(th), sin(th), -sin(th), cos(th)) * uv; }
+
+float neuro(vec2 uv, float t, float p){
+  vec2 sine_acc = vec2(0.0);
+  vec2 res = vec2(0.0);
+  float scale = 8.0;
+  for (int j = 0; j < 12; j++){
+    uv = rot(uv, 1.0);
+    sine_acc = rot(sine_acc, 1.0);
+    vec2 layer = uv * scale + float(j) + sine_acc - t;
+    sine_acc += sin(layer) + 2.4 * p;
+    res += (0.5 + 0.5 * cos(layer)) / scale;
+    scale *= 1.2;
+  }
+  return res.x + res.y;
 }
 
 void main(){
-  vec2 uv = gl_FragCoord.xy / u_res.xy;
-  vec2 p = (uv - 0.5) * vec2(u_res.x / u_res.y, 1.0);
-  vec2 drift = (u_pointer - 0.5) * 0.35;
-  float t = u_time * 0.05;
-  float n = fbm(p * 2.2 + drift + vec2(t, -t * 0.7));
-  float n2 = fbm(p * 4.0 - drift + vec2(-t * 0.5, t));
-  float field = smoothstep(0.35, 0.85, n) * 0.7 + n2 * 0.3;
-  vec3 col = mix(u_color2, u_color, field);
-  float a = field * u_opacity;
+  vec2 ndc = gl_FragCoord.xy / u_res.xy;
+  vec2 uv = ndc;
+  uv.x *= u_res.x / u_res.y;
+  vec2 ptr = ndc - u_pointer;
+  ptr.x *= u_res.x / u_res.y;
+  float p = clamp(length(ptr), 0.0, 1.0);
+  p = 0.45 * pow(1.0 - p, 2.0);
+  float t = 0.10 * u_time;
+  float n = neuro(uv * 1.15, t, p);
+  n = 1.2 * pow(n, 3.0);     // sharpen the filaments
+  n += pow(n, 10.0);          // ignite the brightest threads
+  n = max(0.0, n - 0.45);
+  n *= (1.0 - 0.85 * length(ndc - 0.5)); // soft vignette to the edges
+  vec3 col = mix(u_color2, u_color, clamp(n * 1.4, 0.0, 1.0));
+  float a = clamp(n, 0.0, 1.0) * u_opacity;
   gl_FragColor = vec4(col * a, a); // premultiplied
 }
 `;
@@ -186,6 +195,10 @@ export function NeuralField({
     const draw = (now: number) => {
       cur.x += (target.x - cur.x) * 0.04;
       cur.y += (target.y - cur.y) * 0.04;
+      // Ramp opacity 0→target over the first 600ms so the field never pops in
+      // (avoids the open "flash").
+      const fade = Math.min(1, (now - start) / 600);
+      glx.uniform1f(uOpacity, opacity * fade);
       glx.uniform1f(uTime, (now - start) / 1000);
       glx.uniform2f(uPointer, cur.x, cur.y);
       glx.drawArrays(glx.TRIANGLES, 0, 3);

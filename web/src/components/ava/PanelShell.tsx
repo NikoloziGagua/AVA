@@ -1,8 +1,9 @@
-import { useRef, type CSSProperties, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { useGSAP } from "../../lib/gsap.js";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
 import { buildPanelEnter, setPanelStatic } from "../../lib/deckMotion.js";
 import { NeuralField } from "./NeuralField.js";
+import { BorderGlow } from "./BorderGlow.js";
 
 /**
  * Shared chrome for the deck panels (Chats / Memory / Rules / Self).
@@ -111,11 +112,7 @@ export function PanelSection({ title, right, onClickHeader, span, children }: {
   children: ReactNode;
 }) {
   return (
-    <section
-      data-panel-section
-      className={"lg-slab lg-sweep mb-6 px-6 py-5 " + (span ?? "")}
-      style={{ "--sweep-x": "-130%" } as CSSProperties}
-    >
+    <BorderGlow dataPanelSection className={"mb-6 px-6 py-5 " + (span ?? "")}>
       <header
         className={
           "hud mb-4 flex items-center justify-between text-[11px] tracking-[0.18em] text-white/60 " +
@@ -133,6 +130,6 @@ export function PanelSection({ title, right, onClickHeader, span, children }: {
         {right}
       </header>
       {children}
-    </section>
+    </BorderGlow>
   );
 }

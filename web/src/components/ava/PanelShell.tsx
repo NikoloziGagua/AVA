@@ -2,6 +2,7 @@ import { useRef, type CSSProperties, type ReactNode } from "react";
 import { useGSAP } from "../../lib/gsap.js";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
 import { buildPanelEnter, setPanelStatic } from "../../lib/deckMotion.js";
+import { NeuralField } from "./NeuralField.js";
 
 /**
  * Shared chrome for the deck panels (Chats / Memory / Rules / Self).
@@ -16,10 +17,10 @@ import { buildPanelEnter, setPanelStatic } from "../../lib/deckMotion.js";
  *
  * @param grid  when true the content column becomes a 12-col grid; screens place
  *              sections with `span` (e.g. "lg:col-span-5").
- * @param bg    optional background layer rendered between the black root and the
- *              cyan bloom (so the bloom stays on top of it). Used by Memory for the
- *              low-opacity NeuralField noise. Defaults to nothing (other panels
- *              unaffected).
+ * @param bg    background layer rendered between the black root and the cyan bloom
+ *              (so the bloom stays on top of it). Defaults to a prominent NeuralField
+ *              neuro shader so EVERY deck panel has an animated background; pass your
+ *              own (or null) to override.
  */
 export function PanelShell({ title, grid = false, bg, children }: {
   title: string;
@@ -41,7 +42,7 @@ export function PanelShell({ title, grid = false, bg, children }: {
 
   return (
     <div ref={scope} className="no-scrollbar relative h-full overflow-y-auto text-white" style={{ background: "#000" }}>
-      {bg}
+      {bg === undefined ? <NeuralField opacity={0.4} /> : bg}
       <div
         data-panel-bloom
         aria-hidden

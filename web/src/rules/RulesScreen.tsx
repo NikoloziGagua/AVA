@@ -11,6 +11,7 @@ import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
+import { getMotionPref, setMotionPref, type MotionPref } from "../lib/motionPref.js";
 import { hoverLift, press } from "../lib/deckMotion.js";
 
 interface Device { id: string; label: string; created_at: number; revoked_at: number | null; }
@@ -37,6 +38,7 @@ export function RulesScreen(_props: { onClose?: () => void }) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [pushStatus, setPushStatus] = useState<PushStatus>("unknown");
   const [pushError, setPushError] = useState<string | null>(null);
+  const [motion, setMotion] = useState<MotionPref>(getMotionPref());
   const pollRef = useRef<number | null>(null);
 
   const reduced = useReducedMotion();
@@ -208,6 +210,23 @@ export function RulesScreen(_props: { onClose?: () => void }) {
           ) : (
             <div className="text-xs text-white/40">Loading…</div>
           )}
+        </PanelSection>
+
+        <PanelSection title="Motion" span="lg:col-span-4">
+          <SegmentedTabs<MotionPref>
+            options={[
+              { value: "full", label: "Full", hint: "always animate" },
+              { value: "system", label: "System", hint: "follow Windows" },
+              { value: "reduced", label: "Reduced", hint: "minimal" },
+            ]}
+            value={motion}
+            onChange={(p) => { setMotion(p); setMotionPref(p); }}
+            layout="full"
+          />
+          <div className="text-[10px] text-white/40 mt-2">
+            Controls all GSAP animations + backgrounds. <b className="text-white/60">Full</b> ignores
+            the Windows "reduce motion" setting so Ava always animates.
+          </div>
         </PanelSection>
 
         <PanelSection title="Notifications" span="lg:col-span-4">

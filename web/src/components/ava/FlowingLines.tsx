@@ -33,9 +33,9 @@ export interface FlowingLinesProps {
 
 const COUNT = 8; // paths per mirrored group (i = 0,3,6,…,21)
 
-/** Base stroke opacity ramped 0.04 → 0.16 across the bundle (low = atmosphere). */
+/** Base stroke opacity ramped 0.18 → 0.52 across the bundle (prominent, visible). */
 function baseOp(i: number): number {
-  return 0.04 + (i / (COUNT - 1)) * 0.12;
+  return 0.18 + (i / (COUNT - 1)) * 0.34;
 }
 
 /** The verified FloatingPaths cubic, coarser step so 12 reads as a full bundle. */
@@ -58,7 +58,7 @@ function Group({ position }: { position: number }) {
             data-flowline
             d={pathD(idx, position)}
             fill="none"
-            strokeWidth={0.5 + i * 0.06}
+            strokeWidth={0.9 + i * 0.1}
             strokeOpacity={baseOp(idx)}
             stroke={`color-mix(in srgb, ${lead}, var(--lines-warm) calc(var(--warm, 0) * 55%))`}
             style={{ "--base-op": baseOp(idx) } as CSSProperties}
@@ -107,7 +107,7 @@ export function FlowingLines({ charged = false, scrollerRef, scrollerNode, class
       // layer, not 16 per-path stroke repaints). yoyo sine around the rest 0.55.
       const breathe = layerRef.current
         ? gsap.to(layerRef.current, {
-            opacity: 0.7,
+            opacity: 1,
             duration: 8,
             yoyo: true,
             repeat: -1,
@@ -175,10 +175,10 @@ export function FlowingLines({ charged = false, scrollerRef, scrollerNode, class
         style={{
           position: "absolute",
           inset: 0,
-          opacity: 0.55,
+          opacity: 0.85,
           willChange: "opacity",
-          maskImage: "radial-gradient(ellipse 90% 75% at 50% 40%, black 0%, transparent 78%)",
-          WebkitMaskImage: "radial-gradient(ellipse 90% 75% at 50% 40%, black 0%, transparent 78%)",
+          maskImage: "radial-gradient(ellipse 95% 85% at 50% 42%, black 0%, transparent 92%)",
+          WebkitMaskImage: "radial-gradient(ellipse 95% 85% at 50% 42%, black 0%, transparent 92%)",
         }}
       >
         <svg
@@ -202,7 +202,7 @@ export function FlowingLines({ charged = false, scrollerRef, scrollerNode, class
           inset: 0,
           pointerEvents: "none",
           background:
-            "linear-gradient(180deg, rgba(0,0,0,0.45) 0%, transparent 22%, transparent 68%, rgba(0,0,0,0.6) 100%)",
+            "linear-gradient(180deg, rgba(0,0,0,0.32) 0%, transparent 26%, transparent 72%, rgba(0,0,0,0.44) 100%)",
         }}
       />
     </div>

@@ -1,87 +1,248 @@
-import { useSelfJournal, isRunningStatus, planText } from "./useSelfJournal.js";
+import { useRef, type CSSProperties } from "react";
+import { useSelfJournal, isRunningStatus, planText, type Intent } from "./useSelfJournal.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
+import { useGSAP, gsap } from "../lib/gsap.js";
+import { useReducedMotion } from "../lib/useReducedMotion.js";
+import { hoverLift, press, settleText } from "../lib/deckMotion.js";
+
+/** Status → left-spine accent + chip class. Cyan/live/exec/stop only as state, never decoration. */
+function statusLook(status: string): { spine: string; chip: string } {
+  if (isRunningStatus(status)) return { spine: "var(--ac-exec)", chip: "chip-exec" };
+  if (status === "swapped") return { spine: "var(--ac-live)", chip: "chip-live" };
+  if (status === "failed" || status === "cancelled") return { spine: "var(--ac-stop)", chip: "chip-stop" };
+  if (status === "awaiting_approval") return { spine: "var(--ac)", chip: "chip-ac" };
+  return { spine: "rgba(255,255,255,.18)", chip: "chip-ac" };
+}
 
 export function SelfScreen(_props: { onClose?: () => void }) {
   const { intents, paused, setPaused, revertLast, cancel, approve, reject } = useSelfJournal();
   const canRevert = intents.some((i) => i.status === "swapped");
+  const reduced = useReducedMotion();
+
+  const scope = useRef<HTMLDivElement>(null);
+  const countRef = useRef<HTMLSpanElement>(null);
+
+  const { contextSafe } = useGSAP(
+    () => {
+      // Settle the journal count (digits scramble).
+      if (countRef.current) settleText(countRef.current, String(intents.length), reduced);
+
+      // The ONLY idle loop on the whole deck: a soft pulse on the spine of every
+      // running entry. Reduced-motion-gated — parks lit, no loop.
+      if (reduced) return;
+      const spines = scope.current?.querySelectorAll<HTMLElement>("[data-running-spine]");
+      if (spines && spines.length) {
+        gsap.to(spines, {
+          opacity: 0.45,
+          repeat: -1,
+          yoyo: true,
+          duration: 0.8,
+          ease: "sine.inOut",
+        });
+      }
+    },
+    { scope, dependencies: [intents, reduced] },
+  );
+
+  const onEnter = contextSafe((e: React.PointerEvent<HTMLElement>) =>
+    hoverLift(e.currentTarget, true, reduced),
+  );
+  const onLeave = contextSafe((e: React.PointerEvent<HTMLElement>) =>
+    hoverLift(e.currentTarget, false, reduced),
+  );
+  const onDown = contextSafe((e: React.PointerEvent<HTMLElement>) =>
+    press(e.currentTarget, true, reduced),
+  );
+  const onUp = contextSafe((e: React.PointerEvent<HTMLElement>) =>
+    press(e.currentTarget, false, reduced),
+  );
 
   return (
-    <PanelShell title="Self-improvement">
-      <PanelSection title="Controls">
-        <div className="flex gap-3">
-          <button
-            onClick={() => setPaused(!paused)}
-            aria-pressed={paused}
-            className="px-3 py-1.5 text-xs rounded-md border border-white/15 text-white/85 hover:border-[rgba(92,242,255,0.4)] active:scale-95 transition-all"
-          >
-            {paused ? "Resume" : "Pause"}
-          </button>
-          <button
-            onClick={revertLast}
-            disabled={!canRevert}
-            className="px-3 py-1.5 text-xs rounded-md border border-white/15 text-white/85 hover:border-[rgba(92,242,255,0.4)] active:scale-95 transition-all disabled:opacity-40"
-          >
-            Revert last
-          </button>
-        </div>
-        <div className="text-[10px] text-white/40 mt-2">
-          {paused
-            ? "Paused — Ava won't act on self-improvements."
-            : "Active — Ava may refine how it works for you."}
-        </div>
-      </PanelSection>
+    <div ref={scope} className="h-full">
+      <PanelShell title="Self-improvement">
+        <PanelSection
+          title="Controls"
+          right={
+            <span className={`chip ${paused ? "chip-stop" : "chip-live"}`}>
+              {paused ? "PAUSED" : "ACTIVE"}
+            </span>
+          }
+        >
+          <div className="flex items-center justify-between gap-4">
+            <div className="hud text-[11px] tracking-[0.18em] text-white/55">
+              {paused ? "AUTONOMOUS · PAUSED" : "AUTONOMOUS · ACTIVE"}
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setPaused(!paused)}
+                aria-pressed={paused}
+                onPointerDown={onDown}
+                onPointerUp={onUp}
+                onPointerLeave={onUp}
+                className="btn-deck btn-primary"
+              >
+                {paused ? "Resume" : "Pause"}
+              </button>
+              <button
+                onClick={revertLast}
+                disabled={!canRevert}
+                onPointerDown={onDown}
+                onPointerUp={onUp}
+                onPointerLeave={onUp}
+                className="btn-deck btn-ghost disabled:opacity-40"
+              >
+                Revert last
+              </button>
+            </div>
+          </div>
+          <div className="text-[10px] text-white/40 mt-3">
+            {paused
+              ? "Paused — Ava won't act on self-improvements."
+              : "Active — Ava may refine how it works for you."}
+          </div>
+        </PanelSection>
 
-      <PanelSection title="Journal">
-        <ul className="space-y-1.5">
-          {intents.length === 0 && (
-            <li className="text-xs text-white/40">no self-improvements yet.</li>
+        <PanelSection
+          title="Journal"
+          right={
+            <span className="chip chip-ac">
+              <span ref={countRef}>{intents.length}</span>
+            </span>
+          }
+        >
+          {intents.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <div className="hud text-[11px] tracking-[0.22em] text-white/35">
+                NO SELF-IMPROVEMENTS YET
+              </div>
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {intents.map((i) => (
+                <JournalEntry
+                  key={i.id}
+                  intent={i}
+                  reduced={reduced}
+                  onEnter={onEnter}
+                  onLeave={onLeave}
+                  onDown={onDown}
+                  onUp={onUp}
+                  cancel={cancel}
+                  approve={approve}
+                  reject={reject}
+                />
+              ))}
+            </ul>
           )}
-          {intents.map((i) => (
-            <li
-              key={i.id}
-              className="border border-white/8 rounded-md px-3 py-2 hover:border-[rgba(92,242,255,0.3)] transition-colors"
+        </PanelSection>
+      </PanelShell>
+    </div>
+  );
+}
+
+function JournalEntry({
+  intent: i,
+  reduced,
+  onEnter,
+  onLeave,
+  onDown,
+  onUp,
+  cancel,
+  approve,
+  reject,
+}: {
+  intent: Intent;
+  reduced: boolean;
+  onEnter: (e: React.PointerEvent<HTMLElement>) => void;
+  onLeave: (e: React.PointerEvent<HTMLElement>) => void;
+  onDown: (e: React.PointerEvent<HTMLElement>) => void;
+  onUp: (e: React.PointerEvent<HTMLElement>) => void;
+  cancel: (id: string) => void;
+  approve: (id: string) => void;
+  reject: (id: string) => void;
+}) {
+  const running = isRunningStatus(i.status);
+  const look = statusLook(i.status);
+
+  return (
+    <li
+      onPointerEnter={onEnter}
+      onPointerLeave={onLeave}
+      className="lg-slab lg-sweep relative overflow-hidden rounded-xl pl-5 pr-4 py-3.5"
+      style={{ "--sweep-x": "-130%" } as CSSProperties}
+    >
+      {/* Left status spine */}
+      <span
+        aria-hidden
+        {...(running ? { "data-running-spine": "" } : {})}
+        className="pointer-events-none absolute left-0 top-2 bottom-2 w-[3px] rounded-full"
+        style={{ background: look.spine, boxShadow: `0 0 8px -1px ${look.spine}` }}
+      />
+
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-sm text-white/90 leading-snug">{i.goal}</div>
+        {running && (
+          <button
+            onClick={() => cancel(i.id)}
+            onPointerDown={onDown}
+            onPointerUp={onUp}
+            onPointerLeave={onUp}
+            className="btn-deck btn-danger shrink-0 h-7 px-3 text-[11px]"
+          >
+            Stop
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2 flex items-center gap-2">
+        <span className={`chip ${look.chip}`}>
+          {i.status === "awaiting_approval" ? "awaiting your approval" : i.status}
+        </span>
+        {i.outcome ? (
+          <span className="hud text-[10px] tracking-[0.16em] text-white/40">· {i.outcome}</span>
+        ) : null}
+      </div>
+
+      {i.status === "awaiting_approval" && (
+        <div className="lg-slab lg-rim-mercury mt-3 rounded-xl px-4 py-3">
+          <div className="hud mb-2 flex items-center gap-2 text-[10px] tracking-[0.18em] text-white/55">
+            <span
+              className="h-1 w-1 rounded-full"
+              style={{ background: "var(--ac)", boxShadow: "0 0 6px rgba(92,242,255,.8)" }}
+            />
+            PLAN — REVIEW BEFORE IT RUNS
+          </div>
+          <div className="relative pl-3">
+            <span
+              aria-hidden
+              className="lg-edgelight pointer-events-none absolute left-0 top-1 bottom-1 w-px"
+            />
+            <pre className="no-scrollbar max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-white/80">
+              {planText(i.diff_summary) || "(no plan text)"}
+            </pre>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => approve(i.id)}
+              onPointerDown={onDown}
+              onPointerUp={onUp}
+              onPointerLeave={onUp}
+              className="btn-deck btn-primary"
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="text-sm text-white/85">{i.goal}</div>
-                {isRunningStatus(i.status) && (
-                  <button
-                    onClick={() => cancel(i.id)}
-                    className="shrink-0 px-2 py-1 text-[10px] rounded-md border border-[rgba(255,90,90,0.4)] text-[rgba(255,140,140,0.95)] hover:bg-[rgba(255,90,90,0.12)] active:scale-95 transition-all"
-                  >
-                    Stop
-                  </button>
-                )}
-              </div>
-              <div className="text-[10px] uppercase tracking-widest text-white/40 mt-1">
-                {i.status === "awaiting_approval" ? "awaiting your approval" : i.status}
-                {i.outcome ? ` · ${i.outcome}` : ""}
-              </div>
-              {i.status === "awaiting_approval" && (
-                <div className="mt-2 rounded-md border border-[rgba(92,242,255,0.22)] bg-[rgba(92,242,255,0.05)] p-2">
-                  <div className="hud text-[10px] text-white/50 mb-1">Plan — review before it runs</div>
-                  <pre className="whitespace-pre-wrap break-words text-[11px] leading-snug text-white/80 max-h-44 overflow-y-auto no-scrollbar">
-                    {planText(i.diff_summary) || "(no plan text)"}
-                  </pre>
-                  <div className="flex gap-2 mt-2">
-                    <button
-                      onClick={() => approve(i.id)}
-                      className="px-3 py-1.5 text-xs rounded-md border border-[rgba(92,242,255,0.5)] text-[rgba(92,242,255,0.95)] hover:bg-[rgba(92,242,255,0.12)] active:scale-95 transition-all"
-                    >
-                      Approve & run
-                    </button>
-                    <button
-                      onClick={() => reject(i.id)}
-                      className="px-3 py-1.5 text-xs rounded-md border border-[rgba(255,90,90,0.4)] text-[rgba(255,140,140,0.95)] hover:bg-[rgba(255,90,90,0.12)] active:scale-95 transition-all"
-                    >
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      </PanelSection>
-    </PanelShell>
+              Approve & run
+            </button>
+            <button
+              onClick={() => reject(i.id)}
+              onPointerDown={onDown}
+              onPointerUp={onUp}
+              onPointerLeave={onUp}
+              className="btn-deck btn-danger"
+            >
+              Reject
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }

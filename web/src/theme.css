@@ -29,6 +29,8 @@
   --glass: rgba(12, 15, 22, 0.6);
   --glass-border: rgba(255, 255, 255, 0.1);
   --font-mono: ui-monospace, Menlo, monospace;
+  --ac-text: #d7fbff;          /* legible text on glass-cyan fills */
+  --glass-deck: rgba(12, 15, 22, 0.55);
 }
 
 /* Monospace HUD label — status lines, step lists, chips, small captions. */
@@ -53,6 +55,74 @@
     #eaf6fa, #9fc6d4, #4f7e8c, #d6eef4, #7ba8b6, #f0fbff, #86b3c0, #eaf6fa
   );
 }
+
+/* ── LIQUID GLASS deck slab — the premium card material (replaces border-white/8 + bg-white/[0.02]) */
+.lg-slab {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.015) 14%, rgba(255, 255, 255, 0) 42%),
+    var(--glass-deck);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.07) inset,
+    0 0 0 1px rgba(92, 242, 255, 0.04) inset,
+    0 24px 60px -24px rgba(0, 0, 0, 0.8);
+}
+.lg-rim-mercury {                 /* primary/focused surfaces (Self plan panel) */
+  border-color: rgba(92, 242, 255, 0.18);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.10) inset,
+    0 0 0 1px rgba(92, 242, 255, 0.10) inset,
+    0 0 22px -4px rgba(92, 242, 255, 0.22),
+    0 24px 60px -24px rgba(0, 0, 0, 0.8);
+}
+/* ── SPECULAR SWEEP — GSAP drives --sweep-x from -120% to 120% */
+.lg-sweep { position: relative; overflow: hidden; isolation: isolate; }
+.lg-sweep::after {
+  content: ""; position: absolute; inset: -40% -10%; pointer-events: none; z-index: 2;
+  mix-blend-mode: screen;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.10) 47%,
+              rgba(92, 242, 255, 0.16) 50%, rgba(255, 255, 255, 0.10) 53%, transparent 62%);
+  transform: translateX(var(--sweep-x, -120%));
+}
+/* ── MERCURY edge-light — thin liquid-metal bar for dividers/gutters */
+.lg-edgelight {
+  background: linear-gradient(90deg, transparent, rgba(234, 246, 250, 0.9) 22%,
+              rgba(92, 242, 255, 0.7) 50%, rgba(159, 198, 212, 0.8) 72%, transparent 96%);
+}
+/* ── Unified deck buttons */
+.btn-deck { font: inherit; height: 2.25rem; padding: 0 1rem; border-radius: 0.5rem;
+  font-size: 13px; display: inline-flex; align-items: center; gap: 0.4rem; transition:
+  border-color var(--motion-fast), background var(--motion-fast), box-shadow var(--motion-fast); }
+.btn-primary { background: linear-gradient(180deg, rgba(92, 242, 255, 0.18), rgba(92, 242, 255, 0.10));
+  border: 1px solid rgba(92, 242, 255, 0.45); color: var(--ac-text);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.15) inset; }
+.btn-primary:hover { box-shadow: 0 1px 0 rgba(255, 255, 255, 0.15) inset, 0 0 20px -4px rgba(92, 242, 255, 0.5); }
+.btn-primary:disabled { opacity: 0.4; cursor: default; box-shadow: 0 1px 0 rgba(255, 255, 255, 0.15) inset; }
+.btn-ghost { background: transparent; border: 1px solid rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.85); }
+.btn-ghost:hover { border-color: rgba(92, 242, 255, 0.4); color: #fff; }
+.btn-ghost:disabled { opacity: 0.4; cursor: default; border-color: rgba(255, 255, 255, 0.12); color: rgba(255, 255, 255, 0.85); }
+.btn-danger { background: transparent; border: 1px solid rgba(255, 107, 107, 0.4); color: rgba(255, 140, 140, 0.95); }
+.btn-danger:hover { background: rgba(255, 107, 107, 0.1); }
+/* ── State chip (uses the unused live/exec/stop palette) */
+.chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.1rem 0.5rem; border-radius: 999px;
+  font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.12em; font-size: 10px; }
+.chip::before { content: ""; width: 6px; height: 6px; border-radius: 999px; background: currentColor;
+  box-shadow: 0 0 6px currentColor; }
+.chip-live { color: var(--ac-live); background: rgba(57, 255, 176, 0.08); border: 1px solid rgba(57, 255, 176, 0.3); }
+.chip-exec { color: var(--ac-exec); background: rgba(255, 212, 121, 0.08); border: 1px solid rgba(255, 212, 121, 0.3); }
+.chip-stop { color: var(--ac-stop); background: rgba(255, 107, 107, 0.08); border: 1px solid rgba(255, 107, 107, 0.3); }
+.chip-ac   { color: var(--ac);      background: rgba(92, 242, 255, 0.08); border: 1px solid rgba(92, 242, 255, 0.3); }
+/* ── Mercury toggle (Rules) */
+.tgl { width: 40px; height: 22px; border-radius: 999px; border: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.06); position: relative; cursor: pointer; transition: background var(--motion-fast); }
+.tgl[data-on="true"] { background: rgba(92, 242, 255, 0.18); border-color: rgba(92, 242, 255, 0.4);
+  box-shadow: 0 0 10px -2px rgba(92, 242, 255, 0.5) inset; }
+.tgl-knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 999px;
+  background: #eaf6fa; transition: transform var(--motion-fast) var(--ease-cinematic); }
+.tgl[data-on="true"] .tgl-knob { transform: translateX(18px); }
 
 /* Liquid blob morph for the Orb core (GSAP handles rotation; this handles the
    organic edge wobble — kept in CSS because multi-value border-radius tweening

@@ -150,11 +150,11 @@ export function App() {
         {view.name === "memory" && (
           <motion.div
             key="memory"
-            className="absolute inset-0 bg-black"
-            initial={{ y: "100%" }}
-            animate={{ y: 0 }}
-            exit={{ y: "100%" }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, scale: 0.985, filter: "blur(6px)" }}
+            transition={{ duration: reduced ? 0.15 : 0.3, ease: [0.22, 1, 0.36, 1] }}
           >
             <MemoryScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -162,11 +162,11 @@ export function App() {
         {view.name === "rules" && (
           <motion.div
             key="rules"
-            className="absolute inset-0 bg-black"
-            initial={{ y: "100%" }}
-            animate={{ y: 0 }}
-            exit={{ y: "100%" }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, scale: 0.985, filter: "blur(6px)" }}
+            transition={{ duration: reduced ? 0.15 : 0.3, ease: [0.22, 1, 0.36, 1] }}
           >
             <RulesScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -174,11 +174,11 @@ export function App() {
         {view.name === "self" && (
           <motion.div
             key="self"
-            className="absolute inset-0 bg-black"
-            initial={{ y: "100%" }}
-            animate={{ y: 0 }}
-            exit={{ y: "100%" }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, scale: 0.985, filter: "blur(6px)" }}
+            transition={{ duration: reduced ? 0.15 : 0.3, ease: [0.22, 1, 0.36, 1] }}
           >
             <SelfScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -186,11 +186,11 @@ export function App() {
         {view.name === "list" && (
           <motion.div
             key="list"
-            className="absolute inset-0 bg-black"
-            initial={{ y: "100%" }}
-            animate={{ y: 0 }}
-            exit={{ y: "100%" }}
-            transition={{ duration: 0.3, ease: "easeOut" }}
+            className="absolute inset-0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0, scale: 0.985, filter: "blur(6px)" }}
+            transition={{ duration: reduced ? 0.15 : 0.3, ease: [0.22, 1, 0.36, 1] }}
           >
             <ChatListScreen
               onClose={() => setView({ name: "orbit" })}

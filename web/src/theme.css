@@ -31,6 +31,11 @@
   --font-mono: ui-monospace, Menlo, monospace;
   --ac-text: #d7fbff;          /* legible text on glass-cyan fills */
   --glass-deck: rgba(12, 15, 22, 0.55);
+
+  /* ── Chat flowing-lines + neural-field stroke palette ─────────────────── */
+  --lines-cyan: rgba(92, 242, 255, 0.5);     /* = --ac @ .5 — FlowingLines + NeuralField lead */
+  --lines-mercury: rgba(159, 198, 212, 0.5); /* mercury mid-tone (matches .mercury stops) */
+  --lines-warm: #ffd479;                     /* = --ac-exec — charged tint target */
 }
 
 /* Monospace HUD label — status lines, step lists, chips, small captions. */
@@ -53,6 +58,22 @@
   background: conic-gradient(
     from 180deg,
     #eaf6fa, #9fc6d4, #4f7e8c, #d6eef4, #7ba8b6, #f0fbff, #86b3c0, #eaf6fa
+  );
+}
+
+/* ── Thinking-caption shimmer — recolors ShiningText's gradient to cyan/mercury.
+   ShiningText animates background-position; this only swaps the gradient image, so
+   the loop still runs (and the reduced-motion CSS gate below freezes it). */
+.shine-deck {
+  background-image: linear-gradient(
+    110deg,
+    rgba(159, 198, 212, 0.45),
+    35%,
+    #5cf2ff,
+    50%,
+    rgba(159, 198, 212, 0.45),
+    75%,
+    rgba(159, 198, 212, 0.45)
   );
 }
 

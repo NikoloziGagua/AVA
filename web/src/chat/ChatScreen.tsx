@@ -4,16 +4,17 @@ import { api, fetchSession } from "../api.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
-import { Orb } from "../components/ava/Orb.js";
-import { EtherealShadows } from "../components/ava/EtherealShadows.js";
+import { FlowingLines } from "../components/ava/FlowingLines.js";
+import { EdgeFade } from "../components/ava/EdgeFade.js";
 import { ActivityPanel } from "./ActivityPanel.js";
 import { deriveSteps, isExecuting, currentTool } from "./activity-steps.js";
-import { ChevronLeft, List, Brain, Settings2 } from "lucide-react";
 
 export interface ChatScreenProps {
   sessionId: string | null;
   /** When opening a fresh chat from the home command bar: auto-send this once. */
   initialText?: string;
+  // Navigation now lives in the persistent TubelightNav (App.tsx). These props
+  // are kept inert so the App.tsx call site doesn't need to change.
   onOpenSessions: () => void;
   onOpenRules: () => void;
   onOpenMemory: () => void;
@@ -24,10 +25,6 @@ export interface ChatScreenProps {
 export function ChatScreen({
   sessionId: requestedSessionId,
   initialText,
-  onOpenSessions,
-  onOpenRules,
-  onOpenMemory,
-  onOpenList,
   onEnterVoice,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -35,7 +32,16 @@ export function ChatScreen({
   const [runEpoch, setRunEpoch] = useState(0);
   const { events } = useChatStream(sessionId, runEpoch);
   const [seed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
-  const [title, setTitle] = useState<string>("New chat");
+  // Synchronous optimistic-send flag: flips true the same frame send() fires,
+  // BEFORE the awaited POST resolves — `busy` lags by the full round-trip, so
+  // this is what makes the thinking indicator instant.
+  const [pending, setPending] = useState(false);
+  // Scroller node tracked BOTH as a ref (MessageList reads `.current`) and as
+  // state (`scrollerNode`). FlowingLines' parallax ScrollTrigger depends on the
+  // node *identity*; if the scroll element is replaced on session switch, the
+  // stable ref object wouldn't trigger a re-init — the state node does.
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollerNode, setScrollerNode] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,7 +49,6 @@ export function ChatScreen({
       setSessionId(null);
       setHistory([]);
       setRunEpoch(0);
-      setTitle("New chat");
       return;
     }
     fetchSession(requestedSessionId)
@@ -57,7 +62,6 @@ export function ChatScreen({
         setHistory(loaded);
         setSessionId(requestedSessionId);
         setRunEpoch(0);
-        setTitle(data.session.title ?? "Untitled");
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -117,6 +121,14 @@ export function ChatScreen({
   const executing = isExecuting(liveEvents);
   const runningTool = currentTool(liveEvents);
 
+  // Optimistic thinking: instant on send (pending), held through busy, dropped
+  // the moment the run's final lands or the run terminates.
+  const lastFinalCurrent = events.some((e) => e.runEpoch === runEpoch && e.kind === "final");
+  useEffect(() => {
+    if (busy || currentRunFinished) setPending(false);
+  }, [busy, currentRunFinished]);
+  const optimisticThinking = (pending || busy) && !lastFinalCurrent && !currentRunFinished;
+
   const [activityCollapsed, setActivityCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem("ava.activityCollapsed") === "1"; } catch { return false; }
   });
@@ -141,6 +153,7 @@ export function ChatScreen({
 
   async function send(text: string) {
     setHistory((prev) => [...prev, { role: "user", text, id: `u-${Date.now()}` }]);
+    setPending(true); // optimistic — same frame as send, before the awaited POST
     const r = await api.sendMessage(sessionId, text);
     setSessionId(r.sessionId);
     setRunEpoch((n) => n + 1);
@@ -166,91 +179,9 @@ export function ChatScreen({
 
   return (
     <div className="relative flex h-full flex-col bg-black text-white">
-      <EtherealShadows charged={executing} />
-      {/* Bigger glass navbar */}
-      <header
-        className="relative z-10 flex items-center gap-2 px-3 h-[72px]"
-        style={{
-          background: "rgba(0,0,0,0.55)",
-          backdropFilter: "blur(24px) saturate(160%)",
-          WebkitBackdropFilter: "blur(24px) saturate(160%)",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
-        }}
-      >
-        <button
-          onClick={onOpenSessions}
-          aria-label="back to orbit"
-          className="w-10 h-10 rounded-full text-white/70 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
-        >
-          <ChevronLeft size={20} />
-        </button>
-
-        <div className="flex-1 flex items-center gap-3 min-w-0">
-          {/* AVA wordmark — morphs from centered empty state when first message lands */}
-          <AnimatePresence mode="wait">
-            {!isEmpty && (
-              <motion.div
-                key="navbar-ava"
-                layoutId="chat-ava-wordmark"
-                className="font-bold tracking-[0.22em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/90 to-white/55"
-                style={{ fontSize: 18 }}
-                transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-              >
-                AVA
-              </motion.div>
-            )}
-          </AnimatePresence>
-          {!isEmpty && (
-            <div className="flex flex-col min-w-0">
-              <div className="flex items-center gap-1.5">
-                <Orb state={executing ? "working" : headerState} size={14} flipId="ava-orb" />
-                <div className="hud text-[10px]" style={{ color: executing ? "var(--ac-exec)" : "rgba(255,255,255,0.45)" }}>
-                  {executing
-                    ? `EXECUTING · ${runningTool ?? ""}`
-                    : headerState === "thinking" ? "THINKING" : headerState === "responding" ? "RESPONDING" : "READY"}
-                </div>
-              </div>
-              <div className="text-[12px] truncate text-white/70">{title}</div>
-            </div>
-          )}
-        </div>
-
-        <nav
-          className="flex items-center gap-1 rounded-full p-1"
-          style={{
-            background: "rgba(255,255,255,0.04)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            backdropFilter: "blur(14px)",
-            WebkitBackdropFilter: "blur(14px)",
-          }}
-        >
-          {onOpenList && (
-            <button
-              onClick={onOpenList}
-              aria-label="all chats"
-              className="w-9 h-9 rounded-full text-white/60 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
-            >
-              <List size={16} />
-            </button>
-          )}
-          <button
-            onClick={onOpenMemory}
-            aria-label="memory"
-            className="w-9 h-9 rounded-full text-white/60 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
-          >
-            <Brain size={16} />
-          </button>
-          <button
-            onClick={onOpenRules}
-            aria-label="rules"
-            className="w-9 h-9 rounded-full text-white/60 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
-          >
-            <Settings2 size={16} />
-          </button>
-        </nav>
-      </header>
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col">
-        {/* Empty-state AVA — sits in the message area, morphs into the navbar wordmark when first message arrives */}
+      <FlowingLines charged={executing} scrollerRef={scrollerRef} scrollerNode={scrollerNode} />
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col pt-28">
+        {/* Empty-state AVA — clears under the floating nav pill via pt-28. */}
         <AnimatePresence>
           {isEmpty && (
             <motion.div
@@ -268,10 +199,8 @@ export function ChatScreen({
                 I AM
               </motion.div>
               <motion.div
-                layoutId="chat-ava-wordmark"
                 className="font-bold tracking-[0.20em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/85 to-white/40"
                 style={{ fontSize: 96 }}
-                transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
               >
                 AVA
               </motion.div>
@@ -289,7 +218,25 @@ export function ChatScreen({
 
         <div className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">
-            <MessageList history={history} liveEvents={liveEvents} onRetry={retryLast} />
+            {/* relative wrapper so the EdgeFade strips pin to the VISIBLE scroll
+                edges (the viewport-height column), not the scroller's full
+                content box. They sit OUTSIDE the scroll node as absolute,
+                pointer-events-none siblings over it. */}
+            <div className="relative mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col">
+              <MessageList
+                history={history}
+                liveEvents={liveEvents}
+                onRetry={retryLast}
+                scrollerRef={scrollerRef}
+                onScrollerMount={setScrollerNode}
+                optimisticThinking={optimisticThinking}
+                executing={executing}
+                runningTool={runningTool}
+                headerState={headerState}
+              />
+              <EdgeFade edge="top" />
+              <EdgeFade edge="bottom" />
+            </div>
           </div>
           {steps.length > 0 && (
             <ActivityPanel

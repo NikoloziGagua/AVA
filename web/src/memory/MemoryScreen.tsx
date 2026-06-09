@@ -3,6 +3,7 @@ import { Pencil, Trash2, Check, X, Plus } from "lucide-react";
 import { fetchMemory, type MemoryView, patchMemoryLine, postMemoryLine } from "../api.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
+import { NeuralField } from "../components/ava/NeuralField.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { hoverLift, press, settleText, EASE } from "../lib/deckMotion.js";
@@ -42,7 +43,7 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
   const obs = cat === "all" ? m.observations.lines : m.observations.lines.filter((l) => l.category === cat);
 
   return (
-    <PanelShell title="Memory" grid>
+    <PanelShell title="Memory" grid bg={<NeuralField opacity={0.25} />}>
       <PanelSection
         title="Personality"
         span="lg:col-span-5"

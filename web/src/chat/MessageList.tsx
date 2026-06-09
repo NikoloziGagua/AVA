@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react";
+import { gsap, useGSAP, ScrollTrigger } from "../lib/gsap.js";
+import { D, EASE, SHADOW, hoverLift } from "../lib/deckMotion.js";
+import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { Orb } from "../components/ava/Orb.js";
-import { ShiningText } from "../components/ava/ShiningText.js";
-import { MessageLoading } from "../components/ava/MessageLoading.js";
 import { WordReveal } from "../components/ava/WordReveal.js";
+import { ThinkingIndicator, type ThinkingState } from "./ThinkingIndicator.js";
 import { ToolCallChip } from "./ToolCallChip.js";
 import { humanizeTool } from "./humanize.js";
 import { MessageActions } from "./MessageActions.js";
@@ -18,25 +20,68 @@ export interface MessageListProps {
   liveEvents: StreamEvent[];
   /** Re-run the last turn (wired to the action row's Retry). */
   onRetry?: () => void;
+  /**
+   * The real scroll element — attached here, shared up to ChatScreen so
+   * FlowingLines parallax + the bubble ScrollTriggers target the same node.
+   */
+  scrollerRef?: React.RefObject<HTMLDivElement | null>;
+  /**
+   * Called with the scroll node when it mounts (and null on unmount). Lets
+   * ChatScreen track the node *identity* in state so FlowingLines' parallax
+   * re-attaches if the scroller is replaced on a session switch.
+   */
+  onScrollerMount?: (node: HTMLDivElement | null) => void;
+  /**
+   * Optimistic thinking: true the same frame a message is sent (ChatScreen's
+   * synchronous `pending` flag), so the premium indicator appears instantly —
+   * BEFORE the first liveEvent arrives. Drives ThinkingIndicator, not the old
+   * `liveEvents.length > 0` heuristic (which lagged by the SSE round-trip).
+   */
+  optimisticThinking?: boolean;
+  /** Live working state — feeds the indicator's chip + caption. */
+  executing?: boolean;
+  runningTool?: string | null;
+  headerState?: "idle" | "thinking" | "responding";
 }
 
-export function MessageList({ history, liveEvents, onRetry }: MessageListProps) {
+export function MessageList({
+  history,
+  liveEvents,
+  onRetry,
+  scrollerRef,
+  onScrollerMount,
+  optimisticThinking = false,
+  executing = false,
+  runningTool,
+  headerState = "idle",
+}: MessageListProps) {
+  const reduced = useReducedMotion();
+  const internalRef = useRef<HTMLDivElement>(null);
+  const scroller = scrollerRef ?? internalRef;
   const endRef = useRef<HTMLDivElement>(null);
+  const breathKilled = useRef(false);
+
+  // Callback ref: keep the shared ref object's `.current` in sync (so the
+  // ScrollTriggers below can read it) AND notify ChatScreen of the node identity.
+  const attachScroller = (node: HTMLDivElement | null) => {
+    (scroller as React.MutableRefObject<HTMLDivElement | null>).current = node;
+    onScrollerMount?.(node);
+  };
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [history.length, liveEvents.length]);
+  }, [history.length, liveEvents.length, optimisticThinking]);
 
   const resolved = new Map<string, "approved" | "denied" | "expired">();
   for (const e of liveEvents) {
     if (e.kind === "approval_resolved") resolved.set(e.payload.id, e.payload.status);
   }
 
-  const hasTerminal = liveEvents.some(
-    (e) => e.kind === "done" || e.kind === "killed" || e.kind === "error",
-  );
   const lastFinal = [...liveEvents].reverse().find((e) => e.kind === "final");
-  const isThinking = liveEvents.length > 0 && !lastFinal && !hasTerminal;
 
+  // Caption: backward-walk the live stream (verified mechanism). Before any
+  // liveEvent (the optimistic window) it seeds "thinking…", then upgrades the
+  // instant events stream in.
   let thinkingCaption = "thinking…";
   for (let i = liveEvents.length - 1; i >= 0; i--) {
     const e = liveEvents[i];
@@ -44,43 +89,88 @@ export function MessageList({ history, liveEvents, onRetry }: MessageListProps) 
     if (e?.kind === "thought") { thinkingCaption = e.payload.text.slice(0, 80); break; }
   }
 
+  const thinkingState: ThinkingState = executing
+    ? "executing"
+    : headerState === "responding"
+      ? "responding"
+      : "thinking";
+
+  const showThinking = optimisticThinking && !lastFinal;
+
+  // ── Single source of truth for bubble reveals: ScrollTrigger.batch ──
+  // ScrollTrigger.batch fires onEnter for elements already in view at creation
+  // time too, so it covers BOTH the just-appended newest bubble AND older
+  // bubbles scrolling into view — no separate per-append gsap.from (which used
+  // to double-animate the newest node, fighting over opacity/transform).
+  //
+  // `[data-bubble]:not([data-entered])` keeps the set disjoint across re-runs:
+  // already-revealed bubbles carry data-entered and are skipped when the batch
+  // is rebuilt (history.length changes), so each bubble animates exactly once.
+  // useGSAP reverts tweens but does NOT kill ScrollTriggers — capture + kill.
+  useGSAP(
+    () => {
+      if (reduced || !scroller.current) return;
+      const triggers: ScrollTrigger[] = [];
+      ScrollTrigger.batch("[data-bubble]:not([data-entered])", {
+        scroller: scroller.current,
+        start: "top 92%",
+        once: true,
+        onEnter: (els) => {
+          els.forEach((el) => el.setAttribute("data-entered", ""));
+          gsap.from(els, {
+            y: 18,
+            opacity: 0,
+            filter: "blur(6px)",
+            duration: D.section,
+            ease: EASE,
+            stagger: 0.06,
+            overwrite: true,
+            clearProps: "filter",
+          });
+        },
+      });
+      ScrollTrigger.getAll().forEach((t) => {
+        if (t.scroller === scroller.current) triggers.push(t);
+      });
+      return () => triggers.forEach((t) => t.kill());
+    },
+    { scope: scroller, dependencies: [history.length] },
+  );
+
+  // ── Cross-fade the thinking row out the moment the final block streams in ──
+  useGSAP(
+    () => {
+      if (reduced || !lastFinal || breathKilled.current) return;
+      breathKilled.current = true;
+      const row = scroller.current?.querySelector("[data-thinking]");
+      if (row) gsap.to(row, { opacity: 0, y: -6, duration: D.fast, ease: "power2.in" });
+    },
+    { scope: scroller, dependencies: [!!lastFinal] },
+  );
+  // Re-arm the cross-fade gate for the next run (when the final clears).
+  useEffect(() => {
+    if (!lastFinal) breathKilled.current = false;
+  }, [lastFinal]);
+
   return (
-    <div className="no-scrollbar flex-1 overflow-y-auto px-4 py-6 space-y-5">
+    <div ref={attachScroller} className="no-scrollbar relative flex-1 overflow-y-auto px-4 py-6 space-y-5">
       {history.map((m) => (
         <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
           {m.role === "user" ? (
-            <div
-              className="group relative max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14.5px] text-white/95 overflow-hidden"
-              style={{
-                background:
-                  "linear-gradient(135deg, rgba(255,255,255,0.14), rgba(255,255,255,0.04))",
-                border: "1px solid rgba(255,255,255,0.16)",
-                backdropFilter: "blur(18px) saturate(160%)",
-                WebkitBackdropFilter: "blur(18px) saturate(160%)",
-                boxShadow:
-                  "inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.2), 0 10px 32px -12px rgba(0,0,0,0.6)",
-              }}
-            >
-              <span className="relative">{m.text}</span>
-            </div>
+            <OwnerBubble text={m.text} reduced={reduced} />
           ) : (
-            <div className="flex items-start gap-3 max-w-[88%]">
-              <div className="shrink-0 mt-1">
-                <Orb state="idle" size={22} />
+            <AvaBubble reduced={reduced}>
+              <div
+                className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
+                style={{
+                  backgroundImage:
+                    "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
+                }}
+              >
+                {m.text}
               </div>
-              <div className="flex flex-col gap-2">
-                <div
-                  className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
-                  style={{
-                    backgroundImage:
-                      "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
-                  }}
-                >
-                  {m.text}
-                </div>
-                <MessageActions text={m.text} onRetry={onRetry} />
-              </div>
-            </div>
+              <MessageActions text={m.text} onRetry={onRetry} />
+            </AvaBubble>
           )}
         </div>
       ))}
@@ -110,7 +200,7 @@ export function MessageList({ history, liveEvents, onRetry }: MessageListProps) 
           return <ToolCallChip key={key} label={humanizeTool(e.payload.tool)} ok={false} result={e.payload.result} />;
         }
         if (e.kind === "thought") {
-          return null; // thoughts surface via thinkingCaption, not rendered as message
+          return null; // thoughts surface via the thinking caption, not rendered as message
         }
         if (e.kind === "error") {
           return <div key={key} className="text-sm text-red-400">error: {e.payload.message}</div>;
@@ -130,30 +220,84 @@ export function MessageList({ history, liveEvents, onRetry }: MessageListProps) 
 
       {lastFinal && (
         <div className="flex justify-start" data-testid="final-message">
-          <div className="flex items-start gap-3 max-w-[88%]">
-            <div className="shrink-0 mt-1">
-              <Orb state="responding" size={22} />
-            </div>
-            <div className="flex flex-col gap-2">
-              <WordReveal
-                text={lastFinal.payload.text}
-                className="text-[15px] leading-[1.65] whitespace-pre-wrap"
-                gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
-              />
-              <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
-            </div>
-          </div>
+          <AvaBubble reduced={reduced}>
+            <WordReveal
+              text={lastFinal.payload.text}
+              className="text-[15px] leading-[1.65] whitespace-pre-wrap"
+              gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
+            />
+            <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
+          </AvaBubble>
         </div>
       )}
 
-      {isThinking && (
-        <div className="flex items-center gap-2 text-white/60">
-          <MessageLoading className="h-5 w-5" />
-          <ShiningText text={thinkingCaption} className="text-xs" />
+      {showThinking && (
+        <div className="flex justify-start">
+          <ThinkingIndicator
+            caption={thinkingCaption}
+            state={thinkingState}
+            tool={executing ? runningTool ?? undefined : undefined}
+            reduced={reduced}
+          />
         </div>
       )}
 
       <div ref={endRef} />
+    </div>
+  );
+}
+
+/**
+ * Owner (user) bubble — a distinct, brighter mercury surface so the speaker reads
+ * as polished liquid metal vs Ava's cyan glass. Visually subordinate so the eye
+ * rests on Ava's answers. Right-aligned, hover-lift, GSAP entrance via data-bubble.
+ */
+function OwnerBubble({ text, reduced }: { text: string; reduced: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <div
+      ref={ref}
+      data-bubble
+      onPointerEnter={() => ref.current && hoverLift(ref.current, true, reduced)}
+      onPointerLeave={() => ref.current && hoverLift(ref.current, false, reduced)}
+      className="lg-sweep group relative max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14.5px] text-white/95"
+      style={{
+        background:
+          "linear-gradient(135deg, rgba(214,238,244,0.16), rgba(159,198,212,0.05))",
+        border: "1px solid rgba(159,198,212,0.28)",
+        backdropFilter: "blur(18px) saturate(160%)",
+        WebkitBackdropFilter: "blur(18px) saturate(160%)",
+        boxShadow:
+          "inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.2), 0 10px 32px -12px rgba(0,0,0,0.6)",
+      }}
+    >
+      <span className="relative z-[1]">{text}</span>
+    </div>
+  );
+}
+
+/**
+ * Ava (assistant) bubble — a .lg-slab-derived cyan-tinted glass surface hosting the
+ * text block + a static mercury Orb avatar. Hover-lift + specular sweep via lg-sweep.
+ * The final-block orb here must NOT carry flipId (only ThinkingIndicator does).
+ */
+function AvaBubble({ children, reduced }: { children: React.ReactNode; reduced: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <div className="flex items-start gap-3 max-w-[88%]">
+      <div className="shrink-0 mt-1">
+        <Orb state="idle" size={22} />
+      </div>
+      <div
+        ref={ref}
+        data-bubble
+        onPointerEnter={() => ref.current && hoverLift(ref.current, true, reduced)}
+        onPointerLeave={() => ref.current && hoverLift(ref.current, false, reduced)}
+        className="lg-slab lg-sweep flex flex-col gap-2 px-4 py-3"
+        style={{ boxShadow: SHADOW.rest }}
+      >
+        {children}
+      </div>
     </div>
   );
 }

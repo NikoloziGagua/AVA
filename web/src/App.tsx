@@ -69,7 +69,7 @@ export function App() {
     { name: "Self", icon: Sparkles, onSelect: () => setView({ name: "self" }) },
   ];
   const NAV_FOR_VIEW: Record<string, string> = {
-    orbit: "Home", memory: "Memory", rules: "Rules", self: "Self", list: "Chats",
+    orbit: "Home", chat: "New", memory: "Memory", rules: "Rules", self: "Self", list: "Chats",
   };
   const showNav = view.name in NAV_FOR_VIEW;
 
@@ -201,7 +201,8 @@ export function App() {
       </AnimatePresence>
 
       {/* Persistent deck nav: stays mounted (so the cyan lamp springs smoothly
-          between panels) and fades out on the immersive views (splash/chat/voice). */}
+          between panels) and fades out on the immersive hero views (splash/voice).
+          Chat now joins the deck — NAV_FOR_VIEW maps it to the "New" lamp. */}
       <motion.div
         className="absolute left-1/2 top-6 z-30 -translate-x-1/2"
         animate={{ opacity: showNav ? 1 : 0, y: showNav ? 0 : -14 }}

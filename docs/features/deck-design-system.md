@@ -11,7 +11,9 @@ A small, reusable system that gives the deck panels one cohesive "command-deck" 
 2. **One motion system** — `web/src/lib/deckMotion.ts`, the single source of every reusable deck timing, easing, shadow, and animation helper. Nothing re-implements eases or durations.
 3. **Shared chrome** — `web/src/components/ava/PanelShell.tsx`, the `PanelShell` / `PanelSection` components every deck screen composes onto.
 
-It does **not** touch the home, chat, voice, or splash surfaces — those keep their own bespoke look. It is scoped to the four panels reachable from the persistent nav.
+It is scoped to the four panels reachable from the persistent nav. It does **not** govern the home, voice, or splash surfaces — those keep their own bespoke look.
+
+> **Chat update (commit `b4e6ada`).** The chat surface was redesigned to *join* the deck — it now uses the persistent nav (no own header) and the deck materials (`.lg-slab`/`.lg-sweep`, `.chip`, `.btn-danger`) for its bubbles and composer, while keeping its own bespoke atmosphere (a flowing-lines background and instant thinking row). That redesign also added three reusable atmosphere components (`FlowingLines`, `EdgeFade`, `NeuralField`) and the `PanelShell` `bg` slot below. The chat composition, those components, and the ScrollTrigger rules are documented in the [Premium Chat feature doc](./premium-chat.md).
 
 ## Why it exists
 
@@ -139,7 +141,9 @@ It:
 - Runs the enter timeline in a `useGSAP` keyed on `[reduced, title]`: `buildPanelEnter(root, title)` normally, or `setPanelStatic(root, title)` when reduced (`PanelShell.tsx:27`–`35`).
 - With `grid` true, wraps `children` in a 12-column grid (`lg:grid-cols-12`); sections then place themselves with a `span` class.
 
-### `PanelSection` (`PanelShell.tsx:99`)
+> **`bg` slot (added commit `b4e6ada`).** `PanelShell` now takes an optional `bg?: ReactNode` rendered between the black root and the cyan bloom (so the bloom stays on top of it) — `PanelShell.tsx:43`–`44`, props at `PanelShell.tsx:24`. Memory uses it for the low-opacity `NeuralField` WebGL noise (`MemoryScreen.tsx:46`); other panels pass nothing and are unaffected. See the [Premium Chat feature doc](./premium-chat.md) for `NeuralField`.
+
+### `PanelSection` (`PanelShell.tsx:105`)
 
 A titled `.lg-slab .lg-sweep` card. Props: `{ title; right?; onClickHeader?; span?; children }`.
 

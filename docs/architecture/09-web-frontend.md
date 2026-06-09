@@ -73,11 +73,11 @@ stateDiagram-v2
     orbit --> self : onOpenSelf
     orbit --> list : onOpenList
 
-    chat --> orbit : onOpenSessions (back arrow)
     chat --> voice : onEnterVoice (from="chat")
-    chat --> memory : onOpenMemory
-    chat --> rules : onOpenRules
-    chat --> list : onOpenList
+    chat --> orbit : persistent nav → Home
+    chat --> memory : persistent nav → Memory
+    chat --> rules : persistent nav → Rules
+    chat --> list : persistent nav → Chats
 
     voice --> chat : onExit (if from="chat") / onSwitchToKeyboard
     voice --> orbit : onExit (if from="orbit")
@@ -92,9 +92,9 @@ stateDiagram-v2
 
 Things worth noting from the diagram:
 
-- **`orbit` (the home) is the hub.** Every panel returns to `orbit` on close. There is no global back-stack; "back" is hard-coded per screen (`memory`/`rules`/`self`/`list` always go to `orbit`; `chat`'s back arrow also goes to `orbit`).
+- **`orbit` (the home) is the hub.** Every panel returns to `orbit` on close. There is no global back-stack; "back" is hard-coded per screen (`memory`/`rules`/`self`/`list` always go to `orbit`). As of commit `b4e6ada`, **chat joined the persistent deck nav** (`NAV_FOR_VIEW.chat = "New"`, `App.tsx:72`): it no longer renders its own header or back arrow — the nav pill drives navigation off the chat surface (see §5 and the [Premium Chat feature doc](../features/premium-chat.md)).
 - **Voice remembers where it came from.** The `voice` view carries `from: "orbit" | "chat"`. On exit, `App.tsx:130-134` routes back accordingly: `from === "chat"` → back to that chat (with the session id), otherwise → home. This is the only "return to caller" behavior in the app.
-- **The two grouped behaviors** are *surfaces that own the Orb* (`splash`, `orbit`, `chat`, `voice`) vs. *panels* (`memory`, `rules`, `self`, `list`). This split drives both the GSAP Flip logic and the entry animation. As of the deck redesign (commit `5e24e00`), the four panels no longer slide up from the bottom — they **materialize** (fade + slight scale-in, then blur/shrink out) while the deck nav stays put; orb-surfaces still cross-fade. See §3 and the [Deck Design System feature doc](../features/deck-design-system.md).
+- **The two grouped behaviors** are *surfaces that own the Orb* (`splash`, `orbit`, `chat`, `voice`) vs. *panels* (`memory`, `rules`, `self`, `list`). This split drives both the GSAP Flip logic and the entry animation. As of the deck redesign (commit `5e24e00`), the four panels no longer slide up from the bottom — they **materialize** (fade + slight scale-in, then blur/shrink out) while the deck nav stays put; orb-surfaces still cross-fade. See §3 and the [Deck Design System feature doc](../features/deck-design-system.md). Commit `b4e6ada` then **moved chat onto the persistent nav** (it shows on chat now, lamp on "New") while chat keeps its orb-surface cross-fade.
 
 ### How `sessionId` threads between chat and voice
 
@@ -117,15 +117,15 @@ Two animation systems cooperate, and the split is deliberate.
 
 A load-bearing comment at `App.tsx:81-84` explains why there is **no `mode="wait"`**: the home and voice screens run *infinite* CSS animations (nebula drift, orb morph) that never fire an exit-complete, so `mode="wait"` would block the next view from ever mounting (panels appeared "dead/black"). Default concurrent mode cross-fades instead.
 
-**The deck nav is persistent.** The `TubelightNav` pill is mounted **once, outside** the `AnimatePresence` (`App.tsx:205-212`); it fades/lifts out only on the immersive views (splash/chat/voice, via `showNav`) and tracks the current view through `NAV_FOR_VIEW`. Because it never unmounts across panel swaps, the cyan "lamp" springs smoothly between items, and the panels no longer render their own in-panel back button — the nav handles navigation.
+**The deck nav is persistent.** The `TubelightNav` pill is mounted **once, outside** the `AnimatePresence`; it fades/lifts out only on the immersive hero views (splash/voice, via `showNav`) and tracks the current view through `NAV_FOR_VIEW`. As of commit `b4e6ada` **chat is included** — `NAV_FOR_VIEW.chat = "New"` (`App.tsx:72`), so the nav now shows on chat too and chat no longer renders its own header. Because it never unmounts across panel swaps, the cyan "lamp" springs smoothly between items, and panels/chat no longer render an in-panel back button — the nav handles navigation.
 
-**GSAP Flip** owns the **shared Orb**. The mercury orb carries a stable `flipId="ava-orb"` on `splash`, `orbit`, `chat` (header avatar), and `voice`. The `useLayoutEffect` at `App.tsx:37-57` snapshots the orb's geometry before a view change and `Flip.from(...)` animates it from its old position/size to its new one — so the orb *flies* between surfaces (splash center → home hero → chat header → voice hero) instead of cutting. Guards:
+**GSAP Flip** owns the **shared Orb**. The mercury orb carries a stable `flipId="ava-orb"` on `splash`, `orbit`, `voice`, and — since commit `b4e6ada` — `chat` via the **`ThinkingIndicator`** (the old chat header avatar that used to carry it is gone with the header). The `useLayoutEffect` at `App.tsx:39-59` snapshots the orb's geometry before a view change and `Flip.from(...)` animates it from its old position/size to its new one — so the orb *flies* between surfaces (splash center → home hero → chat thinking row → voice hero) instead of cutting. On chat the orb only exists while the thinking row is mounted, so `document.querySelector` returns null otherwise and the Flip cleanly degrades. **Exactly one element may carry `flipId="ava-orb"` at a time** — see the [Premium Chat feature doc](../features/premium-chat.md) for that invariant. Guards:
 
 - Only runs for `VIEWS_WITH_ORB = ["splash","orbit","chat","voice"]` (`App.tsx:41`). Panels have no orb, so Flipping during those transitions would hijack the *exiting* home orb — explicitly avoided.
 - `useReducedMotion()` short-circuits the whole thing (`App.tsx:42`).
 - Every GSAP call is wrapped in `try/catch` to degrade to a hard cut if the orb is absent mid-swap.
 
-`web/src/lib/gsap.ts` is the **single registration point** for GSAP and its plugins (Flip, MorphSVG, DrawSVG, ScrambleText). Components import `{ gsap, useGSAP, Flip }` from there and never register plugins ad hoc, so registration happens exactly once.
+`web/src/lib/gsap.ts` is the **single registration point** for GSAP and its plugins (Flip, MorphSVG, DrawSVG, ScrambleText, and — added in commit `b4e6ada` — **ScrollTrigger**). Components import `{ gsap, useGSAP, Flip, ScrollTrigger }` from there and never register plugins ad hoc, so registration happens exactly once. ScrollTrigger is registered **behind a browser guard** — `ScrollTrigger.register()` calls `window.matchMedia`, which jsdom (the component-test env) lacks, so it registers only when `window.matchMedia` is a function (`gsap.ts:22-24`); the object is exported either way. Anything scroll-driven (the chat bubble reveals, the FlowingLines parallax) must import it from here and **kill its triggers on cleanup** — `useGSAP` reverts tweens but does not kill ScrollTriggers. See the [Premium Chat feature doc](../features/premium-chat.md).
 
 ---
 
@@ -196,7 +196,7 @@ Two endpoints bypass `request()` on purpose:
 - **`Composer`** — the input box, suggestion chips, send/stop, and the mic button.
 - **`ActivityPanel`** — a right-docked, collapsible list of tool steps for the current run.
 - **`useChatStream`** — the hook that consumes the SSE event stream.
-- Background + avatar: `EtherealShadows` (charged while executing) and the `Orb`.
+- Background + edges: **`FlowingLines`** (the cyan/mercury flowing-lines field, `charged` while executing) and two **`EdgeFade`** strips pinned over the top/bottom of the scroll column. (Commit `b4e6ada` replaced the old `EtherealShadows` backdrop and removed the chat header; the avatar `Orb` now lives in the bubbles and the `ThinkingIndicator`.) See the [Premium Chat feature doc](../features/premium-chat.md) for these components, the ScrollTrigger rules, and the chat layer stack.
 
 ### State model inside `ChatScreen`
 
@@ -206,16 +206,20 @@ Two endpoints bypass `request()` on purpose:
 | `history: ChatMessage[]` | Settled messages (user turns + **completed** assistant replies) |
 | `runEpoch: number` | Monotonic counter; **bumped once per send** to scope the live stream to the current turn |
 | `events` (from `useChatStream`) | The accumulated SSE events across runs |
-| `title` | Chat title shown in the header |
+| `pending` | **Synchronous optimistic-send flag** (commit `b4e6ada`): flips true the same frame `send()` fires, *before* the awaited POST resolves, so the thinking row is instant (`busy` lags by the round-trip). Drives `optimisticThinking` (`ChatScreen.tsx:38`, `130`) |
+| `scrollerNode` | The chat scroll node's *identity* in state, shared so `FlowingLines`' parallax re-attaches when the scroller is swapped on a session switch (`ChatScreen.tsx:43-44`) |
 | `activityCollapsed` | Activity-panel collapse, persisted in `localStorage` (`ava.activityCollapsed`) |
+
+> The chat header (and its `title` state) was **removed** in commit `b4e6ada` — navigation is now the persistent deck nav. The header orb's `flipId` moved to the `ThinkingIndicator`.
 
 The central idea: **`history` holds finished turns; `events` holds the live one.** When a run finishes, its `final` text is *promoted* into `history` exactly once (the effect at `ChatScreen.tsx:70-91`), keyed by `a-${epoch}`. Without that promotion, the previous reply vanished on the next user turn (the fix comment at `ChatScreen.tsx:66-69` documents the original bug). To avoid double-rendering, live events are filtered to the current `runEpoch`, and the live `final` is dropped once it's been promoted (`ChatScreen.tsx:108-113`).
 
 Derived UI state:
 
 - `busy` — a run is in flight (`runEpoch > 0` and no terminal event yet). Drives the Composer's send→stop swap.
-- `headerState` — `idle | thinking | responding`, shown next to the header orb; flips to `responding` once a `final` event exists for the current run.
-- `steps`, `executing`, `runningTool` — derived from the live stream by `activity-steps.ts` (see §6); `executing` (a tool is mid-flight) charges the background and auto-expands the Activity panel (`ChatScreen.tsx:132-135`).
+- `headerState` — `idle | thinking | responding`; flips to `responding` once a `final` event exists for the current run. (Now feeds the `ThinkingIndicator`'s chip state rather than a header orb — the header is gone.)
+- `optimisticThinking` = `(pending || busy) && !lastFinalCurrent && !currentRunFinished` (`ChatScreen.tsx:130`) — instant on send, held through the run, dropped when the `final` lands or the run ends. Drives the premium thinking row.
+- `steps`, `executing`, `runningTool` — derived from the live stream by `activity-steps.ts` (see §6); `executing` (a tool is mid-flight) charges the `FlowingLines` background and auto-expands the Activity panel (`ChatScreen.tsx:143-147`).
 
 `initialText` (set when the home command bar opens a fresh chat) is auto-sent **exactly once**, guarded by `autoSentRef`, and only for a brand-new (`requestedSessionId === null`) session (`ChatScreen.tsx:151-160`).
 
@@ -223,18 +227,20 @@ Derived UI state:
 
 A sticky, frosted-glass input with: a horizontal strip of **suggestion chips** fetched from `/api/chips/suggested` (tap → fills the box, does **not** auto-send), an auto-growing `<textarea>` (48–150px), an **Enter-to-send / Shift+Enter-newline** key handler, a **mic button** (the small Orb) that calls `onMicTap` → enters voice mode, and a **send button that becomes a red Stop** while `busy` (calling `onKill`). `submit()` no-ops while busy or empty.
 
+As of commit `b4e6ada` the composer **expands on focus** (`Composer.tsx:51-84`): tapping in scales the box `1.012`, glows cyan, raises the textarea `minHeight` floor to 64, and runs one specular glint; it collapses back on blur **only when the box is empty** (a draft keeps it expanded). Focus sets the floor, the text auto-grow grows the ceiling above it — the two compose. Reduced motion sets the floor with no tween.
+
 ### MessageList rendering rules (`MessageList.tsx`)
 
-- **History**: user turns render as right-aligned glass bubbles; assistant turns as left-aligned silver-gradient text beside a static Orb, each with a `MessageActions` row.
+- **History**: user turns render as right-aligned **mercury glass bubbles** (`OwnerBubble`); assistant turns as a left-aligned **cyan glass slab** (`AvaBubble`, a `.lg-slab`-derived surface) beside a static Orb, each with a `MessageActions` row. Both carry `data-bubble`, hover-lift + specular sweep, and reveal with a blur-up via a single-source `ScrollTrigger.batch` (commit `b4e6ada`; see the [Premium Chat feature doc](../features/premium-chat.md)).
 - **Live events** (current run only) render in order:
   - `approval_required` → an **`ApprovalCard`** (§7).
   - `tool_call` → a `ToolCallChip` breadcrumb (humanized label).
   - `tool_result` → **only failures render inline** (`ok:false`); successes are intentionally suppressed in the chat flow because the Activity panel already shows them (`MessageList.tsx:105-110`).
   - `thought` → **not rendered as a bubble**; the latest thought/tool feeds the "thinking…" caption instead.
   - `error` / `killed` / `gap` → small status lines (a `gap` means buffered SSE events were missed and points the owner at Sessions for the full trace).
-- The **live `final`** renders via `WordReveal` (`MessageList.tsx:131-147`) — a one-shot, time-boxed, word-by-word blur-up. This is necessary because Ava's answer arrives as a **single `final` event, not token-streamed**, so the reveal animation *is* the "typing" feel.
-- A **thinking indicator** (`MessageLoading` dots + `ShiningText` caption) shows whenever there are live events but no `final` and no terminal event yet.
-- Auto-scrolls to the bottom on every change in `history.length` or `liveEvents.length`.
+- The **live `final`** renders via `WordReveal` (`MessageList.tsx:221-232`) — a one-shot, time-boxed, word-by-word blur-up. This is necessary because Ava's answer arrives as a **single `final` event, not token-streamed**, so the reveal animation *is* the "typing" feel.
+- A premium **`ThinkingIndicator`** (commit `b4e6ada`) shows whenever `optimisticThinking && !lastFinal` (`MessageList.tsx:98`, `234`) — a breathing mercury orb (hosting the chat `flipId="ava-orb"`) + a state `.chip` + a cyan/mercury `ShiningText` caption. It appears the **instant** you send (the synchronous `pending` flag), before any live event, and cross-fades out when the `final` streams in. It replaced the old `MessageLoading`-dots indicator that only appeared once live events existed.
+- Auto-scrolls to the bottom on every change in `history.length`, `liveEvents.length`, or `optimisticThinking`.
 
 ### Humanizing tool calls (`humanize.ts`)
 
@@ -253,13 +259,13 @@ This is the core client loop, verified against the code. It shows how a keystrok
 ### Step by step
 
 1. **Type + submit.** The owner types in the `Composer` and hits Enter. `Composer.submit()` (`Composer.tsx:39-45`) trims, guards against empty/busy, calls `onSend(text)`, and clears the box.
-2. **Optimistic echo + POST.** `ChatScreen.send(text)` (`ChatScreen.tsx:142-147`) immediately appends the user bubble to `history` (so it shows instantly), then `await api.sendMessage(sessionId, text)`. The server persists the turn and returns `{ sessionId }`.
+2. **Optimistic echo + instant thinking + POST.** `ChatScreen.send(text)` (`ChatScreen.tsx:154-160`) immediately appends the user bubble to `history` *and* sets `pending = true` (the same frame, before the await — this is what makes the thinking row instant), then `await api.sendMessage(sessionId, text)`. The server persists the turn and returns `{ sessionId }`.
 3. **Adopt id + bump epoch.** `send()` stores the returned `sessionId` and does `setRunEpoch(n => n + 1)`. Bumping `runEpoch` is what (a) scopes the upcoming live events to *this* turn and (b) **re-keys the `useChatStream` effect**, forcing a fresh stream connection.
 4. **Open the SSE stream.** `useChatStream(sessionId, runEpoch)` (`useChatStream.ts:19-83`) opens `new EventSource('/api/chat/{sessionId}/stream?lastEventId={n}&t={token}')`. The token rides in the query string because `EventSource` can't set headers. It registers listeners for every event kind: `thought, tool_call, tool_result, final, error, killed, done, gap, approval_required, approval_resolved`.
 5. **Server streams events.** The server writes SSE frames (`server/src/sse/stream.ts`): each frame is `id: <n>` + `event: <kind>` + `data: <json>`. The client's per-kind handler (`useChatStream.ts:44-60`) parses `data`, tracks the highest `lastEventId` seen (for resume), and appends `{ kind, payload, id, runEpoch }` to `events`.
 6. **Render the live turn.** `ChatScreen` recomputes `liveEvents` (current run, minus an already-promoted final) and passes them to:
    - **`MessageList`** — shows tool-call breadcrumbs, inline failures, approval cards, and the thinking caption.
-   - **`ActivityPanel`** — `deriveSteps(liveEvents)` (`activity-steps.ts:14-34`) turns each `tool_call` into a **running** step and completes it on the matching `tool_result` (marking `ok`). `isExecuting` (any step still running) charges the `EtherealShadows` background, swaps the header orb to `working`, and auto-expands the panel.
+   - **`ActivityPanel`** — `deriveSteps(liveEvents)` (`activity-steps.ts:14-34`) turns each `tool_call` into a **running** step and completes it on the matching `tool_result` (marking `ok`). `isExecuting` (any step still running) charges the `FlowingLines` background (warms it toward exec-amber + quickens), swaps the thinking orb to `working`, and auto-expands the panel.
 7. **Final answer reveals.** When a `final` event arrives, `MessageList` renders its text with `WordReveal` (word-by-word blur-up) — the stand-in for token streaming, since the answer comes whole.
 8. **Terminal → promote + close.** On `done` / `killed` / `error`, `useChatStream` sets `finished = true` and closes the `EventSource`. The promotion effect (`ChatScreen.tsx:70-91`) moves the run's `final` text into `history` as a settled assistant message (id `a-{epoch}`), and the live copy stops rendering. `busy` flips false → the Stop button reverts to Send.
 9. **Stop (optional).** If the owner hits Stop mid-run, `Composer.onKill` → `ChatScreen.kill()` → `api.kill(sessionId)` (`POST /api/chat/:id/kill`); the server emits `killed`, which terminates the stream the same way.
@@ -351,7 +357,7 @@ A ~1.7s cinematic intro: the mercury orb scales/blurs in over a nebula, "AVA" re
 
 ### Memory — `memory/MemoryScreen.tsx`
 
-Reads `/api/memory` and renders four sections: **Personality** (read-only `.md`, collapsible), **Preferences** (inline add / edit / delete via `/api/memory/lines`), **Observations** (filterable by category via `SegmentedTabs`, each with a confidence-colored dot and edit/delete), and **Projects** (collapsible). Edits are optimistic-with-reload; the underlying `patchMemoryLine` understands HTTP 409 for concurrent-edit safety (see §4).
+Reads `/api/memory` and renders four sections: **Personality** (read-only `.md`, collapsible), **Preferences** (inline add / edit / delete via `/api/memory/lines`), **Observations** (filterable by category via `SegmentedTabs`, each with a confidence-colored dot and edit/delete), and **Projects** (collapsible). Edits are optimistic-with-reload; the underlying `patchMemoryLine` understands HTTP 409 for concurrent-edit safety (see §4). As of commit `b4e6ada` Memory has a subtle cyan **`NeuralField`** WebGL backdrop, passed through `PanelShell`'s new `bg` slot (`MemoryScreen.tsx:46`) — see the [Premium Chat feature doc](../features/premium-chat.md).
 
 ### Rules — `rules/RulesScreen.tsx`
 
@@ -406,9 +412,12 @@ The **locked aesthetic** (per project memory, `frontend_remodel_aesthetic`): a *
 | **`Orb.tsx`** + `orb-state.ts` | The canonical avatar/hero. GSAP drives spin/rim-pulse/(listening) ripples; CSS does the morph. `orbMotion(state, amplitude)` maps `idle/listening/thinking/responding/working` → spin/morph/rim numbers (pure, tested). **Perf-critical detail:** only orbs ≥40px animate; the many tiny avatars (chat header, every message, composer ≈14–28px) render as a **static** mercury disc, or a long chat would spin up ~20 infinite GSAP timelines and choke the main thread (`Orb.tsx:30-31`). |
 | **`TubelightNav.tsx`** + `tubelight-nav.ts` | The glass home nav pill; a cyan "lamp" springs to the active item via Motion `layoutId`. Items fire view-switches, not routes. |
 | **`DottedSurface.tsx`** | three.js animated dot-grid wave — the home's depth layer. |
-| **`NebulaBackground` / `EtherealShadows` / `PathsBackground` / `RainBackground` / `SpaceBackground`** | Per-surface decorative backdrops. `EtherealShadows` (chat) warps a cyan/violet field with an animated SVG turbulence/displacement filter and **`charged`** warms it toward exec-amber while a tool runs. `PathsBackground` (pairing) animates flowing SVG strokes. All freeze under reduced motion and are `aria-hidden`. |
+| **`NebulaBackground` / `PathsBackground` / `RainBackground` / `SpaceBackground` / `EtherealShadows`** | Per-surface decorative backdrops. `PathsBackground` (pairing) animates flowing SVG strokes. (`EtherealShadows` was the chat backdrop until commit `b4e6ada` replaced it with `FlowingLines`; it remains in the codebase but is no longer used by chat.) All freeze under reduced motion and are `aria-hidden`. |
+| **`FlowingLines.tsx`** | **(commit `b4e6ada`)** The chat hero background — a slow looping bundle of cyan/mercury lines (one GSAP `strokeDashoffset` draw timeline over 16 paths), a single-layer opacity breathe, tab-hidden pause, and one ScrollTrigger parallax. `charged` warms + quickens. Replaced `EtherealShadows` on chat. See the [Premium Chat feature doc](../features/premium-chat.md). |
+| **`EdgeFade.tsx`** | **(commit `b4e6ada`)** Pure-CSS stacked-blur + gradient edge fade, mounted as a viewport-pinned overlay over the chat scroll column (top + bottom) so messages dissolve into the substrate. No JS/rAF; reduced motion → tint only. |
+| **`NeuralField.tsx`** | **(commit `b4e6ada`)** A subtle fixed/viewport-sized raw-WebGL "neuro" fbm shader (cyan), now Memory's backdrop. One fullscreen triangle, one draw call; reduced-motion static frame; gl-null CSS-haze fallback. |
 | **`WordReveal.tsx`** | Word-by-word blur-up for Ava's final answers (since answers aren't token-streamed). Time-boxed so long replies don't crawl; reduced motion renders plainly. |
-| **`ShiningText` / `TextEffect` / `CyclingText` / `MessageLoading`** | Small text/loading flourishes — the shimmer "thinking…" caption, the three-dot SVG spinner, etc. |
+| **`ShiningText` / `TextEffect` / `CyclingText` / `MessageLoading`** | Small text/loading flourishes. `ShiningText` is the cyan/mercury "thinking…" caption (recolored via `.shine-deck`); its shimmer is a **Framer Motion loop**, so the CSS reduced-motion gate can't stop it — commit `b4e6ada` added a `reduced` prop that renders a static lit gradient instead. `MessageLoading` is the three-dot SVG spinner. |
 | **`SegmentedTabs.tsx`** | The pill toggle (with a spring-animated cursor) used by Rules' Speed and Memory's category filter. |
 | **`GlassFilter.tsx`** | A hidden SVG `feTurbulence`/`feDisplacementMap` filter (`#ava-glass`) mounted once at the app root for liquid-glass distortion. |
 

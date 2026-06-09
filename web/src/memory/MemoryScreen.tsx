@@ -1,12 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { ChevronLeft } from "lucide-react";
+import { useEffect, useState } from "react";
 import { fetchMemory, type MemoryView, patchMemoryLine, postMemoryLine } from "../api.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
+import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 
 const CATEGORIES = ["all", "context", "people", "setup", "skills", "schedule", "preferences"] as const;
 type Filter = typeof CATEGORIES[number];
 
-export function MemoryScreen({ onClose }: { onClose: () => void }) {
+export function MemoryScreen(_props: { onClose?: () => void }) {
   const [m, setM] = useState<MemoryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [cat, setCat] = useState<Filter>("all");
@@ -20,39 +20,14 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
   }
   useEffect(() => { load(); }, []);
 
-  if (err) return <div className="p-4 text-red-400 text-sm">error: {err}</div>;
-  if (!m) return <div className="p-4 text-white/50 text-sm">Loading memory…</div>;
+  if (err) return <div className="flex h-full items-center justify-center bg-black text-sm text-red-400">error: {err}</div>;
+  if (!m) return <div className="flex h-full items-center justify-center bg-black text-sm text-white/50">Loading memory…</div>;
 
   const obs = cat === "all" ? m.observations.lines : m.observations.lines.filter((l) => l.category === cat);
 
   return (
-    <div
-      className="no-scrollbar relative h-full overflow-y-auto text-white"
-      style={{
-        background:
-          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(92,242,255,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
-      }}
-    >
-      <header
-        className="sticky top-0 z-10 flex items-center gap-2 px-4 py-4 h-16"
-        style={{
-          background: "rgba(0,0,0,0.55)",
-          backdropFilter: "blur(20px) saturate(140%)",
-          WebkitBackdropFilter: "blur(20px) saturate(140%)",
-          borderBottom: "1px solid rgba(92,242,255,0.16)",
-        }}
-      >
-        <button
-          onClick={onClose}
-          aria-label="back"
-          className="w-9 h-9 rounded-full text-white/65 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
-        >
-          <ChevronLeft size={20} />
-        </button>
-        <div className="hud text-[13px] text-white/95">Memory</div>
-      </header>
-
-      <Section
+    <PanelShell title="Memory">
+      <PanelSection
         title="Personality"
         right={<span className="text-white/40 text-[10px]">{showPersonality ? "hide" : "show"}</span>}
         onClickHeader={() => setShowPersonality((v) => !v)}
@@ -63,9 +38,9 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
             <div className="text-[10px] text-white/35 mt-2">Edit data/memory/personality.md directly to change.</div>
           </>
         )}
-      </Section>
+      </PanelSection>
 
-      <Section title="Preferences">
+      <PanelSection title="Preferences">
         <div className="space-y-1.5">
           {m.preferences.lines.length === 0 && (
             <div className="text-xs text-white/40">none yet.</div>
@@ -106,9 +81,9 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
             </button>
           </div>
         </div>
-      </Section>
+      </PanelSection>
 
-      <Section title={`Observations (${m.observations.lines.length})`}>
+      <PanelSection title={`Observations (${m.observations.lines.length})`}>
         <div className="overflow-x-auto pb-2 mb-2 -mx-1 px-1">
           <SegmentedTabs<Filter>
             options={CATEGORIES.map((c) => ({ value: c, label: c }))}
@@ -134,9 +109,9 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
             />
           ))}
         </div>
-      </Section>
+      </PanelSection>
 
-      <Section
+      <PanelSection
         title="Projects"
         right={<span className="text-white/40 text-[10px]">{showProjects ? "hide" : "show"}</span>}
         onClickHeader={() => setShowProjects((v) => !v)}
@@ -154,28 +129,8 @@ export function MemoryScreen({ onClose }: { onClose: () => void }) {
             ))}
           </div>
         )}
-      </Section>
-    </div>
-  );
-}
-
-function Section({ title, right, onClickHeader, children }: {
-  title: string;
-  right?: ReactNode;
-  onClickHeader?: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <section className="border-b border-white/5 px-4 py-3">
-      <header
-        className={"hud flex items-center justify-between text-white/55 text-xs mb-2 " + (onClickHeader ? "cursor-pointer" : "")}
-        onClick={onClickHeader}
-      >
-        <span>{title}</span>
-        {right}
-      </header>
-      {children}
-    </section>
+      </PanelSection>
+    </PanelShell>
   );
 }
 

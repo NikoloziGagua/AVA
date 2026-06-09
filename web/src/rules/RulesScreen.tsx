@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronLeft } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import {
   fetchRules, createRule, patchRule, deleteRuleApi, type RuleRow,
   fetchReasoning, putReasoning, type ReasoningPref,
@@ -8,12 +7,13 @@ import {
 import { getToken } from "../auth/tokens.js";
 import { enablePush } from "../push/register.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
+import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 
 interface Device { id: string; label: string; created_at: number; revoked_at: number | null; }
 
 type PushStatus = "unknown" | "granted" | "denied" | "default" | "unsupported" | "pending" | "error";
 
-export function RulesScreen({ onClose }: { onClose: () => void }) {
+export function RulesScreen(_props: { onClose?: () => void }) {
   const [rows, setRows] = useState<RuleRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -134,33 +134,8 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div
-      className="no-scrollbar relative h-full overflow-y-auto text-white"
-      style={{
-        background:
-          "radial-gradient(ellipse 70% 80% at 50% 0%, rgba(92,242,255,0.10), transparent 60%), radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px) 0 0 / 28px 28px, #000",
-      }}
-    >
-      <header
-        className="sticky top-0 z-10 flex items-center gap-2 px-4 py-4 h-16"
-        style={{
-          background: "rgba(0,0,0,0.55)",
-          backdropFilter: "blur(20px) saturate(140%)",
-          WebkitBackdropFilter: "blur(20px) saturate(140%)",
-          borderBottom: "1px solid rgba(92,242,255,0.16)",
-        }}
-      >
-        <button
-          onClick={onClose}
-          aria-label="back"
-          className="w-9 h-9 rounded-full text-white/65 hover:text-white hover:bg-white/8 active:scale-95 flex items-center justify-center transition-all"
-        >
-          <ChevronLeft size={20} />
-        </button>
-        <div className="hud text-[13px] text-white/95">Rules</div>
-      </header>
-
-      <Section title="Speed">
+    <PanelShell title="Rules">
+      <PanelSection title="Speed">
         {reason ? (
           <>
             <SegmentedTabs<"fast" | "thorough">
@@ -181,9 +156,9 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
         ) : (
           <div className="text-xs text-white/40">Loading…</div>
         )}
-      </Section>
+      </PanelSection>
 
-      <Section title="Autonomy rules">
+      <PanelSection title="Autonomy rules">
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -224,9 +199,9 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-      </Section>
+      </PanelSection>
 
-      <Section title="Pinned chips">
+      <PanelSection title="Pinned chips">
         <div className="space-y-1.5 mb-2">
           {chips.length === 0 && <div className="text-xs text-white/40">no pinned chips.</div>}
           {chips.map((c) => (
@@ -252,9 +227,9 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
           />
         </div>
         <button onClick={addChip} className="mt-2 px-3 py-1 text-xs rounded-md" style={{ background: "var(--ac)", color: "#04222a" }}>Add chip</button>
-      </Section>
+      </PanelSection>
 
-      <Section title="Notifications">
+      <PanelSection title="Notifications">
         {pushStatus === "unsupported" && (
           <div className="text-xs text-white/40">Push notifications aren't supported in this browser.</div>
         )}
@@ -285,9 +260,9 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
         {pushStatus === "pending" && (
           <div className="text-xs text-white/55">Asking permission…</div>
         )}
-      </Section>
+      </PanelSection>
 
-      <Section title="Devices">
+      <PanelSection title="Devices">
         <div className="space-y-1.5">
           {devices.length === 0 && <div className="text-xs text-white/40">no devices paired.</div>}
           {devices.map((d) => (
@@ -298,17 +273,8 @@ export function RulesScreen({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-      </Section>
-    </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <section className="border-b border-white/5 px-4 py-3">
-      <div className="hud text-xs text-white/55 mb-2">{title}</div>
-      {children}
-    </section>
+      </PanelSection>
+    </PanelShell>
   );
 }
 

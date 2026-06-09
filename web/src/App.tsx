@@ -1,6 +1,8 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { Home, Plus, List, Brain, Settings2, Sparkles } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
+import { TubelightNav, type TubelightItem } from "./components/ava/TubelightNav.js";
 import { useReducedMotion } from "./lib/useReducedMotion.js";
 import { getToken } from "./auth/tokens.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
@@ -56,6 +58,21 @@ export function App() {
     try { flipStateRef.current = Flip.getState(orb); } catch { flipStateRef.current = null; }
   }, [view.name, reduced]);
 
+  // Persistent deck nav — the bar stays put while panels swap, tracks the current
+  // view, and lets you jump straight between Home / Chats / Memory / Rules / Self.
+  const navItems: TubelightItem[] = [
+    { name: "Home", icon: Home, onSelect: () => setView({ name: "orbit" }) },
+    { name: "New", icon: Plus, onSelect: () => setView({ name: "chat", sessionId: null }) },
+    { name: "Chats", icon: List, onSelect: () => setView({ name: "list" }) },
+    { name: "Memory", icon: Brain, onSelect: () => setView({ name: "memory" }) },
+    { name: "Rules", icon: Settings2, onSelect: () => setView({ name: "rules" }) },
+    { name: "Self", icon: Sparkles, onSelect: () => setView({ name: "self" }) },
+  ];
+  const NAV_FOR_VIEW: Record<string, string> = {
+    orbit: "Home", memory: "Memory", rules: "Rules", self: "Self", list: "Chats",
+  };
+  const showNav = view.name in NAV_FOR_VIEW;
+
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
 
   return (
@@ -82,16 +99,11 @@ export function App() {
             className="absolute inset-0"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 1.4 }}
-            transition={{ duration: 0.3 }}
+            exit={{ opacity: 0, scale: 1.04 }}
+            transition={{ duration: 0.45, ease: [0.4, 0, 0.2, 1] }}
           >
             <OrbitScreen
-              onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
               onCommand={(text) => setView({ name: "chat", sessionId: null, initialText: text })}
-              onOpenMemory={() => setView({ name: "memory" })}
-              onOpenRules={() => setView({ name: "rules" })}
-              onOpenList={() => setView({ name: "list" })}
-              onOpenSelf={() => setView({ name: "self" })}
               onEnterVoice={() => setView({ name: "voice", from: "orbit", sessionId: null })}
             />
           </motion.div>
@@ -100,10 +112,10 @@ export function App() {
           <motion.div
             key={`chat-${view.sessionId ?? "new"}`}
             className="absolute inset-0"
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
+            transition={{ duration: 0.45, ease: [0.4, 0, 0.2, 1] }}
           >
             <ChatScreen
               sessionId={view.sessionId}
@@ -187,6 +199,17 @@ export function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Persistent deck nav: stays mounted (so the cyan lamp springs smoothly
+          between panels) and fades out on the immersive views (splash/chat/voice). */}
+      <motion.div
+        className="absolute left-1/2 top-6 z-30 -translate-x-1/2"
+        animate={{ opacity: showNav ? 1 : 0, y: showNav ? 0 : -14 }}
+        transition={{ duration: 0.3, ease: "easeOut" }}
+        style={{ pointerEvents: showNav ? "auto" : "none" }}
+      >
+        <TubelightNav items={navItems} activeName={NAV_FOR_VIEW[view.name]} />
+      </motion.div>
     </div>
   );
 }

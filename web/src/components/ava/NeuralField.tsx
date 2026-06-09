@@ -89,9 +89,14 @@ function compile(gl: WebGLRenderingContext, type: number, src: string): WebGLSha
   return sh;
 }
 
+// Stable default so the effect's `color` dep doesn't change identity on re-render
+// (a fresh [..] literal default would rebuild the WebGL context on every re-render,
+// e.g. when the Motion pref flips).
+const DEFAULT_COLOR: [number, number, number] = [0.36, 0.95, 1.0];
+
 export function NeuralField({
   opacity = 0.25,
-  color = [0.36, 0.95, 1.0],
+  color = DEFAULT_COLOR,
   reactive = true,
   className,
 }: NeuralFieldProps) {

@@ -46,9 +46,8 @@ export function buildPanelEnter(_root: HTMLElement, title: string): gsap.core.Ti
     { duration: 0.65, scrambleText: { text: title, chars: "upperCase", speed: 0.7, revealDelay: 0.12 } }, 0.18);
   tl.from("[data-panel-section]",
     { y: 22, opacity: 0, duration: D.section, stagger: 0.07, clearProps: "transform,opacity" }, 0.28);
-  // Sweep var lives on the sections themselves (.lg-sweep::after reads it).
-  tl.fromTo("[data-panel-section]",
-    { "--sweep-x": "-130%" }, { "--sweep-x": "130%", duration: 0.7, stagger: 0.07, ease: "power2.inOut" }, 0.32);
+  // (No per-section --sweep-x sweep: the cards are now BorderGlow .bg-card, which has
+  // no .lg-sweep::after to read it — the cursor-following border is their accent.)
   return tl;
 }
 

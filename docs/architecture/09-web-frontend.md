@@ -94,7 +94,7 @@ Things worth noting from the diagram:
 
 - **`orbit` (the home) is the hub.** Every panel returns to `orbit` on close. There is no global back-stack; "back" is hard-coded per screen (`memory`/`rules`/`self`/`list` always go to `orbit`; `chat`'s back arrow also goes to `orbit`).
 - **Voice remembers where it came from.** The `voice` view carries `from: "orbit" | "chat"`. On exit, `App.tsx:130-134` routes back accordingly: `from === "chat"` → back to that chat (with the session id), otherwise → home. This is the only "return to caller" behavior in the app.
-- **The two grouped behaviors** are *surfaces that own the Orb* (`splash`, `orbit`, `chat`, `voice`) vs. *panels* (`memory`, `rules`, `self`, `list`). This split drives both the GSAP Flip logic and the entry animation (panels slide up from the bottom; orb-surfaces cross-fade). See §3.
+- **The two grouped behaviors** are *surfaces that own the Orb* (`splash`, `orbit`, `chat`, `voice`) vs. *panels* (`memory`, `rules`, `self`, `list`). This split drives both the GSAP Flip logic and the entry animation. As of the deck redesign (commit `5e24e00`), the four panels no longer slide up from the bottom — they **materialize** (fade + slight scale-in, then blur/shrink out) while the deck nav stays put; orb-surfaces still cross-fade. See §3 and the [Deck Design System feature doc](../features/deck-design-system.md).
 
 ### How `sessionId` threads between chat and voice
 
@@ -113,9 +113,11 @@ Things worth noting from the diagram:
 
 Two animation systems cooperate, and the split is deliberate.
 
-**Motion (`AnimatePresence`)** owns screen-to-screen transitions. Each `view` branch is a `motion.div` with `initial`/`animate`/`exit`. Panels (`memory`/`rules`/`self`/`list`) slide up (`y: "100%"` → `0`); `orbit` fades and zooms slightly on exit; `chat` fades up; `voice` plain-fades.
+**Motion (`AnimatePresence`)** owns screen-to-screen transitions. Each `view` branch is a `motion.div` with `initial`/`animate`/`exit`. The four panels (`memory`/`rules`/`self`/`list`) **materialize**: `initial opacity:0` → `animate opacity:1`, and `exit { opacity:0, scale:0.985, filter:"blur(6px)" }` on the cinematic ease `[0.22, 1, 0.36, 1]`, with the duration cut to `0.15s` under reduced motion (`App.tsx:150-200`). `orbit` fades and zooms slightly on exit; `chat` fades up; `voice` plain-fades. (Until commit `5e24e00` the panels slid up `y:"100%"` → `0` over their own black background; that was replaced because it read as a separate app slamming in — see the [Deck Design System feature doc](../features/deck-design-system.md). The rich *entrance* now lives **inside** each panel, in `PanelShell`'s GSAP enter timeline, not in this `motion.div`.)
 
-A load-bearing comment at `App.tsx:64-67` explains why there is **no `mode="wait"`**: the home and voice screens run *infinite* CSS animations (nebula drift, orb morph) that never fire an exit-complete, so `mode="wait"` would block the next view from ever mounting (panels appeared "dead/black"). Default concurrent mode cross-fades instead.
+A load-bearing comment at `App.tsx:81-84` explains why there is **no `mode="wait"`**: the home and voice screens run *infinite* CSS animations (nebula drift, orb morph) that never fire an exit-complete, so `mode="wait"` would block the next view from ever mounting (panels appeared "dead/black"). Default concurrent mode cross-fades instead.
+
+**The deck nav is persistent.** The `TubelightNav` pill is mounted **once, outside** the `AnimatePresence` (`App.tsx:205-212`); it fades/lifts out only on the immersive views (splash/chat/voice, via `showNav`) and tracks the current view through `NAV_FOR_VIEW`. Because it never unmounts across panel swaps, the cyan "lamp" springs smoothly between items, and the panels no longer render their own in-panel back button — the nav handles navigation.
 
 **GSAP Flip** owns the **shared Orb**. The mercury orb carries a stable `flipId="ava-orb"` on `splash`, `orbit`, `chat` (header avatar), and `voice`. The `useLayoutEffect` at `App.tsx:37-57` snapshots the orb's geometry before a view change and `Flip.from(...)` animates it from its old position/size to its new one — so the orb *flies* between surfaces (splash center → home hero → chat header → voice hero) instead of cutting. Guards:
 
@@ -327,6 +329,8 @@ Approvals also arrive as **web-push notifications** so the owner can respond whe
 
 ## 8. Home, lists, and the settings panels
 
+> **The four deck panels share one design system.** `Chats` (`ChatListScreen`), `Memory`, `Rules`, and `Self` are all built on **`PanelShell` / `PanelSection`** (`web/src/components/ava/PanelShell.tsx`) and the shared **`deckMotion`** module (`web/src/lib/deckMotion.ts`) — one material vocabulary (`.lg-slab`/`.lg-sweep`/`.btn-deck`/`.chip`/`.tgl`), one enter timeline (materialize → staggered section reveal → specular glint), and reduced-motion gating throughout. The per-panel notes below describe each screen's *content*; for the shared chrome, materials, and motion, see the [Deck Design System feature doc](../features/deck-design-system.md). Shipped in commit `5e24e00`.
+
 ### Home — `orbit/OrbitScreen.tsx`
 
 The "de-spun" home (the old orbital ring was removed — see the locked aesthetic note in §10). Layout: a three.js `DottedSurface` + drifting `NebulaBackground` behind a vignette, a glass **`TubelightNav`** pill at top (New / Chats / Memory / Rules / Self), the **mercury `Orb` hero** (150px) with the "AVA" wordmark, and a **`CommandBar`** omnibox at the bottom. Interactions: **press Space (when not typing) or click the orb → voice** (`OrbitScreen.tsx:34-43`); the command bar submits text → opens a fresh chat seeded with it (`onCommand`).
@@ -337,7 +341,7 @@ A small controlled form ("Ask Ava, or tell her to do something…"). On submit i
 
 ### All-chats — `orbit/ChatListScreen.tsx`
 
-Lists sessions from `/api/sessions`, newest first. Tap a row → open that chat; **+** → new chat. Delete is **optimistic with a 5-second undo**: the row is removed immediately, a toast offers *undo*, and the actual `DELETE` only fires after the window (or immediately if another delete starts). If the server `DELETE` fails, the row is restored (`ChatListScreen.tsx:30-54`).
+Lists sessions from `/api/sessions`, newest first. Tap a row → open that chat; **+** → new chat. Delete is **optimistic with a 5-second undo**: the row is removed immediately, a toast offers *undo*, and the actual `DELETE` only fires after the window (or immediately if another delete starts). If the server `DELETE` fails, the row is restored (`ChatListScreen.tsx:89-107`). It also demonstrates the deck's React-Flip list-reorder pattern (snapshot in the handler, replay in a `useGSAP` effect — see the feature doc).
 
 > Note: `web/src/sessions/SessionsScreen.tsx` is a **legacy/dead screen** — an earlier, plainer sessions list. It is **not imported by `App.tsx`** (only referenced in old specs/plans) and has been superseded by `ChatListScreen`. Treat it as stale.
 
@@ -351,10 +355,10 @@ Reads `/api/memory` and renders four sections: **Personality** (read-only `.md`,
 
 ### Rules — `rules/RulesScreen.tsx`
 
-The control panel (321 lines), in sections:
+The control panel (419 lines), in sections:
 
 - **Speed** — a `fast`/`thorough` `SegmentedTabs` bound to `/api/reasoning`. The hint explains it tunes **both voice responsiveness and chat reasoning depth**, and notes when depth needs the OpenAI provider (`reason.supported === false`).
-- **Autonomy rules** — free-text rules (e.g. "never let shell delete files in C:/work without asking") POSTed to `/api/rules`. New rules show a **`parsing…` → `active` / `parse failed`** status; the screen **polls every 2s (max 30s)** while any rule is pending (`RulesScreen.tsx:35-48`).
+- **Autonomy rules** — free-text rules (e.g. "never let shell delete files in C:/work without asking") POSTed to `/api/rules`, each row toggled on/off via the deck `.tgl` switch. New rules show a **`PARSING` → `ACTIVE` / `PARSE FAILED`** status chip; the screen **polls every 2s (max 30s)** while any rule is pending (`RulesScreen.tsx:48-85`), and draws a cyan underline onto the genuinely-new row (keyed by id, so a server re-sort can't misfire it).
 - **Pinned chips** — manage the composer's pinned quick-prompts.
 - **Notifications** — enable web push (`enablePush`), with status states (unsupported / granted / denied / pending / error).
 - **Devices** — list and **revoke** paired devices via `/api/auth/devices`.
@@ -388,11 +392,12 @@ Built with `vite-plugin-pwa`'s **`injectManifest`** strategy: Workbox injects th
 
 The **locked aesthetic** (per project memory, `frontend_remodel_aesthetic`): a **liquid-mercury orb** + a **cyan command-deck**, GSAP/Motion-driven, **desktop-primary**. The design tokens live in `web/src/theme.css`:
 
-- **Cyan accent system**: `--ac: #5cf2ff` (lead), `--ac-live: #39ffb0` (success), `--ac-exec: #ffd479` (executing), `--ac-stop: #ff6b6b` (destructive).
-- **`.glass`** — the frosted surface (blur + subtle border) used by nav, composer, panels, cards.
+- **Cyan accent system**: `--ac: #5cf2ff` (lead), `--ac-live: #39ffb0` (success), `--ac-exec: #ffd479` (executing), `--ac-stop: #ff6b6b` (destructive). Plus `--ac-text: #d7fbff` (legible text on cyan fills) and `--glass-deck` (the deck slab base), added in the deck redesign.
+- **`.glass`** — the frosted surface (blur + subtle border) used by nav, composer, and the home/chat chrome.
 - **`.mercury`** — the conic-gradient fill of the Orb; **`@keyframes orb-morph`** does the organic edge wobble (kept in CSS because multi-value `border-radius` tweening is awkward in GSAP).
 - **`.hud`** — the monospace, upper-case, wide-tracked label style for status lines, step lists, and chips.
-- A global **`prefers-reduced-motion`** block collapses all animation to near-instant.
+- **The deck material vocabulary** — `.lg-slab` (the premium glass card, which replaced the four panels' old `border-white/8 + bg-white/[0.02]` cards), `.lg-rim-mercury` (focused rim), `.lg-sweep` (the `--sweep-x`-driven specular glint), `.lg-edgelight`, `.btn-deck` + `.btn-primary`/`.btn-ghost`/`.btn-danger`, `.chip` + `.chip-live`/`-exec`/`-stop`/`-ac`, and the `.tgl` toggle. These are scoped to the four deck panels and documented in full in the [Deck Design System feature doc](../features/deck-design-system.md).
+- A global **`prefers-reduced-motion`** block collapses all CSS animation to near-instant; the deck's GSAP layer gates separately on a `reduced` flag.
 
 ### `components/ava/` — the bespoke, Ava-branded pieces
 

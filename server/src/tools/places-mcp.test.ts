@@ -62,4 +62,39 @@ describe("find_places", () => {
     expect(r.ok).toBe(false);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it("fans out over multiple queries and dedupes by id (beating the 60-per-query cap)", async () => {
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const q = (JSON.parse(String(init?.body)) as { textQuery: string }).textQuery;
+      if (q === "q1") {
+        return fakeRes({ places: [
+          { id: "p1", displayName: { text: "Alpha" }, formattedAddress: "1" },      // no website
+          { id: "p2", displayName: { text: "Beta" }, formattedAddress: "2" },       // no website
+        ] });
+      }
+      return fakeRes({ places: [
+        { id: "p2", displayName: { text: "Beta" }, formattedAddress: "2" },         // DUPLICATE id
+        { id: "p3", displayName: { text: "Gamma" }, formattedAddress: "3" },        // no website
+      ] });
+    });
+    const tools = buildPlacesTools({ apiKey: "KEY", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const r = await run(tools, { queries: ["q1", "q2"], websiteFilter: "without" });
+    expect(r.ok).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // one call per query (no pagination here)
+    expect(r.text).toContain("3 result(s) for 2 searches");
+    expect(r.text).toContain("Alpha");
+    expect(r.text).toContain("Gamma");
+    expect((r.text.match(/Beta/g) ?? []).length).toBe(1); // appeared in both queries → deduped to one
+  });
+
+  it("combines a single `query` with `queries` and dedupes", async () => {
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const q = (JSON.parse(String(init?.body)) as { textQuery: string }).textQuery;
+      return fakeRes({ places: [{ id: q, displayName: { text: q }, formattedAddress: q }] });
+    });
+    const tools = buildPlacesTools({ apiKey: "KEY", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const r = await run(tools, { query: "a", queries: ["b", "a"] }); // 'a' listed twice → one call
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // a, b (dup 'a' dropped)
+    expect(r.text).toContain("2 searches");
+  });
 });

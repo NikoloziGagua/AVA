@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
-import { createSession, getSession, getSessionFull, listByStatus, listSessions, purgeDeletedSessions, setStatus, softDeleteSession, touchSession, updateSummary, updateTitle } from "./sessions.js";
+import { createSession, getSession, getSessionFull, listByStatus, listSessions, purgeDeletedSessions, setPinned, setStatus, softDeleteSession, touchSession, updateSummary, updateTitle } from "./sessions.js";
 
 describe("sessions repo", () => {
   let db: Db;
@@ -94,6 +94,29 @@ describe("sessions repo", () => {
   it("listByStatus returns [] when no sessions match", () => {
     createSession(db, { title: "x" });
     expect(listByStatus(db, "interrupted")).toEqual([]);
+  });
+
+  it("setPinned flips the pinned flag", () => {
+    const s = createSession(db, { title: "x" });
+    expect(getSession(db, s.id)?.pinned).toBe(0);
+    setPinned(db, s.id, true);
+    expect(getSession(db, s.id)?.pinned).toBe(1);
+    setPinned(db, s.id, false);
+    expect(getSession(db, s.id)?.pinned).toBe(0);
+  });
+
+  it("listSessions returns pinned sessions first", () => {
+    const older = createSession(db, { title: "older" });
+    // make `older` the less-recent of the two
+    db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(older.updated_at - 1000, older.id);
+    const newer = createSession(db, { title: "newer" });
+    // before pinning, newer sorts first by recency
+    expect(listSessions(db).map((s) => s.id)).toEqual([newer.id, older.id]);
+    // pin the older one; it should now sort ahead despite being less recent
+    setPinned(db, older.id, true);
+    const all = listSessions(db);
+    expect(all[0]?.id).toBe(older.id);
+    expect(all[1]?.id).toBe(newer.id);
   });
 });
 

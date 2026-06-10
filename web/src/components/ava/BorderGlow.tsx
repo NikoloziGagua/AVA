@@ -1,4 +1,4 @@
-import { useCallback, useRef, type CSSProperties, type ReactNode } from "react";
+import { type CSSProperties, type PointerEvent, type ReactNode } from "react";
 
 export interface BorderGlowProps {
   children: ReactNode;
@@ -6,6 +6,31 @@ export interface BorderGlowProps {
   style?: CSSProperties;
   /** Tag the card as a deck section so it joins the panel-enter stagger. */
   dataPanelSection?: boolean;
+}
+
+/**
+ * Light a `.bg-card`'s cursor-following cyan/mercury border ring toward the pointer.
+ * Operates on the event's `currentTarget`, so ANY `.bg-card` element can share it
+ * (BorderGlow, the DisplayCards Important-chats cards, …) — wire it as `onPointerMove`.
+ * Sets `--edge` (0 at centre → 1 at any edge, drives the ring/glow opacity) and
+ * `--angle` (the gradient rotation toward the cursor).
+ */
+export function igniteBorder(e: PointerEvent<HTMLElement>): void {
+  const el = e.currentTarget;
+  const r = el.getBoundingClientRect();
+  const dx = e.clientX - r.left - r.width / 2;
+  const dy = e.clientY - r.top - r.height / 2;
+  const kx = dx !== 0 ? r.width / 2 / Math.abs(dx) : Infinity;
+  const ky = dy !== 0 ? r.height / 2 / Math.abs(dy) : Infinity;
+  const edge = Math.min(Math.max(1 / Math.min(kx, ky), 0), 1);
+  const angle = (Math.atan2(dy, dx) * (180 / Math.PI) + 90 + 360) % 360;
+  el.style.setProperty("--edge", edge.toFixed(3));
+  el.style.setProperty("--angle", `${angle.toFixed(1)}deg`);
+}
+
+/** Douse the border ring (pointer left the card). Pair with `onPointerLeave`. */
+export function douseBorder(e: PointerEvent<HTMLElement>): void {
+  e.currentTarget.style.setProperty("--edge", "0");
 }
 
 /**
@@ -22,32 +47,10 @@ export interface BorderGlowProps {
  * needs no special branch.
  */
 export function BorderGlow({ children, className, style, dataPanelSection }: BorderGlowProps) {
-  const ref = useRef<HTMLDivElement>(null);
-
-  const onMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const dx = e.clientX - r.left - r.width / 2;
-    const dy = e.clientY - r.top - r.height / 2;
-    // Edge proximity: 0 at the centre → 1 at any edge.
-    const kx = dx !== 0 ? (r.width / 2) / Math.abs(dx) : Infinity;
-    const ky = dy !== 0 ? (r.height / 2) / Math.abs(dy) : Infinity;
-    const edge = Math.min(Math.max(1 / Math.min(kx, ky), 0), 1);
-    const angle = (Math.atan2(dy, dx) * (180 / Math.PI) + 90 + 360) % 360;
-    el.style.setProperty("--edge", edge.toFixed(3));
-    el.style.setProperty("--angle", `${angle.toFixed(1)}deg`);
-  }, []);
-
-  const onLeave = useCallback(() => {
-    ref.current?.style.setProperty("--edge", "0");
-  }, []);
-
   return (
     <div
-      ref={ref}
-      onPointerMove={onMove}
-      onPointerLeave={onLeave}
+      onPointerMove={igniteBorder}
+      onPointerLeave={douseBorder}
       {...(dataPanelSection ? { "data-panel-section": "" } : {})}
       className={"bg-card " + (className ?? "")}
       style={style}

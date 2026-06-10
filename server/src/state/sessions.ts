@@ -7,6 +7,7 @@ export type Session = {
   created_at: number;
   updated_at: number;
   status: "active" | "idle" | "archived";
+  pinned: number;
 };
 
 export function createSession(db: Db, opts: { title?: string | null }): Session {
@@ -15,7 +16,7 @@ export function createSession(db: Db, opts: { title?: string | null }): Session 
   db.prepare(
     "INSERT INTO sessions (id, title, created_at, updated_at, status) VALUES (?, ?, ?, ?, ?)"
   ).run(id, opts.title ?? null, now, now, "active");
-  return { id, title: opts.title ?? null, created_at: now, updated_at: now, status: "active" };
+  return { id, title: opts.title ?? null, created_at: now, updated_at: now, status: "active", pinned: 0 };
 }
 
 export function getSession(db: Db, id: string): Session | null {
@@ -50,7 +51,7 @@ export function updateSummary(db: Db, id: string, summary: string, throughMessag
 }
 
 export function listSessions(db: Db): Session[] {
-  return db.prepare("SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY updated_at DESC").all() as Session[];
+  return db.prepare("SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC").all() as Session[];
 }
 
 export function touchSession(db: Db, id: string): void {
@@ -63,6 +64,10 @@ export function updateTitle(db: Db, id: string, title: string): void {
     Date.now(),
     id,
   );
+}
+
+export function setPinned(db: Db, id: string, pinned: boolean): void {
+  db.prepare("UPDATE sessions SET pinned = ? WHERE id = ? AND deleted_at IS NULL").run(pinned ? 1 : 0, id);
 }
 
 export function setStatus(db: Db, id: string, status: string): void {

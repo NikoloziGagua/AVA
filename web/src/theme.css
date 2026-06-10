@@ -140,6 +140,50 @@
   opacity: calc(var(--edge) * 0.8);
   transition: opacity 0.4s ease;
 }
+/* ── DISPLAY CARDS — the "Important chats" fanned stack. The host is a relative
+   box; each .dc-card is absolutely stacked on top of the next and GSAP poses them
+   into a skewed fan at rest / spreads them on hover. Nothing animates at rest.
+   (Reduced motion renders a plain CSS grid instead — see DisplayCards.tsx.) */
+.dc-stack { position: relative; }
+.dc-stack .dc-card {
+  position: absolute; top: 0; left: 0; width: 264px;
+  transform-origin: 50% 120%; will-change: transform;
+}
+/* The pinned-star sits lit; give the front card a faint mercury rim so the pile
+   reads as a premium object even before hover. */
+.dc-card { border-color: rgba(92, 242, 255, 0.16); }
+
+/* ── CHAT TABLE — the "All chats" semantic table styled into the deck: thin cyan
+   hairlines, glass rows, .hud column heads. Spacious (desktop-primary), nothing
+   animating at rest; hover only lifts the row tint. */
+.chat-table { width: 100%; border-collapse: collapse; }
+.chat-table thead th {
+  text-align: left; padding: 0 1rem 0.75rem;
+  font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.18em;
+  font-size: 10px; color: rgba(255, 255, 255, 0.4); font-weight: 500;
+  border-bottom: 1px solid rgba(92, 242, 255, 0.12);
+}
+.chat-table thead th:last-child { text-align: right; }
+.chat-row { cursor: pointer; transition: background var(--motion-fast); }
+.chat-row > td {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.chat-row:hover > td { background: rgba(92, 242, 255, 0.04); }
+.chat-row:hover > td:first-child { box-shadow: inset 2px 0 0 0 var(--ac); }
+.chat-row:last-child > td { border-bottom: 0; }
+.chat-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.25rem; }
+/* Row action buttons — dim at rest, brighten on row hover / focus. */
+.chat-act {
+  border-radius: 0.375rem; padding: 0.375rem; line-height: 0;
+  color: rgba(255, 255, 255, 0.4); opacity: 0.5;
+  transition: color var(--motion-fast), opacity var(--motion-fast);
+}
+.chat-row:hover .chat-act, .chat-act:focus-visible { opacity: 1; }
+.chat-act-star[data-on="true"] { color: var(--ac); opacity: 1; }
+.chat-act-star:hover { color: var(--ac); }
+.chat-act-del:hover { color: #ff8c8c; }
+
 /* ── SPECULAR SWEEP — GSAP drives --sweep-x from -120% to 120% */
 .lg-sweep { position: relative; overflow: hidden; isolation: isolate; }
 .lg-sweep::after {

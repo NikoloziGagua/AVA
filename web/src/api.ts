@@ -39,6 +39,11 @@ export const api = {
     request<{ aborted: boolean }>(`/api/chat/${sessionId}/kill`, { method: "POST" }),
   deleteSession: (sessionId: string) =>
     request<void>(`/api/sessions/${sessionId}`, { method: "DELETE" }),
+  setSessionPinned: (sessionId: string, pinned: boolean) =>
+    request<void>(`/api/sessions/${sessionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ pinned }),
+    }),
 };
 
 export type SessionRow = {
@@ -47,6 +52,8 @@ export type SessionRow = {
   created_at: number;
   updated_at: number;
   status: string;
+  /** 1 when the chat is pinned to the "Important chats" strip, else 0. */
+  pinned: number;
 };
 
 export async function fetchSessions(): Promise<SessionRow[]> {

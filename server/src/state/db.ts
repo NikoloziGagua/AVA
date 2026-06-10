@@ -14,6 +14,7 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "sessions", "summary", "TEXT");
   tryAddColumn(db, "sessions", "summary_through_message_id", "INTEGER");
   tryAddColumn(db, "sessions", "deleted_at", "INTEGER");
+  tryAddColumn(db, "sessions", "pinned", "INTEGER NOT NULL DEFAULT 0");
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at)");
   return db;
 }

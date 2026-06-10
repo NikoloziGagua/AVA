@@ -66,3 +66,30 @@ describe("DELETE /api/sessions/:id", () => {
     await request(app).delete(`/api/sessions/${s.id}`).expect(404);
   });
 });
+
+describe("PATCH /api/sessions/:id", () => {
+  it("204 on { pinned: true } and the row reads back pinned=1", async () => {
+    const { app, db } = setup();
+    const s = createSession(db, { title: "to pin" });
+    await request(app).patch(`/api/sessions/${s.id}`).send({ pinned: true }).expect(204);
+    const row = db.prepare("SELECT pinned FROM sessions WHERE id = ?").get(s.id) as { pinned: number };
+    expect(row.pinned).toBe(1);
+  });
+
+  it("400 on a non-boolean pinned", async () => {
+    const { app, db } = setup();
+    const s = createSession(db, { title: "x" });
+    await request(app).patch(`/api/sessions/${s.id}`).send({ pinned: "yes" }).expect(400);
+  });
+
+  it("400 on missing pinned", async () => {
+    const { app, db } = setup();
+    const s = createSession(db, { title: "x" });
+    await request(app).patch(`/api/sessions/${s.id}`).send({}).expect(400);
+  });
+
+  it("404 on an unknown id", async () => {
+    const { app } = setup();
+    await request(app).patch("/api/sessions/unknown").send({ pinned: true }).expect(404);
+  });
+});

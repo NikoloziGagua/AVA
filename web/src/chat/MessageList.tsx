@@ -1,9 +1,10 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { gsap, useGSAP, ScrollTrigger } from "../lib/gsap.js";
 import { D, EASE, SHADOW, hoverLift } from "../lib/deckMotion.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { Orb } from "../components/ava/Orb.js";
 import { WordReveal } from "../components/ava/WordReveal.js";
+import { StreamingReveal } from "../components/ava/StreamingReveal.js";
 import { ThinkingIndicator, type ThinkingState } from "./ThinkingIndicator.js";
 import { ToolCallChip } from "./ToolCallChip.js";
 import { humanizeTool } from "./humanize.js";
@@ -79,6 +80,34 @@ export function MessageList({
 
   const lastFinal = [...liveEvents].reverse().find((e) => e.kind === "final");
 
+  // ── Live streaming text for the in-flight turn ──────────────────────────
+  // liveEvents is already filtered to the current runEpoch by ChatScreen, so
+  // accumulating every `delta` text yields exactly this run's streamed reply —
+  // and it resets automatically next run (liveEvents only holds the new epoch).
+  //
+  // Memoized on `liveEvents` so we don't re-filter+map+join the entire growing
+  // array on every render (each delta would otherwise re-scan all prior events,
+  // an O(n²)-per-turn cost). The result is byte-identical to the eager version.
+  const streamingText = useMemo(
+    () =>
+      liveEvents
+        .filter((e): e is Extract<StreamEvent, { kind: "delta" }> => e.kind === "delta")
+        .map((e) => e.payload.text)
+        .join(""),
+    [liveEvents],
+  );
+  // A run is terminated once it has been killed or errored; on those paths there
+  // is no `final`, so we must stop growing the streaming bubble explicitly.
+  const runTerminated = liveEvents.some((e) => e.kind === "killed" || e.kind === "error");
+  // Show the live streaming bubble only while text is arriving and the run has
+  // neither finalized nor terminated. The `final` (or kill/error) flips this off,
+  // unmounting the streaming bubble in favor of the final block / stopped chip.
+  const isStreaming = streamingText.length > 0 && !lastFinal && !runTerminated;
+  // True if this run streamed any text before its `final`. Used to render the
+  // final block plainly (no WordReveal re-reveal) since the words are already
+  // on screen — a seamless handoff with no second flash.
+  const turnStreamed = streamingText.length > 0;
+
   // Caption: backward-walk the live stream (verified mechanism). Before any
   // liveEvent (the optimistic window) it seeds "thinking…", then upgrades the
   // instant events stream in.
@@ -95,7 +124,9 @@ export function MessageList({
       ? "responding"
       : "thinking";
 
-  const showThinking = optimisticThinking && !lastFinal;
+  // Gate the thinking row off the instant the first delta arrives — the live
+  // streaming bubble takes its place in the same AvaBubble geometry (no jump).
+  const showThinking = optimisticThinking && !lastFinal && !isStreaming;
 
   // ── Single source of truth for bubble reveals: ScrollTrigger.batch ──
   // ScrollTrigger.batch fires onEnter for elements already in view at creation
@@ -206,7 +237,29 @@ export function MessageList({
           return <div key={key} className="text-sm text-red-400">error: {e.payload.message}</div>;
         }
         if (e.kind === "killed") {
-          return <div key={key} className="text-sm text-amber-400">stopped.</div>;
+          // Stop mid-stream must NOT discard the half-reply the user was reading.
+          // The live StreamingReveal bubble unmounts once the run terminates, so
+          // re-render the accumulated partial PLAINLY (no animation — the words
+          // were already on screen) directly above the "stopped." chip. Guarded
+          // on `!lastFinal` so a (rare) final + killed race never double-renders.
+          const showPartial = streamingText.length > 0 && !lastFinal;
+          return (
+            <div key={key} className="space-y-3">
+              {showPartial && (
+                <div className="flex justify-start" data-testid="stopped-partial">
+                  <AvaBubble reduced={reduced}>
+                    <WordReveal
+                      text={streamingText}
+                      animate={false}
+                      className="text-[15px] leading-[1.65] whitespace-pre-wrap"
+                      gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
+                    />
+                  </AvaBubble>
+                </div>
+              )}
+              <div className="text-sm text-amber-400">stopped.</div>
+            </div>
+          );
         }
         if (e.kind === "gap") {
           return (
@@ -218,11 +271,27 @@ export function MessageList({
         return null;
       })}
 
+      {isStreaming && (
+        <div className="flex justify-start" data-testid="streaming-message">
+          <AvaBubble reduced={reduced}>
+            <StreamingReveal
+              text={streamingText}
+              reduced={reduced}
+              className="text-[15px] leading-[1.65] whitespace-pre-wrap"
+              gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
+            />
+          </AvaBubble>
+        </div>
+      )}
+
       {lastFinal && (
         <div className="flex justify-start" data-testid="final-message">
           <AvaBubble reduced={reduced}>
             <WordReveal
               text={lastFinal.payload.text}
+              // Streamed turns already revealed the words live — render plainly so
+              // the final block doesn't re-animate the whole message (no flash).
+              animate={!turnStreamed}
               className="text-[15px] leading-[1.65] whitespace-pre-wrap"
               gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
             />

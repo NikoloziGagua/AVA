@@ -20,6 +20,7 @@ import {
 
 export type AgentEvent =
   | { kind: "thought"; payload: { text: string } }
+  | { kind: "delta"; payload: { text: string } }
   | { kind: "tool_call"; payload: { tool: string; args: unknown } }
   | { kind: "tool_result"; payload: { tool: string; ok: boolean; result: string } }
   | { kind: "final"; payload: { text: string } }
@@ -82,7 +83,11 @@ export async function runAgent(opts: RunOpts): Promise<void> {
   let stuckReason: "stuck" | undefined = undefined;
   const emit = (e: AgentEvent) => {
     innerEmit(e);
-    if (e.kind === "thought") stuckLoop.observeThought(e.payload.text);
+    // Both reasoning `thought`s and streamed `delta` text count as "the model is
+    // making progress" for the stuck-loop. Streamed reply text used to ride the
+    // `thought` kind (and thus reset the no-progress timer); now it rides `delta`,
+    // so observe both to keep the identical anti-loop behavior.
+    if (e.kind === "thought" || e.kind === "delta") stuckLoop.observeThought(e.payload.text);
     else if (e.kind === "tool_result") {
       const r = stuckLoop.observe({
         tool: e.payload.tool,
@@ -154,6 +159,21 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     const pendingCalls: ToolCall[] = [];
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error" = "end_turn";
 
+    // ── Delta coalescer (per turn) ──────────────────────────────────────────
+    // The provider yields one `delta` per model token. Emitting an SSE event per
+    // token floods the replay buffer (and the wire). Instead we batch tokens and
+    // flush a coalesced `delta` AgentEvent on a WORD/whitespace boundary OR after
+    // a ~50ms window — whichever trips first — so the frontend receives whole
+    // words at a human cadence (a long reply becomes tens-to-low-hundreds of
+    // events, not thousands). `deltaBuf`/`deltaTimer` are scoped INSIDE this turn
+    // loop so turn N's tail can never bleed into turn N+1.
+    let deltaBuf = "";
+    let deltaTimer: ReturnType<typeof setTimeout> | null = null;
+    const flushDelta = () => {
+      if (deltaTimer) { clearTimeout(deltaTimer); deltaTimer = null; }
+      if (deltaBuf) { emit({ kind: "delta", payload: { text: deltaBuf } }); deltaBuf = ""; }
+    };
+
     try {
       for await (const ev of deps.provider.stream({
         model,
@@ -163,21 +183,39 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       })) {
         if (ev.kind === "delta") {
           assistantText += ev.text;
-          emit({ kind: "thought", payload: { text: ev.text } });
+          deltaBuf += ev.text;
+          // Flush whole words promptly; otherwise cap latency with a short timer
+          // so a long token-less stretch still streams within ~50ms.
+          if (/\s$/.test(ev.text) || deltaBuf.length >= 24) {
+            flushDelta();
+          } else if (!deltaTimer) {
+            deltaTimer = setTimeout(flushDelta, 50);
+          }
         } else if (ev.kind === "tool_call") {
+          // Order guarantee: any streamed prose must land BEFORE the tool chip in
+          // the ordered replay buffer, so the client never re-reveals text after
+          // a tool event.
+          flushDelta();
           pendingCalls.push(ev.call);
         } else if (ev.kind === "done") {
           stopReason = ev.stop_reason;
           if (ev.stop_reason === "error") {
+            flushDelta();
             emit({ kind: "error", payload: { message: ev.error ?? "stream error" } });
             return;
           }
         }
       }
     } catch (err) {
+      flushDelta();
       emit({ kind: "error", payload: { message: err instanceof Error ? err.message : String(err) } });
       return;
     }
+
+    // Drain the last partial word so the tail is never stranded after `final`.
+    // This runs BEFORE every stopReason branch below (abort/max_tokens/end_turn),
+    // guaranteeing all of this turn's deltas precede its `final`/`killed`.
+    flushDelta();
 
     if (stopReason === "abort" || abort.signal.aborted) {
       emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : { reason: "manual" } });

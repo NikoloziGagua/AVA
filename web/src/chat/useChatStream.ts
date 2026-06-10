@@ -6,6 +6,7 @@ type EventBase = { id: number; runEpoch: number };
 
 export type StreamEvent =
   | (EventBase & { kind: "thought"; payload: { text: string } })
+  | (EventBase & { kind: "delta"; payload: { text: string } })
   | (EventBase & { kind: "tool_call"; payload: { tool: string; args: unknown } })
   | (EventBase & { kind: "tool_result"; payload: { tool: string; ok: boolean; result: string } })
   | (EventBase & { kind: "final"; payload: { text: string } })
@@ -58,7 +59,7 @@ export function useChatStream(sessionId: string | null, runEpoch: number) {
           es.close();
         }
       };
-      for (const k of ["thought", "tool_call", "tool_result", "final", "error", "killed", "done", "gap", "approval_required", "approval_resolved"] as const) {
+      for (const k of ["thought", "delta", "tool_call", "tool_result", "final", "error", "killed", "done", "gap", "approval_required", "approval_resolved"] as const) {
         es.addEventListener(k, handle(k));
       }
     }

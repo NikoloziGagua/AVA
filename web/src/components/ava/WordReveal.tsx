@@ -8,6 +8,13 @@ export interface WordRevealProps {
   style?: CSSProperties;
   /** Vertical text gradient, clipped per word so the silver fill is preserved. */
   gradient?: string;
+  /**
+   * When false, render the text plainly with no entrance animation. Used by the
+   * final block of a STREAMED turn — the words already revealed live via
+   * StreamingReveal, so re-animating the whole block on `final` would flash a
+   * second reveal. Defaults to true (the normal one-shot mount reveal).
+   */
+  animate?: boolean;
 }
 
 function gradientStyle(gradient?: string): CSSProperties {
@@ -27,10 +34,10 @@ function gradientStyle(gradient?: string): CSSProperties {
  * long answers don't crawl. Reduced motion renders the text plainly. The text
  * gradient is clipped per word to keep the silver fill intact.
  */
-export function WordReveal({ text, className, style, gradient }: WordRevealProps) {
+export function WordReveal({ text, className, style, gradient, animate = true }: WordRevealProps) {
   const reduced = useReducedMotion();
 
-  if (reduced || !text) {
+  if (reduced || !text || !animate) {
     return (
       <div className={className} style={{ ...style, ...gradientStyle(gradient) }}>
         {text}

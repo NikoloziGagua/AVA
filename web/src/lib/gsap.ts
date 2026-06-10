@@ -11,8 +11,9 @@ import { MorphSVGPlugin } from "gsap/MorphSVGPlugin";
 import { DrawSVGPlugin } from "gsap/DrawSVGPlugin";
 import { ScrambleTextPlugin } from "gsap/ScrambleTextPlugin";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { SplitText } from "gsap/SplitText";
 
-gsap.registerPlugin(useGSAP, Flip, MorphSVGPlugin, DrawSVGPlugin, ScrambleTextPlugin);
+gsap.registerPlugin(useGSAP, Flip, MorphSVGPlugin, DrawSVGPlugin, ScrambleTextPlugin, SplitText);
 
 // ScrollTrigger.register() enables the plugin, which calls gsap.matchMedia() →
 // window.matchMedia(). jsdom (our component test env) defines `window` but NOT
@@ -23,4 +24,4 @@ if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
   gsap.registerPlugin(ScrollTrigger);
 }
 
-export { gsap, useGSAP, Flip, ScrollTrigger };
+export { gsap, useGSAP, Flip, ScrollTrigger, SplitText };

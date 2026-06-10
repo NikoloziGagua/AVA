@@ -188,7 +188,19 @@ export function chatRoutes(
       void maybeSummarize({ db, sessionId, provider: agentDeps.provider }).catch(() => {});
     }
 
-    const buffer = new SseBuffer({ maxEvents: 500, maxBytes: 5 * 1024 * 1024 });
+    // maxEvents raised 500 → 2000 → 6000: streamed replies now ride coalesced
+    // `delta` events through this same replay buffer. Coalescing keeps a long
+    // reply to tens-to-low-hundreds of deltas, but a pathologically long reply
+    // (~2000+ coalesced deltas plus tool events) could exceed a 2000 cap and
+    // EVICT this run's early tool_call/tool_result events, so a client that
+    // reconnects mid-very-long-reply would miss them (a gap). 6000 is cheap
+    // headroom; the 5MB byte cap still bounds memory.
+    //
+    // Note: deltas are TRANSIENT. The `final` event carries the complete text,
+    // so even if early deltas are evicted, a reconnecting client still gets the
+    // full reply via `final` — only the live word-by-word reveal of the prefix
+    // is lost on reconnect, never the message content.
+    const buffer = new SseBuffer({ maxEvents: 6000, maxBytes: 5 * 1024 * 1024 });
     const abort = new AbortController();
     // Generate the runId HERE (before register) so it's stored on the ActiveRun.
     // The same id keys the agent run, the tool ctx, and the pidfiles — letting

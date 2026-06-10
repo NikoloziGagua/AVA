@@ -75,9 +75,9 @@ export function ThinkingIndicator({ caption, state, tool, reduced, className }: 
         <div className="shrink-0 mt-1">
           <Orb state="working" size={22} flipId="ava-orb" />
         </div>
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex flex-1 flex-wrap items-center gap-2">
           <span className={chip.cls}>{chip.label}</span>
-          <ShiningText text={caption} className="shine-deck text-xs truncate" reduced={reduced} />
+          <ShiningText text={caption} className="shine-deck text-xs" reduced={reduced} />
         </div>
       </div>
     </div>

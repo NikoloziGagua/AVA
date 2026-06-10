@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Pencil, Trash2, Check, X, Plus } from "lucide-react";
+import { Pencil, Trash2, Check, X, Plus, Pause, Play } from "lucide-react";
 import { fetchMemory, type MemoryView, patchMemoryLine, postMemoryLine } from "../api.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
@@ -208,6 +208,7 @@ function MindStage({
   selected: BrainNode | null;
   onSelect: (n: BrainNode | null) => void;
 }) {
+  const [spinning, setSpinning] = useState(true);
   return (
     <div className="lg:col-span-12" data-panel-section>
       {/* No framing box — the network floats free over the panel backdrop, bigger. */}
@@ -215,12 +216,23 @@ function MindStage({
         className="relative w-full overflow-hidden"
         style={{ height: "min(86vh, 940px)" }}
       >
-        <MemoryBrain memory={memory} onSelect={onSelect} />
+        <MemoryBrain memory={memory} onSelect={onSelect} spinning={spinning} />
 
         {/* Hint rail, bottom-left. */}
         <div className="pointer-events-none absolute bottom-3 left-4 hud text-[9px] tracking-[0.18em] text-white/35">
           drag to rotate · scroll to zoom · tap a node
         </div>
+
+        {/* Spin toggle, bottom-right. */}
+        <button
+          onClick={() => setSpinning((s) => !s)}
+          aria-label={spinning ? "pause rotation" : "resume rotation"}
+          aria-pressed={!spinning}
+          className="btn-deck btn-ghost absolute bottom-3 right-4 z-10 h-7 gap-1.5 px-2.5 text-[10px]"
+        >
+          {spinning ? <Pause size={12} /> : <Play size={12} />}
+          <span>{spinning ? "Pause" : "Spin"}</span>
+        </button>
 
         {/* Inspector card, top-right corner, shown on selection. */}
         {selected && <NodeInspector node={selected} onClose={() => onSelect(null)} />}

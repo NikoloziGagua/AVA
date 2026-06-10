@@ -17,6 +17,8 @@ export type BrainNode = {
 export interface MemoryBrainProps {
   memory: MemoryView;
   onSelect?: (node: BrainNode | null) => void;
+  /** When false, the gentle idle auto-rotation pauses (drag/zoom + pulses still run). */
+  spinning?: boolean;
   className?: string;
 }
 
@@ -283,12 +285,16 @@ function makeSpriteTexture(): THREE.Texture {
   return tex;
 }
 
-export function MemoryBrain({ memory, onSelect, className }: MemoryBrainProps) {
+export function MemoryBrain({ memory, onSelect, spinning = true, className }: MemoryBrainProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   // Keep the latest onSelect without re-running the heavy effect on each render.
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  // Live spin toggle read inside the rAF — kept in a ref so flipping it never rebuilds
+  // the scene (effect deps stay [memory, reduced]).
+  const spinningRef = useRef(spinning);
+  spinningRef.current = spinning;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -348,6 +354,7 @@ export function MemoryBrain({ memory, onSelect, className }: MemoryBrainProps) {
 
     // The whole graph lives under one group we rotate (drag + idle spin).
     const group = new THREE.Group();
+    group.scale.set(1, 1.7, 1); // stretched vertically — a taller, more brain-like form
     scene.add(group);
 
     // ── build geometry ─────────────────────────────────────────────────────────
@@ -476,8 +483,9 @@ export function MemoryBrain({ memory, onSelect, className }: MemoryBrainProps) {
         varying float vProgress;
         varying float vSeed;
         void main() {
-          // Faint resting cyan filament (matches the old opacity 0.16 look).
-          vec3 base = uBase * 0.16;
+          // Resting cyan filament — clearly visible at rest (additive, so brightness is
+          // ~col*alpha; the old 0.16*0.16 read as nearly nothing).
+          vec3 base = uBase * 0.5;
           // Pulse head position in [0,1), per-edge phase from the seed; flows 0→1.
           float p = fract(uTime * uSpeed + vSeed);
           // Wrapped distance from this fragment's progress to the pulse head so the
@@ -487,8 +495,8 @@ export function MemoryBrain({ memory, onSelect, className }: MemoryBrainProps) {
           // Narrow gaussian → a tight bright travelling band.
           float pulse = exp(-(d * d) / (2.0 * 0.018 * 0.018)) * uPulseOn;
           vec3 col = base + uPulseColor * pulse;
-          // Alpha: always show the faint line; spike toward opaque under the band.
-          float a = 0.16 + pulse * 0.9;
+          // Alpha: the resting line is now solidly readable; the band spikes to opaque.
+          float a = 0.45 + pulse * 0.55;
           gl_FragColor = vec4(col, a);
         }
       `,
@@ -770,7 +778,7 @@ export function MemoryBrain({ memory, onSelect, className }: MemoryBrainProps) {
       } else {
         rot.x += (rotTarget.x - rot.x) * 0.12;
         rot.y += (rotTarget.y - rot.y) * 0.12;
-        rotTarget.y += 0.0016; // gentle idle Y spin
+        if (spinningRef.current) rotTarget.y += 0.0016; // gentle idle Y spin (toggleable)
       }
       group.rotation.x = rot.x;
       group.rotation.y = rot.y;

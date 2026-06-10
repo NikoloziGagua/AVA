@@ -1,4 +1,4 @@
-import { motion } from "motion/react";
+import { motion, type Variants } from "motion/react";
 import type { CSSProperties } from "react";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
 
@@ -10,9 +10,7 @@ export interface WordRevealProps {
   gradient?: string;
   /**
    * When false, render the text plainly with no entrance animation. Used by the
-   * final block of a STREAMED turn — the words already revealed live via
-   * StreamingReveal, so re-animating the whole block on `final` would flash a
-   * second reveal. Defaults to true (the normal one-shot mount reveal).
+   * final block of a turn that already revealed its words live. Defaults to true.
    */
   animate?: boolean;
 }
@@ -27,12 +25,23 @@ function gradientStyle(gradient?: string): CSSProperties {
   };
 }
 
+// Container orchestrates the per-word stagger. The staggerChildren MUST live in the
+// container variant's transition (not as a bare `transition` prop) — otherwise Framer
+// Motion animates every word at once and the reply just "appears" instead of revealing
+// word-by-word. Each word carries its own enter variant.
+const container: Variants = {
+  hidden: {},
+  visible: (stagger: number) => ({ transition: { staggerChildren: stagger } }),
+};
+const wordVariant: Variants = {
+  hidden: { opacity: 0, filter: "blur(10px)", y: 4 },
+  visible: { opacity: 1, filter: "blur(0px)", y: 0, transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] } },
+};
+
 /**
- * Reveals a block of text word-by-word with a quick blur-up stagger — used for
- * Ava's fresh answers, which arrive as one `final` event (not token-streamed),
- * so this IS the reveal. One-shot enter on mount; the total is time-boxed so
- * long answers don't crawl. Reduced motion renders the text plainly. The text
- * gradient is clipped per word to keep the silver fill intact.
+ * Reveals a block of text WORD-BY-WORD with a quick blur-up stagger. One-shot enter on
+ * mount; total time-boxed so long answers don't crawl. Reduced motion / animate=false
+ * render plainly. The gradient is clipped per word so the silver fill stays intact.
  */
 export function WordReveal({ text, className, style, gradient, animate = true }: WordRevealProps) {
   const reduced = useReducedMotion();
@@ -48,15 +57,16 @@ export function WordReveal({ text, className, style, gradient, animate = true }:
   // Split keeping whitespace so spaces and newlines survive (container wraps).
   const tokens = text.split(/(\s+)/);
   const wordCount = tokens.filter((t) => t && !/^\s+$/.test(t)).length || 1;
-  const stagger = Math.min(0.022, 1.1 / wordCount); // time-box the whole reveal
+  const stagger = Math.min(0.045, 1.1 / wordCount); // per-word delay, time-boxed for long answers
 
   return (
     <motion.div
       className={className}
       style={style}
+      variants={container}
+      custom={stagger}
       initial="hidden"
       animate="visible"
-      transition={{ staggerChildren: stagger }}
     >
       {tokens.map((tok, i) =>
         /^\s+$/.test(tok) ? (
@@ -66,12 +76,8 @@ export function WordReveal({ text, className, style, gradient, animate = true }:
         ) : (
           <motion.span
             key={i}
+            variants={wordVariant}
             style={{ display: "inline-block", whiteSpace: "pre-wrap", ...gradientStyle(gradient) }}
-            variants={{
-              hidden: { opacity: 0, filter: "blur(10px)" },
-              visible: { opacity: 1, filter: "blur(0px)" },
-            }}
-            transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
           >
             {tok}
           </motion.span>

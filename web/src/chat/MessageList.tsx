@@ -4,7 +4,6 @@ import { D, EASE, SHADOW, hoverLift } from "../lib/deckMotion.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { Orb } from "../components/ava/Orb.js";
 import { WordReveal } from "../components/ava/WordReveal.js";
-import { StreamingReveal } from "../components/ava/StreamingReveal.js";
 import { ThinkingIndicator, type ThinkingState } from "./ThinkingIndicator.js";
 import { ToolCallChip } from "./ToolCallChip.js";
 import { humanizeTool } from "./humanize.js";
@@ -96,49 +95,15 @@ export function MessageList({
         .join(""),
     [liveEvents],
   );
-  // A run is terminated once it has been killed or errored; on those paths there
-  // is no `final`, so we must stop growing the streaming bubble explicitly.
+  // A run is terminated once it has been killed or errored.
   const runTerminated = liveEvents.some((e) => e.kind === "killed" || e.kind === "error");
-  // Show the live streaming bubble only while text is arriving and the run has
-  // neither finalized nor terminated. The `final` (or kill/error) flips this off,
-  // unmounting the streaming bubble in favor of the final block / stopped chip.
-  const isStreaming = streamingText.length > 0 && !lastFinal && !runTerminated;
-  // True if this run streamed any text before its `final`.
-  const turnStreamed = streamingText.length > 0;
 
-  // ── Reveal handoff timing ───────────────────────────────────────────────
-  // Reasoning models (gpt-5.5) "think" for seconds, then emit ALL their output
-  // text in a sub-100ms burst — so the live StreamingReveal flashes by unseen and
-  // the final block, rendered plainly because the turn technically "streamed",
-  // looked like the whole reply just popped in (the "text animation doesn't work
-  // when I text" report). Track how long text was actually on screen: if the
-  // visible stream was a burst (< REVEAL_MS, or arrived all in one commit so the
-  // start was never even recorded), animate the final so the word-by-word reveal
-  // is perceptible. A genuinely slow/long stream (visible ≥ REVEAL_MS) still hands
-  // off plainly — its words already revealed live, so no second-reveal flash.
-  const REVEAL_MS = 550;
-  const streamStartRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (streamingText.length > 0 && streamStartRef.current === null) {
-      streamStartRef.current = performance.now();
-    } else if (streamingText.length === 0 && !lastFinal) {
-      streamStartRef.current = null; // armed for the next turn
-    }
-  }, [streamingText, lastFinal]);
-
-  // Freeze the decision the first time this run's final appears, so later
-  // re-renders don't flip `animate` and re-trigger the reveal.
-  const finalDecisionRef = useRef<{ key: string; animate: boolean } | null>(null);
-  let animateFinal = !turnStreamed;
-  if (lastFinal) {
-    const key = `${lastFinal.runEpoch}-${lastFinal.id}`;
-    if (finalDecisionRef.current?.key !== key) {
-      // null start = everything arrived in one commit (instant burst) → 0ms visible.
-      const visibleMs = streamStartRef.current === null ? 0 : performance.now() - streamStartRef.current;
-      finalDecisionRef.current = { key, animate: !turnStreamed || visibleMs < REVEAL_MS };
-    }
-    animateFinal = finalDecisionRef.current.animate;
-  }
+  // No live token-by-token bubble. Reasoning models (gpt-5.5) "think" for seconds then
+  // emit the WHOLE reply in a sub-100ms burst, so a live bubble either flashed past
+  // unseen or (worse) rendered empty. Instead the thinking indicator stays up until the
+  // reply is ready, then the FINAL block reveals it WORD-BY-WORD (WordReveal) — exactly
+  // "it thinks, then outputs word by word". `streamingText` is still accumulated so a
+  // Stop mid-reply can show whatever was generated.
 
   // Caption: backward-walk the live stream (verified mechanism). Before any
   // liveEvent (the optimistic window) it seeds "thinking…", then upgrades the
@@ -156,9 +121,8 @@ export function MessageList({
       ? "responding"
       : "thinking";
 
-  // Gate the thinking row off the instant the first delta arrives — the live
-  // streaming bubble takes its place in the same AvaBubble geometry (no jump).
-  const showThinking = optimisticThinking && !lastFinal && !isStreaming;
+  // Thinking row shows from send until the final reply arrives (then WordReveal takes over).
+  const showThinking = optimisticThinking && !lastFinal && !runTerminated;
 
   // ── Single source of truth for bubble reveals: ScrollTrigger.batch ──
   // ScrollTrigger.batch fires onEnter for elements already in view at creation
@@ -269,11 +233,10 @@ export function MessageList({
           return <div key={key} className="text-sm text-red-400">error: {e.payload.message}</div>;
         }
         if (e.kind === "killed") {
-          // Stop mid-stream must NOT discard the half-reply the user was reading.
-          // The live StreamingReveal bubble unmounts once the run terminates, so
-          // re-render the accumulated partial PLAINLY (no animation — the words
-          // were already on screen) directly above the "stopped." chip. Guarded
-          // on `!lastFinal` so a (rare) final + killed race never double-renders.
+          // Stop mid-reply must NOT discard whatever was generated. There's no live
+          // bubble now, so on Stop render the accumulated partial PLAINLY above the
+          // "stopped." chip. Guarded on `!lastFinal` so a (rare) final + killed race
+          // never double-renders.
           const showPartial = streamingText.length > 0 && !lastFinal;
           return (
             <div key={key} className="space-y-3">
@@ -303,28 +266,14 @@ export function MessageList({
         return null;
       })}
 
-      {isStreaming && (
-        <div className="flex justify-start" data-testid="streaming-message">
-          <AvaBubble reduced={reduced}>
-            <StreamingReveal
-              text={streamingText}
-              reduced={reduced}
-              className="text-[15px] leading-[1.65] whitespace-pre-wrap"
-              gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
-            />
-          </AvaBubble>
-        </div>
-      )}
-
       {lastFinal && (
         <div className="flex justify-start" data-testid="final-message">
           <AvaBubble reduced={reduced}>
             <WordReveal
               text={lastFinal.payload.text}
-              // Animate unless the words were already revealed by a perceptibly-long
-              // live stream (see the reveal-handoff timing above). Fixes the no-reveal
-              // on fast reasoning-model bursts while avoiding a double reveal on slow ones.
-              animate={animateFinal}
+              // Always reveal the reply word-by-word — there's no live bubble to hand
+              // off from, so this IS the reveal the owner asked for.
+              animate
               className="text-[15px] leading-[1.65] whitespace-pre-wrap"
               gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
             />

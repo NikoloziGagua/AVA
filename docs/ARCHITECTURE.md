@@ -398,7 +398,7 @@ flowchart LR
 
 | Table | One-line purpose |
 |-------|------------------|
-| `sessions` | One conversation thread (title, status, soft-delete, summary). |
+| `sessions` | One conversation thread (title, status, soft-delete, summary, **pinned**). |
 | `messages` | Every user/assistant/tool turn, ordered, FK to its session. |
 | `tool_calls` | **Defined but currently unused** — reserved/forward-looking audit schema. |
 | `device_tokens` | Bearer credentials issued at pairing (incl. the `voice-internal` loopback token). |

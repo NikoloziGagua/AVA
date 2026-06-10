@@ -160,7 +160,8 @@ Two endpoints bypass `request()` on purpose:
 | `api.sendMessage` | `POST /api/chat` | Start a turn; returns `{ sessionId }` |
 | `api.kill` | `POST /api/chat/:id/kill` | Abort the running turn |
 | `api.deleteSession` | `DELETE /api/sessions/:id` | Delete a chat |
-| `fetchSessions` | `GET /api/sessions` | List chats (chat list) |
+| `api.setSessionPinned` | `PATCH /api/sessions/:id` | Pin/unpin a chat (`{ pinned }`) |
+| `fetchSessions` | `GET /api/sessions` | List chats (chat list, pinned-first) |
 | `fetchSession` | `GET /api/sessions/:id` | One chat + its messages |
 | `useChatStream` (raw `EventSource`) | `GET /api/chat/:id/stream?lastEventId=&t=` | **Live SSE** of a run |
 | `fetchVapidPublicKey` | `GET /api/push/vapid-public` | Web-push public key |
@@ -345,9 +346,14 @@ The "de-spun" home (the old orbital ring was removed — see the locked aestheti
 
 A small controlled form ("Ask Ava, or tell her to do something…"). On submit it hands the trimmed text up via `onSubmit`; the home wires that to open a new seeded chat. It does not itself navigate.
 
-### All-chats — `orbit/ChatListScreen.tsx`
+### Chats — `orbit/ChatListScreen.tsx`
 
-Lists sessions from `/api/sessions`, newest first. Tap a row → open that chat; **+** → new chat. Delete is **optimistic with a 5-second undo**: the row is removed immediately, a toast offers *undo*, and the actual `DELETE` only fires after the window (or immediately if another delete starts). If the server `DELETE` fails, the row is restored (`ChatListScreen.tsx:89-107`). It also demonstrates the deck's React-Flip list-reorder pattern (snapshot in the handler, replay in a `useGSAP` effect — see the feature doc).
+Lists sessions from `/api/sessions` (pinned-first), then **partitions the one ordered list client-side** into a pinned set and the rest (`ChatListScreen.tsx:50-51`). The screen has two parts (redesigned in commit `4f206ee`):
+
+- **Important chats** — an "Important chats" `PanelSection` (shown only when something is pinned) rendering up to four pinned chats via **`DisplayCards`** (`web/src/components/ava/DisplayCards.tsx`): a skewed depth-cued fan of glass cards that GSAP-spreads to a flat row on hover; reduced-motion → a flat CSS grid. Each card lights the cursor-following cyan border (`igniteBorder`/`douseBorder`, extracted from `BorderGlow`) and carries a lit star to unpin.
+- **All chats** — a semantic `.chat-table` (Title · Last active · Actions) replacing the old card grid. A star toggles pin; trash + 5-second undo are preserved.
+
+Tap a row/card → open that chat; **+** → new chat. **Delete** is optimistic with a 5-second undo: the row is removed immediately, a toast offers *undo*, and the actual `DELETE` fires after the window (or immediately if another delete starts); a failed `DELETE` restores the row (`ChatListScreen.tsx:103-129`). **Pin/unpin** (`handleTogglePin`, `ChatListScreen.tsx:133`) is optimistic too: it flips `s.pinned` locally (re-partitioning the list so the row moves between strip and table), persists via `PATCH /api/sessions/:id`, and reverts only that one row on failure. Both delete and pin use the deck's React-Flip list-reorder pattern, and pin snapshots **both** the table rows and the strip cards in one selector (`Flip.getState(".chat-row, .dc-card")`) so a row can physically fly between the two regions (reduced-motion gated). Full write-up: [`features/chats-screen-pinning.md`](../features/chats-screen-pinning.md).
 
 > Note: `web/src/sessions/SessionsScreen.tsx` is a **legacy/dead screen** — an earlier, plainer sessions list. It is **not imported by `App.tsx`** (only referenced in old specs/plans) and has been superseded by `ChatListScreen`. Treat it as stale.
 
@@ -419,6 +425,8 @@ The **locked aesthetic** (per project memory, `frontend_remodel_aesthetic`): a *
 | **`WordReveal.tsx`** | Word-by-word blur-up for Ava's final answers (since answers aren't token-streamed). Time-boxed so long replies don't crawl; reduced motion renders plainly. |
 | **`ShiningText` / `TextEffect` / `CyclingText` / `MessageLoading`** | Small text/loading flourishes. `ShiningText` is the cyan/mercury "thinking…" caption (recolored via `.shine-deck`); its shimmer is a **Framer Motion loop**, so the CSS reduced-motion gate can't stop it — commit `b4e6ada` added a `reduced` prop that renders a static lit gradient instead. `MessageLoading` is the three-dot SVG spinner. |
 | **`SegmentedTabs.tsx`** | The pill toggle (with a spring-animated cursor) used by Rules' Speed and Memory's category filter. |
+| **`BorderGlow.tsx`** | A `.bg-card` whose cyan/mercury border lights toward the cursor. **(commit `4f206ee`)** Also exports two standalone helpers — `igniteBorder(e)`/`douseBorder(e)` — that drive the effect off `e.currentTarget`'s `--edge`/`--angle` CSS vars, so any `.bg-card` (e.g. the `DisplayCards` cards) can share the exact same border by wiring them as `onPointerMove`/`onPointerLeave`. |
+| **`DisplayCards.tsx`** | **(commit `4f206ee`)** The Chats screen's "Important chats" cluster — up to four pinned chats as a skewed depth-cued fan of `.bg-card` glass slabs that GSAP-spreads to a flat readable row on hover (reduced-motion → a flat CSS grid). Each card lights the `igniteBorder` border and carries a lit star to unpin. See [`features/chats-screen-pinning.md`](../features/chats-screen-pinning.md). |
 | **`GlassFilter.tsx`** | A hidden SVG `feTurbulence`/`feDisplacementMap` filter (`#ava-glass`) mounted once at the app root for liquid-glass distortion. |
 
 Most of these have co-located `*.smoke.test.tsx` files (render-without-crashing checks), and the pure helpers (`orb-state`, `tubelight-nav`, `activity-steps`, `humanize`, `message-actions`) have real unit tests.

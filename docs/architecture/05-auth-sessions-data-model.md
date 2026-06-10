@@ -377,8 +377,9 @@ soft-delete marker.
 | `summary` | TEXT | added by migration (`db.ts`) — rolling summary text |
 | `summary_through_message_id` | INTEGER | added by migration — high-water mark of summarized messages |
 | `deleted_at` | INTEGER | added by migration — soft-delete timestamp, `NULL` = live |
+| `pinned` | INTEGER | added by migration — `NOT NULL DEFAULT 0`; `1` = pinned to the "Important chats" strip |
 
-The last three columns are **not** in `schema.sql`; they are added at runtime by
+The last four columns are **not** in `schema.sql`; they are added at runtime by
 `openDb`'s `tryAddColumn` migrations (see §13). The base `Session` type
 (`status: "active" | "idle" | "archived"`) is the declared vocabulary, though in
 practice rows are created `'active'` and the status column is only lightly used.
@@ -394,8 +395,10 @@ practice rows are created `'active'` and the status column is only lightly used.
 - **Read (incl. deleted, with summary)** — `getSessionFull(db, id)`: returns the
   full row regardless of `deleted_at`, including `summary` and
   `summary_through_message_id`. Used by the summarizer and recovery paths.
-- **List** — `listSessions(db)`: all non-deleted sessions, newest-updated first.
-  This backs `GET /api/sessions`.
+- **List** — `listSessions(db)`: all non-deleted sessions, ordered
+  `pinned DESC, updated_at DESC` — pinned chats first, each group newest-updated
+  first. This backs `GET /api/sessions`; the Chats screen partitions this one
+  ordered list into the pinned strip and the table client-side.
 - **Touch** — `touchSession(db, id)`: bumps `updated_at` so an active
   conversation floats to the top of the list (`routes/chat.ts:120`).
 - **Title** — `updateTitle(db, id, title)`: replaces the title (the chat path
@@ -406,6 +409,10 @@ practice rows are created `'active'` and the status column is only lightly used.
   `server/src/orchestrator/auto-summary.ts`, which periodically condenses older
   turns so long conversations stay within the model's context window.
 - **Status** — `setStatus` / `listByStatus`: set or query the `status` column.
+- **Pin** — `setPinned(db, id, pinned)` (`sessions.ts:69`): writes `pinned = 0|1`,
+  scoped `AND deleted_at IS NULL`. **Deliberately does not touch `updated_at`** —
+  pinning is orthogonal to recency, so pinning an old chat must not make it look
+  freshly used. Backs `PATCH /api/sessions/:id`.
 - **Soft delete** — `softDeleteSession(db, id)`: stamps `deleted_at` (and
   `updated_at`). The row and its messages remain on disk but disappear from
   `getSession`/`listSessions`.
@@ -416,12 +423,13 @@ practice rows are created `'active'` and the status column is only lightly used.
 
 ### Routes — `server/src/routes/sessions.ts`
 
-All three require a token:
+All four require a token:
 
 | Method & path | Behavior |
 | --- | --- |
-| `GET /api/sessions` | `{ sessions: listSessions(db) }` — the conversation list |
+| `GET /api/sessions` | `{ sessions: listSessions(db) }` — the conversation list (pinned-first) |
 | `GET /api/sessions/:id` | `{ session, messages }` for a live session, else `404 not_found` |
+| `PATCH /api/sessions/:id` | body `{ pinned: boolean }` → `setPinned` then `204`; `400` if `pinned` is missing/non-boolean; `404` if the session doesn't exist or was soft-deleted |
 | `DELETE /api/sessions/:id` | `softDeleteSession` then `204`; `404` if it didn't exist/was already gone |
 
 `DELETE` is a **soft** delete — the conversation is hidden immediately but the
@@ -598,6 +606,7 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "sessions", "summary", "TEXT");
   tryAddColumn(db, "sessions", "summary_through_message_id", "INTEGER");
   tryAddColumn(db, "sessions", "deleted_at", "INTEGER");
+  tryAddColumn(db, "sessions", "pinned", "INTEGER NOT NULL DEFAULT 0");
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at)");
   return db;
 }
@@ -611,8 +620,9 @@ export function openDb(path: string): Db {
 - The only true "migration" mechanism is `tryAddColumn`, which reads
   `PRAGMA table_info(<table>)` and issues an `ALTER TABLE … ADD COLUMN` only if the
   column is absent. This is how `sessions.summary`,
-  `sessions.summary_through_message_id`, and `sessions.deleted_at` get added to
-  databases created before those columns existed — and why those three columns are
+  `sessions.summary_through_message_id`, `sessions.deleted_at`, and
+  `sessions.pinned` get added to databases created before those columns existed —
+  and why those four columns are
   **not** in `schema.sql`. There is no version table or down-migration; the schema
   evolves forward only.
 
@@ -657,6 +667,7 @@ erDiagram
     TEXT    summary "added by migration"
     INTEGER summary_through_message_id "added by migration"
     INTEGER deleted_at "added by migration; NULL = live"
+    INTEGER pinned "added by migration; NOT NULL DEFAULT 0"
   }
 
   messages {

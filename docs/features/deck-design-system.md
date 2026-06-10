@@ -87,7 +87,7 @@ One module owns every deck timing, ease, shadow, and animation helper. **Every h
 
 ### Constants
 
-- **`EASE`** = `"cubic-bezier(0.22,1,0.36,1)"` (`deckMotion.ts:10`) — the cinematic ease, written literally so GSAP tweens match the CSS `--ease-cinematic`.
+- **`EASE`** = `"cinematic"` (`deckMotion.ts:15`) — the cinematic ease, as a **registered GSAP `CustomEase`** (created in `lib/gsap.ts:26` from the SVG path of `cubic-bezier(0.22,1,0.36,1)`). It used to be the literal CSS string `"cubic-bezier(0.22,1,0.36,1)"`, but **GSAP core cannot parse a raw `cubic-bezier()` string** and was silently falling back to its default ease on every `ease: EASE` tween; commit `42eb302` registered the curve as a real named ease so it actually applies. The literal CSS curve still lives in `theme.css` as `--ease-cinematic`, so the CSS and GSAP paths stay in sync. See [`features/chats-screen-pinning.md`](./chats-screen-pinning.md#the-customease-correctness-fix-42eb302).
 - **`D`** (`deckMotion.ts:13`) — the one motion clock: `{ fast: .2, press: .12, screen: .3, section: .5, materialize: .6 }` (seconds).
 - **`SHADOW`** (`deckMotion.ts:16`) — the `rest` and `hover` box-shadow strings, so hover handlers and the resting CSS agree on the exact shadow.
 

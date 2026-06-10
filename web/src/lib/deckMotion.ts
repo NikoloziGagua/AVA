@@ -36,23 +36,19 @@ export const SHADOW = {
  *   6. [data-panel-section]    stagger up (y 22→0, opacity 0→1)
  *   7. [data-panel-section]    per-section specular sweep (--sweep-x -130%→130%)
  */
-export function buildPanelEnter(_root: HTMLElement, title: string): gsap.core.Timeline {
+export function buildPanelEnter(_root: HTMLElement, _title: string): gsap.core.Timeline {
   const tl = gsap.timeline({ defaults: { ease: EASE } });
-  // NOTE: no [data-panel-stage] opacity/blur/scale "materialize" — the panel root
-  // covers the screen opaque (App mounts it without an entrance opacity fade), and
-  // the section stagger below carries the content in. A stage-wide blur-fade on top
-  // of the panel's own fade read as a flash on every open.
+  // Calm open. The owner disliked the title "glow + glitch" on every open, so the
+  // ScrambleText decode and the titlewrap specular sweep are both gone — the title
+  // simply fades up and its mercury underline draws out. (No [data-panel-stage]
+  // materialize either: the panel root already covers the screen opaque, and the
+  // section stagger carries the content in; a stage-wide blur-fade read as a flash.)
   tl.fromTo("[data-panel-bloom]",
-    { opacity: 0, scale: 1.12 }, { opacity: 1, scale: 1, duration: 0.7, ease: "power2.out" }, 0.04);
-  tl.fromTo("[data-panel-titlewrap]",
-    { "--sweep-x": "-120%" }, { "--sweep-x": "120%", duration: 0.85, ease: "power2.inOut" }, 0.16);
-  tl.from("[data-title-rule]", { drawSVG: "50% 50%", duration: 0.65, ease: "power2.out" }, 0.2);
-  tl.to("[data-panel-title]",
-    { duration: 0.65, scrambleText: { text: title, chars: "upperCase", speed: 0.7, revealDelay: 0.12 } }, 0.18);
+    { opacity: 0, scale: 1.08 }, { opacity: 1, scale: 1, duration: 0.7, ease: "power2.out" }, 0.04);
+  tl.from("[data-panel-title]", { y: 10, opacity: 0, duration: 0.5, ease: "power2.out" }, 0.06);
+  tl.from("[data-title-rule]", { drawSVG: "50% 50%", duration: 0.6, ease: "power2.out" }, 0.16);
   tl.from("[data-panel-section]",
-    { y: 22, opacity: 0, duration: D.section, stagger: 0.07, clearProps: "transform,opacity" }, 0.28);
-  // (No per-section --sweep-x sweep: the cards are now BorderGlow .bg-card, which has
-  // no .lg-sweep::after to read it — the cursor-following border is their accent.)
+    { y: 22, opacity: 0, duration: D.section, stagger: 0.07, clearProps: "transform,opacity" }, 0.22);
   return tl;
 }
 

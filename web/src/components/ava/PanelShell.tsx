@@ -58,7 +58,7 @@ export function PanelShell({ title, grid = false, bg, children }: {
         data-panel-stage
         className="relative mx-auto w-full max-w-5xl px-8 pt-28 pb-24 will-change-transform"
       >
-        <div data-panel-titlewrap className="lg-sweep mb-10">
+        <div data-panel-titlewrap className="mb-10">
           <h1
             data-panel-title
             className="hud text-[30px] font-semibold tracking-[0.16em] text-transparent bg-clip-text"

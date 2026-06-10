@@ -6,8 +6,13 @@
 // parks to the final lit state instead of running transforms / loops.
 import { gsap, Flip } from "./gsap.js";
 
-/** --ease-cinematic, written literally so GSAP tweens match the CSS eases. */
-export const EASE = "cubic-bezier(0.22,1,0.36,1)";
+/**
+ * The deck's signature ease for GSAP tweens — the registered CustomEase "cinematic"
+ * (created in lib/gsap.ts from the SVG path of cubic-bezier(0.22,1,0.36,1)). GSAP core
+ * can't parse a raw `cubic-bezier(...)` string, so this MUST be the registered name, not
+ * the literal curve. The literal CSS curve still lives in theme.css as --ease-cinematic.
+ */
+export const EASE = "cinematic";
 
 /** The one motion clock for the whole deck. */
 export const D = { fast: 0.2, press: 0.12, screen: 0.3, section: 0.5, materialize: 0.6 } as const;

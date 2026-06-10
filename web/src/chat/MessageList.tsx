@@ -103,10 +103,42 @@ export function MessageList({
   // neither finalized nor terminated. The `final` (or kill/error) flips this off,
   // unmounting the streaming bubble in favor of the final block / stopped chip.
   const isStreaming = streamingText.length > 0 && !lastFinal && !runTerminated;
-  // True if this run streamed any text before its `final`. Used to render the
-  // final block plainly (no WordReveal re-reveal) since the words are already
-  // on screen — a seamless handoff with no second flash.
+  // True if this run streamed any text before its `final`.
   const turnStreamed = streamingText.length > 0;
+
+  // ── Reveal handoff timing ───────────────────────────────────────────────
+  // Reasoning models (gpt-5.5) "think" for seconds, then emit ALL their output
+  // text in a sub-100ms burst — so the live StreamingReveal flashes by unseen and
+  // the final block, rendered plainly because the turn technically "streamed",
+  // looked like the whole reply just popped in (the "text animation doesn't work
+  // when I text" report). Track how long text was actually on screen: if the
+  // visible stream was a burst (< REVEAL_MS, or arrived all in one commit so the
+  // start was never even recorded), animate the final so the word-by-word reveal
+  // is perceptible. A genuinely slow/long stream (visible ≥ REVEAL_MS) still hands
+  // off plainly — its words already revealed live, so no second-reveal flash.
+  const REVEAL_MS = 550;
+  const streamStartRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (streamingText.length > 0 && streamStartRef.current === null) {
+      streamStartRef.current = performance.now();
+    } else if (streamingText.length === 0 && !lastFinal) {
+      streamStartRef.current = null; // armed for the next turn
+    }
+  }, [streamingText, lastFinal]);
+
+  // Freeze the decision the first time this run's final appears, so later
+  // re-renders don't flip `animate` and re-trigger the reveal.
+  const finalDecisionRef = useRef<{ key: string; animate: boolean } | null>(null);
+  let animateFinal = !turnStreamed;
+  if (lastFinal) {
+    const key = `${lastFinal.runEpoch}-${lastFinal.id}`;
+    if (finalDecisionRef.current?.key !== key) {
+      // null start = everything arrived in one commit (instant burst) → 0ms visible.
+      const visibleMs = streamStartRef.current === null ? 0 : performance.now() - streamStartRef.current;
+      finalDecisionRef.current = { key, animate: !turnStreamed || visibleMs < REVEAL_MS };
+    }
+    animateFinal = finalDecisionRef.current.animate;
+  }
 
   // Caption: backward-walk the live stream (verified mechanism). Before any
   // liveEvent (the optimistic window) it seeds "thinking…", then upgrades the
@@ -289,9 +321,10 @@ export function MessageList({
           <AvaBubble reduced={reduced}>
             <WordReveal
               text={lastFinal.payload.text}
-              // Streamed turns already revealed the words live — render plainly so
-              // the final block doesn't re-animate the whole message (no flash).
-              animate={!turnStreamed}
+              // Animate unless the words were already revealed by a perceptibly-long
+              // live stream (see the reveal-handoff timing above). Fixes the no-reveal
+              // on fast reasoning-model bursts while avoiding a double reveal on slow ones.
+              animate={animateFinal}
               className="text-[15px] leading-[1.65] whitespace-pre-wrap"
               gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
             />

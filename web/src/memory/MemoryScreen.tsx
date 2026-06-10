@@ -214,7 +214,7 @@ function MindStage({
       {/* No framing box — the network floats free over the panel backdrop, bigger. */}
       <div
         className="relative w-full overflow-hidden"
-        style={{ height: "min(86vh, 940px)" }}
+        style={{ height: "min(94vh, 1120px)" }}
       >
         <MemoryBrain memory={memory} onSelect={onSelect} spinning={spinning} />
 

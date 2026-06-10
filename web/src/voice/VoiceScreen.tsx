@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { Orb } from "../components/ava/Orb.js";
+import { MagicRings } from "../components/ava/MagicRings.js";
 import { NebulaBackground } from "../components/ava/NebulaBackground.js";
 import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
+import { gsap, useGSAP } from "../lib/gsap.js";
+import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { useRealtimeVoice } from "./useRealtimeVoice.js";
 import { useMicAmplitude } from "./useMicAmplitude.js";
 import { Mic, Keyboard, MicOff, Pause, X, MessageSquarePlus } from "lucide-react";
@@ -24,6 +27,25 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
   const v = useRealtimeVoice({ initialSessionId });
   const amp = useMicAmplitude(v.state === "listening" && !v.muted);
   const [secs, setSecs] = useState(0);
+  const chromeScope = useRef<HTMLDivElement>(null);
+  const reduced = useReducedMotion();
+  const ptt = v.inputMode === "enter_push_to_talk";
+
+  // Slowly rotate the living-chrome conic angle on the RESTING CTA (idle mic disc /
+  // inactive push-to-talk). One transform-free CSS-var tween over the whole control
+  // row; targets only elements carrying .liquid-chrome, so the active/interrupt
+  // states (which never get that class) are untouched. Reduced motion → no spin.
+  useGSAP(
+    () => {
+      if (reduced) return;
+      gsap.fromTo(
+        ".liquid-chrome",
+        { "--chrome-angle": "0deg" },
+        { "--chrome-angle": "360deg", duration: 14, ease: "none", repeat: -1 },
+      );
+    },
+    { scope: chromeScope, dependencies: [reduced, v.state, ptt, v.capturing] },
+  );
 
   useEffect(() => { v.start(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
@@ -34,7 +56,6 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
   }, [v.state]);
   useEffect(() => { if (v.state === "idle") setSecs(0); }, [v.state]);
 
-  const ptt = v.inputMode === "enter_push_to_talk";
   const stateLabel =
     v.state === "connecting" ? "CONNECTING…" :
     v.state === "listening"  ? (ptt && !v.capturing ? "PUSH TO TALK · ↵" : `LISTENING · ${formatTime(secs)}`) :
@@ -86,8 +107,13 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         <X size={14} />
       </button>
 
-      {/* the living orb — Flips in from the home hero (Phase 5) */}
+      {/* the living orb — Flips in from the home hero (Phase 5). MagicRings is a
+          separate LIGHT GSAP+SVG layer sitting BEHIND the orb on the SAME center,
+          pointer-events-none (does not intercept the orb / controls). */}
       <div className="absolute left-1/2 top-[42%] z-10 -translate-x-1/2 -translate-y-1/2">
+        <div className="pointer-events-none absolute left-1/2 top-1/2 -z-10 -translate-x-1/2 -translate-y-1/2">
+          <MagicRings size={160} state={orbState} amplitude={amp} />
+        </div>
         <Orb size={160} state={orbState} amplitude={amp} flipId="ava-orb" />
       </div>
 
@@ -177,7 +203,7 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         </div>
       </div>
 
-      <div className="absolute bottom-8 left-0 right-0 z-20 flex items-center justify-center gap-5">
+      <div ref={chromeScope} className="absolute bottom-8 left-0 right-0 z-20 flex items-center justify-center gap-5">
         <button
           aria-label={v.muted ? "unmute" : "mute"}
           onClick={() => v.setMuted(!v.muted)}
@@ -198,29 +224,29 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
           <button
             aria-label={v.capturing ? "finish turn" : "start turn"}
             onClick={v.togglePushToTalk}
-            className="flex h-16 w-16 items-center justify-center rounded-full transition-all active:scale-95"
-            style={{
-              background: v.capturing ? "var(--ac)" : "linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04))",
-              border: "1px solid rgba(255,255,255,0.18)",
-              color: v.capturing ? "#04222a" : undefined,
-              boxShadow: v.capturing ? "0 0 26px rgba(92,242,255,0.5)" : undefined,
-            }}
+            // Capturing = active (solid cyan + glow, unchanged). INACTIVE push-to-talk
+            // gets the living-chrome surface (class provides bg + border + sheen).
+            className={`flex h-16 w-16 items-center justify-center rounded-full transition-all active:scale-95${v.capturing ? "" : " liquid-chrome"}`}
+            style={
+              v.capturing
+                ? { background: "var(--ac)", border: "1px solid rgba(255,255,255,0.18)", color: "#04222a", boxShadow: "0 0 26px rgba(92,242,255,0.5)" }
+                : undefined
+            }
           >
-            <Mic size={20} className={v.capturing ? "" : "text-white/85"} />
+            <Mic size={20} className={v.capturing ? "" : "text-[#0c2a31]"} />
           </button>
         ) : (
+          // Idle mic disc — resting affordance, gets the living-chrome surface.
           <div
             aria-hidden="true"
-            className="flex h-16 w-16 items-center justify-center rounded-full"
+            className="liquid-chrome flex h-16 w-16 items-center justify-center rounded-full"
             style={{
-              background: "linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.04))",
-              border: "1px solid rgba(255,255,255,0.18)",
               backdropFilter: "blur(14px)",
               WebkitBackdropFilter: "blur(14px)",
               boxShadow: v.state === "listening" ? "0 0 24px rgba(92,242,255,0.3)" : undefined,
             }}
           >
-            <Mic size={20} className="text-white/85" />
+            <Mic size={20} className="text-[#0c2a31]" />
           </div>
         )}
         <button

@@ -230,6 +230,51 @@
   background: #eaf6fa; transition: transform var(--motion-fast) var(--ease-cinematic); }
 .tgl[data-on="true"] .tgl-knob { transform: translateX(18px); }
 
+/* ── LIQUID CHROME — premium living-metal surface for the RESTING voice CTA
+   (the idle mic disc + the INACTIVE push-to-talk button). A slow-rotating
+   mercury↔white conic chrome gradient under a glassy specular highlight, so the
+   button reads as a polished liquid-metal object at rest. The active / interrupt
+   / capturing branches keep their solid-cyan look and never get this class.
+
+   The conic angle is held in --chrome-angle (default 0deg); VoiceScreen's GSAP
+   slowly rotates it 0→360 (single transform-free var tween). Reduced motion (the
+   media query below) parks the var so the chrome is static — still pretty, no spin. */
+.liquid-chrome {
+  --chrome-angle: 0deg;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background:
+    conic-gradient(
+      from var(--chrome-angle) at 50% 50%,
+      #b9d2dc, #f2fbff, #7ea6b4, #dceaf0, #9fc6d4, #fbffff, #6f97a6, #b9d2dc
+    );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.35) inset,
+    0 -6px 14px -8px rgba(0, 0, 0, 0.6) inset,
+    0 10px 24px -14px rgba(0, 0, 0, 0.7);
+}
+/* Glassy specular highlight — a soft top sheen + a tight upper-left glint, so the
+   chrome looks wet/lacquered rather than a flat gradient. Sits above the metal. */
+.liquid-chrome::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    radial-gradient(ellipse 55% 38% at 32% 24%, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0) 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.32) 0%, rgba(255, 255, 255, 0) 46%);
+  mix-blend-mode: screen;
+}
+.liquid-chrome > * { position: relative; z-index: 2; }
+
+@media (prefers-reduced-motion: reduce) {
+  .liquid-chrome { --chrome-angle: 0deg; }
+}
+
 /* Liquid blob morph for the Orb core (GSAP handles rotation; this handles the
    organic edge wobble — kept in CSS because multi-value border-radius tweening
    is finicky in GSAP). Disabled under reduced motion via the component. */

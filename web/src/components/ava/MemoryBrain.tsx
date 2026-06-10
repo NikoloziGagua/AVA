@@ -354,7 +354,7 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
 
     // The whole graph lives under one group we rotate (drag + idle spin).
     const group = new THREE.Group();
-    group.scale.set(1, 2.4, 1); // strongly stretched vertically — a tall, brain-like column
+    group.scale.set(2.3, 0.7, 1); // stretched HORIZONTALLY — a wide, shallow brain spread
     scene.add(group);
 
     // ── build geometry ─────────────────────────────────────────────────────────

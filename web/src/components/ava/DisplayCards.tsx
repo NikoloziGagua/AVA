@@ -17,8 +17,12 @@ export interface DisplayCardsProps {
   cards: DisplayCard[];
 }
 
-/** How many cards we lay out in the physical fanned stack (the rest stay logical). */
-const MAX_FANNED = 4;
+/**
+ * How many cards we lay out in the physical fanned stack. Exported so the Chats
+ * screen caps its strip at the same number and overflows any further pinned chats
+ * into the table (a 5th+ pin must never become invisible).
+ */
+export const MAX_FANNED = 4;
 
 /**
  * "Important chats" cluster — a taste-driven adaptation of the owner's DisplayCards,

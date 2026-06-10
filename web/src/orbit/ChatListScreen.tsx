@@ -3,7 +3,7 @@ import { Trash2, Plus, Star } from "lucide-react";
 import { api, fetchSessions, type SessionRow } from "../api.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
-import { DisplayCards, type DisplayCard } from "../components/ava/DisplayCards.js";
+import { DisplayCards, MAX_FANNED, type DisplayCard } from "../components/ava/DisplayCards.js";
 import { Flip, gsap, useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { press } from "../lib/deckMotion.js";
@@ -47,8 +47,13 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
       .finally(() => setLoading(false));
   }, []);
 
+  // The "Important chats" strip shows at most MAX_FANNED pinned chats; any pinned
+  // beyond that OVERFLOW into the table (with a lit star) so a 5th+ pin is never
+  // invisible. The table therefore lists overflow-pinned first, then the unpinned.
   const pinned = sessions.filter((s) => s.pinned);
-  const rest = sessions.filter((s) => !s.pinned);
+  const unpinned = sessions.filter((s) => !s.pinned);
+  const stripPinned = pinned.slice(0, MAX_FANNED);
+  const tableRows = [...pinned.slice(MAX_FANNED), ...unpinned];
 
   // Stagger the rows in on first paint, Flip them when the list reorders (delete /
   // undo / pin / unpin), and pulse the loading skeletons. All reduced-motion gated.
@@ -139,7 +144,7 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
     });
   }
 
-  const displayCards: DisplayCard[] = pinned.map((s) => ({
+  const displayCards: DisplayCard[] = stripPinned.map((s) => ({
     id: s.id,
     title: s.title ?? "Untitled",
     subtitle: lastActive(s),
@@ -181,7 +186,7 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
             </div>
           )}
 
-          {!loading && rest.length === 0 && pinned.length === 0 && (
+          {!loading && sessions.length === 0 && (
             <div className="flex flex-col items-center gap-5 py-14 text-center">
               <div className="hud text-[12px] tracking-[0.22em] text-white/45">NO CHATS YET</div>
               <button
@@ -198,13 +203,13 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
             </div>
           )}
 
-          {!loading && rest.length === 0 && pinned.length > 0 && (
+          {!loading && tableRows.length === 0 && pinned.length > 0 && (
             <div className="hud py-8 text-center text-[11px] tracking-[0.2em] text-white/35">
               ALL CHATS ARE PINNED
             </div>
           )}
 
-          {!loading && rest.length > 0 && (
+          {!loading && tableRows.length > 0 && (
             <table className="chat-table">
               <thead>
                 <tr>
@@ -214,7 +219,7 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
                 </tr>
               </thead>
               <tbody>
-                {rest.map((s) => (
+                {tableRows.map((s) => (
                   <tr
                     key={s.id}
                     className="chat-row"

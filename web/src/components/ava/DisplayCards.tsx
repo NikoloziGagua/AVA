@@ -73,7 +73,7 @@ export function DisplayCards({ cards }: DisplayCardsProps) {
   return (
     <div
       className="dc-stack"
-      style={{ minHeight: 104 + (n - 1) * 40 } as CSSProperties}
+      style={{ minHeight: 150 + (n - 1) * 48 } as CSSProperties}
     >
       {shown.map((c, i) => (
         <Card key={c.id} card={c} depth={i} reduced={false} z={n - i} />

@@ -203,6 +203,12 @@
   grid-template-areas: "stack";
   place-items: start;
   transform: skewY(-8deg);
+  /* Sized to the front card (340) + the deepest card's spread (200) and CENTERED in the
+     section, so the pile reads as a deliberate showcase instead of a cluster jammed in
+     the top-left corner of a wide empty box. */
+  width: 540px;
+  max-width: 100%;
+  margin: 0.5rem auto 1.25rem;
   /* Right-edge fade so the receding pile dissolves into the panel rather than
      hard-clipping. Sits above the cards but lets pointer events through. */
 }
@@ -213,7 +219,7 @@
 }
 .dc-stack .dc-card {
   grid-area: stack;
-  width: 264px;
+  width: 340px;
   transform-origin: 50% 120%;
   /* Resting depth pose (front card = identity); back cards override below. */
   transition: transform 700ms var(--ease-cinematic),

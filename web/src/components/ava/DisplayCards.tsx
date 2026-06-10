@@ -1,8 +1,6 @@
-import { useRef, type CSSProperties } from "react";
+import { type CSSProperties } from "react";
 import { Star } from "lucide-react";
-import { gsap, useGSAP } from "../../lib/gsap.js";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
-import { EASE, D } from "../../lib/deckMotion.js";
 import { igniteBorder, douseBorder } from "./BorderGlow.js";
 
 export interface DisplayCard {
@@ -18,7 +16,7 @@ export interface DisplayCardsProps {
 }
 
 /**
- * How many cards we lay out in the physical fanned stack. Exported so the Chats
+ * How many cards we lay out in the physical skew-stack. Exported so the Chats
  * screen caps its strip at the same number and overflows any further pinned chats
  * into the table (a 5th+ pin must never become invisible).
  */
@@ -28,82 +26,30 @@ export const MAX_FANNED = 4;
  * "Important chats" cluster — a taste-driven adaptation of the owner's DisplayCards,
  * recolored into the cyan/mercury deck.
  *
- * RESTING STATE: up to four `.bg-card` glass slabs are stacked on top of one another,
- * each one nudged down/right and rotated a few degrees more than the last, so the pile
- * reads as a gently skewed fan of cards (newest on top, depth-cued by a darkening
- * brightness ramp). Only the leading edge of the cards behind peeks out.
+ * RESTING STATE: up to four `.bg-card` glass slabs share ONE grid cell
+ * (`grid-template-areas:'stack'`) so they OVERLAP in a pile. The whole pile is skewed
+ * (`skewY(-8deg)`, in theme.css). The front card (index 0, highest z-index) is full
+ * cyan; each card BEHIND it is nudged right+down (`data-depth` → `translate(...)`) and
+ * DESATURATED + dimmed, so the pile reads as a stack receding off-frame (helped by a
+ * right-edge gradient fade on `.dc-stack::after`). This is the deck's reading of the
+ * reference's "grayscale-at-rest" depth cue.
  *
- * HOVER: GSAP spreads the pile — each card slides to its own column and un-rotates to
- * flat, so all of them are readable side by side. On leave it collapses back to the
- * fan. Nothing animates at rest; the spread is purely interaction-driven.
+ * HOVER: each card lifts on its OWN hover — a back card slides UP out of the pile to
+ * flat and goes full-colour (`saturate(1) brightness(1)`), the front card lifts a hair.
+ * All pure CSS transitions (`700ms` cinematic), so nothing animates at rest and it's
+ * cheap with four cards. The cursor-following cyan border (igniteBorder/douseBorder)
+ * still lights per card.
  *
- * REDUCED MOTION: no skew, no GSAP. The cards park as a neat, flat, evenly-spaced row
- * (a CSS grid), every card fully readable, no transforms.
+ * REDUCED MOTION: no skew, no stack, no desaturation, no transforms. The cards park as
+ * a neat, flat, evenly-spaced grid (`.dc-flat`), every card fully readable.
  *
  * Each card shows the chat title, a `.hud` last-active subtitle, and a LIT cyan star
  * that unpins (stopPropagation). Clicking the card body opens the chat.
  */
 export function DisplayCards({ cards }: DisplayCardsProps) {
   const reduced = useReducedMotion();
-  const scope = useRef<HTMLDivElement>(null);
   const shown = cards.slice(0, MAX_FANNED);
   const n = shown.length;
-
-  // Fan geometry: index 0 is the BACK of the pile, the last index is the front/top.
-  // Each step forward nudges the card down + right and rotates it a touch more, so the
-  // stack fans toward the bottom-right. Spread targets line the cards up in a flat row.
-  const geom = (i: number) => {
-    const depth = n - 1 - i; // 0 = front card, grows toward the back
-    return {
-      restX: i * 26,
-      restY: i * 18,
-      restRot: (i - (n - 1) / 2) * 5,
-      restScale: 1 - depth * 0.04,
-      restBright: 1 - depth * 0.12,
-      // Spread: even columns across the row, flat, full size/brightness.
-      spreadX: n > 1 ? (i / (n - 1)) * 100 : 0, // percent of the spread track
-    };
-  };
-
-  useGSAP(
-    () => {
-      if (reduced) return;
-      // Park every card at its resting fan pose (so initial paint matches the fan).
-      const cardsEls = gsap.utils.toArray<HTMLElement>(".dc-card");
-      cardsEls.forEach((el, i) => {
-        const g = geom(i);
-        gsap.set(el, {
-          x: g.restX,
-          y: g.restY,
-          rotation: g.restRot,
-          scale: g.restScale,
-          filter: `brightness(${g.restBright})`,
-          zIndex: i + 1,
-        });
-      });
-    },
-    { scope, dependencies: [reduced, n] },
-  );
-
-  function spread(on: boolean) {
-    if (reduced) return;
-    const host = scope.current;
-    if (!host) return;
-    const track = host.clientWidth;
-    const cardsEls = gsap.utils.toArray<HTMLElement>(".dc-card", host);
-    cardsEls.forEach((el, i) => {
-      const g = geom(i);
-      gsap.to(el, {
-        x: on ? (g.spreadX / 100) * Math.max(track - 240, 0) : g.restX,
-        y: on ? 0 : g.restY,
-        rotation: on ? 0 : g.restRot,
-        scale: on ? 1 : g.restScale,
-        filter: `brightness(${on ? 1 : g.restBright})`,
-        duration: on ? D.section : D.screen,
-        ease: on ? EASE : "power3.out",
-      });
-    });
-  }
 
   if (n === 0) return null;
 
@@ -111,39 +57,50 @@ export function DisplayCards({ cards }: DisplayCardsProps) {
   if (reduced) {
     return (
       <div
-        ref={scope}
-        className="grid gap-4"
-        style={{ gridTemplateColumns: `repeat(${Math.min(n, MAX_FANNED)}, minmax(0, 1fr))` }}
+        className="dc-flat"
+        style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}
       >
         {shown.map((c) => (
-          <Card key={c.id} card={c} reduced />
+          <Card key={c.id} card={c} depth={0} reduced />
         ))}
       </div>
     );
   }
 
+  // Skew-stack. The host reserves enough height for the deepest card's
+  // right+down offset (each step nudges ~40px down). Front card = index 0,
+  // highest z-index; later cards recede (data-depth grows).
   return (
     <div
-      ref={scope}
       className="dc-stack"
-      onMouseEnter={() => spread(true)}
-      onMouseLeave={() => spread(false)}
-      style={{ height: 96 + (n - 1) * 18 } as CSSProperties}
+      style={{ minHeight: 104 + (n - 1) * 40 } as CSSProperties}
     >
-      {shown.map((c) => (
-        <Card key={c.id} card={c} reduced={false} />
+      {shown.map((c, i) => (
+        <Card key={c.id} card={c} depth={i} reduced={false} z={n - i} />
       ))}
     </div>
   );
 }
 
-function Card({ card, reduced }: { card: DisplayCard; reduced: boolean }) {
+function Card({
+  card,
+  depth,
+  reduced,
+  z,
+}: {
+  card: DisplayCard;
+  depth: number;
+  reduced: boolean;
+  z?: number;
+}) {
   return (
     <div
-      className={"dc-card bg-card cursor-pointer px-5 py-4" + (reduced ? " relative" : "")}
+      className="dc-card bg-card cursor-pointer px-5 py-4"
+      data-depth={depth}
+      style={z !== undefined ? ({ zIndex: z } as CSSProperties) : undefined}
       onClick={card.onOpen}
-      onPointerMove={igniteBorder}
-      onPointerLeave={douseBorder}
+      onPointerMove={reduced ? undefined : igniteBorder}
+      onPointerLeave={reduced ? undefined : douseBorder}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => {

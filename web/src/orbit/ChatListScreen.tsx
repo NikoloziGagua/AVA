@@ -4,6 +4,7 @@ import { api, fetchSessions, type SessionRow } from "../api.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { DisplayCards, MAX_FANNED, type DisplayCard } from "../components/ava/DisplayCards.js";
+import { ContainerScroll } from "../components/ava/ContainerScroll.js";
 import { Flip, gsap, useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { press } from "../lib/deckMotion.js";
@@ -172,7 +173,9 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
         {/* IMPORTANT CHATS — only when something is pinned. */}
         {pinned.length > 0 && (
           <PanelSection title="Important chats">
-            <DisplayCards cards={displayCards} />
+            <ContainerScroll>
+              <DisplayCards cards={displayCards} />
+            </ContainerScroll>
           </PanelSection>
         )}
 

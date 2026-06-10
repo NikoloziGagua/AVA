@@ -210,9 +210,10 @@ function MindStage({
 }) {
   return (
     <div className="lg:col-span-12" data-panel-section>
+      {/* No framing box — the network floats free over the panel backdrop, bigger. */}
       <div
-        className="lg-slab relative w-full overflow-hidden rounded-2xl"
-        style={{ height: "min(72vh, 760px)" }}
+        className="relative w-full overflow-hidden"
+        style={{ height: "min(86vh, 940px)" }}
       >
         <MemoryBrain memory={memory} onSelect={onSelect} />
 
@@ -240,7 +241,24 @@ const KIND_LABEL: Record<BrainNode["kind"], string> = {
 function NodeInspector({ node, onClose }: { node: BrainNode; onClose: () => void }) {
   const confColor = node.confidence ? CONF_COLOR[node.confidence] : null;
   return (
-    <div className="bg-card absolute right-4 top-4 z-10 w-[min(20rem,calc(100%-2rem))] rounded-xl p-4">
+    // Sleek technical HUD panel (not the bubbly .bg-card): sharp 7px corners, a flat deep
+    // body, a thin cyan top accent bar, restrained glow.
+    <div
+      className="absolute right-4 top-4 z-10 w-[min(20rem,calc(100%-2rem))] p-4"
+      style={{
+        borderRadius: "7px",
+        background: "rgba(8,12,18,0.86)",
+        border: "1px solid rgba(92,242,255,0.22)",
+        boxShadow: "0 18px 50px -26px rgba(0,0,0,0.9)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+      }}
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-px"
+        style={{ background: "linear-gradient(90deg, transparent, var(--ac), transparent)" }}
+      />
       <div className="mb-2 flex items-start justify-between gap-3">
         <span className="hud text-[10px] tracking-[0.18em] text-[var(--ac)]/85">
           {KIND_LABEL[node.kind]}

@@ -43,59 +43,7 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
 
   return (
     <PanelShell title="Memory" grid>
-      <PanelSection
-        title="Personality"
-        span="lg:col-span-5"
-        right={
-          <span className="hud text-[10px] tracking-[0.18em] text-[var(--ac)]/80">
-            {showPersonality ? "hide" : "show"}
-          </span>
-        }
-        onClickHeader={() => setShowPersonality((v) => !v)}
-      >
-        {showPersonality && (
-          <Reveal>
-            <pre className="whitespace-pre-wrap text-xs leading-relaxed text-white/75">{m.personality || "(empty)"}</pre>
-            <div className="mt-3 hud text-[9px] tracking-[0.16em] text-white/30">
-              Edit data/memory/personality.md directly to change.
-            </div>
-          </Reveal>
-        )}
-      </PanelSection>
-
-      <PanelSection title="Preferences" span="lg:col-span-7">
-        <div className="space-y-2">
-          {m.preferences.lines.length === 0 && (
-            <div className="text-xs text-white/40">none yet.</div>
-          )}
-          {m.preferences.lines.map((line) => (
-            <PreferenceRow
-              key={line}
-              line={line}
-              onEdit={async (newLine) => {
-                await patchMemoryLine({ file: "preferences", oldLine: line, newLine });
-                await load();
-              }}
-              onDelete={async () => {
-                await patchMemoryLine({ file: "preferences", oldLine: line });
-                await load();
-              }}
-            />
-          ))}
-          <NewPreferenceInput
-            value={newPref}
-            onChange={setNewPref}
-            onAdd={async () => {
-              const v = newPref.trim();
-              if (!v) return;
-              await postMemoryLine(v);
-              setNewPref("");
-              await load();
-            }}
-          />
-        </div>
-      </PanelSection>
-
+      {/* PRIMARY — the live observation feed (wide left column, the densest content). */}
       <PanelSection
         title="Observations"
         span="lg:col-span-7"
@@ -130,23 +78,89 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
         </div>
       </PanelSection>
 
+      {/* SECONDARY — editable preferences (top of the right column). */}
       <PanelSection
-        title="Projects"
+        title="Preferences"
         span="lg:col-span-5"
+        right={<CountChip count={m.preferences.lines.length} />}
+      >
+        <div className="space-y-2">
+          {m.preferences.lines.length === 0 && (
+            <div className="text-xs text-white/40">none yet.</div>
+          )}
+          {m.preferences.lines.map((line) => (
+            <PreferenceRow
+              key={line}
+              line={line}
+              onEdit={async (newLine) => {
+                await patchMemoryLine({ file: "preferences", oldLine: line, newLine });
+                await load();
+              }}
+              onDelete={async () => {
+                await patchMemoryLine({ file: "preferences", oldLine: line });
+                await load();
+              }}
+            />
+          ))}
+          <NewPreferenceInput
+            value={newPref}
+            onChange={setNewPref}
+            onAdd={async () => {
+              const v = newPref.trim();
+              if (!v) return;
+              await postMemoryLine(v);
+              setNewPref("");
+              await load();
+            }}
+          />
+        </div>
+      </PanelSection>
+
+      {/* TERTIARY — collapsible reference (Personality + Projects) span the lower row. */}
+      <PanelSection
+        title="Personality"
+        span="lg:col-span-6"
         right={
           <span className="hud text-[10px] tracking-[0.18em] text-[var(--ac)]/80">
-            {showProjects ? "hide" : "show"}
+            {showPersonality ? "hide" : "show"}
+          </span>
+        }
+        onClickHeader={() => setShowPersonality((v) => !v)}
+      >
+        {showPersonality ? (
+          <Reveal>
+            <pre className="whitespace-pre-wrap text-xs leading-relaxed text-white/75">{m.personality || "(empty)"}</pre>
+            <div className="mt-3 hud text-[9px] tracking-[0.16em] text-white/30">
+              Edit data/memory/personality.md directly to change.
+            </div>
+          </Reveal>
+        ) : (
+          <div className="text-xs text-white/40">Ava's tone &amp; voice. Tap to reveal.</div>
+        )}
+      </PanelSection>
+
+      <PanelSection
+        title="Projects"
+        span="lg:col-span-6"
+        right={
+          <span className="flex items-center gap-2">
+            <CountChip count={m.projects.length} />
+            <span className="hud text-[10px] tracking-[0.18em] text-[var(--ac)]/80">
+              {showProjects ? "hide" : "show"}
+            </span>
           </span>
         }
         onClickHeader={() => setShowProjects((v) => !v)}
       >
-        {showProjects && (
+        {showProjects ? (
           <Reveal className="space-y-1.5">
             {m.projects.length === 0 && <div className="text-xs text-white/40">no projects.</div>}
             {m.projects.map((p) => (
               <ProjectDisclosure key={p.slug} slug={p.slug} body={p.body} />
             ))}
           </Reveal>
+        ) : (
+          <div className="text-xs text-white/40">Known project workspaces. Tap to reveal.</div>
         )}
       </PanelSection>
     </PanelShell>

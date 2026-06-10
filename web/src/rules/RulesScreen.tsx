@@ -266,34 +266,11 @@ export function RulesScreen(_props: { onClose?: () => void }) {
           )}
         </PanelSection>
 
-        <PanelSection title="Devices" span="lg:col-span-4">
-          <div className="space-y-2">
-            {devices.length === 0 && <div className="text-xs text-white/40">no devices paired.</div>}
-            {devices.map((d) => (
-              <div
-                key={d.id}
-                onMouseEnter={onEnter}
-                onMouseLeave={onLeave}
-                className="lg-slab lg-sweep rounded-xl px-3 py-2.5 text-xs flex items-center gap-3"
-                style={{ "--sweep-x": "-130%" } as CSSProperties}
-              >
-                <span className="font-medium text-white/90">{d.label}</span>
-                <span className="hud text-[10px] text-white/40">{new Date(d.created_at).toLocaleDateString()}</span>
-                <button
-                  className="btn-deck btn-danger ml-auto !h-7 !px-2"
-                  aria-label="revoke"
-                  onClick={() => revokeDevice(d.id)}
-                  onMouseDown={onDown}
-                  onMouseUp={onUp}
-                >
-                  <Trash2 size={13} aria-hidden /> revoke
-                </button>
-              </div>
-            ))}
-          </div>
-        </PanelSection>
-
-        <PanelSection title="Autonomy rules" span="lg:col-span-12">
+        <PanelSection
+          title="Autonomy rules"
+          span="lg:col-span-8"
+          right={rows && rows.length > 0 ? <span className="chip chip-ac">{rows.length}</span> : undefined}
+        >
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -375,7 +352,42 @@ export function RulesScreen(_props: { onClose?: () => void }) {
           </div>
         </PanelSection>
 
-        <PanelSection title="Pinned chips" span="lg:col-span-12">
+        <PanelSection
+          title="Devices"
+          span="lg:col-span-4"
+          right={devices.length > 0 ? <span className="chip chip-ac">{devices.length}</span> : undefined}
+        >
+          <div className="space-y-2">
+            {devices.length === 0 && <div className="text-xs text-white/40">no devices paired.</div>}
+            {devices.map((d) => (
+              <div
+                key={d.id}
+                onMouseEnter={onEnter}
+                onMouseLeave={onLeave}
+                className="lg-slab lg-sweep rounded-xl px-3 py-2.5 text-xs flex items-center gap-3"
+                style={{ "--sweep-x": "-130%" } as CSSProperties}
+              >
+                <span className="font-medium text-white/90">{d.label}</span>
+                <span className="hud text-[10px] text-white/40">{new Date(d.created_at).toLocaleDateString()}</span>
+                <button
+                  className="btn-deck btn-danger ml-auto !h-7 !px-2"
+                  aria-label="revoke"
+                  onClick={() => revokeDevice(d.id)}
+                  onMouseDown={onDown}
+                  onMouseUp={onUp}
+                >
+                  <Trash2 size={13} aria-hidden /> revoke
+                </button>
+              </div>
+            ))}
+          </div>
+        </PanelSection>
+
+        <PanelSection
+          title="Pinned chips"
+          span="lg:col-span-12"
+          right={chips.length > 0 ? <span className="chip chip-ac">{chips.length}</span> : undefined}
+        >
           <div className="space-y-2 mb-3">
             {chips.length === 0 && <div className="text-xs text-white/40">no pinned chips.</div>}
             {chips.map((c) => (

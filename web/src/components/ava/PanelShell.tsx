@@ -8,10 +8,11 @@ import { BorderGlow } from "./BorderGlow.js";
 /**
  * Shared chrome for the deck panels (Chats / Memory / Rules / Self).
  *
- * Lays out a readable column (max-w-5xl) under the persistent TubelightNav, paints
- * the cyan bloom + dot-grid backdrop, renders the title rail (specular sweep +
- * DrawSVG mercury underline + ScrambleText decode), and runs the panel-enter master
- * timeline — or parks to the lit final state under reduced motion.
+ * Lays out a wide desktop column (max-w-7xl, responsive padding) under the
+ * persistent TubelightNav, paints the cyan bloom + dot-grid backdrop, renders the
+ * title rail (specular sweep + DrawSVG mercury underline + ScrambleText decode), and
+ * runs the panel-enter master timeline — or parks to the lit final state under
+ * reduced motion.
  *
  * Mark each top-level block with `data-panel-section` (PanelSection does this) to
  * join the stagger cascade.
@@ -56,7 +57,7 @@ export function PanelShell({ title, grid = false, bg, children }: {
       />
       <div
         data-panel-stage
-        className="relative mx-auto w-full max-w-5xl px-8 pt-28 pb-24 will-change-transform"
+        className="relative mx-auto w-full max-w-7xl px-6 sm:px-10 lg:px-14 pt-28 pb-24 will-change-transform"
       >
         <div data-panel-titlewrap className="mb-10">
           <h1
@@ -86,7 +87,7 @@ export function PanelShell({ title, grid = false, bg, children }: {
             </defs>
           </svg>
         </div>
-        <div className={grid ? "grid grid-cols-1 lg:grid-cols-12 gap-6 items-start" : ""}>
+        <div className={grid ? "grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-7 items-start" : ""}>
           {children}
         </div>
       </div>
@@ -112,7 +113,7 @@ export function PanelSection({ title, right, onClickHeader, span, children }: {
   children: ReactNode;
 }) {
   return (
-    <BorderGlow dataPanelSection className={"mb-6 px-6 py-5 " + (span ?? "")}>
+    <BorderGlow dataPanelSection className={"mb-5 px-6 py-5 sm:px-7 sm:py-6 " + (span ?? "")}>
       <header
         className={
           "hud mb-4 flex items-center justify-between text-[11px] tracking-[0.18em] text-white/60 " +

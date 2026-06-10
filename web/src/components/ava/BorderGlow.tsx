@@ -35,16 +35,22 @@ export function douseBorder(e: PointerEvent<HTMLElement>): void {
 
 /**
  * A glass card whose cyan/mercury border IGNITES near the pointer and a soft glow
- * follows the cursor's edge — adapted (perf-light) from the owner's BorderGlow.
+ * follows the cursor's edge — the "glowing-ray box": dark glass + thin glowing
+ * corner brackets + a diagonal light ray, all CALM at rest and lit by proximity.
  *
  * It's used on every deck section (5-8 per panel), so it deliberately drops the
  * heavy original (7 mesh gradients + mask-composite fill + a giant box-shadow
- * stack). Instead: ONE conic gradient masked into a 1px border that rotates to the
- * cursor angle, its opacity ramped by edge-proximity, plus a single edge glow.
- * Nothing animates at rest — the CSS vars only change while a card is hovered (a
- * React-delegated onPointerMove, so one real listener), so it's cheap at scale.
- * The styles live in theme.css (.bg-card). Interaction-driven, so reduced-motion
- * needs no special branch.
+ * stack). Instead, everything is driven by a single CSS var `--edge` (0 at centre →
+ * 1 at any edge), set on `onPointerMove` (a React-delegated handler, so one real
+ * listener) and reset on leave:
+ *   • `::before`  — a 1px conic gradient border ring that rotates to the cursor.
+ *   • `::after`   — a soft outer edge glow.
+ *   • 4 `.bg-card__bracket` corner L-brackets — faint at rest, brighten/extend with --edge.
+ *   • 1 `.bg-card__ray`     — a diagonal specular sheen that intensifies with --edge.
+ * Nothing animates at rest — the vars only change while a card is hovered — so it's
+ * cheap with 8 cards on screen. The bracket/ray nodes are static, decorative, and
+ * interaction-driven, so reduced-motion needs no special branch. Styles live in
+ * theme.css (.bg-card and friends).
  */
 export function BorderGlow({ children, className, style, dataPanelSection }: BorderGlowProps) {
   return (
@@ -55,6 +61,12 @@ export function BorderGlow({ children, className, style, dataPanelSection }: Bor
       className={"bg-card " + (className ?? "")}
       style={style}
     >
+      {/* Diagonal light ray + glowing corner brackets — calm at rest, lit by --edge. */}
+      <span aria-hidden className="bg-card__ray" />
+      <span aria-hidden className="bg-card__bracket bg-card__bracket--tl" />
+      <span aria-hidden className="bg-card__bracket bg-card__bracket--tr" />
+      <span aria-hidden className="bg-card__bracket bg-card__bracket--bl" />
+      <span aria-hidden className="bg-card__bracket bg-card__bracket--br" />
       {children}
     </div>
   );

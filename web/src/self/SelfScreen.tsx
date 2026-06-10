@@ -59,43 +59,42 @@ export function SelfScreen(_props: { onClose?: () => void }) {
 
   return (
     <div ref={scope} className="h-full">
-      <PanelShell title="Self-improvement">
+      <PanelShell title="Self-improvement" grid>
         <PanelSection
           title="Controls"
+          span="lg:col-span-4"
           right={
             <span className={`chip ${paused ? "chip-stop" : "chip-live"}`}>
               {paused ? "PAUSED" : "ACTIVE"}
             </span>
           }
         >
-          <div className="flex items-center justify-between gap-4">
-            <div className="hud text-[11px] tracking-[0.18em] text-white/55">
-              {paused ? "AUTONOMOUS · PAUSED" : "AUTONOMOUS · ACTIVE"}
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setPaused(!paused)}
-                aria-pressed={paused}
-                onPointerDown={onDown}
-                onPointerUp={onUp}
-                onPointerLeave={onUp}
-                className="btn-deck btn-primary"
-              >
-                {paused ? "Resume" : "Pause"}
-              </button>
-              <button
-                onClick={revertLast}
-                disabled={!canRevert}
-                onPointerDown={onDown}
-                onPointerUp={onUp}
-                onPointerLeave={onUp}
-                className="btn-deck btn-ghost disabled:opacity-40"
-              >
-                Revert last
-              </button>
-            </div>
+          <div className="hud text-[11px] tracking-[0.18em] text-white/55">
+            {paused ? "AUTONOMOUS · PAUSED" : "AUTONOMOUS · ACTIVE"}
           </div>
-          <div className="text-[10px] text-white/40 mt-3">
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              onClick={() => setPaused(!paused)}
+              aria-pressed={paused}
+              onPointerDown={onDown}
+              onPointerUp={onUp}
+              onPointerLeave={onUp}
+              className="btn-deck btn-primary flex-1"
+            >
+              {paused ? "Resume" : "Pause"}
+            </button>
+            <button
+              onClick={revertLast}
+              disabled={!canRevert}
+              onPointerDown={onDown}
+              onPointerUp={onUp}
+              onPointerLeave={onUp}
+              className="btn-deck btn-ghost flex-1 disabled:opacity-40"
+            >
+              Revert last
+            </button>
+          </div>
+          <div className="text-[10px] text-white/40 mt-4 leading-relaxed">
             {paused
               ? "Paused — Ava won't act on self-improvements."
               : "Active — Ava may refine how it works for you."}
@@ -104,6 +103,7 @@ export function SelfScreen(_props: { onClose?: () => void }) {
 
         <PanelSection
           title="Journal"
+          span="lg:col-span-8"
           right={
             <span className="chip chip-ac">
               <span ref={countRef}>{intents.length}</span>

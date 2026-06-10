@@ -3,6 +3,7 @@ import { Pencil, Trash2, Check, X, Plus } from "lucide-react";
 import { fetchMemory, type MemoryView, patchMemoryLine, postMemoryLine } from "../api.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
+import { MemoryBrain, type BrainNode } from "../components/ava/MemoryBrain.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { hoverLift, press, settleText, EASE } from "../lib/deckMotion.js";
@@ -20,6 +21,8 @@ const CONF_COLOR = {
   low: "var(--conf-low)",
 } as const;
 
+type ViewMode = "list" | "mind";
+
 export function MemoryScreen(_props: { onClose?: () => void }) {
   const [m, setM] = useState<MemoryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -27,6 +30,8 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
   const [showPersonality, setShowPersonality] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const [newPref, setNewPref] = useState("");
+  const [view, setView] = useState<ViewMode>("list");
+  const [selected, setSelected] = useState<BrainNode | null>(null);
 
   async function load() {
     try { setM(await fetchMemory()); }
@@ -43,8 +48,28 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
 
   return (
     <PanelShell title="Memory" grid>
-      {/* PRIMARY — the live observation feed (wide left column, the densest content). */}
-      <PanelSection
+      {/* View toggle — List (dashboard) vs Mind (3D memory brain). Spans the grid. */}
+      <div className="lg:col-span-12 mb-1 flex justify-end" data-panel-section>
+        <SegmentedTabs<ViewMode>
+          options={[
+            { value: "list", label: "List" },
+            { value: "mind", label: "Mind" },
+          ]}
+          value={view}
+          onChange={(v) => {
+            setView(v);
+            if (v === "list") setSelected(null);
+          }}
+          layout="auto"
+        />
+      </div>
+
+      {view === "mind" ? (
+        <MindStage memory={m} selected={selected} onSelect={setSelected} />
+      ) : (
+        <>
+          {/* PRIMARY — the live observation feed (wide left column, the densest content). */}
+          <PanelSection
         title="Observations"
         span="lg:col-span-7"
         right={<CountChip count={m.observations.lines.length} />}
@@ -163,7 +188,87 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
           <div className="text-xs text-white/40">Known project workspaces. Tap to reveal.</div>
         )}
       </PanelSection>
+        </>
+      )}
     </PanelShell>
+  );
+}
+
+/**
+ * "Mind" mode: the 3D memory brain in a tall full-width stage, with a node
+ * inspector that overlays the top-right corner when a node is selected. The brain
+ * computes its layout once and disposes its GL resources on unmount.
+ */
+function MindStage({
+  memory,
+  selected,
+  onSelect,
+}: {
+  memory: MemoryView;
+  selected: BrainNode | null;
+  onSelect: (n: BrainNode | null) => void;
+}) {
+  return (
+    <div className="lg:col-span-12" data-panel-section>
+      <div
+        className="lg-slab relative w-full overflow-hidden rounded-2xl"
+        style={{ height: "min(72vh, 760px)" }}
+      >
+        <MemoryBrain memory={memory} onSelect={onSelect} />
+
+        {/* Hint rail, bottom-left. */}
+        <div className="pointer-events-none absolute bottom-3 left-4 hud text-[9px] tracking-[0.18em] text-white/35">
+          drag to rotate · scroll to zoom · tap a node
+        </div>
+
+        {/* Inspector card, top-right corner, shown on selection. */}
+        {selected && <NodeInspector node={selected} onClose={() => onSelect(null)} />}
+      </div>
+    </div>
+  );
+}
+
+const KIND_LABEL: Record<BrainNode["kind"], string> = {
+  core: "core",
+  category: "hub",
+  observation: "observation",
+  preference: "preference",
+  project: "project",
+};
+
+/** The selected-node detail card overlaying the brain stage. */
+function NodeInspector({ node, onClose }: { node: BrainNode; onClose: () => void }) {
+  const confColor = node.confidence ? CONF_COLOR[node.confidence] : null;
+  return (
+    <div className="bg-card absolute right-4 top-4 z-10 w-[min(20rem,calc(100%-2rem))] rounded-xl p-4">
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <span className="hud text-[10px] tracking-[0.18em] text-[var(--ac)]/85">
+          {KIND_LABEL[node.kind]}
+        </span>
+        <button onClick={onClose} className="btn-deck btn-ghost h-7 px-2" aria-label="close inspector">
+          <X size={14} strokeWidth={2.5} />
+        </button>
+      </div>
+      <div className="text-sm font-medium leading-snug text-white/90">{node.label}</div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 hud text-[9px] tracking-[0.16em] text-white/40">
+        {node.category && <span>{node.category}</span>}
+        {confColor && (
+          <span className="flex items-center gap-1.5">
+            <span
+              className="inline-block h-2 w-2 rounded-full"
+              style={{ background: confColor, boxShadow: `0 0 6px ${confColor}` }}
+            />
+            {node.confidence}
+          </span>
+        )}
+        {node.date && <span>{node.date}</span>}
+      </div>
+      {node.text && node.text !== node.label && (
+        <pre className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap border-l border-[rgba(92,242,255,0.25)] pl-3 text-[11px] leading-relaxed text-white/65">
+          {node.text}
+        </pre>
+      )}
+    </div>
   );
 }
 

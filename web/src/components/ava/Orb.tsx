@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { gsap, useGSAP } from "../../lib/gsap.js";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
 import { orbMotion, type OrbState } from "./orb-state.js";
@@ -30,16 +30,26 @@ export function Orb({ size = 120, state = "idle", amplitude = 0, flipId, classNa
   // conic-gradient repaints and choke the main thread.
   const animate = !reduced && size >= 40;
 
+  // Reused setter so the rim's amplitude-tracked opacity is driven WITHOUT rebuilding
+  // any tween (see the amplitude effect below). Null for static avatars.
+  const rimOpacityTo = useRef<ReturnType<typeof gsap.quickTo> | null>(null);
+
   useGSAP(
     () => {
+      rimOpacityTo.current = null;
       if (!animate) return;
+      const rim = scope.current?.querySelector<HTMLDivElement>("[data-orb-rim]");
       gsap.to("[data-orb-core]", { rotation: 360, repeat: -1, ease: "none", duration: m.spin });
-      gsap.to("[data-orb-rim]", { opacity: m.rimOpacity, duration: 0.6, ease: "power2.out" });
-      gsap.fromTo(
-        "[data-orb-rim]",
-        { scale: 0.97 },
-        { scale: 1.05, repeat: -1, yoyo: true, duration: 1.7, ease: "sine.inOut" },
-      );
+      if (rim) {
+        // Rim opacity is GSAP-owned (the inline style omits it while animating) so the
+        // ~60fps amplitude-prop re-renders never fight the tween. It's driven live by the
+        // amplitude effect below via a reused quickTo — which is why the amp-derived
+        // m.rimOpacity is no longer a useGSAP dependency: keeping it here made the whole
+        // body (core spin + ripples included) re-run and accumulate tweens every frame.
+        gsap.set(rim, { opacity: m.rimOpacity });
+        rimOpacityTo.current = gsap.quickTo(rim, "opacity", { duration: 0.4, ease: "power2.out" });
+        gsap.fromTo(rim, { scale: 0.97 }, { scale: 1.05, repeat: -1, yoyo: true, duration: 1.7, ease: "sine.inOut" });
+      }
       if (listening) {
         gsap.fromTo(
           "[data-orb-ripple]",
@@ -48,8 +58,15 @@ export function Orb({ size = 120, state = "idle", amplitude = 0, flipId, classNa
         );
       }
     },
-    { scope, dependencies: [state, reduced, animate, m.spin, m.rimOpacity, listening] },
+    { scope, dependencies: [state, reduced, animate, m.spin, listening] },
   );
+
+  // Rim brightness tracks mic amplitude while listening (orbMotion folds amp into
+  // rimOpacity). A reused quickTo means a 60fps amplitude change is one setter call, not
+  // a tween rebuild. No-op for static avatars (rimOpacityTo is null when !animate).
+  useEffect(() => {
+    rimOpacityTo.current?.(orbMotion(state, amplitude).rimOpacity);
+  }, [amplitude, state]);
 
   return (
     <div
@@ -76,7 +93,10 @@ export function Orb({ size = 120, state = "idle", amplitude = 0, flipId, classNa
           inset: "-7%",
           borderRadius: "50%",
           border: "1px solid var(--ac)",
-          opacity: m.rimOpacity,
+          // While animating, GSAP owns rim opacity (quickTo) — omit it inline so a
+          // 60fps amplitude re-render can't reset it and fight the tween. Static
+          // avatars get the amplitude-independent base.
+          opacity: animate ? undefined : orbMotion(state, 0).rimOpacity,
           boxShadow: `0 0 ${size * 0.22}px rgba(92,242,255,0.45)`,
         }}
       />

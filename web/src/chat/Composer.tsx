@@ -98,7 +98,12 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
   };
 
   return (
-    <div className="sticky bottom-0 px-3 pb-3 pt-2 bg-gradient-to-t from-black via-black/85 to-transparent">
+    <div
+      className="sticky bottom-0 px-3 pt-2 bg-gradient-to-t from-black via-black/85 to-transparent"
+      // Keep the composer clear of the home-indicator area on notched phones
+      // (env() is 0 on desktop, so this stays the old pb-3 there).
+      style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" }}
+    >
       <div className="mx-auto w-full max-w-[760px]">
         {chips.length > 0 && (
           <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 mb-1">

@@ -9,6 +9,7 @@ import { ToolCallChip } from "./ToolCallChip.js";
 import { humanizeTool } from "./humanize.js";
 import { MessageActions } from "./MessageActions.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
+import { stripMarkdown } from "./strip-markdown.js";
 import type { StreamEvent } from "./useChatStream.js";
 
 export type ChatMessage =
@@ -78,6 +79,11 @@ export function MessageList({
   }
 
   const lastFinal = [...liveEvents].reverse().find((e) => e.kind === "final");
+
+  // Retry re-runs the LAST turn (ChatScreen's retryLast), so it only belongs on
+  // the LAST assistant bubble — on every bubble it implied re-running THAT turn.
+  // The live final (when present) is the newest reply and owns Retry instead.
+  const lastAssistantHistoryId = [...history].reverse().find((m) => m.role === "assistant")?.id;
 
   // ── Live streaming text for the in-flight turn ──────────────────────────
   // liveEvents is already filtered to the current runEpoch by ChatScreen, so
@@ -194,9 +200,12 @@ export function MessageList({
                     "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
                 }}
               >
-                {m.text}
+                {stripMarkdown(m.text)}
               </div>
-              <MessageActions text={m.text} onRetry={onRetry} />
+              <MessageActions
+                text={m.text}
+                onRetry={!lastFinal && m.id === lastAssistantHistoryId ? onRetry : undefined}
+              />
             </AvaBubble>
           )}
         </div>
@@ -244,7 +253,7 @@ export function MessageList({
                 <div className="flex justify-start" data-testid="stopped-partial">
                   <AvaBubble reduced={reduced}>
                     <WordReveal
-                      text={streamingText}
+                      text={stripMarkdown(streamingText)}
                       animate={false}
                       className="text-[15px] leading-[1.65] whitespace-pre-wrap"
                       gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
@@ -259,7 +268,7 @@ export function MessageList({
         if (e.kind === "gap") {
           return (
             <div key={key} className="text-xs text-amber-500">
-              ⚠ missed {e.payload.to - e.payload.from + 1} events — see Sessions for the full trace.
+              ⚠ missed {e.payload.to - e.payload.from + 1} live events — reopen this chat to refresh.
             </div>
           );
         }
@@ -270,7 +279,7 @@ export function MessageList({
         <div className="flex justify-start" data-testid="final-message">
           <AvaBubble reduced={reduced}>
             <WordReveal
-              text={lastFinal.payload.text}
+              text={stripMarkdown(lastFinal.payload.text)}
               // Always reveal the reply word-by-word — there's no live bubble to hand
               // off from, so this IS the reveal the owner asked for.
               animate

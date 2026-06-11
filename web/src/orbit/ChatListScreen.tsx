@@ -32,6 +32,9 @@ function lastActive(s: SessionRow): string {
 export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Fetch failure is its own state (MemoryScreen's err pattern) — swallowing it
+  // into the empty list lied with "NO CHATS YET" when the server was down.
+  const [err, setErr] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const reduced = useReducedMotion();
 
@@ -44,7 +47,7 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
   useEffect(() => {
     fetchSessions()
       .then((s) => setSessions(s))
-      .catch(() => {})
+      .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
   }, []);
 
@@ -189,7 +192,11 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
             </div>
           )}
 
-          {!loading && sessions.length === 0 && (
+          {!loading && err && (
+            <div className="py-10 text-center text-sm text-red-400">error: {err}</div>
+          )}
+
+          {!loading && !err && sessions.length === 0 && (
             <div className="flex flex-col items-center gap-5 py-14 text-center">
               <div className="hud text-[12px] tracking-[0.22em] text-white/45">NO CHATS YET</div>
               <button

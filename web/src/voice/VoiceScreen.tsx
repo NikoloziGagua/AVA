@@ -148,7 +148,8 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
 
       {v.errorMsg && (
         <div className="absolute left-1/2 top-20 z-30 w-72 -translate-x-1/2">
-          <Alert variant="destructive" close onClose={() => onExit(v.sessionId)}>
+          {/* Dismiss only clears the error — exiting voice is the X button's job. */}
+          <Alert variant="destructive" close onClose={v.clearError}>
             <AlertDescription>{v.errorMsg}</AlertDescription>
           </Alert>
         </div>
@@ -203,7 +204,12 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         </div>
       </div>
 
-      <div ref={chromeScope} className="absolute bottom-8 left-0 right-0 z-20 flex items-center justify-center gap-5">
+      <div
+        ref={chromeScope}
+        className="absolute left-0 right-0 z-20 flex items-center justify-center gap-5"
+        // bottom-8 plus the home-indicator inset on phones (env() is 0 on desktop).
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 2rem)" }}
+      >
         <button
           aria-label={v.muted ? "unmute" : "mute"}
           onClick={() => v.setMuted(!v.muted)}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import type { SessionRow } from "../api.js";
 
 // Mock the api module so the screen mounts without real network in jsdom.
@@ -35,6 +35,10 @@ beforeEach(() => {
   deleteSession.mockReset().mockResolvedValue(undefined);
 });
 
+// No vitest globals → RTL can't auto-register its cleanup; unmount explicitly
+// so one test's DOM (e.g. the empty state) can't leak into the next.
+afterEach(() => cleanup());
+
 describe("ChatListScreen", () => {
   it("exports a function component", () => {
     expect(typeof ChatListScreen).toBe("function");
@@ -44,6 +48,13 @@ describe("ChatListScreen", () => {
     fetchSessions.mockResolvedValue([]);
     render(<ChatListScreen onClose={() => {}} onOpenChat={() => {}} />);
     expect(await screen.findByText("NO CHATS YET")).toBeTruthy();
+  });
+
+  it("renders a distinct error state when the fetch fails (failure ≠ empty)", async () => {
+    fetchSessions.mockRejectedValue(new Error("boom"));
+    render(<ChatListScreen onClose={() => {}} onOpenChat={() => {}} />);
+    expect(await screen.findByText(/error: .*boom/)).toBeTruthy();
+    expect(screen.queryByText("NO CHATS YET")).toBeNull();
   });
 
   it("shows pinned chats in the strip and unpinned in the table, and toggles a pin", async () => {

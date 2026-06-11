@@ -16,6 +16,7 @@ import {
   hasEnoughAudio,
 } from "./voiceInputMode.js";
 import { shouldToggleOnEnter } from "./pushToTalk.js";
+import { splitForSpeech } from "./speech-chunks.js";
 import { humanizeTool } from "../chat/humanize.js";
 import {
   api,
@@ -326,37 +327,53 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     wsRef.current = null;
   }, [stopAgentStream]);
 
-  // Drain the speak queue: for each text, generate TTS and play it to completion
-  // before the next, so ack + streamed sentences play in order without overlap.
+  // Synthesize one clip — null on any failure (the worker just skips it).
+  const fetchClip = useCallback(async (text: string): Promise<Blob | null> => {
+    try {
+      const token = getToken() ?? "";
+      const resp = await fetch("/api/speak", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) return null;
+      return await resp.blob();
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Drain the speak queue: clips PLAY strictly in order, but clip N+1's TTS is
+  // PREFETCHED while clip N plays — the old fetch-then-play serial loop put the
+  // full synthesis latency (2-3s) of dead air between every clip. The epoch
+  // guard covers prefetched-but-unplayed audio too: interrupt() bumps the epoch,
+  // so an already-fetched blob is dropped, never played.
   const speakWorker = useCallback(async () => {
     if (speakBusyRef.current) return;
     speakBusyRef.current = true;
     setState("responding");
     const epoch = speakEpochRef.current;     // interrupt() bumps this to abort the drain
-    const token = getToken() ?? "";
-    while (speakQueueRef.current.length > 0) {
-      if (speakEpochRef.current !== epoch) break;   // barged-in before this clip
-      const text = speakQueueRef.current.shift()!;
-      try {
-        const resp = await fetch("/api/speak", {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-          body: JSON.stringify({ text }),
-        });
-        if (speakEpochRef.current !== epoch) break; // barged-in during the fetch
-        if (resp.ok) {
-          const url = URL.createObjectURL(await resp.blob());
-          await new Promise<void>((resolve) => {
-            const el = new Audio(url);
-            ttsRef.current = el;
-            const done = () => { URL.revokeObjectURL(url); if (ttsRef.current === el) ttsRef.current = null; ttsDoneRef.current = null; resolve(); };
-            el.onended = done;
-            el.onerror = done;
-            ttsDoneRef.current = done;              // interrupt() calls this to end the clip's await
-            void el.play().catch(done);
-          });
-        }
-      } catch { /* skip this clip */ }
+    let next: Promise<Blob | null> | null = null;
+    while (speakEpochRef.current === epoch) {
+      const pending =
+        next ?? (speakQueueRef.current.length > 0 ? fetchClip(speakQueueRef.current.shift()!) : null);
+      if (!pending) break;                          // queue drained
+      next = null;
+      const blob = await pending;
+      if (speakEpochRef.current !== epoch) break;   // barged-in during the fetch
+      // Start the NEXT clip's synthesis before this one plays.
+      if (speakQueueRef.current.length > 0) next = fetchClip(speakQueueRef.current.shift()!);
+      if (!blob) continue;                          // failed clip — skip it
+      const url = URL.createObjectURL(blob);
+      await new Promise<void>((resolve) => {
+        const el = new Audio(url);
+        ttsRef.current = el;
+        const done = () => { URL.revokeObjectURL(url); if (ttsRef.current === el) ttsRef.current = null; ttsDoneRef.current = null; resolve(); };
+        el.onended = done;
+        el.onerror = done;
+        ttsDoneRef.current = done;              // interrupt() calls this to end the clip's await
+        void el.play().catch(done);
+      });
     }
     speakBusyRef.current = false;
     ttsDoneRef.current = null;
@@ -380,14 +397,16 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       if (actionPendingRef.current) { actionPendingRef.current = false; actionResultReceivedRef.current = false; }
       setState("listening");
     }
-  }, []);
+  }, [fetchClip]);
 
   // Queue a phrase to be spoken. Worker is re-entrant-safe: a running drain
-  // picks up new items; a fresh enqueue restarts it if idle.
+  // picks up new items; a fresh enqueue restarts it if idle. Long texts (the
+  // monolithic task result especially) are sentence-split here so the first
+  // sentence's clip plays while the rest are still synthesizing.
   const enqueueSpeak = useCallback((text: string) => {
-    const t = text.trim();
-    if (!t) return;
-    speakQueueRef.current.push(t);
+    const chunks = splitForSpeech(text);
+    if (chunks.length === 0) return;
+    speakQueueRef.current.push(...chunks);
     void speakWorker();
   }, [speakWorker]);
 
@@ -430,9 +449,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           if (!acked) { acked = true; enqueueSpeak("On it, Sir."); }
         } catch { /* ignore */ }
       });
-      es.addEventListener("thought", (e) => {
+      es.addEventListener("delta", (e) => {
         // Fix 4: stream the reply — speak the first complete sentence as soon as
-        // it forms instead of waiting for the whole answer.
+        // it forms instead of waiting for the whole answer. Streamed reply text
+        // rides `delta`; `thought` events are reasoning summaries and must NEVER
+        // be spoken.
         try {
           const p = JSON.parse((e as MessageEvent).data) as { text: string };
           replyText += p.text;
@@ -997,6 +1018,9 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     });
   }, []);
 
+  // Dismiss the error surface WITHOUT leaving voice — the X button exits.
+  const clearError = useCallback(() => setErrorMsg(null), []);
+
   useEffect(() => () => { intentionalStopRef.current = true; cleanup(); }, [cleanup]);
 
   return {
@@ -1004,6 +1028,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     sessionId,
     caption,
     errorMsg,
+    clearError,
     muted,
     setMuted,
     pendingApproval,

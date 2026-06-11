@@ -3,6 +3,7 @@ import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { NebulaBackground } from "../components/ava/NebulaBackground.js";
 import { Orb } from "../components/ava/Orb.js";
 import { CommandBar } from "../chat/CommandBar.js";
+import { isCoarsePointer } from "../lib/media.js";
 
 export interface OrbitScreenProps {
   /** Submit from the command bar → open a new chat seeded with this text. */
@@ -21,6 +22,9 @@ function isTypingTarget(e: KeyboardEvent): boolean {
  * AVA wordmark, and a command bar. Press Space (or click the orb) to talk.
  */
 export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
+  // Touch devices have no spacebar (and Space is a press, not a hold) — the
+  // hint must say what's actually true for the device in hand.
+  const touch = isCoarsePointer();
   // Space anywhere (when not typing) → voice.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -48,7 +52,7 @@ export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
 
       <div className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center">
         <div className="hud mb-4 text-[10px] text-white/40">I AM</div>
-        <button onClick={onEnterVoice} aria-label="hold to speak" className="cursor-pointer">
+        <button onClick={onEnterVoice} aria-label="speak to Ava" className="cursor-pointer">
           <Orb size={150} state="idle" flipId="ava-orb" />
         </button>
         <div
@@ -58,7 +62,11 @@ export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
           AVA
         </div>
         <div className="hud mt-3 text-[10px] text-white/45">
-          HOLD <span style={{ color: "var(--ac)" }}>SPACE</span> TO SPEAK · OR TYPE
+          {touch ? (
+            <>TAP THE <span style={{ color: "var(--ac)" }}>ORB</span> TO SPEAK · OR TYPE</>
+          ) : (
+            <>PRESS <span style={{ color: "var(--ac)" }}>SPACE</span> TO SPEAK · OR TYPE</>
+          )}
         </div>
       </div>
 

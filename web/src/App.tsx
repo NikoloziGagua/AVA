@@ -204,10 +204,14 @@ export function App() {
           between panels) and fades out on the immersive hero views (splash/voice).
           Chat now joins the deck — NAV_FOR_VIEW maps it to the "New" lamp. */}
       <motion.div
-        className="absolute left-1/2 top-6 z-30 -translate-x-1/2"
+        className="absolute left-1/2 z-30 -translate-x-1/2"
         animate={{ opacity: showNav ? 1 : 0, y: showNav ? 0 : -14 }}
         transition={{ duration: 0.3, ease: "easeOut" }}
-        style={{ pointerEvents: showNav ? "auto" : "none" }}
+        style={{
+          pointerEvents: showNav ? "auto" : "none",
+          // top-6 plus the notch/status-bar inset on phones (env() is 0 on desktop).
+          top: "calc(env(safe-area-inset-top, 0px) + 1.5rem)",
+        }}
       >
         <TubelightNav items={navItems} activeName={NAV_FOR_VIEW[view.name]} />
       </motion.div>

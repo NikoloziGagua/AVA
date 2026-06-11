@@ -14,6 +14,11 @@ const STATUS_GLYPH: Record<ActivityStep["status"], string> = { done: "✓", runn
  * Right-docked, side-to-side collapsible step list. Collapsed → a thin edge tab
  * with a live count; expanded → the full Activity list. The parent owns the
  * `collapsed` state so the conversation can flex to full width.
+ *
+ * Below the `sm` breakpoint the panel takes NO layout width (a docked 280px
+ * column left the conversation a one-word-per-line sliver): both states pin to
+ * the right edge of the (relative) chat row — the tab floats mid-edge, the
+ * expanded list overlays the conversation at ≤85vw/320px.
  */
 export function ActivityPanel({ steps, collapsed, onToggle, executing }: ActivityPanelProps) {
   const doneCount = steps.filter((s) => s.status === "done").length;
@@ -24,7 +29,7 @@ export function ActivityPanel({ steps, collapsed, onToggle, executing }: Activit
         type="button"
         aria-label="show activity"
         onClick={onToggle}
-        className="glass flex flex-none cursor-pointer items-center gap-2 self-center rounded-l-xl border-r-0 px-2 py-3"
+        className="glass absolute right-0 top-1/2 z-20 flex -translate-y-1/2 cursor-pointer items-center gap-2 rounded-l-xl border-r-0 px-2 py-3 sm:static sm:translate-y-0 sm:flex-none sm:self-center"
         style={{ borderColor: "rgba(92,242,255,0.25)" }}
       >
         <span style={{ color: "var(--ac)", fontSize: 13 }}>⟨</span>
@@ -43,7 +48,7 @@ export function ActivityPanel({ steps, collapsed, onToggle, executing }: Activit
 
   return (
     <aside
-      className="flex w-[280px] flex-none flex-col p-3.5"
+      className="absolute inset-y-0 right-0 z-20 flex w-[min(85vw,320px)] flex-col p-3.5 sm:static sm:w-[280px] sm:flex-none"
       style={{
         borderLeft: "1px solid rgba(92,242,255,0.2)",
         background: "rgba(6,10,16,0.55)",

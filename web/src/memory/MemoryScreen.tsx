@@ -6,6 +6,7 @@ import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { MemoryBrain, type BrainNode } from "../components/ava/MemoryBrain.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
+import { isCoarsePointer } from "../lib/media.js";
 import { hoverLift, press, settleText, EASE } from "../lib/deckMotion.js";
 
 const CATEGORIES = ["all", "context", "people", "setup", "skills", "schedule", "preferences"] as const;
@@ -218,9 +219,9 @@ function MindStage({
       >
         <MemoryBrain memory={memory} onSelect={onSelect} spinning={spinning} />
 
-        {/* Hint rail, bottom-left. */}
+        {/* Hint rail, bottom-left — zoom gesture depends on the pointer in hand. */}
         <div className="pointer-events-none absolute bottom-3 left-4 hud text-[9px] tracking-[0.18em] text-white/35">
-          drag to rotate · scroll to zoom · tap a node
+          drag to rotate · {isCoarsePointer() ? "pinch" : "scroll"} to zoom · tap a node
         </div>
 
         {/* Spin toggle, bottom-right. */}

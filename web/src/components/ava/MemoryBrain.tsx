@@ -354,7 +354,14 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
 
     // The whole graph lives under one group we rotate (drag + idle spin).
     const group = new THREE.Group();
-    group.scale.set(2.3, 0.7, 1); // stretched HORIZONTALLY — a wide, shallow brain spread
+    // Aspect-aware spread: the wide horizontal stretch is desktop-tuned; on a
+    // portrait canvas it shoved the graph past the side edges (sparse, clipped).
+    // Derived from the canvas aspect at setup AND on every resize.
+    const applyGroupScale = () => {
+      if (camera.aspect >= 1) group.scale.set(2.3, 0.7, 1); // landscape — wide, shallow brain spread
+      else group.scale.set(1.15, 1.05, 1); // portrait — near-uniform so it fits the frame
+    };
+    applyGroupScale();
     scene.add(group);
 
     // ── build geometry ─────────────────────────────────────────────────────────
@@ -657,6 +664,10 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     let moved = 0;
     let lastX = 0;
     let lastY = 0;
+    // Two-pointer pinch-to-zoom (touch): the pinch distance delta drives the
+    // SAME camDist the wheel uses. Active pointers tracked across down/move/up.
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pinchDist = 0;
 
     const raycaster = new THREE.Raycaster();
     // Points need an explicit pick threshold (world units near the points).
@@ -689,14 +700,34 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     }
 
     const onPointerDown = (e: PointerEvent) => {
-      dragging = true;
-      moved = 0;
-      lastX = e.clientX;
-      lastY = e.clientY;
+      pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        // Second finger down: the gesture becomes a pinch — stop rotating and
+        // make sure releasing it never reads as a tap.
+        dragging = false;
+        moved = 1000;
+        const [a, b] = [...pointers.values()];
+        pinchDist = Math.hypot(a!.x - b!.x, a!.y - b!.y);
+      } else {
+        dragging = true;
+        moved = 0;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      }
       canvas.setPointerCapture(e.pointerId);
       canvas.style.cursor = "grabbing";
     };
     const onPointerMove = (e: PointerEvent) => {
+      if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pointers.size === 2) {
+        // Pinch: distance delta → camDist, clamped exactly like the wheel zoom.
+        const [a, b] = [...pointers.values()];
+        const d = Math.hypot(a!.x - b!.x, a!.y - b!.y);
+        if (pinchDist > 0) camDist = Math.max(CAM_MIN, Math.min(CAM_MAX, camDist - (d - pinchDist) * 1.2));
+        pinchDist = d;
+        requestRender(); // reduced-motion: repaint the zoom
+        return;
+      }
       if (dragging) {
         const dx = e.clientX - lastX;
         const dy = e.clientY - lastY;
@@ -714,13 +745,25 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       }
     };
     const onPointerUp = (e: PointerEvent) => {
-      const wasDrag = moved > 6;
-      dragging = false;
+      pointers.delete(e.pointerId);
       try {
         canvas.releasePointerCapture(e.pointerId);
       } catch {
         /* capture may already be gone */
       }
+      if (pointers.size === 1) {
+        // Pinch ended with one finger still down — hand off to a drag from
+        // where that finger sits, so the graph doesn't jump.
+        pinchDist = 0;
+        const [p] = [...pointers.values()];
+        dragging = true;
+        lastX = p!.x;
+        lastY = p!.y;
+        return;
+      }
+      pinchDist = 0;
+      const wasDrag = moved > 6;
+      dragging = false;
       canvas.style.cursor = hovered >= 0 ? "pointer" : "grab";
       requestRender(); // reduced-motion: settle the final drag/zoom frame
       // A tap (not a drag) selects whatever node is under the pointer (or null).
@@ -760,6 +803,7 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       const h = Math.max(1, container.clientHeight);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      applyGroupScale(); // re-derive the spread when orientation/aspect changes
       renderer.setSize(w, h);
       pointsMat.uniforms.uPixelRatio!.value = renderer.getPixelRatio();
       requestRender(); // reduced-motion: repaint after a layout change

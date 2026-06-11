@@ -8,6 +8,7 @@ import { FlowingLines } from "../components/ava/FlowingLines.js";
 import { EdgeFade } from "../components/ava/EdgeFade.js";
 import { ActivityPanel } from "./ActivityPanel.js";
 import { deriveSteps, isExecuting, currentTool } from "./activity-steps.js";
+import { isSmallScreen } from "../lib/media.js";
 
 export interface ChatScreenProps {
   sessionId: string | null;
@@ -42,6 +43,12 @@ export function ChatScreen({
   // stable ref object wouldn't trigger a re-init — the state node does.
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrollerNode, setScrollerNode] = useState<HTMLDivElement | null>(null);
+  // Last assistant message in the SEEDED history. On reopen the server replays
+  // the run's `final` on stream connect; for a finished run that text is already
+  // the last persisted assistant message, so rendering/promoting the replay
+  // would duplicate the final bubble. Captured once per fetch (the `s-` rows
+  // never change), so the dedupe stays stable across later re-renders.
+  const seededLastAssistantRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,6 +56,7 @@ export function ChatScreen({
       setSessionId(null);
       setHistory([]);
       setRunEpoch(0);
+      seededLastAssistantRef.current = null;
       return;
     }
     fetchSession(requestedSessionId)
@@ -59,6 +67,8 @@ export function ChatScreen({
           role: m.role === "user" ? "user" : "assistant",
           text: m.content,
         }));
+        seededLastAssistantRef.current =
+          [...loaded].reverse().find((m) => m.role === "assistant")?.text ?? null;
         setHistory(loaded);
         setSessionId(requestedSessionId);
         setRunEpoch(0);
@@ -88,6 +98,12 @@ export function ChatScreen({
           .reverse()
           .find((e) => e.runEpoch === epoch && e.kind === "final");
         if (!final || final.kind !== "final") continue;
+        // Epoch 0 only exists when REOPENING a chat (a local send always bumps
+        // to ≥1), so its final is a server replay — skip it when it matches the
+        // seeded history's last assistant message (already rendered there).
+        // Locally-run epochs are never deduped, so an intentionally repeated
+        // reply still shows.
+        if (epoch === 0 && final.payload.text === seededLastAssistantRef.current) continue;
         next = [...next, { id, role: "assistant", text: final.payload.text }];
       }
       return next;
@@ -97,7 +113,14 @@ export function ChatScreen({
   const currentRunFinished = events.some(
     (e) => e.runEpoch === runEpoch && (e.kind === "done" || e.kind === "killed" || e.kind === "error"),
   );
-  const busy = runEpoch > 0 && !currentRunFinished;
+  // Busy is derived from the STREAM, not the local runEpoch counter: reopening
+  // a chat resets runEpoch to 0, so the old `runEpoch > 0` gate made a reopened
+  // MID-RUN chat read as idle — no Stop button, no thinking indicator, the run
+  // streaming invisibly. An event seen for the current run without its terminal
+  // event means the run is live; `pending` covers the send→first-event window.
+  const currentRunSeen = events.some((e) => e.runEpoch === runEpoch);
+  const streamBusy = currentRunSeen && !currentRunFinished;
+  const busy = pending || streamBusy;
   const isEmpty = history.length === 0 && events.length === 0 && requestedSessionId === null;
 
   const headerState: "idle" | "thinking" | "responding" =
@@ -108,11 +131,14 @@ export function ChatScreen({
       : "idle";
 
   // Filter live events: only current run, and skip its final once it's
-  // been promoted into history (avoid duplicate rendering).
+  // been promoted into history (avoid duplicate rendering) — or when it's an
+  // epoch-0 replay of the last persisted assistant message (same dedupe as the
+  // promote effect above, so neither path renders the duplicate).
   const promotedCurrent = history.some((m) => m.id === `a-${runEpoch}`);
   const liveEvents = events.filter((e) => {
     if (e.runEpoch !== runEpoch) return false;
-    if (promotedCurrent && e.kind === "final") return false;
+    if (e.kind === "final" && (promotedCurrent ||
+        (e.runEpoch === 0 && e.payload.text === seededLastAssistantRef.current))) return false;
     return true;
   });
 
@@ -122,14 +148,18 @@ export function ChatScreen({
   const runningTool = currentTool(liveEvents);
 
   // Optimistic thinking: instant on send (pending), held through busy, dropped
-  // the moment the run's final lands or the run terminates.
+  // the moment the run's final lands or the run terminates. Pending hands off
+  // to streamBusy (not `busy`, which pending itself feeds) once events arrive.
   const lastFinalCurrent = events.some((e) => e.runEpoch === runEpoch && e.kind === "final");
   useEffect(() => {
-    if (busy || currentRunFinished) setPending(false);
-  }, [busy, currentRunFinished]);
-  const optimisticThinking = (pending || busy) && !lastFinalCurrent && !currentRunFinished;
+    if (streamBusy || currentRunFinished) setPending(false);
+  }, [streamBusy, currentRunFinished]);
+  const optimisticThinking = busy && !lastFinalCurrent && !currentRunFinished;
 
   const [activityCollapsed, setActivityCollapsed] = useState<boolean>(() => {
+    // Small screens default to the collapsed edge tab — the docked panel would
+    // crush the conversation column; the stored pref is a desktop choice.
+    if (isSmallScreen()) return true;
     try { return localStorage.getItem("ava.activityCollapsed") === "1"; } catch { return false; }
   });
   function toggleActivity() {
@@ -139,10 +169,12 @@ export function ChatScreen({
       return next;
     });
   }
-  // Auto-expand the panel the moment a run starts doing things.
+  // Auto-expand the panel the moment a run starts doing things — desktop only;
+  // on small screens the expanded panel overlays the conversation, so popping
+  // it open uninvited would hide the chat mid-task.
   const wasExecutingRef = useRef(false);
   useEffect(() => {
-    if (executing && !wasExecutingRef.current) setActivityCollapsed(false);
+    if (executing && !wasExecutingRef.current && !isSmallScreen()) setActivityCollapsed(false);
     wasExecutingRef.current = executing;
   }, [executing]);
 
@@ -210,13 +242,15 @@ export function ChatScreen({
                 transition={{ duration: 0.6, delay: 0.6 }}
                 className="mt-6 text-sm text-white/45 max-w-xs text-center px-6"
               >
-                How can I help today? Type a message, tap a chip, or hold the orb to speak.
+                How can I help today? Type a message, tap a chip, or tap the orb to speak.
               </motion.p>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <div className="flex min-h-0 flex-1">
+        {/* `relative` so the small-screen Activity overlay (absolute) pins to
+            this row instead of taking layout width from the conversation. */}
+        <div className="relative flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">
             {/* relative wrapper so the EdgeFade strips pin to the VISIBLE scroll
                 edges (the viewport-height column), not the scroller's full

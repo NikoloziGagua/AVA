@@ -1,11 +1,21 @@
 export const TOOL_BUDGET_MS: Record<string, number> = {
-  shell: 30_000,
+  // Backstop above the tool's own internal timeout (default 30s, per-call
+  // override up to 120s) — the tool tree-kills its child itself; this budget
+  // only catches a wedged tool wrapper.
+  shell: 130_000,
   fs_read: 5_000, fs_write: 5_000, fs_list: 5_000, fs_stat: 5_000, fs_delete: 5_000,
   claude_code: 600_000,
   chrome_navigate: 30_000, chrome_click: 10_000, chrome_type: 10_000,
   chrome_press_key: 5_000, chrome_read_page: 15_000, chrome_screenshot: 15_000, chrome_tabs: 5_000,
-  computer_use: 60_000,
+  // Was 60s against an inner loop of up to 100 model iterations — a guaranteed
+  // budget blowout. The dispatch-level abort (agent.ts) now cancels the loop on
+  // timeout; 120s gives real visual tasks room to finish.
+  computer_use: 120_000,
   control_app: 30_000,
+  // Its own description tells the model to fan out up to 12 queries at up to
+  // 20s each — the 30s unknown-tool default rejected exactly the sweeps the
+  // tool exists for.
+  find_places: 120_000,
 };
 
 export function withTimeout<T>(p: Promise<T>, ms: number, tag: string): Promise<T> {

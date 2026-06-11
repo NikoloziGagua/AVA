@@ -276,19 +276,30 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       toolsUsed++;
 
       const budget = TOOL_BUDGET_MS[call.name] ?? 30_000;
+      // Per-dispatch abort: a budget timeout must CANCEL the in-flight work
+      // (computer_use's inner vision loop kept clicking the shared browser and
+      // spending API credits after withTimeout had already rejected). The
+      // call-scoped controller follows the run's Stop signal AND fires on
+      // timeout; tools see it as ctx.signal.
+      const callAbort = new AbortController();
+      const onRunAbort = () => callAbort.abort();
+      abort.signal.addEventListener("abort", onRunAbort, { once: true });
       try {
         // Final guard immediately before dispatch: covers a Stop that lands in the
         // narrow gap between the policy decision and the tool actually running.
         if (abort.signal.aborted) break;
-        const r = await withTimeout(registry.dispatch(call), budget, call.name);
+        const r = await withTimeout(registry.dispatch(call, callAbort.signal), budget, call.name);
         emit({ kind: "tool_result", payload: { tool: call.name, ok: !r.is_error, result: r.output } });
         messages.push({ role: "tool", content: r });
         turnResultClasses.push(classifyActionResult(r));
       } catch (err) {
+        callAbort.abort();
         const msg = err instanceof Error ? err.message : String(err);
         emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: msg } });
         messages.push({ role: "tool", content: { call_id: call.id, output: msg, is_error: true } });
         turnResultClasses.push("error");
+      } finally {
+        abort.signal.removeEventListener("abort", onRunAbort);
       }
     }
 

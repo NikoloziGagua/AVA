@@ -1,10 +1,16 @@
 import type { ToolDef } from "./ava-mcp.js";
 import { runShell } from "./shell.js";
 import { scrubSecrets } from "../security/scrub.js";
-import { TOOL_BUDGET_MS } from "../orchestrator/timeout.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 
-const MAX_STREAM_CHARS = 4096;
+// Raised 4096 → 8192 (matches fs_read): the old cap chopped build/test logs in
+// half, blinding the model to the failures it needed to read.
+const MAX_STREAM_CHARS = 8192;
+// The tool enforces its own timeout (tree-kill at expiry). Default 30s; the
+// model may request up to 2 minutes for installs/builds via `timeoutMs`. The
+// orchestrator budget (timeout.ts) sits above the max as a backstop.
+const DEFAULT_TIMEOUT_MS = 30_000;
+const MAX_TIMEOUT_MS = 120_000;
 
 function truncate(s: string): string {
   if (s.length <= MAX_STREAM_CHARS) return s;
@@ -28,17 +34,25 @@ export function buildShellTool(opts: { signal: AbortSignal; pidfiles?: PidfileRe
         type: "object",
         properties: {
           command: { type: "string", description: "The full shell command to execute (e.g. 'ls -la')." },
+          cwd: { type: "string", description: "Working directory for the command (optional; defaults to the server's cwd). Use this instead of Set-Location chains." },
+          timeoutMs: { type: "number", description: "Per-command timeout in ms (default 30000, max 120000). Raise it for installs/builds/downloads." },
         },
         required: ["command"],
       },
     },
     run: async (args, ctx) => {
       const command = String(args.command ?? "");
+      const cwd = typeof args.cwd === "string" && args.cwd.trim() ? args.cwd : undefined;
+      const requested = Number(args.timeoutMs);
+      const timeoutMs = Number.isFinite(requested) && requested > 0
+        ? Math.min(Math.max(requested, 1_000), MAX_TIMEOUT_MS)
+        : DEFAULT_TIMEOUT_MS;
       const runId = ctx?.runId;
       const reg = opts.pidfiles;
       const r = await runShell({
         command,
-        timeoutMs: TOOL_BUDGET_MS["shell"] ?? 30_000,
+        cwd,
+        timeoutMs,
         signal: opts.signal,
         // Register/unregister the child PID so the Stop button's killTree() loop
         // tree-kills this shell (and its descendants), not just claude_code.

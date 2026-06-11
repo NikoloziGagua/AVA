@@ -60,9 +60,23 @@ export function createStuckLoop(opts?: {
   const window: ToolObservation[] = [];
   // Timestamp of the most recent non-empty thought we've observed.
   let lastThoughtAt: number | null = null;
+  // The wallclock is a NO-PROGRESS clock, not a task budget. It used to halt on
+  // the first tool result arriving >= 5 minutes after run START regardless of
+  // progress — which cut off every long multi-phase task and contradicted the
+  // 1000-turn "never cut off mid-work" design (a 6-minute claude_code edit
+  // finished its work, then the run was killed before the model could report).
+  // Now it measures time since the last sign of progress: a NOVEL tool result
+  // (different from that tool's previous result) or any thought resets it.
+  // Repeating identical results for `wallclockMs` still halts.
+  let progressAt = startedAt;
+  const lastResultByTool = new Map<string, string>();
 
   function observe(obs: ToolObservation): HaltDecision {
-    if (obs.at - startedAt >= wallclockMs) {
+    const prev = lastResultByTool.get(obs.tool);
+    const novel = prev === undefined || levenshtein(prev, obs.resultText) > threshold;
+    lastResultByTool.set(obs.tool, obs.resultText);
+    if (novel) progressAt = obs.at;
+    if (obs.at - progressAt >= wallclockMs) {
       return { halt: true, reason: "wallclock" };
     }
 
@@ -100,6 +114,9 @@ export function createStuckLoop(opts?: {
   function observeThought(text: string): void {
     if (text && text.trim().length > 0) {
       lastThoughtAt = now();
+      // Model reasoning/streamed text is progress — it keeps the no-progress
+      // wallclock from aging out a long but actively-working run.
+      progressAt = lastThoughtAt;
     }
   }
 

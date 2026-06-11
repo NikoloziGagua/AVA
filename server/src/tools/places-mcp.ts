@@ -63,7 +63,7 @@ export function buildPlacesTools(deps: PlacesDeps): ToolDef[] {
           },
         },
       },
-      run: async (args) => {
+      run: async (args, ctx) => {
         const list = Array.isArray(args.queries) ? args.queries.map((q) => String(q).trim()).filter(Boolean) : [];
         if (args.query && String(args.query).trim()) list.unshift(String(args.query).trim());
         const queries = [...new Set(list)].slice(0, MAX_QUERIES);
@@ -87,11 +87,15 @@ export function buildPlacesTools(deps: PlacesDeps): ToolDef[] {
             for (let page = 0; page < MAX_PAGES; page++) {
               const body: Record<string, unknown> = { textQuery: q };
               if (pageToken) body.pageToken = pageToken;
+              // Per-request timeout + the run's Stop/budget signal: a cancelled
+              // run must not leave a multi-query sweep fetching ownerlessly.
+              const signals = [AbortSignal.timeout(TIMEOUT_MS)];
+              if (ctx?.signal) signals.push(ctx.signal);
               const r = await doFetch(SEARCH_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-Goog-Api-Key": deps.apiKey, "X-Goog-FieldMask": FIELD_MASK },
                 body: JSON.stringify(body),
-                signal: AbortSignal.timeout(TIMEOUT_MS),
+                signal: AbortSignal.any(signals),
               });
               if (!r.ok) return { ok: false, text: `Places search failed: ${r.status} ${(await r.text().catch(() => "")).slice(0, 300)}` };
               const j = (await r.json()) as { places?: Place[]; nextPageToken?: string };

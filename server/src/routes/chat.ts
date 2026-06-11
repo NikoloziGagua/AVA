@@ -62,10 +62,6 @@ const Body = z.object({
   persist: z.boolean().optional(),
 });
 
-// Upper bound on how long pre-run playbook recall may block a turn. Recall is a
-// best-effort optimization; past this it is skipped and the agent runs without
-// the playbook hint. Normal side-model matches return in ~1-2s.
-const PLAYBOOK_MATCH_TIMEOUT_MS = 8_000;
 
 // Shown/persisted in place of a blank assistant turn when the model produces an
 // empty final (it acted but wrote no closing text). Never store an empty reply —
@@ -246,29 +242,18 @@ export function chatRoutes(
         : parsed.data.voice ? intent
           : "action";
 
-    // Recall: in action mode with saved playbooks, ask the side model to match
-    // this request to a known playbook and inject its steps + a stakes rubric.
-    // Chitchat (conversation mode) and a first-ever empty index never pay for it.
-    //
-    // Recall is a best-effort OPTIMIZATION: it must never break or stall a turn.
-    // The match is wrapped in try/catch and bounded by a timeout so a slow or
-    // failing side-model call (e.g. an LLM request timeout) degrades to "no
-    // playbook injected" and the agent still runs.
+    // Recall: in action mode with saved playbooks, match this request to a known
+    // playbook locally and inject its steps + a stakes rubric. This used to be a
+    // BLOCKING side-model LLM call — measured live at 1.7-2.8s of pre-roll on
+    // every typed turn. Local token-overlap scoring is ~0ms and free; the trade
+    // (documented in match.test.ts) is that pure paraphrases with no lexical
+    // overlap no longer recall — the agent then simply runs without the hint.
     let playbookPrefix = "";
-    if (mode === "action" && agentDeps.provider && !parsed.data.voice) {
+    if (mode === "action" && !parsed.data.voice) {
       try {
         const index = loadPlaybookIndex(agentDeps.memoryDir);
         if (index.length) {
-          const matchAbort = new AbortController();
-          const timer = setTimeout(() => matchAbort.abort(), PLAYBOOK_MATCH_TIMEOUT_MS);
-          let slug: string | null;
-          try {
-            slug = await matchPlaybook({
-              prompt: parsed.data.text, index, provider: agentDeps.provider, abort: matchAbort.signal,
-            });
-          } finally {
-            clearTimeout(timer);
-          }
+          const slug = matchPlaybook({ prompt: parsed.data.text, index });
           if (slug) {
             const pb = readPlaybook(agentDeps.memoryDir, slug);
             if (pb) {
@@ -444,6 +429,19 @@ export function chatRoutes(
             tools,
           },
         });
+      } catch (err) {
+        // Last-resort guard: an exception escaping the agent loop (e.g. a SQLite
+        // write failing inside emit) must end THIS run — not become an unhandled
+        // rejection that crashes the whole server mid-task.
+        const msg = err instanceof Error ? err.message : String(err);
+        try {
+          buffer.append({ kind: "error", payload: { message: msg } });
+          buffer.append({ kind: "done", payload: {} });
+          if (parsed.data.persist !== false) {
+            appendMessage(db, { sessionId: sid, role: "assistant", content: `That didn't work, Sir — ${msg}` });
+          }
+        } catch { /* even the error path failed; finally still unregisters */ }
+        console.error("[chat] run crashed:", msg);
       } finally {
         runs.unregister(sid, activeRun);
       }

@@ -8,6 +8,11 @@ const READ_ONLY_TOOLS = new Set([
   "fs_read", "fs_list", "fs_stat",
   "chrome_read_page", "chrome_screenshot", "chrome_tabs",
   "memory_read",
+  // Pure reads that previously fell through to the unknown-tool default
+  // ("medium" → ask) and paid a 15s veto stall on EVERY call — the API tools
+  // added for speed were the slowest to start. All of these only read state.
+  "read_logs", "read_claude_updates", "read_discussion", "self_improve_status",
+  "find_places", "shopify_list_products", "shopify_get_product",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -58,6 +63,13 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   }
 
   if (tool === "claude_code") return { tier: "medium", reason: "claude_code modifies code" };
+
+  // Background read-only repo consult (spawns a local `claude -p` with no write
+  // permissions). Instant — queueing a consult is not a risky act.
+  if (tool === "discuss_with_claude") return { tier: "low", reason: "read-only background consult" };
+
+  // Mutates live store products — keep Sir's veto window.
+  if (tool === "shopify_update_product") return { tier: "medium", reason: "mutates live Shopify products" };
 
   if (tool === "shell") {
     const cmd = strs.join(" ");

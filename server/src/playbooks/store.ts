@@ -59,6 +59,12 @@ export function listPlaybooks(memoryDir: string): Playbook[] {
     .map((f) => readPlaybook(memoryDir, f.replace(/\.md$/, "")))
     .filter((p): p is Playbook => p !== null);
 }
-export function loadPlaybookIndex(memoryDir: string): { slug: string; trigger: string }[] {
-  return listPlaybooks(memoryDir).map((p) => ({ slug: p.slug, trigger: p.trigger }));
+export function loadPlaybookIndex(
+  memoryDir: string,
+): { slug: string; trigger: string; keywords: string[]; uses: number }[] {
+  // keywords + uses feed the local recall scorer (match.ts): keywords broaden
+  // paraphrase matching, uses breaks ties toward the proven playbook.
+  return listPlaybooks(memoryDir).map((p) => ({
+    slug: p.slug, trigger: p.trigger, keywords: p.keywords, uses: p.uses,
+  }));
 }

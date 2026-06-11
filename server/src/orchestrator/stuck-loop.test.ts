@@ -30,15 +30,46 @@ describe("createStuckLoop", () => {
     }
   });
 
-  it("halts with reason wallclock when the wallclock budget is exceeded", () => {
+  it("halts with reason wallclock when results stop changing for the whole budget", () => {
     const start = Date.now();
     const guard = createStuckLoop({ now: () => start });
+    // First result is novel (resets the progress clock at t0)…
+    expect(guard.observe({ tool: "fs_read", resultText: "same output", at: start }))
+      .toEqual({ halt: false });
+    // …then the IDENTICAL result a full budget later = no progress → halt.
     const dec = guard.observe({
       tool: "fs_read",
-      resultText: "anything",
+      resultText: "same output",
       at: start + STUCK_WALLCLOCK_MS,
     });
     expect(dec).toEqual({ halt: true, reason: "wallclock" });
+  });
+
+  it("does NOT halt a long run that keeps making progress (novel results past the budget)", () => {
+    const start = Date.now();
+    const guard = createStuckLoop({ now: () => start });
+    // A real multi-phase task: every result is different, total runtime far past
+    // the old 5-minute start-anchored kill. Progress must keep it alive.
+    for (let i = 0; i < 4; i++) {
+      const dec = guard.observe({
+        tool: "shell",
+        resultText: `step ${i}: ${"x".repeat(80 + i * 80)}`,
+        at: start + i * STUCK_WALLCLOCK_MS,
+      });
+      expect(dec).toEqual({ halt: false });
+    }
+  });
+
+  it("a thought resets the no-progress wallclock", () => {
+    let clock = 1_000_000;
+    const guard = createStuckLoop({ now: () => clock });
+    expect(guard.observe({ tool: "fs_read", resultText: "same", at: clock })).toEqual({ halt: false });
+    // Thought lands just before the budget would expire…
+    clock = 1_000_000 + STUCK_WALLCLOCK_MS - 1_000;
+    guard.observeThought("still working through the list");
+    // …so an identical result AT the old deadline is fine now.
+    const dec = guard.observe({ tool: "fs_read", resultText: "same", at: 1_000_000 + STUCK_WALLCLOCK_MS });
+    expect(dec).toEqual({ halt: false });
   });
 
   it("halts with reason no-progress when 5 identical screenshots arrive without a thought", () => {

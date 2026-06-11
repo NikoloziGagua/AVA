@@ -3,7 +3,13 @@ import type { ToolDefinition, ToolCall, ToolResult } from "./llm/types.js";
 
 export type ToolRegistry = {
   toolDefinitions(): ToolDefinition[];
-  dispatch(call: ToolCall): Promise<ToolResult>;
+  /**
+   * `signal`, when provided, replaces ctx.signal for THIS dispatch — the agent
+   * loop passes a per-call signal it aborts on budget timeout, so a timed-out
+   * tool (e.g. computer_use's inner vision loop) is actually cancelled instead
+   * of running on as an orphan against the shared browser.
+   */
+  dispatch(call: ToolCall, signal?: AbortSignal): Promise<ToolResult>;
   has(name: string): boolean;
 };
 
@@ -41,7 +47,7 @@ export function buildToolRegistry(opts: { tools: ToolDef[]; ctx: RunCtx }): Tool
     has(name: string): boolean {
       return byName.has(name);
     },
-    async dispatch(call: ToolCall): Promise<ToolResult> {
+    async dispatch(call: ToolCall, signal?: AbortSignal): Promise<ToolResult> {
       const td = byName.get(call.name);
       if (!td) {
         return { call_id: call.id, output: `unknown tool: ${call.name}`, is_error: true };
@@ -62,7 +68,7 @@ export function buildToolRegistry(opts: { tools: ToolDef[]; ctx: RunCtx }): Tool
       try {
         const args = (typeof call.args === "object" && call.args !== null)
           ? (call.args as Record<string, unknown>) : {};
-        const r = await td.run(args, opts.ctx);
+        const r = await td.run(args, signal ? { ...opts.ctx, signal } : opts.ctx);
         return { call_id: call.id, output: r.text, is_error: !r.ok };
       } catch (err) {
         return {

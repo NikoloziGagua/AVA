@@ -10,7 +10,10 @@ let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "ava-sp-")); });
 
 describe("buildSystemPrompt (layered)", () => {
-  it("assembles persona → memoryIndex → preferences → observations → rubric, in that order", () => {
+  it("assembles persona → memoryIndex → rubric (static first) → preferences → observations", () => {
+    // Cache-aware order: every static layer precedes the mutable ones, so a
+    // mid-session memory write (which appends to preferences/observations)
+    // invalidates only the prompt-cache TAIL, never the static rubric.
     writeFileSync(join(dir, "personality.md"), "PERSONA-BLOCK\n", "utf8");
     writeFileSync(join(dir, "MEMORY.md"), "INDEX-BLOCK\n", "utf8");
     writeFileSync(join(dir, "preferences.md"), "PREFS-BLOCK\n", "utf8");
@@ -25,9 +28,9 @@ describe("buildSystemPrompt (layered)", () => {
 
     expect(iPersona).toBeGreaterThan(-1);
     expect(iPersona).toBeLessThan(iIndex);
-    expect(iIndex).toBeLessThan(iPrefs);
+    expect(iIndex).toBeLessThan(iRubric);
+    expect(iRubric).toBeLessThan(iPrefs);
     expect(iPrefs).toBeLessThan(iObs);
-    expect(iObs).toBeLessThan(iRubric);
   });
 
   it("is byte-stable across runs (cache safety)", () => {

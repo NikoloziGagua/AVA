@@ -335,15 +335,13 @@ app.use("/api/self", selfRoutes(db, requireToken(db), {
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });
 // STT (/transcribe) + TTS (/speak) primitives only. Voice conversations route
 // through POST /api/chat (the full tool-using agent) via the realtime WS proxy.
-// /speak routes by the global voice-engine pref (openai | chatterbox | hybrid),
-// so db + log are threaded in.
 app.use("/api", voiceRoutes({
   clients: voiceClients,
   requireToken: requireToken(db),
   db,
   log,
 }));
-// Get/set how Ava's voice is produced (openai | chatterbox | hybrid).
+// Get/set how Ava's voice is produced (openai | hume).
 app.use("/api/voice/engine", voiceEngineRoutes(db, requireToken(db)));
 
 app.use("/", statusRoutes({ db, runs, startedAt }));
@@ -356,6 +354,9 @@ async function shutdown(reason: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info({ reason }, "shutting down");
+  // Stop accepting new connections first so the port frees promptly for the
+  // next process (tsx watch / self-dev restart) instead of racing EADDRINUSE.
+  try { httpServer.close(); } catch { /* may not be listening yet */ }
   if (chromePromise) {
     try {
       const chrome = await chromePromise;
@@ -364,13 +365,40 @@ async function shutdown(reason: string) {
       log.warn({ err: e instanceof Error ? e.message : String(e) }, "chrome close failed");
     }
   }
+  // Pino buffers asynchronously — flush so the shutdown reason actually lands
+  // in the log file instead of dying with the process.
+  try { (log as unknown as { flush?: () => void }).flush?.(); } catch { /* best-effort */ }
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
+// Crash guards: a stray rejection (e.g. a fire-and-forget write failing) used to
+// take down the whole server mid-task — Node's default is process death. For a
+// personal agent, log-and-continue beats losing every in-flight run; state after
+// an uncaughtException may be degraded, so it's logged loudly for diagnosis.
+process.on("unhandledRejection", (reason) => {
+  const err = reason instanceof Error ? reason.stack ?? reason.message : String(reason);
+  log.error({ err }, "unhandledRejection — continuing");
+});
+process.on("uncaughtException", (err) => {
+  log.error({ err: err.stack ?? err.message }, "uncaughtException — continuing (state may be degraded)");
+});
+
 const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
   log.info({ port: cfg.port, bind: cfg.bindAddr }, "ava server listening");
+});
+// Without this handler a bind failure (EADDRINUSE from a half-dead prior
+// process — the documented self-dev restart collision) crash-looped with a raw
+// stack. Exit once with a readable reason; the supervisor (tsx watch) retries.
+httpServer.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    log.error({ port: cfg.port }, "port already in use — is another Ava server still running? exiting");
+  } else {
+    log.error({ err: err.stack ?? err.message }, "http server error — exiting");
+  }
+  try { (log as unknown as { flush?: () => void }).flush?.(); } catch { /* best-effort */ }
+  process.exit(1);
 });
 
 // Hybrid voice action handoff: the realtime model's do_on_computer tool runs the
@@ -378,12 +406,13 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
 // loopback with a dedicated internal token and read the run's final reply off the
 // SSE stream so the realtime model can speak it.
 //
-// REALTIME_HYBRID is now only an optional default-seed for the engine preference
-// (legacy opt-in); it no longer gates the handoff. The action handoff is wired
-// UNCONDITIONALLY — it's harmless when the model never calls do_on_computer — so
-// the persisted engine value alone (read at connect via getVoiceEngine) decides
-// whether the realtime model speaks (openai/hybrid) or stays transcribe-only
-// (chatterbox). The internal token must therefore always exist.
+// REALTIME_HYBRID is a legacy no-op kept only for old .env files; it no longer
+// gates anything. The action handoff is wired UNCONDITIONALLY — harmless when
+// the model never calls do_on_computer — and the persisted engine value
+// (openai | hume, read at connect via getVoiceEngine) picks the realtime
+// upstream. The chatterbox/hybrid engine values were retired in 777ecc0; the
+// realtime model always speaks for the OpenAI engine. The internal token must
+// therefore always exist.
 const hybridVoice = !!process.env.REALTIME_HYBRID;
 // Retire any prior run's internal token(s) before minting this run's, so the
 // device_tokens table holds exactly one live voice-internal credential instead of
@@ -468,11 +497,10 @@ async function runVoiceAction(
 
 // Realtime voice WebSocket proxy: /api/voice/realtime. The action handoff
 // (runAction → the full /api/chat agent via do_on_computer) is provided
-// UNCONDITIONALLY: it's inert unless the realtime model actually calls the tool,
-// and whether the model speaks at all is decided by the persisted engine value
-// (getVoiceEngine, read at connect) — "openai"/"hybrid" speak, "chatterbox" stays
-// transcribe-only. This is what lets the engine toggle switch speak↔transcribe
-// without REALTIME_HYBRID being set.
+// UNCONDITIONALLY: it's inert unless the realtime model actually calls the tool.
+// The persisted engine value (getVoiceEngine, read at connect: openai | hume)
+// picks the upstream; the realtime model always speaks (hybrid is the only mode
+// since 777ecc0 — the transcribe-only client path is unreachable).
 // AVA_VOICE_PROVIDER selects the realtime upstream (openai default | hume). Hume
 // is used only when fully configured; otherwise the proxy falls back to OpenAI.
 const realtimeProxy = buildRealtimeProxy({

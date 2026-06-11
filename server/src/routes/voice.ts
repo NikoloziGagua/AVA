@@ -75,6 +75,15 @@ export function voiceRoutes(deps: VoiceRoutesDeps): ExpressRouter {
     return Buffer.from(await r.arrayBuffer());
   }
 
+  // Synthesized-clip LRU: voice-task narration repeats the same short phrases
+  // constantly ("Done.", "Running a command…"). Each repeat used to re-pay a
+  // full OpenAI synthesis round-trip — measured live at ~2.1s for one word.
+  // Cache hits return instantly and cost nothing. Keyed by everything that
+  // shapes the audio (text + voice + resolved speed); ~60 short mp3 clips
+  // (~30-200KB each) bounds memory at a few MB.
+  const TTS_CACHE_MAX = 60;
+  const ttsCache = new Map<string, Buffer>();
+
   router.post("/speak", deps.requireToken, async (req, res) => {
     const text = typeof req.body?.text === "string" ? req.body.text : "";
     const voice = typeof req.body?.voice === "string" ? req.body.voice : DEFAULT_VOICE;
@@ -86,8 +95,25 @@ export function voiceRoutes(deps: VoiceRoutesDeps): ExpressRouter {
     if (!deps.clients) {
       return res.status(503).json({ error: "OPENAI_API_KEY not configured" });
     }
+    const cacheKey = `${voice}|${resolveSpeechRate(req.body?.speed)}|${text}`;
+    const cached = ttsCache.get(cacheKey);
+    if (cached) {
+      // refresh LRU position
+      ttsCache.delete(cacheKey);
+      ttsCache.set(cacheKey, cached);
+      res.setHeader("Content-Type", "audio/mpeg");
+      return res.send(cached);
+    }
     try {
       const buf = await speakOpenAi(text, voice, req.body?.speed);
+      if (buf) {
+        ttsCache.set(cacheKey, buf);
+        while (ttsCache.size > TTS_CACHE_MAX) {
+          const oldest = ttsCache.keys().next().value as string | undefined;
+          if (oldest === undefined) break;
+          ttsCache.delete(oldest);
+        }
+      }
       res.setHeader("Content-Type", "audio/mpeg");
       return res.send(buf!);
     } catch (err) {

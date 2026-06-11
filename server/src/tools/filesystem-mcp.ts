@@ -51,8 +51,21 @@ export function buildFilesystemTools(opts: {
         // Scrub secrets from file contents before the model sees them — the
         // same backstop every other tool applies. Covers the case where a secret
         // slips past the path hard-block (e.g. an unlisted credential file).
-        if (r.ok) return { ok: true, text: truncate(scrubSecrets(r.content)) };
-        return { ok: false, text: `error: ${r.reason}` };
+        if (!r.ok) return { ok: false, text: `error: ${r.reason}` };
+        const clean = scrubSecrets(r.content);
+        if (clean.length <= MAX_TEXT) return { ok: true, text: clean };
+        // Truncated read = read-modify-write CORRUPTION hazard: writing this
+        // partial content back with fs_write would silently destroy the rest of
+        // the file. Make the danger explicit to the model.
+        return {
+          ok: true,
+          text:
+            clean.slice(0, MAX_TEXT) +
+            `\n... [TRUNCATED at ${MAX_TEXT} chars — the file is LARGER than shown ` +
+            `(${clean.length} chars total). Do NOT write this truncated content back ` +
+            `with fs_write (it would destroy the rest of the file); use claude_code ` +
+            `to edit large files.]`,
+        };
       }),
     },
     {

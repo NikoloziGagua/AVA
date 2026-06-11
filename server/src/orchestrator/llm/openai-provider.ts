@@ -95,6 +95,11 @@ export class OpenAIProvider implements LLMProvider {
       max_output_tokens: input.maxTokens,
       instructions: input.system,
       input: input.user,
+      // complete() is only used for side work (titles, summaries, chip labels,
+      // playbook distill). Without this, gpt-5.x defaults to MEDIUM reasoning —
+      // burning thinking tokens on a 32-token title and sometimes eating the
+      // whole maxTokens budget as reasoning before any text.
+      reasoning: { effort: "minimal" },
     })) as { output?: Array<{ type: string; content?: Array<{ type: string; text?: string }> }> };
 
     const messages = (r.output ?? []).filter((o) => o.type === "message");
@@ -119,6 +124,10 @@ export class OpenAIProvider implements LLMProvider {
       stream: true,
       instructions: input.system,
       input: toResponsesInput(input.messages),
+      // Routing affinity for OpenAI's automatic prompt caching: keeps this
+      // app's requests on the same cache shard so the stable prefix actually
+      // hits. No behavior change.
+      prompt_cache_key: "ava-main",
       ...(input.tools.length ? { tools: toResponsesTools(input.tools) } : {}),
       ...(input.reasoningEffort
         ? { reasoning: { effort: toOpenAIEffort(input.reasoningEffort) } }

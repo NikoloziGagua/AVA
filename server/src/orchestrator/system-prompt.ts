@@ -70,21 +70,25 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
     : "";
 
   const layers: string[] = [];
+  // Layer order is cache-aware: ALL static text (persona, capability map, memory
+  // index, tool rubric, fsRoots) comes first; the mutable layers (preferences,
+  // observations — appended to by memory_remember mid-session) come after, so a
+  // memory write invalidates only the tail of the prompt-cache prefix instead of
+  // busting the ~6k chars of static rubric that used to sit behind observations.
   if (persona.trim()) layers.push(persona.replace(/\s+$/, "") + "\n");
   // Canonical capability map — present in both modes so Ava recalls its own reach
-  // in voice/conversation as well as action. Static text, kept in the stable cache
-  // prefix right after the persona. Skipped in `compact` (Hume voice) — the model
-  // there can't run tools, so the 4.4k map is dead prefill that crowds out identity.
+  // in voice/conversation as well as action. Skipped in `compact` (Hume voice) —
+  // the model there can't run tools, so the 4.4k map is dead prefill.
   if (!opts.compact) layers.push(CAPABILITIES_MD.replace(/\s+$/, "") + "\n");
   if (!opts.compact && memoryIndex.trim()) layers.push(block("Memory index", memoryIndex));
-  if (preferences.trim()) layers.push(block("Preferences", preferences));
-  if (observations.trim()) layers.push(block("Observations", observations));
   if (opts.mode !== "conversation") {
     layers.push(TOOL_RUBRIC);
     if (opts.fsRoots && opts.fsRoots.length) {
       layers.push(buildFsRootsBlock(opts.fsRoots));
     }
   }
+  if (preferences.trim()) layers.push(block("Preferences", preferences));
+  if (observations.trim()) layers.push(block("Observations", observations));
   if (opts.projectContext && opts.projectContext.trim()) {
     layers.push(block("Project context", opts.projectContext));
   }

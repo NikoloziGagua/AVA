@@ -25,6 +25,16 @@ export function swapTo(repoRoot: string, sha: string): void {
       `refusing non-fast-forward swap: HEAD (${head.slice(0, 12)}) has commits not in the candidate (${sha.slice(0, 12)})`,
     );
   }
+  // SAFETY: the fast-forward check protects COMMITS; this protects UNCOMMITTED
+  // work. `reset --hard` silently destroys tracked edits in progress — the exact
+  // recorded collision with concurrent dev sessions. Refuse instead.
+  const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: repoRoot })
+    .toString().trim();
+  if (dirty) {
+    throw new Error(
+      `refusing swap: working tree has uncommitted changes (concurrent edits in progress):\n${dirty.slice(0, 400)}`,
+    );
+  }
   // Move the live working tree + current branch to the verified commit.
   execFileSync("git", ["reset", "--hard", sha], { cwd: repoRoot });
 }

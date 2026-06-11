@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, appendFileSync, renameSync } from "node:fs";
 import { scrubSecrets } from "../security/scrub.js";
 
 export function readFile(path: string): string {
@@ -7,7 +7,11 @@ export function readFile(path: string): string {
 }
 
 export function writeFile(path: string, content: string): void {
-  writeFileSync(path, scrubSecrets(content), "utf8");
+  // Atomic write (tmp + rename): a crash mid-write must never truncate a memory
+  // file — observations/preferences are Ava's only durable memory.
+  const tmp = `${path}.tmp-${process.pid}`;
+  writeFileSync(tmp, scrubSecrets(content), "utf8");
+  renameSync(tmp, path);
 }
 
 export function appendLine(path: string, line: string): void {

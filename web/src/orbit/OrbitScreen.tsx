@@ -1,9 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { NebulaBackground } from "../components/ava/NebulaBackground.js";
 import { Orb } from "../components/ava/Orb.js";
 import { CommandBar } from "../chat/CommandBar.js";
 import { isCoarsePointer } from "../lib/media.js";
+import { gsap, useGSAP } from "../lib/gsap.js";
+import { EASE } from "../lib/deckMotion.js";
+import { useReducedMotion } from "../lib/useReducedMotion.js";
 
 export interface OrbitScreenProps {
   /** Submit from the command bar → open a new chat seeded with this text. */
@@ -25,6 +28,25 @@ export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
   // Touch devices have no spacebar (and Space is a press, not a hold) — the
   // hint must say what's actually true for the device in hand.
   const touch = isCoarsePointer();
+  const reduced = useReducedMotion();
+  // The command-bar rail widens while the bar is focused (CommandBar ignites its
+  // own glow; the home stretches the stage under it). Width tween on ONE element,
+  // driven by a focus boolean — never per-frame state.
+  const railRef = useRef<HTMLDivElement>(null);
+  const { contextSafe } = useGSAP({ scope: railRef });
+  const onBarFocus = contextSafe((focused: boolean) => {
+    if (!railRef.current) return;
+    if (reduced) {
+      gsap.set(railRef.current, { width: focused ? 580 : 460 });
+      return;
+    }
+    gsap.to(railRef.current, {
+      width: focused ? 580 : 460,
+      y: focused ? -6 : 0,
+      duration: 0.55,
+      ease: EASE,
+    });
+  });
   // Space anywhere (when not typing) → voice.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -70,8 +92,15 @@ export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
         </div>
       </div>
 
-      <div className="absolute bottom-12 left-1/2 z-20 w-[460px] max-w-[80%] -translate-x-1/2">
-        <CommandBar onSubmit={onCommand} />
+      {/* Centered via auto margins (NOT translateX(-50%)): GSAP's y-tween would
+          freeze a translate at the pre-tween pixel value, drifting the bar
+          off-center while its width animates. Auto margins re-center every frame. */}
+      <div
+        ref={railRef}
+        className="absolute inset-x-0 bottom-12 z-20 mx-auto max-w-[86%]"
+        style={{ width: 460 }}
+      >
+        <CommandBar onSubmit={onCommand} onFocusChange={onBarFocus} />
       </div>
     </div>
   );

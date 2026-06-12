@@ -31,19 +31,24 @@ export interface MemoryBrainProps {
  * cancels the frame and disposes every geometry/material/texture + loses the GL
  * context + removes the canvas.
  *
- * Layout is computed ONCE (no live physics) so it never feels sluggish: a central
- * core, category/preference/project hubs spread over a fibonacci sphere, and each
- * hub's leaves in a small deterministic jittered cloud. Everything draws as ONE
- * THREE.Points (glowing additive sprites) + ONE THREE.LineSegments (filaments).
+ * Layout is computed ONCE (no live physics) so it never feels sluggish. The render
+ * stack — four draw calls total, all additive:
+ *   1. DUST    — a sparse twinkling particle shell around the graph (atmosphere).
+ *   2. HALOS   — the same node geometry drawn big + soft (corona glow per node).
+ *   3. EDGES   — curved dendrite polylines (quadratic bézier, sampled) carrying
+ *                travelling light pulses, tinted by their hub's color; plus a
+ *                dimmer "web" of cross-links between sibling leaves / hub ring.
+ *   4. NODES   — the crisp glowing cores with per-node twinkle + hover size bump.
+ * Far elements fade with view depth (uCamDist) so the network reads with real
+ * spatial depth instead of a flat wireframe.
  *
  * jsdom has no WebGL (`getContext` → null); we then render a static CSS "memory
  * map" placeholder and return early WITHOUT throwing, so the smoke test mounts.
- * Reduced motion renders a single static frame (no idle spin / no breathing).
+ * Reduced motion renders a single static frame (no idle spin / no pulses).
  */
 
 // ── palette (cyan / mercury command-deck) ───────────────────────────────────
 const CORE_COLOR = new THREE.Color("#eaf9ff"); // near-white mercury
-const HUB_DEFAULT = new THREE.Color("#9fc6d4"); // mercury
 
 // Distinct-but-cool hue per category, staying in the cyan/teal/violet range.
 const CATEGORY_COLORS: Record<string, string> = {
@@ -80,15 +85,19 @@ function truncate(s: string, max: number): string {
 }
 
 // Point sizes (world units; sizeAttenuation on). Core > hubs > leaves.
-const SIZE_CORE = 38;
-const SIZE_HUB = 22;
+const SIZE_CORE = 40;
+const SIZE_HUB = 26;
 const CONF_SIZE: Record<"low" | "medium" | "high", number> = {
-  high: 13,
-  medium: 10,
-  low: 7,
+  high: 16,
+  medium: 12.5,
+  low: 9,
 };
 
 const MAX_NODES = 400;
+// Samples per curved edge: each edge becomes CURVE_SEG line segments along a
+// quadratic bézier, so pulses travel along an organic dendrite, not a chord.
+const CURVE_SEG = 10;
+const DUST_COUNT = 400;
 
 // A full graph node with its computed position + render attributes.
 interface GraphNode extends BrainNode {
@@ -98,10 +107,19 @@ interface GraphNode extends BrainNode {
   dim: boolean; // superseded observations render faint
 }
 
+// An edge with the hub tint that colors its pulse + its layer kind.
+interface GraphEdge {
+  a: number;
+  b: number;
+  tint: THREE.Color;
+  /** 0 = primary spoke (core→hub, hub→leaf), 1 = dim cross-link web. */
+  kind: 0 | 1;
+}
+
 /** Build the node + edge model and the one-shot layout from a MemoryView. */
-function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: Array<[number, number]> } {
+function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
-  const edges: Array<[number, number]> = [];
+  const edges: GraphEdge[] = [];
 
   // 0 — core at the origin.
   nodes.push({
@@ -213,8 +231,10 @@ function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: Array<[num
   // ── place hubs on a fibonacci (golden-spiral) sphere around the core ─────────
   const HUB_RADIUS = 170;
   const GOLDEN = Math.PI * (3 - Math.sqrt(5)); // ~2.399963
+  const hubIndices: number[] = [];
   hubs.forEach((hub, h) => {
     const hubIndex = nodes.length;
+    hubIndices.push(hubIndex);
     // Even sphere distribution + a small deterministic radius wobble so it reads
     // organic rather than a perfect shell.
     const t = hubCount > 1 ? h / (hubCount - 1) : 0.5;
@@ -238,10 +258,11 @@ function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: Array<[num
       size: SIZE_HUB,
       dim: false,
     });
-    edges.push([0, hubIndex]); // core → hub
+    edges.push({ a: 0, b: hubIndex, tint: hub.color.clone(), kind: 0 }); // core → hub
 
     // ── leaves cluster in a small jittered cloud just outside the hub ──────────
     const cloud = 46 + Math.min(36, hub.leaves.length * 1.4);
+    const leafIndices: number[] = [];
     hub.leaves.forEach((leaf, li) => {
       const seed = h * 1009 + li * 31 + 1;
       // Direction biased outward from the core through the hub, plus jitter.
@@ -254,13 +275,53 @@ function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: Array<[num
       const dist = cloud * (0.55 + hash01(seed) * 0.9);
       const leafPos = hubPos.clone().add(dir.multiplyScalar(dist));
       const leafIndex = nodes.length;
+      leafIndices.push(leafIndex);
       nodes.push({
         ...leaf,
         pos: leafPos,
       });
-      edges.push([hubIndex, leafIndex]); // hub → leaf
+      edges.push({ a: hubIndex, b: leafIndex, tint: hub.color.clone(), kind: 0 }); // hub → leaf
     });
+
+    // ── cross-link web: faint dendrites between SIBLING leaves so each cluster
+    // reads as interconnected tissue, not a star burst. Deterministic ~40% of
+    // adjacent sibling pairs link up; drawn dim (kind 1) so the spokes stay primary.
+    for (let li = 0; li + 1 < leafIndices.length; li++) {
+      if (hash01(h * 7919 + li * 233 + 5) < 0.4) {
+        edges.push({ a: leafIndices[li]!, b: leafIndices[li + 1]!, tint: hub.color.clone(), kind: 1 });
+      }
+    }
   });
+
+  // ── hub ring: whisper-faint long arcs between neighbouring hubs — the cortex's
+  // association fibres. Only with 3+ hubs (a 2-hub "ring" is just a doubled edge).
+  if (hubIndices.length >= 3) {
+    for (let h = 0; h < hubIndices.length; h++) {
+      const a = hubIndices[h]!;
+      const b = hubIndices[(h + 1) % hubIndices.length]!;
+      edges.push({ a, b, tint: nodes[b]!.color.clone(), kind: 1 });
+    }
+  }
+
+  // ── long-range association fibres: faint arcs between leaves of DIFFERENT
+  // clusters. A few dozen of these span the empty middle volume and make the
+  // graph read as one connected cortex instead of isolated star-bursts.
+  // Deterministic picks; capped so a small memory never turns into spaghetti.
+  const leafIdx: Array<{ idx: number; hub: number }> = [];
+  nodes.forEach((n, i) => {
+    if (n.kind !== "core" && n.kind !== "category") {
+      leafIdx.push({ idx: i, hub: hubIndices.findIndex((hi) => nodes[hi]!.category === n.category) });
+    }
+  });
+  const want = Math.min(36, Math.floor(leafIdx.length * 0.7));
+  let made = 0;
+  for (let k = 0; k < want * 4 && made < want; k++) {
+    const a = leafIdx[Math.floor(hash01(k * 433 + 7) * leafIdx.length)];
+    const b = leafIdx[Math.floor(hash01(k * 991 + 19) * leafIdx.length)];
+    if (!a || !b || a.idx === b.idx || a.hub === b.hub) continue;
+    edges.push({ a: a.idx, b: b.idx, tint: nodes[b.idx]!.color.clone(), kind: 1 });
+    made++;
+  }
 
   return { nodes, edges };
 }
@@ -276,6 +337,26 @@ function makeSpriteTexture(): THREE.Texture {
     g.addColorStop(0.0, "rgba(255,255,255,1)");
     g.addColorStop(0.25, "rgba(255,255,255,0.85)");
     g.addColorStop(0.55, "rgba(255,255,255,0.28)");
+    g.addColorStop(1.0, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** A wider, softer falloff for the halo/corona layer (no hot center). */
+function makeHaloTexture(): THREE.Texture {
+  const size = 128;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d");
+  if (ctx) {
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    g.addColorStop(0.0, "rgba(255,255,255,0.55)");
+    g.addColorStop(0.4, "rgba(255,255,255,0.22)");
+    g.addColorStop(0.75, "rgba(255,255,255,0.06)");
     g.addColorStop(1.0, "rgba(255,255,255,0)");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
@@ -338,7 +419,7 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     const camera = new THREE.PerspectiveCamera(55, width / height, 1, 5000);
     const CAM_MIN = 200;
     const CAM_MAX = 1100;
-    let camDist = 560;
+    let camDist = 440; // closer default — the network fills the stage with presence
     camera.position.set(0, 0, camDist);
 
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
@@ -358,7 +439,9 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     // portrait canvas it shoved the graph past the side edges (sparse, clipped).
     // Derived from the canvas aspect at setup AND on every resize.
     const applyGroupScale = () => {
-      if (camera.aspect >= 1) group.scale.set(2.3, 0.7, 1); // landscape — wide, shallow brain spread
+      // Landscape keeps the wide cinematic spread but with enough vertical body
+      // that the network fills the tall stage instead of banding across its middle.
+      if (camera.aspect >= 1) group.scale.set(2.15, 0.85, 1);
       else group.scale.set(1.15, 1.05, 1); // portrait — near-uniform so it fits the frame
     };
     applyGroupScale();
@@ -371,7 +454,8 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
     const sizes = new Float32Array(count);
-    const baseSizes = new Float32Array(count); // immutable copy for breathing/hover
+    const seeds = new Float32Array(count); // per-node phase for the twinkle
+    const baseSizes = new Float32Array(count); // immutable copy for hover bump
     for (let i = 0; i < count; i++) {
       const n = nodes[i]!;
       positions[i * 3] = n.pos.x;
@@ -382,83 +466,185 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       colors[i * 3 + 1] = n.color.g * dimK;
       colors[i * 3 + 2] = n.color.b * dimK;
       sizes[i] = n.size;
+      seeds[i] = hash01(i * 524287 + 7);
       baseSizes[i] = n.size;
     }
 
     const sprite = makeSpriteTexture();
+    const haloSprite = makeHaloTexture();
     const pointsGeo = new THREE.BufferGeometry();
     pointsGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     pointsGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     pointsGeo.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
+    pointsGeo.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+
+    // Shared chunks: per-node decorrelated twinkle (replaces the old global pulse
+    // where every node breathed in unison) + a view-depth fade so far nodes recede
+    // into the dark instead of flattening the composition.
+    const POINT_VERTEX = `
+      attribute float size;
+      attribute float aSeed;
+      varying vec3 vColor;
+      varying float vDepth;
+      uniform float uTime;
+      uniform float uScale;
+      uniform float uPixelRatio;
+      void main() {
+        vColor = color;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vDepth = -mv.z;
+        float tw = 1.0 + 0.07 * sin(uTime * 1.6 + aSeed * 6.2831);
+        // size attenuation: shrink with distance, scale by DPR + twinkle.
+        float s = min(size * uScale, 86.0);
+        gl_PointSize = s * tw * uPixelRatio * (300.0 / -mv.z);
+        gl_Position = projectionMatrix * mv;
+      }
+    `;
+    const POINT_FRAGMENT = `
+      uniform sampler2D uTex;
+      uniform float uAlpha;
+      uniform float uCamDist;
+      varying vec3 vColor;
+      varying float vDepth;
+      void main() {
+        vec4 t = texture2D(uTex, gl_PointCoord);
+        if (t.a < 0.02) discard;
+        float fade = smoothstep(uCamDist + 320.0, uCamDist - 160.0, vDepth);
+        float a = t.a * uAlpha * mix(0.52, 1.0, fade);
+        gl_FragColor = vec4(vColor, 1.0) * a;
+      }
+    `;
 
     // ShaderMaterial so per-vertex `size` is honored (PointsMaterial ignores it).
     const pointsMat = new THREE.ShaderMaterial({
       uniforms: {
         uTex: { value: sprite },
-        uPulse: { value: 1 },
+        uTime: { value: 0 },
+        uScale: { value: 1 },
+        uAlpha: { value: 1 },
+        uCamDist: { value: camDist },
         uPixelRatio: { value: renderer.getPixelRatio() },
       },
-      vertexShader: `
-        attribute float size;
-        varying vec3 vColor;
-        uniform float uPulse;
-        uniform float uPixelRatio;
-        void main() {
-          vColor = color;
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          // size attenuation: shrink with distance, scale by DPR + global pulse.
-          gl_PointSize = size * uPulse * uPixelRatio * (300.0 / -mv.z);
-          gl_Position = projectionMatrix * mv;
-        }
-      `,
-      fragmentShader: `
-        uniform sampler2D uTex;
-        varying vec3 vColor;
-        void main() {
-          vec4 t = texture2D(uTex, gl_PointCoord);
-          if (t.a < 0.02) discard;
-          gl_FragColor = vec4(vColor, 1.0) * t.a;
-        }
-      `,
+      vertexShader: POINT_VERTEX,
+      fragmentShader: POINT_FRAGMENT,
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       vertexColors: true,
     });
 
+    // Corona layer: SAME geometry drawn a second time, wide + soft + faint — every
+    // node gets a luminous halo for ~zero extra memory (one extra draw call).
+    const haloMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTex: { value: haloSprite },
+        uTime: { value: 0 },
+        uScale: { value: 3.0 },
+        uAlpha: { value: 0.5 },
+        uCamDist: { value: camDist },
+        uPixelRatio: { value: renderer.getPixelRatio() },
+      },
+      vertexShader: POINT_VERTEX,
+      fragmentShader: POINT_FRAGMENT,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexColors: true,
+    });
+
+    const halos = new THREE.Points(pointsGeo, haloMat);
+    halos.renderOrder = 1;
+    group.add(halos);
     const points = new THREE.Points(pointsGeo, pointsMat);
+    points.renderOrder = 2;
     group.add(points);
 
-    // ── edges as one LineSegments with NEURON LIGHT PULSES ──────────────────────
-    // A custom ShaderMaterial animates a bright cyan band travelling along every
-    // connection (core→hub→leaf, i.e. outward). Per-vertex `aProgress` is 0 at the
-    // source/inner end and 1 at the target/outer end of each segment, so the pulse
-    // flows outward. Per-edge `aSeed` is a deterministic phase (SAME on both verts
-    // of an edge — hashed from the edge index, no Math.random) so edges fire out of
-    // phase and the whole thing reads as neurons firing. Still ONE draw call.
-    const linePos = new Float32Array(edges.length * 6);
-    const lineProgress = new Float32Array(edges.length * 2); // 0 at source, 1 at target
-    const lineSeed = new Float32Array(edges.length * 2); // same value on both verts
+    // ── edges: CURVED dendrites with NEURON LIGHT PULSES ─────────────────────────
+    // Every edge is a quadratic bézier sampled into CURVE_SEG line segments (one
+    // LineSegments draw call total). The control point bows the curve outward from
+    // the core plus a deterministic sideways arc, so connections read as organic
+    // dendrites instead of straight spokes. A bright band travels 0→1 along each
+    // curve (per-edge phase from aSeed); aTint colors the band toward the hub's
+    // hue; aKind dims the cross-link web below the primary spokes.
+    const segPerEdge = CURVE_SEG;
+    const vertsPerEdge = segPerEdge * 2;
+    const linePos = new Float32Array(edges.length * vertsPerEdge * 3);
+    const lineProgress = new Float32Array(edges.length * vertsPerEdge);
+    const lineSeed = new Float32Array(edges.length * vertsPerEdge);
+    const lineKind = new Float32Array(edges.length * vertsPerEdge);
+    const lineTint = new Float32Array(edges.length * vertsPerEdge * 3);
+
+    const va = new THREE.Vector3();
+    const vb = new THREE.Vector3();
+    const mid = new THREE.Vector3();
+    const ctrl = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    const perp = new THREE.Vector3();
+    const UP = new THREE.Vector3(0, 1, 0);
+    const RIGHT = new THREE.Vector3(1, 0, 0);
+    const bez = (t: number, a: THREE.Vector3, c: THREE.Vector3, b: THREE.Vector3, out: THREE.Vector3) => {
+      const u = 1 - t;
+      out.set(
+        u * u * a.x + 2 * u * t * c.x + t * t * b.x,
+        u * u * a.y + 2 * u * t * c.y + t * t * b.y,
+        u * u * a.z + 2 * u * t * c.z + t * t * b.z,
+      );
+      return out;
+    };
+
+    const sample = new THREE.Vector3();
+    const samplePrev = new THREE.Vector3();
     for (let e = 0; e < edges.length; e++) {
-      const pair = edges[e]!;
-      const a = nodes[pair[0]]!; // inner end (core / hub)
-      const b = nodes[pair[1]]!; // outer end (hub / leaf)
-      linePos[e * 6] = a.pos.x;
-      linePos[e * 6 + 1] = a.pos.y;
-      linePos[e * 6 + 2] = a.pos.z;
-      linePos[e * 6 + 3] = b.pos.x;
-      linePos[e * 6 + 4] = b.pos.y;
-      linePos[e * 6 + 5] = b.pos.z;
-      lineProgress[e * 2] = 0;
-      lineProgress[e * 2 + 1] = 1;
+      const edge = edges[e]!;
+      va.copy(nodes[edge.a]!.pos);
+      vb.copy(nodes[edge.b]!.pos);
+      mid.copy(va).add(vb).multiplyScalar(0.5);
+      const len = va.distanceTo(vb);
+      // Outward bow (away from the core) + a sideways arc, both deterministic.
+      dir.copy(vb).sub(va).normalize();
+      perp.copy(dir).cross(Math.abs(dir.y) > 0.92 ? RIGHT : UP).normalize();
+      const side = (hash01(e * 911 + 29) - 0.5) * 2; // [-1, 1]
+      const bowOut = len * (edge.kind === 1 ? 0.16 : 0.1);
+      const bowSide = len * 0.16 * side;
+      ctrl
+        .copy(mid)
+        .add(mid.lengthSq() > 1 ? mid.clone().normalize().multiplyScalar(bowOut) : perp.clone().multiplyScalar(bowOut))
+        .add(perp.multiplyScalar(bowSide));
+
       const seed = hash01(e * 2654435761 + 11); // deterministic phase per edge
-      lineSeed[e * 2] = seed;
-      lineSeed[e * 2 + 1] = seed;
+      bez(0, va, ctrl, vb, samplePrev);
+      for (let s = 0; s < segPerEdge; s++) {
+        const t0 = s / segPerEdge;
+        const t1 = (s + 1) / segPerEdge;
+        bez(t1, va, ctrl, vb, sample);
+        const vi = (e * segPerEdge + s) * 2;
+        linePos[vi * 3] = samplePrev.x;
+        linePos[vi * 3 + 1] = samplePrev.y;
+        linePos[vi * 3 + 2] = samplePrev.z;
+        linePos[vi * 3 + 3] = sample.x;
+        linePos[vi * 3 + 4] = sample.y;
+        linePos[vi * 3 + 5] = sample.z;
+        lineProgress[vi] = t0;
+        lineProgress[vi + 1] = t1;
+        lineSeed[vi] = seed;
+        lineSeed[vi + 1] = seed;
+        lineKind[vi] = edge.kind;
+        lineKind[vi + 1] = edge.kind;
+        lineTint[vi * 3] = edge.tint.r;
+        lineTint[vi * 3 + 1] = edge.tint.g;
+        lineTint[vi * 3 + 2] = edge.tint.b;
+        lineTint[vi * 3 + 3] = edge.tint.r;
+        lineTint[vi * 3 + 4] = edge.tint.g;
+        lineTint[vi * 3 + 5] = edge.tint.b;
+        samplePrev.copy(sample);
+      }
     }
     const lineGeo = new THREE.BufferGeometry();
     lineGeo.setAttribute("position", new THREE.BufferAttribute(linePos, 3));
     lineGeo.setAttribute("aProgress", new THREE.BufferAttribute(lineProgress, 1));
     lineGeo.setAttribute("aSeed", new THREE.BufferAttribute(lineSeed, 1));
+    lineGeo.setAttribute("aKind", new THREE.BufferAttribute(lineKind, 1));
+    lineGeo.setAttribute("aTint", new THREE.BufferAttribute(lineTint, 3));
 
     // uPulseOn = 0 freezes the travelling band (reduced motion) → faint static lines.
     const lineMat = new THREE.ShaderMaterial({
@@ -466,18 +652,28 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
         uTime: { value: 0 },
         uSpeed: { value: 0.32 }, // pulse cycles per second along an edge
         uPulseOn: { value: reduced ? 0 : 1 },
-        uBase: { value: new THREE.Color("#5cf2ff") }, // faint resting filament
+        uCamDist: { value: camDist },
+        uBase: { value: new THREE.Color("#5cf2ff") }, // resting filament
         uPulseColor: { value: new THREE.Color("#dffaff") }, // bright near-white-cyan band
       },
       vertexShader: `
         attribute float aProgress;
         attribute float aSeed;
+        attribute float aKind;
+        attribute vec3 aTint;
         varying float vProgress;
         varying float vSeed;
+        varying float vKind;
+        varying vec3 vTint;
+        varying float vDepth;
         void main() {
           vProgress = aProgress;
           vSeed = aSeed;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          vKind = aKind;
+          vTint = aTint;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vDepth = -mv.z;
+          gl_Position = projectionMatrix * mv;
         }
       `,
       fragmentShader: `
@@ -485,25 +681,34 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
         uniform float uTime;
         uniform float uSpeed;
         uniform float uPulseOn;
+        uniform float uCamDist;
         uniform vec3 uBase;
         uniform vec3 uPulseColor;
         varying float vProgress;
         varying float vSeed;
+        varying float vKind;
+        varying vec3 vTint;
+        varying float vDepth;
         void main() {
-          // Resting cyan filament — clearly visible at rest (additive, so brightness is
-          // ~col*alpha; the old 0.16*0.16 read as nearly nothing).
-          vec3 base = uBase * 0.5;
+          // Resting filament: primary spokes glow a readable hub-tinted cyan; the
+          // cross-link web sits far dimmer so structure stays legible. (Additive —
+          // brightness ≈ col * alpha.)
+          float strength = mix(1.0, 0.32, vKind);
+          vec3 base = mix(uBase, vTint, 0.45) * 0.75 * strength;
           // Pulse head position in [0,1), per-edge phase from the seed; flows 0→1.
-          float p = fract(uTime * uSpeed + vSeed);
+          // The web pulses slower + weaker than the spokes.
+          float speed = uSpeed * mix(1.0, 0.55, vKind);
+          float p = fract(uTime * speed + vSeed);
           // Wrapped distance from this fragment's progress to the pulse head so the
           // band crosses the 0/1 seam seamlessly.
           float d = vProgress - p;
           d = d - floor(d + 0.5); // wrap into [-0.5, 0.5]
-          // Narrow gaussian → a tight bright travelling band.
-          float pulse = exp(-(d * d) / (2.0 * 0.018 * 0.018)) * uPulseOn;
-          vec3 col = base + uPulseColor * pulse;
-          // Alpha: the resting line is now solidly readable; the band spikes to opaque.
-          float a = 0.45 + pulse * 0.55;
+          // Narrow gaussian → a tight bright travelling band, tinted toward the hub.
+          float pulse = exp(-(d * d) / (2.0 * 0.018 * 0.018)) * uPulseOn * mix(1.0, 0.35, vKind);
+          vec3 col = base + mix(uPulseColor, vTint, 0.35) * pulse;
+          // View-depth fade: far filaments recede instead of flattening the image.
+          float fade = smoothstep(uCamDist + 320.0, uCamDist - 160.0, vDepth);
+          float a = (0.6 * strength + pulse * 0.4) * mix(0.45, 1.0, fade);
           gl_FragColor = vec4(col, a);
         }
       `,
@@ -512,7 +717,67 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       depthWrite: false,
     });
     const lines = new THREE.LineSegments(lineGeo, lineMat);
+    lines.renderOrder = 0;
     group.add(lines);
+
+    // ── neural dust: a sparse twinkling particle shell around the graph ──────────
+    // Pure atmosphere (not pickable, not labelled): tiny mercury/cyan motes drifting
+    // with the same rotation, fading in and out of the dark. One draw call.
+    const dustPos = new Float32Array(DUST_COUNT * 3);
+    const dustSeed = new Float32Array(DUST_COUNT);
+    const dustSize = new Float32Array(DUST_COUNT);
+    for (let i = 0; i < DUST_COUNT; i++) {
+      // Deterministic shell placement: radius 230..520, uniform-ish direction.
+      const u = hash01(i * 37 + 1) * 2 - 1;
+      const phi = hash01(i * 101 + 9) * Math.PI * 2;
+      const r = 230 + hash01(i * 211 + 3) * 290;
+      const ring = Math.sqrt(Math.max(0, 1 - u * u));
+      dustPos[i * 3] = Math.cos(phi) * ring * r;
+      dustPos[i * 3 + 1] = u * r;
+      dustPos[i * 3 + 2] = Math.sin(phi) * ring * r;
+      dustSeed[i] = hash01(i * 587 + 13);
+      dustSize[i] = 2 + hash01(i * 769 + 5) * 3.5;
+    }
+    const dustGeo = new THREE.BufferGeometry();
+    dustGeo.setAttribute("position", new THREE.BufferAttribute(dustPos, 3));
+    dustGeo.setAttribute("aSeed", new THREE.BufferAttribute(dustSeed, 1));
+    dustGeo.setAttribute("size", new THREE.BufferAttribute(dustSize, 1));
+    const dustMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTex: { value: sprite },
+        uTime: { value: 0 },
+        uPixelRatio: { value: renderer.getPixelRatio() },
+      },
+      vertexShader: `
+        attribute float size;
+        attribute float aSeed;
+        varying float vTwinkle;
+        uniform float uTime;
+        uniform float uPixelRatio;
+        void main() {
+          vTwinkle = 0.5 + 0.5 * sin(uTime * (0.6 + aSeed) + aSeed * 6.2831);
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = size * uPixelRatio * (300.0 / -mv.z);
+          gl_Position = projectionMatrix * mv;
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D uTex;
+        varying float vTwinkle;
+        void main() {
+          vec4 t = texture2D(uTex, gl_PointCoord);
+          if (t.a < 0.02) discard;
+          float a = t.a * (0.07 + 0.16 * vTwinkle);
+          gl_FragColor = vec4(0.62, 0.84, 0.92, 1.0) * a;
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const dust = new THREE.Points(dustGeo, dustMat);
+    dust.renderOrder = 0;
+    group.add(dust);
 
     // ── HTML LABEL OVERLAY (imperative — never React setState per frame) ─────────
     // One non-interactive overlay holds: a PERSISTENT label per hub + the core
@@ -805,7 +1070,10 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       camera.updateProjectionMatrix();
       applyGroupScale(); // re-derive the spread when orientation/aspect changes
       renderer.setSize(w, h);
-      pointsMat.uniforms.uPixelRatio!.value = renderer.getPixelRatio();
+      const pr = renderer.getPixelRatio();
+      pointsMat.uniforms.uPixelRatio!.value = pr;
+      haloMat.uniforms.uPixelRatio!.value = pr;
+      dustMat.uniforms.uPixelRatio!.value = pr;
       requestRender(); // reduced-motion: repaint after a layout change
     };
     window.addEventListener("resize", resize);
@@ -826,12 +1094,19 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       }
       group.rotation.x = rot.x;
       group.rotation.y = rot.y;
-      // subtle global "breathing" pulse + neuron edge-pulse clock (cheap: uniforms)
+      // shader clocks: edge pulses, node twinkle, dust drift + a whisper of roll
       if (!reduced) {
         const t = (now - start) / 1000;
-        pointsMat.uniforms.uPulse!.value = 1 + Math.sin(t * 1.4) * 0.05;
-        lineMat.uniforms.uTime!.value = t; // advances the travelling light bands
+        lineMat.uniforms.uTime!.value = t;
+        pointsMat.uniforms.uTime!.value = t;
+        haloMat.uniforms.uTime!.value = t;
+        dustMat.uniforms.uTime!.value = t;
+        group.rotation.z = Math.sin(t * 0.07) * 0.015; // barely-there sway — feels alive
       }
+      // Depth-fade anchor follows the zoom so the fade band stays centred on the graph.
+      lineMat.uniforms.uCamDist!.value = camDist;
+      pointsMat.uniforms.uCamDist!.value = camDist;
+      haloMat.uniforms.uCamDist!.value = camDist;
       camera.position.set(0, 0, camDist);
       camera.lookAt(0, 0, 0);
       // Keep the camera matrices current BEFORE we project labels to screen.
@@ -874,11 +1149,15 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       canvas.removeEventListener("pointerup", onPointerUp);
       canvas.removeEventListener("pointercancel", onPointerUp);
       canvas.removeEventListener("wheel", onWheel);
-      pointsGeo.dispose();
+      pointsGeo.dispose(); // shared by the node + halo layers
       pointsMat.dispose();
-      lineGeo.dispose(); // also frees the aProgress / aSeed buffers
+      haloMat.dispose();
+      lineGeo.dispose(); // also frees aProgress / aSeed / aKind / aTint
       lineMat.dispose();
+      dustGeo.dispose();
+      dustMat.dispose();
       sprite.dispose();
+      haloSprite.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
       if (canvas.parentElement === container) container.removeChild(canvas);

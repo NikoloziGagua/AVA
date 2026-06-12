@@ -114,9 +114,11 @@ export function PanelSection({ title, right, onClickHeader, span, children }: {
 }) {
   return (
     <BorderGlow dataPanelSection className={"mb-5 px-6 py-5 sm:px-7 sm:py-6 " + (span ?? "")}>
+      {/* Header sits on its own hairline rule — gives every section a crisp
+          instrument-panel top band instead of a floating caption. */}
       <header
         className={
-          "hud mb-4 flex items-center justify-between text-[11px] tracking-[0.18em] text-white/60 " +
+          "hud mb-4 flex items-center justify-between border-b border-white/[0.07] pb-3 text-[11px] tracking-[0.18em] text-white/65 " +
           (onClickHeader ? "cursor-pointer" : "")
         }
         onClick={onClickHeader}

@@ -31,7 +31,8 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
   const [showPersonality, setShowPersonality] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const [newPref, setNewPref] = useState("");
-  const [view, setView] = useState<ViewMode>("list");
+  // Mind (the 3D brain) is the front door — the list is the editing back office.
+  const [view, setView] = useState<ViewMode>("mind");
   const [selected, setSelected] = useState<BrainNode | null>(null);
 
   async function load() {
@@ -53,8 +54,8 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
       <div className="lg:col-span-12 mb-1 flex justify-end" data-panel-section>
         <SegmentedTabs<ViewMode>
           options={[
-            { value: "list", label: "List" },
             { value: "mind", label: "Mind" },
+            { value: "list", label: "List" },
           ]}
           value={view}
           onChange={(v) => {
@@ -210,6 +211,9 @@ function MindStage({
   onSelect: (n: BrainNode | null) => void;
 }) {
   const [spinning, setSpinning] = useState(true);
+  const items =
+    memory.observations.lines.length + memory.preferences.lines.length + memory.projects.length;
+  const hubs = new Set(memory.observations.lines.map((l) => l.category)).size + 2; // + preferences/projects
   return (
     <div className="lg:col-span-12" data-panel-section>
       {/* No framing box — the network floats free over the panel backdrop, bigger. */}
@@ -217,7 +221,23 @@ function MindStage({
         className="relative w-full overflow-hidden"
         style={{ height: "min(82vh, 900px)" }}
       >
+        {/* Stage atmosphere BEHIND the canvas: a deep radial well that grounds the
+            network in space + a faint cyan breath at its heart. Pure CSS, static. */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 62% 56% at 50% 46%, rgba(92,242,255,0.055), transparent 62%)," +
+              "radial-gradient(ellipse 85% 80% at 50% 50%, transparent 38%, rgba(0,0,0,0.55) 86%)",
+          }}
+        />
         <MemoryBrain memory={memory} onSelect={onSelect} spinning={spinning} />
+
+        {/* Telemetry rail, top-left — what the cortex is holding right now. */}
+        <div className="pointer-events-none absolute left-4 top-3 hud text-[9px] tracking-[0.22em] text-white/40">
+          <span style={{ color: "var(--ac)" }}>◉</span> neural map · {items} memories · {hubs} clusters
+        </div>
 
         {/* Hint rail, bottom-left — zoom gesture depends on the pointer in hand. */}
         <div className="pointer-events-none absolute bottom-3 left-4 hud text-[9px] tracking-[0.18em] text-white/35">

@@ -188,65 +188,37 @@
 .bg-card__bracket--tr { top: 10px; right: 10px; transform: scaleX(-1); }
 .bg-card__bracket--bl { bottom: 10px; left: 10px; transform: scaleY(-1); }
 .bg-card__bracket--br { bottom: 10px; right: 10px; transform: scale(-1, -1); }
-/* ── DISPLAY CARDS — the "Important chats" skew-stack. A taste-driven adaptation of
-   the owner's DisplayCards into the cyan/mercury deck. All cards share ONE grid cell
-   (grid-template-areas:'stack') so they OVERLAP in a pile; the whole pile is skewed
-   (-8deg on Y) and each card behind is nudged right+down. The reference's "grayscale
-   at rest → full colour on hover" becomes "DESATURATED + dimmed at rest → vivid cyan
-   on its own hover", and the hovered card LIFTS up out of the pile. A right-edge
-   gradient fade (::after) makes the pile read as a stack receding off-frame. Pure CSS
-   transitions (cheap) — nothing animates at rest. Reduced motion renders a plain,
-   flat, evenly-spaced grid (the .dc-flat branch in DisplayCards.tsx) — no skew/stack. */
-.dc-stack {
-  position: relative;
+/* ── PIN CARDS — the "Important chats" rail: up to three wide starred glass cards
+   filling the section row (the old skew-stack smeared into an unreadable pile).
+   Calm at rest; on hover the card lifts a hair, its cursor-following border ring
+   ignites (igniteBorder), the title brightens and the OPEN affordance lights cyan.
+   Nothing animates at rest. */
+.pin-grid {
   display: grid;
-  grid-template-areas: "stack";
-  place-items: start;
-  transform: skewY(-8deg);
-  /* Sized to the front card (340) + the deepest card's spread (200) and CENTERED in the
-     section, so the pile reads as a deliberate showcase instead of a cluster jammed in
-     the top-left corner of a wide empty box. */
-  width: 540px;
-  max-width: 100%;
-  margin: 0.5rem auto 1.25rem;
-  /* Right-edge fade so the receding pile dissolves into the panel rather than
-     hard-clipping. Sits above the cards but lets pointer events through. */
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1rem;
+  margin: 0.25rem 0 0.25rem;
 }
-.dc-stack::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 30;
-  background: linear-gradient(to left, #000 0%, rgba(0, 0, 0, 0) 26%);
-  opacity: 0.85;
+.pin-card {
+  border-color: rgba(92, 242, 255, 0.16);
+  transition: transform 450ms var(--ease-cinematic), border-color 400ms ease,
+              box-shadow 450ms var(--ease-cinematic);
 }
-.dc-stack .dc-card {
-  grid-area: stack;
-  width: 340px;
-  transform-origin: 50% 120%;
-  /* Resting depth pose (front card = identity); back cards override below. */
-  transition: transform 700ms var(--ease-cinematic),
-              filter 700ms var(--ease-cinematic),
-              opacity 700ms var(--ease-cinematic),
-              border-color 400ms ease;
-  will-change: transform, filter;
+.pin-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 22px 44px -28px rgba(0, 0, 0, 0.9), 0 0 30px -14px rgba(92, 242, 255, 0.35);
 }
-/* Front card (top of the pile): full colour, just a hair of lift on hover. */
-.dc-card { border-color: rgba(92, 242, 255, 0.2); }
-.dc-card:hover { transform: translateY(-4px); }
-/* Back cards: pushed right+down, DESATURATED + dimmed so the front reads as the
-   focus. The deeper the card, the further/dimmer. Each lifts to flat full-cyan on
-   its OWN hover (so all cards stay individually reachable + readable). */
-.dc-card[data-depth="1"] { transform: translate(60px, 40px); filter: saturate(0.35) brightness(0.72); }
-.dc-card[data-depth="2"] { transform: translate(120px, 80px); filter: saturate(0.35) brightness(0.6); }
-.dc-card[data-depth="3"] { transform: translate(180px, 120px); filter: saturate(0.35) brightness(0.5); }
-.dc-card[data-depth="1"]:hover,
-.dc-card[data-depth="2"]:hover,
-.dc-card[data-depth="3"]:hover {
-  transform: translateY(-40px);
-  filter: saturate(1) brightness(1);
-  z-index: 20;
+.pin-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.6em; /* two lines reserved so short/long titles align across the rail */
+  transition: color 300ms ease;
 }
-/* Reduced-motion / flat layout: a neat readable grid, no skew, no stack, no pose. */
-.dc-flat { display: grid; gap: 1rem; }
-.dc-flat .dc-card { position: relative; width: auto; transform: none; filter: none; }
+.pin-card:hover .pin-title { color: #fff; }
+.pin-open { transition: color 300ms ease, transform 450ms var(--ease-cinematic); }
+.pin-card:hover .pin-open { color: var(--ac); transform: translateX(2px); }
 
 /* ── CHAT TABLE — the "All chats" semantic table styled into the deck: thin cyan
    hairlines, glass rows, .hud column heads. Spacious (desktop-primary), nothing

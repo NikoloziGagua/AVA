@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { Trash2, Plus, Star } from "lucide-react";
+import { Trash2, Plus, Star, ArrowUpRight } from "lucide-react";
 import { api, fetchSessions, type SessionRow } from "../api.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
-import { DisplayCards, MAX_FANNED, type DisplayCard } from "../components/ava/DisplayCards.js";
+import { igniteBorder, douseBorder } from "../components/ava/BorderGlow.js";
 import { ContainerScroll } from "../components/ava/ContainerScroll.js";
 import { Flip, gsap, useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { press } from "../lib/deckMotion.js";
+
+/**
+ * How many pinned chats get a starred card in the "Important chats" rail; any
+ * further pins overflow into the table (with a lit star) so a 4th+ pin is never
+ * invisible. Three wide cards fill the deck row exactly.
+ */
+const MAX_PINNED_CARDS = 3;
 
 export interface ChatListScreenProps {
   // Kept for API parity with App.tsx; the persistent nav now handles "back",
@@ -51,13 +58,13 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
       .finally(() => setLoading(false));
   }, []);
 
-  // The "Important chats" strip shows at most MAX_FANNED pinned chats; any pinned
-  // beyond that OVERFLOW into the table (with a lit star) so a 5th+ pin is never
-  // invisible. The table therefore lists overflow-pinned first, then the unpinned.
+  // The "Important chats" rail shows at most MAX_PINNED_CARDS pinned chats; any
+  // pinned beyond that OVERFLOW into the table (with a lit star) so a 4th+ pin is
+  // never invisible. The table therefore lists overflow-pinned first, then unpinned.
   const pinned = sessions.filter((s) => s.pinned);
   const unpinned = sessions.filter((s) => !s.pinned);
-  const stripPinned = pinned.slice(0, MAX_FANNED);
-  const tableRows = [...pinned.slice(MAX_FANNED), ...unpinned];
+  const stripPinned = pinned.slice(0, MAX_PINNED_CARDS);
+  const tableRows = [...pinned.slice(MAX_PINNED_CARDS), ...unpinned];
 
   // Stagger the rows in on first paint, Flip them when the list reorders (delete /
   // undo / pin / unpin), and pulse the loading skeletons. All reduced-motion gated.
@@ -104,9 +111,9 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
   );
 
   // Snapshot every element that can move in a reorder: the table rows AND the pinned
-  // strip cards (so a row Flips smoothly into/out of the "Important chats" cluster).
+  // rail cards (so a row Flips smoothly into/out of the "Important chats" rail).
   function snapshotForFlip() {
-    flipState.current = reduced ? null : Flip.getState(".chat-row, .dc-card");
+    flipState.current = reduced ? null : Flip.getState(".chat-row, .pin-card");
   }
 
   function commitDelete(s: SessionRow) {
@@ -148,14 +155,6 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
     });
   }
 
-  const displayCards: DisplayCard[] = stripPinned.map((s) => ({
-    id: s.id,
-    title: s.title ?? "Untitled",
-    subtitle: lastActive(s),
-    onOpen: () => onOpenChat(s.id),
-    onUnpin: () => handleTogglePin(s),
-  }));
-
   const newChatBtn = (
     <button
       onClick={() => onOpenChat(null)}
@@ -173,11 +172,57 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
   return (
     <PanelShell title="Chats">
       <div ref={listScope}>
-        {/* IMPORTANT CHATS — only when something is pinned. */}
+        {/* IMPORTANT CHATS — only when something is pinned. A rail of up to three
+            wide starred cards (the old skew-stack smeared into an unreadable pile;
+            this reads instantly and ignites per-card on hover). */}
         {pinned.length > 0 && (
-          <PanelSection title="Important chats">
+          <PanelSection title="Important chats" right={<span className="chip chip-ac">{pinned.length}</span>}>
             <ContainerScroll>
-              <DisplayCards cards={displayCards} />
+              <div className="pin-grid">
+                {stripPinned.map((s) => (
+                  <div
+                    key={s.id}
+                    role="button"
+                    tabIndex={0}
+                    className="pin-card bg-card cursor-pointer px-5 py-4"
+                    onClick={() => onOpenChat(s.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onOpenChat(s.id);
+                      }
+                    }}
+                    onPointerMove={reduced ? undefined : igniteBorder}
+                    onPointerLeave={reduced ? undefined : douseBorder}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="hud text-[9px] tracking-[0.22em] text-[var(--ac)]/75">
+                        ★ PINNED
+                      </span>
+                      <button
+                        aria-label="unpin"
+                        title="Unpin"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTogglePin(s);
+                        }}
+                        className="pin-star -mr-1 -mt-1 rounded-md p-1 text-[var(--ac)] transition-colors hover:text-white"
+                      >
+                        <Star size={14} fill="currentColor" strokeWidth={1.5} />
+                      </button>
+                    </div>
+                    <div className="pin-title mt-2 text-[15px] font-medium leading-snug text-white/92">
+                      {s.title ?? "Untitled"}
+                    </div>
+                    <div className="mt-3 flex items-center justify-between">
+                      <span className="hud text-[10px] tracking-[0.16em] text-white/40">{lastActive(s)}</span>
+                      <span className="pin-open flex items-center gap-1 hud text-[9px] tracking-[0.2em] text-white/35">
+                        OPEN <ArrowUpRight size={11} />
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </ContainerScroll>
           </PanelSection>
         )}

@@ -11,7 +11,7 @@ export interface BorderGlowProps {
 /**
  * Light a `.bg-card`'s cursor-following cyan/mercury border ring toward the pointer.
  * Operates on the event's `currentTarget`, so ANY `.bg-card` element can share it
- * (BorderGlow, the DisplayCards Important-chats cards, …) — wire it as `onPointerMove`.
+ * (BorderGlow, the Important-chats pin cards, …) — wire it as `onPointerMove`.
  * Sets `--edge` (0 at centre → 1 at any edge, drives the ring/glow opacity) and
  * `--angle` (the gradient rotation toward the cursor).
  */

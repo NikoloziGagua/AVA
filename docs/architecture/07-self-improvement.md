@@ -148,6 +148,8 @@ implementations of `implement`, `restart`, `watch`, etc.
 | `restart()` | restart the live server | no-op (tsx watch reloads) | no-op |
 | `watch(knownGood, swapped)` | spawn detached watchdog | spawns `watchdog-main.ts` | same |
 | `emit(e)` | progress event for logs/journal | `log.*` | append to overnight log |
+| `onSwapped(intent, sha)?` | **new**: fired after a successful swap — append the self-changelog | `appendChangelog(memoryDir, …)` | same |
+| `onFailed(intent, error)?` | **new**: fired on a real failure (not a cancel) — record a friction-ledger entry | `recordMistake(memoryDir, …)` | same |
 
 ### The single-flight lock + FIFO queue + cancel/decision registries, `improver.ts:32-41`
 
@@ -241,35 +243,49 @@ up in `finally`.
 ## 3. What triggers an improvement (and what does NOT)
 
 There are four *declared* trigger types (`intents.ts:4`): `explicit`, `failure`,
-`friction`, `schedule`. **Only two of them are actually wired to create
-intents** in the current code:
+`friction`, `schedule`. **Three are now wired to create intents** (the `friction`
+trigger went live tonight, commit c3bd23b):
 
 | Trigger | Wired? | Entry point |
 | --- | --- | --- |
-| `explicit` | **Yes** | The `self_improve` tool (`tools/self-improve-mcp.ts`) → `queueSelfImprove` (`index.ts:226`), and the HTTP route `POST /api/self/improve` (`routes/self.ts:12`). Both used when the owner says "improve yourself" / asks Ava to change its own behaviour. |
-| `schedule` | **Yes** | The overnight loop `auto-improve-loop.ts:129`. Ava picks its *own* goal each iteration via `suggestImprovement` (see §8). |
-| `failure` | **No (unwired)** | The type exists; nothing constructs an intent with it. |
-| `friction` | **No (unwired)** | See below. |
+| `explicit` | **Yes** | The `self_improve` tool (`tools/self-improve-mcp.ts`) → `queueSelfImprove` (`index.ts`), the HTTP route `POST /api/self/improve` (`routes/self.ts`), and the Self screen's new initiator box (§11). Used when the owner asks Ava to change its own behaviour. |
+| `schedule` | **Yes** | The overnight loop `auto-improve-loop.ts`. Ava picks its *own* goal each iteration via `suggestImprovement` (see §8) — but **only after** the friction ledger is drained (below). |
+| `friction` | **Yes (new)** | The overnight loop mines the mistakes ledger (`listOpenMistakes` → `mistakeToGoal`) and creates a `trigger:"friction"` intent *before* asking Claude to invent ideas (`auto-improve-loop.ts`). |
+| `failure` | **No (unwired)** | The type constant exists; nothing constructs an intent with it. (Self-improvement failures are recorded as *friction* entries, surface `"tool"`, not as `failure`-trigger intents.) |
 
-### `friction.ts` — built, tested, but not connected
+### `friction.ts` — the mistakes ledger, now connected
 
-`friction.ts` is the **mistakes ledger**: Ava's record of real friction the owner
-hit (Ava was corrected, a tool failed, the owner flagged something). It is a
-full, tested module — `recordMistake` (dedups recurrences and *reopens* a
-resolved mistake that recurs, `friction.ts:41-64`), `listOpenMistakes`
-(worst-first by severity/count/recency), `mistakeToGoal` (formats a mistake into
-a goal+evidence string for the worker, flagging recurrences), and
-`resolveMistake`. The design intent is clear from the header comment: *"This is
-what Ava brings to Claude on self-improve: grounded evidence, not invented
-ideas."*
+`friction.ts` is the **mistakes ledger**: Ava's record of real friction (Ava was
+corrected, a tool failed, the owner flagged something). It is a full module —
+`recordMistake` (dedups recurrences and *reopens* a resolved mistake that recurs,
+`friction.ts:41-64`), `listOpenMistakes` (worst-first by severity/count/recency),
+`mistakeToGoal` (formats a mistake into a goal+evidence string for the worker,
+flagging recurrences), and `resolveMistake`. The design intent, from the header:
+*"This is what Ava brings to Claude on self-improve: grounded evidence, not
+invented ideas."*
 
-**However**, a repo-wide search shows `recordMistake` / `listOpenMistakes` /
-`mistakeToGoal` are referenced **only by `friction.test.ts`** — no production
-caller records a mistake, and nothing turns the ledger into an intent. So today
-the friction-driven trigger is **half-built**: the storage and formatting exist,
-but the wiring from "owner corrected Ava" → `recordMistake` → `mistakeToGoal` →
-`queueSelfImprove` is not present. This is worth knowing before claiming Ava
-"learns from its mistakes automatically" — it currently does not, on its own.
+**Tonight this got wired into the pipeline** (it was previously referenced only by
+its own test):
+
+- **Writer.** `runImprovement`'s new `onFailed` hook records a mistake on a real
+  failure (not a cancel). Both the live deps (`index.ts` `buildImproverDeps`) and
+  the overnight loop supply it — so a self-improvement that fails leaves a ledger
+  entry.
+- **Reader.** Each overnight iteration calls `listOpenMistakes` and, if any exist,
+  builds the goal from `mistakeToGoal` (`trigger:"friction"`) **before** falling
+  back to `suggestImprovement`. A **shipped** friction fix calls `resolveMistake`
+  (with the commit); a later recurrence reopens the entry so Claude digs deeper.
+
+**Honest nuance (important).** The ledger's *only* writer today is
+self-improvement's own failures, and the overnight loop explicitly **filters those
+out** of its goal selection (`!m.summary.startsWith("self-improvement failed:")`)
+so it doesn't spin re-fixing a failed fix. So the friction-first machinery is fully
+live, but there is still **no wiring from Sir's actual friction** ("Ava was
+corrected in a chat/voice turn" → `recordMistake`) into the ledger — that external
+source is the missing piece. Net: the trigger, the drain, the resolve/reopen loop,
+and the `npm run self:loop` launcher all exist and work; what they currently have
+to chew on is limited to self-improvement's own history, minus itself. Don't yet
+claim Ava "automatically learns from every mistake it makes with Sir."
 
 ---
 
@@ -468,20 +484,32 @@ passes `expectedHead`; the manual revert route does **not** (see §9).
 
 ### 8b. Overnight autonomous loop (`server/scripts/auto-improve-loop.ts`)
 
-A detached driver that lets Ava improve itself unattended. Each iteration
-(`auto-improve-loop.ts:116-148`):
+A detached driver that lets Ava improve itself unattended, launched with
+**`npm -w server run self:loop`** (the script added tonight; previously the loop
+had no entry point). Each iteration (`auto-improve-loop.ts`):
 
-1. `suggestImprovement(advisor, …)` — Ava asks its **persistent Claude session**
-   (run in the *stable repo dir*, not a worktree, so the session resumes and
-   Claude remembers prior suggestions to avoid repeats) for ONE concrete,
-   low-risk improvement, returning a single `GOAL:` line or `none`
-   (`suggest.ts`). The prompt hard-bans proposing changes to
-   safety/verification/approval/sandbox/scrub/self-loop code.
-2. If the goal matches `SAFETY_RE`, skip it.
-3. `createIntent(trigger:"schedule")` → `runImprovement(db, id, deps)`.
-4. Stop conditions: Claude credits exhausted (`/credit balance.*too low/`),
+1. **Friction first.** Drain the mistakes ledger: `listOpenMistakes(memoryDir)`,
+   filtered to exclude entries whose summary starts `"self-improvement failed:"`
+   (so a failed fix isn't re-attempted on repeat). If any remain, the **worst one**
+   becomes the goal via `mistakeToGoal` and the intent is created
+   `trigger:"friction"`. Grounded evidence beats invented ideas.
+2. **Else, invent.** With an empty ledger, fall back to `suggestImprovement(advisor,
+   …)` — Ava asks its **persistent Claude session** (run in the *stable repo dir*,
+   not a worktree, so the session resumes and Claude remembers prior suggestions to
+   avoid repeats) for ONE concrete, low-risk improvement, returning a `GOAL:` line
+   or `none` (`suggest.ts`). The prompt hard-bans changes to
+   safety/verification/approval/sandbox/scrub/self-loop code. Intent is
+   `trigger:"schedule"`.
+3. If the goal matches `SAFETY_RE`, skip it. Otherwise `createIntent(…)` →
+   `runImprovement(db, id, deps)`.
+4. **On ship, close the loop.** A `swapped` outcome bumps the shipped count, and if
+   the goal came from the ledger, `resolveMistake(memoryDir, frictionId, commit)`
+   marks that entry fixed (a recurrence later reopens it). A shipped change also
+   appends the changelog via `onSwapped`; a failure records a fresh friction entry
+   via `onFailed`.
+5. Stop conditions: Claude credits exhausted (`/credit balance.*too low/`),
    `MAX_CONSEC_FAILS` (default 6) consecutive non-ships, `MAX_ITERS` (default 60),
-   or Ava proposing `none`.
+   or Ava proposing `none` with an empty ledger.
 
 Note the loop uses **two** Claude workers with different allowlists
 (`auto-improve-loop.ts:55-64`): the *edit* worker (`selfClaudeCode`) is restricted
@@ -536,6 +564,19 @@ relays it honestly ("Claude shipped X"). `appendDevLog` stamps a `ts` and append
 `started` with no later `shipped`. It is plumbing for honest attribution between
 the two actors, not part of the autonomous pipeline.
 
+### `changelog.ts` — Ava's self-evolution record (yet another *separate* thing)
+
+New tonight, and distinct from both the intents table and `dev-log.ts`.
+`changelog.ts` maintains `memory/changelog.md`: on **every successful swap**,
+`runImprovement`'s `onSwapped` hook calls `appendChangelog(memoryDir, { summary:
+intent.goal, commit: sha })`, adding one dated line. Two purposes (header comment):
+Ava stays aware of how it has changed **without re-reading its own code**, and
+`readChangelog` can hand recent history to the Claude worker so it doesn't undo
+past fixes. It is best-effort — wrapped in a `try/catch` so a changelog write can
+never fail a shipped improvement. (Contrast: `dev-log.ts` is what *Claude the human's
+coding agent* writes by hand; `changelog.md` is what *Ava's autonomous pipeline*
+writes on every ship. Different authors, different files.)
+
 ### `identity.ts` + `SELF.md`
 
 `loadSelfKnowledge({ repoRoot })` (`identity.ts:8-17`) returns the repo root, the
@@ -548,9 +589,13 @@ repo is actually laid out.
 
 ## 11. The UI (`web/src/self/` + `routes/self.ts`)
 
-- **`routes/self.ts`** exposes six endpoints (all token-auth'd):
-  `POST /api/self/improve` (create + start, `trigger:"explicit"`),
-  `GET /api/self` (list all intents),
+- **`routes/self.ts`** exposes seven endpoints (all token-auth'd):
+  `POST /api/self/improve` (create + start, `trigger:"explicit"`; now returns
+  **409 `paused`** if self-improvement is paused),
+  `GET /api/self` (list all intents — the response now also carries a top-level
+  `paused` boolean),
+  `POST /api/self/pause` (**new**: set the server-side pause gate via
+  `setImprovementsPaused`, `self.ts`),
   `POST /api/self/:id/cancel` (cancel a running/queued improvement →
   `cancelImprovement`, `self.ts:29-34`),
   `POST /api/self/:id/approve` and `POST /api/self/:id/reject` (settle a plan
@@ -559,28 +604,38 @@ repo is actually laid out.
   `POST /api/self/:id/revert` (revert one intent to its `last_known_good`, set
   `status="rolled_back"`).
 - **`useSelfJournal.ts`** polls `GET /api/self` every 4 s and exposes
-  `revertLast()` (reverts the most recent `swapped` intent) plus `cancel` /
-  `approve` / `reject` (a generic `act(id, action)` that POSTs the matching route
-  then refreshes, `useSelfJournal.ts:63-77`). Two helpers: `isRunningStatus(status)`
-  (`:83-85`) gates the Stop button; `planText(diffSummary)` (`:88-91`) strips the
-  `PLAN:` prefix for display. The polled `Intent` type now carries `diff_summary`
-  so the parked plan is available client-side (`:9-11`).
-- **`SelfScreen.tsx`** (reachable from the app at `App.tsx:171`) shows the journal
-  — each intent's goal + status + outcome — plus a "Pause/Resume" toggle and a
-  "Revert last" button. New: a red **Stop** button on any running intent
-  (`SelfScreen.tsx:73-80`), and for an `awaiting_approval` intent a *"Plan — review
-  before it runs"* panel rendering the parked plan with **Approve & run** /
-  **Reject** buttons (`SelfScreen.tsx:86-107`); the status line reads "awaiting your
-  approval" for that state (`:83`).
+  `revertLast()` (reverts the most recent `swapped` intent), `cancel` / `approve` /
+  `reject` (a generic `act(id, action)` that POSTs the matching route then
+  refreshes), and — new tonight — **`improve(goal)`** (POSTs the initiator goal,
+  surfacing a 409 as *"self-improvement is paused"*) and **`setPaused(next)`**
+  (optimistically flips the UI, POSTs `/api/self/pause`, reconciles from the
+  response and the next poll). It also reads the server's `paused` flag back and
+  tolerates three response shapes (`improvements`/`intents`/bare array) so the UI
+  never breaks mid-deploy. Two helpers: `isRunningStatus(status)` gates the Stop
+  button; `planText(diffSummary)` strips the `PLAN:` prefix. The polled `Intent`
+  type carries `diff_summary` so the parked plan is available client-side.
+- **`SelfScreen.tsx`** (reachable from the app) shows the journal — each intent's
+  goal + status + outcome — plus:
+  - **an initiator box** (new): *"Tell Ava what to improve about herself…"* → a
+    text field + **Improve** button that calls `improve(goal)`; a failure (e.g.
+    paused) renders inline.
+  - a **Pause/Resume** toggle (now **real** — it drives the server gate) with an
+    `ACTIVE`/`PAUSED` chip in the header and a second `PAUSED` chip over the journal.
+  - a **Revert last** button, a red **Stop** button on any running intent, and for
+    an `awaiting_approval` intent a *"Plan — review before it runs"* panel rendering
+    the parked plan with **Approve & run** / **Reject** buttons.
 
 > **UI honesty caveats:**
-> - **"Pause" is still a no-op on the backend.** `paused` is purely local React
->   state (`useSelfJournal.ts:29`); there is no `/pause` route and nothing on the
->   server reads it. Tapping Pause changes the label and the helper text, but does
->   **not** stop Ava from running a queued/triggered improvement. (Verified: no
->   `pause` handling in `routes/self.ts` or the server.) Note this is **separate**
->   from the new **Stop** button, which *does* really cancel a running improvement
->   via `/cancel`.
+> - **"Pause" is now real (fixed tonight).** Tapping Pause POSTs `/api/self/pause`,
+>   which flips a **server-side gate** (`setImprovementsPaused` in `improver.ts`).
+>   While paused, both intake points refuse new work — `POST /api/self/improve`
+>   returns 409 and the `self_improve` chat tool throws — so Ava genuinely won't
+>   *start* a new improvement. **Three honest limits remain:** (1) the pause flag is
+>   **in-memory**, so a server restart resets it to *active*; (2) it gates *intake*
+>   only — an already-running improvement finishes (use **Stop** to cancel that);
+>   (3) it lives in the live process, so it does **not** reach the separate
+>   overnight-loop process. (Distinct from the **Stop** button, which cancels a
+>   running improvement via `/cancel`.)
 > - **"Revert last" is real but unguarded.** The route-level revert
 >   (`index.ts:325`) and the `selfRoutes` revert both call `revertTo(repoRoot,
 >   last_known_good)` **without** `expectedHead`, so it is an unconditional
@@ -703,22 +758,28 @@ These are real, current limitations — documented because precise > flattering.
    the **manual** revert route sets `rolled_back`. So the journal can show
    "shipped (live)" for a change the watchdog has actually undone.
 
-4. **The `failure` and `friction` triggers are unwired, and the mistakes ledger
-   is not connected.** Despite `friction.ts` being a complete, tested module
-   (`recordMistake`/`mistakeToGoal`/…), no production code records mistakes or
-   converts them into intents (§3). Ava does not currently self-trigger
-   improvements from its own errors; improvements come only from explicit asks or
-   the overnight self-suggest loop.
+4. **The `friction` trigger is now wired; the ledger's only source is still
+   self-improvement's own failures (fixed partially tonight).** `recordMistake` now
+   has production callers (`onFailed` on both driving paths), the overnight loop
+   drains the ledger into `trigger:"friction"` intents before inventing ideas, and
+   a shipped friction fix resolves its entry (§3, §8b). **But** the sole writer is
+   self-improvement failures — which the loop deliberately filters out — so there is
+   still no path from *Sir's* real friction (a correction in chat/voice) into the
+   ledger. The plumbing is live; an external writer is the missing piece. The
+   `failure` *trigger* constant remains unused (such failures are recorded as
+   `friction` entries instead).
 
 5. **No reflect-on-failure retry.** `reflect`'s `failureLog` parameter and the
    reflect prompt both anticipate feeding a prior failure back for another
    attempt, but `runImprovement` always passes `null` — a failed verify ends the
    intent; it is not automatically retried with the failure as context.
 
-6. **"Pause" gives a false sense of control.** As in §11, the SelfScreen Pause
-   toggle does nothing server-side. (The new **Stop** button *does* really cancel a
-   running improvement — Pause and Stop are different things; only Pause is the
-   no-op.)
+6. **"Pause" is now a real server gate (fixed tonight), with three limits.** The
+   SelfScreen Pause toggle POSTs `/api/self/pause` → `setImprovementsPaused`, which
+   makes both intake points (`POST /api/self/improve` and the `self_improve` tool)
+   refuse new work while paused (§11). The limits: the flag is **in-memory** (a
+   restart resets it to active), it gates **intake only** (a running improvement
+   finishes — use Stop), and it doesn't reach the **overnight-loop process**.
 
 7. **The approval gate holds the single-flight slot while it waits.** While a
    user-triggered improvement is parked at `awaiting_approval`, the run is blocked
@@ -729,6 +790,12 @@ These are real, current limitations — documented because precise > flattering.
    `:175-182`). This is deliberate — it keeps "one improvement touches the tree at a
    time" true across the human pause — but a forgotten plan is a soft wedge. Reject,
    cancel, and restart all release it promptly.
+
+8. **Two records now written on every ship/fail (new tonight).** A successful swap
+   appends `memory/changelog.md` (`onSwapped` → `appendChangelog`); a real failure
+   records a `memory/friction.json` entry (`onFailed` → `recordMistake`). Both are
+   best-effort (`try/catch`) so neither can break the pipeline (§10). Previously the
+   changelog module existed but was never invoked.
 
 ---
 
@@ -742,9 +809,12 @@ These are real, current limitations — documented because precise > flattering.
   improvements).
 - **Should the watchdog rollback write `rolled_back`?** Today the journal can lie
   ("shipped") after an auto-revert. Likely a small, high-value fix.
-- **Is the friction ledger meant to be live?** It's built and tested but
-  dead-ended. Was the wiring deferred, or is auto-triggering from mistakes
-  deliberately off for now?
+- ~~**Is the friction ledger meant to be live?**~~ **Now live** (commit c3bd23b):
+  the overnight loop drains it into `friction`-trigger intents and resolves them on
+  ship (§3, §8b). The **open** question is what should *feed* it beyond
+  self-improvement's own failures — should a chat/voice correction (Ava got
+  something wrong, Sir fixed it) call `recordMistake`? That external writer is the
+  remaining gap between "the ledger is wired" and "Ava learns from every mistake."
 - **Live vs overnight flightcheck divergence:** flightcheck runs (report-only) on
   the live path but not in the overnight loop. Intentional, or an oversight?
 - **`restart()` is a no-op everywhere**, relying on `tsx watch` (dev). The code

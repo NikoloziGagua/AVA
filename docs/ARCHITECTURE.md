@@ -202,6 +202,12 @@ stateDiagram-v2
   rolled_back --> [*]
 ```
 
+### W6 — A standing watch ("notify me if the RTX 5090 drops below €1800")
+
+1. Ava calls `watch_create` with a **self-contained** check prompt + interval; the row is stored in the `watches` table. [11]
+2. A background scheduler tick finds it due and **POSTs the check prompt to Ava's own `/api/chat`** over loopback (internal token) — a full agent run, recorded in the watch's session. [11][02]
+3. The check ends with a strict marker; `WATCH: TRIGGERED` fires a **web-push** to your devices and disables a one-shot watch; `WATCH: OK` just records the status. [11][04]
+
 ---
 
 ## 3. The chat / agent loop
@@ -228,7 +234,7 @@ The loop is bounded by `MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS
 
 **What it is:** the set of capabilities the action-mode agent can call. Tools are assembled per-run and registered into a `ToolRegistry` that emits `tool_call`/`tool_result` centrally. The Stop signal is threaded into every tool's context so it can be interrupted mid-flight. **→ Full catalog (one subsection per tool family): [03](architecture/03-tools-catalog.md).**
 
-**Cost note:** the local tools cost **nothing** — they drive your own machine. Only `computer_use` hits a **metered LLM** API per call. The Shopify and Places tools make no LLM call either, but they do spend your own Shopify / Google Cloud billing.
+**Cost note:** the local tools cost **nothing** — they drive your own machine. `computer_use` and `look_at_screen` each hit a **metered LLM** API per call (a vision model). The Shopify and Places tools make no LLM call either, but they do spend your own Shopify / Google Cloud billing. A **watch check** is not in this table but is the priciest recurring item: each scheduled check is a *full agent run* (§11).
 
 | Tool | File | What it does | API cost |
 |------|------|--------------|----------|
@@ -236,9 +242,11 @@ The loop is bounded by `MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS
 | `control_app` | `tools/control-app-mcp.ts` | Native-app control (UI Automation + keystrokes) by writing a `.ps1` and spawning **powershell.exe directly** (avoids cmd's quoting bugs). | none |
 | `fs_read/write/list/stat/delete` | `tools/filesystem-mcp.ts` | Read/write/list files within the allowlisted roots; `.env` and secret files blocked; contents scrubbed. | none |
 | `chrome_*` (navigate/click/type/read_page/screenshot/tabs) | `tools/chrome-mcp.ts` | Drives **Ava's own** persistent Chromium via Playwright (separate from your everyday Chrome); booted lazily. | none |
-| `computer_use` | `tools/computer-use-mcp.ts` | Vision-driven clicking on the active tab. Prefers Anthropic, falls back to OpenAI. | **paid** (Anthropic/OpenAI) |
+| `computer_use` | `tools/computer-use-mcp.ts` | Vision-driven clicking on the active tab. Prefers Anthropic, falls back to OpenAI. **OpenAI path needs the gated `computer-use-preview` model** — an account without it 404s, which is why `look_at_screen` exists as the everyday eyes. | **paid** (Anthropic/OpenAI) |
 | `claude_code` | `tools/claude-code.ts` | Runs the `claude` CLI as a worker. **Your Claude subscription, not an API key** (`workerEnv` strips the key). | none (subscription) |
-| `take_screenshot` | `tools/screenshot/` | Captures the desktop to `Downloads/Ava/screenshots`. | none |
+| `take_screenshot` | `tools/screenshot/screenshot-mcp.ts` | Captures the desktop to `Downloads/Ava/screenshots` and returns **only the path** — the model has *not* seen the image, and its description says so, so Ava never narrates a screenshot it can't see. | none |
+| `look_at_screen` | `tools/screenshot/look-mcp.ts` | Ava's honest eyes: capture the desktop **and** run ONE vision call on a standard multimodal model, returning a factual description. Registered only when an OpenAI key exists. 60s tool budget. | **paid** (OpenAI vision) |
+| `watch_create` / `watch_list` / `watch_delete` | `tools/watches-mcp.ts` | Register/list/delete standing background **watches** ("notify me if/when X"). The tools just manage the record; a scheduler runs the checks (see §11). | none (LLM); each *check* is a paid agent run |
 | `discuss_with_claude` / `read_discussion` | `tools/discuss-mcp.ts` | Queues a read-only background Claude consult. | none (subscription) |
 | `memory_read/remember/forget` | `tools/memory-mcp.ts` | Reads/writes durable memory files. | none |
 | `self_improve` / `self_improve_status` | `tools/self-improve-mcp.ts` | Queues a self-improvement and reports status. | none (subscription worker) |
@@ -329,12 +337,18 @@ flowchart TB
 
 **The guardrails that make it safe to run unattended:** worktree isolation (a self-edit can't touch the live repo directly), the full verify+build+boot gate, a **safety-file refusal** (`assertSwapSafe` blocks any diff touching security/policy/auth or the self-improve machinery), the rollback watchdog, a **plan-approval gate** on user-asked improvements (they park at `awaiting_approval` and write no code until you approve), and a **Stop path** that cancels a running improvement end-to-end. (See `features/self-improve-stop-and-gate.md`.)
 
-**Honest flags (important):**
-- ✅ **Stop now cancels an in-flight self-improvement** (resolved, commit 0bd8b93). A per-improvement `AbortController` threads into reflect/implement/verify; `POST /api/self/:id/cancel` cancels one and the red global Stop (`/kill` → `cancelAllImprovements`) cancels all. A cancelled run is recorded `outcome="cancelled"`. *Remaining limit:* the live server can't reach a job running inside the **separate overnight-loop process**.
-- ✅ **User-asked improvements gate behind a plan** (commit c539c75): they pause at `awaiting_approval` until you Approve & run / Reject in the Self screen. The overnight scheduler is intentionally **not** gated. *Limit:* a parked plan **holds the single-flight slot**, so a forgotten plan stalls the queue until approved/rejected/stopped/restarted.
-- Boot reconciliation bluntly marks **all** non-terminal self-improvements `failed` after a restart (now including `awaiting_approval`).
-- The **trigger ledger** (`friction.ts`) and a couple of trigger types are built and tested but **not wired** — only explicit requests and the overnight scheduler actually create improvements.
-- The SelfScreen "Pause" button is currently a client-only no-op (distinct from the working **Stop** button).
+**What's now wired (tonight, commit c3bd23b — the loop existed but nothing drove it):**
+- ✅ **The loop has an initiator.** The Self screen now has a text box — Sir types a goal ("get faster at Shopify edits") and queues a real improvement from the phone (`POST /api/self/improve` → `awaiting_approval`). Previously the only way in was the `self_improve` chat tool.
+- ✅ **Pause is real.** The Pause/Resume toggle now flips a **server-side gate** (`improvementsPaused()` in `improver.ts`), enforced on both `POST /api/self/improve` (409) and the `self_improve` chat tool. While paused, new intake is refused; a `PAUSED` chip shows. (Was: a client-only no-op. Caveat: the flag is in-memory — it resets to *active* on restart — and it gates *intake*, not the separate overnight-loop process.)
+- ✅ **Every shipped swap appends a self-changelog.** `onSwapped` writes one line to `memory/changelog.md` (`self/changelog.ts`) — Ava keeps a durable record of how it has evolved without re-reading its own code, and Claude gets recent history so it doesn't undo past fixes. (Was: the changelog module existed but was never called.)
+- ✅ **Failures land in the friction ledger, and the overnight loop mines it first.** `onFailed` records a mistake (`self/friction.ts`); the overnight loop now drains grounded friction goals (`trigger:"friction"`) **before** asking Claude to invent ideas, and a shipped fix closes its ledger entry (a recurrence reopens it). The `npm -w server run self:loop` script finally exists to launch that loop. *Honest limit:* today the **only** writer of the ledger is self-improvement's own failures, which the loop deliberately skips — so the friction-first path is live but has no *external* source (a chat correction → ledger) feeding it yet. See [07] §3.
+- ✅ **Stop cancels an in-flight self-improvement** (commit 0bd8b93). Per-improvement `AbortController`; `POST /api/self/:id/cancel` cancels one, the red global Stop (`/kill` → `cancelAllImprovements`) cancels all; recorded `outcome="cancelled"`. *Limit:* can't reach a job inside the **separate overnight-loop process**.
+- ✅ **User-asked improvements gate behind a plan** (commit c539c75): they pause at `awaiting_approval` until you Approve & run / Reject. The overnight scheduler is intentionally **not** gated. *Limit:* a parked plan **holds the single-flight slot**, so a forgotten plan stalls the queue.
+
+**Remaining honest flags:**
+- Boot reconciliation bluntly marks **all** non-terminal self-improvements `failed` after a restart (including `awaiting_approval`).
+- An automatic **watchdog rollback still doesn't write `rolled_back`** to the DB — the journal can show "shipped" for a change the watchdog undid.
+- `restart()` is a no-op everywhere, relying on `tsx watch` (dev). Production self-improve is not yet in scope.
 
 ---
 
@@ -342,11 +356,16 @@ flowchart TB
 
 **What it is:** Ava's durable sense of self and what it knows about you — plain Markdown files (easy to read and hand-edit) assembled into the system prompt every turn — plus a **playbook** system that lets Ava learn a successful task and reuse it. **→ Full detail (assembly, playbooks, chips): [08](architecture/08-memory-learning-identity.md).**
 
-**The memory dir** (`server/data/memory/`): `personality.md` (the persona), `MEMORY.md` (the index of durable facts), `preferences.md` (learned preferences — e.g. *"open Chrome as a new tab, never overwrite the current tab"*), `observations.md` (low-confidence notes, auto-pruned), and `projects/<slug>.md` (per-project context).
+**The memory dir** (`server/data/memory/`): `personality.md` (the persona), `MEMORY.md` (the index of durable facts), `preferences.md` (learned preferences — e.g. *"open Chrome as a new tab, never overwrite the current tab"*), `observations.md` (low-confidence notes, auto-pruned), `projects/<slug>.md` (per-project context), `playbooks/*.md` (learned procedures, above), `changelog.md` (one line per shipped self-improvement — Ava's self-evolution record, `self/changelog.ts`), and `friction.json` (the mistakes ledger, `self/friction.ts`).
 
 **Assembly** (`orchestrator/system-prompt.ts`): persona → capability map → memory index → preferences → observations → (action mode only) the tool rubric + writable fsRoots. The same bytes are produced each turn for prompt-cache hits.
 
-**Learning (playbooks):** when a multi-step task succeeds (≥2 tools, no failed tool), `maybeCapture` distils it into a reusable playbook; on a similar future request the matching playbook's steps are injected into the prompt. There are ~50 real captured playbooks on disk today (WhatsApp control, Maps scraping, file create-and-verify…).
+**Learning (playbooks, v2 — commit 1bed65b):** when a multi-step task **reaches a final reply** (≥2 tool steps, a non-failed last step, not mostly-failed), `maybeCapture` distils it into a reusable playbook; on a similar future request the matching playbook's steps are injected into the prompt. Playbooks now **measurably improve instead of resetting**:
+
+- **Recall is lexical, not an LLM call.** `matchPlaybook` (`playbooks/match.ts`) scores token overlap against each playbook's short canonical trigger + keywords — ~0 ms and free (it replaced a 1.7–2.8 s side-model call before every action turn). *Honest limit:* being lexical, a pure paraphrase with no shared words won't recall — Ava just runs without the hint (a deliberate precision-over-recall trade).
+- **Distillation keeps the success path, and turns failures into lessons.** A run that *recovered* from a mid-run tool failure is prime material: the distiller writes success-path steps plus a `lessons[]` list ("Google bot-walls automation — go straight to wttr.in") injected at recall so the same wall isn't hit twice.
+- **Metrics + merge + demotion.** Each playbook carries `version`, a `succ`/`fail` record, and a rolling `avg_secs`; a recalled playbook's run records a win/loss when the run ends (`recordOutcome`). Re-learning a known task class **merges** into the existing playbook (version bump, track record kept) instead of writing near-duplicates; a playbook that keeps failing on recall gets **demoted** out of matching and eventually pruned.
+- **Sir can finally see them.** `GET /api/playbooks` lists everything with its metrics; `DELETE /api/playbooks/:slug` removes one (`routes/playbooks.ts`).
 
 **Claude → Ava dev log** (`self/dev-log.ts`, `data/claude-updates.jsonl`): Claude appends a `started`/`shipped` line per change; Ava reads it via `read_claude_updates` and the voice path folds recent entries into the prompt, so *"what's your latest update?"* is answered from the real changelog instead of confabulated LLM-training trivia.
 
@@ -408,9 +427,57 @@ flowchart LR
 | `approvals` | Pending/decided tool-approval requests with their veto status. |
 | `self_improvements` | Self-improvement records (the code type is called `Intent`): goal, status, commit, last-known-good, verify log. |
 | `discussions` | Background Claude consults: topic, status, result, the originating session. |
+| `watches` | Standing background monitors (§11): the check prompt, interval, `once`/`enabled`, the chat session holding every check, and the last run's status/result. |
 | `voice_engine_pref` | The voice provider toggle (`openai` · `hume`). |
 | `reasoning_pref` | The Fast↔Thorough level (drives OpenAI reasoning effort + voice VAD snappiness). |
 | `device_state` · `chip_overrides` · `chip_label_cache` | Per-device greeting state, custom quick-action chips, and their cached labels. |
+
+---
+
+## 11. Watches — long-term monitoring
+
+**What it is:** Ava's persistence *across time*. A **watch** is a standing
+instruction ("notify me if the RTX 5090 drops below $1800", "tell me when it's
+going to rain in Tbilisi") that a background scheduler re-checks on an interval and
+push-notifies you about when its condition fires. It is how Ava keeps watching
+after the conversation ends. **→ Full write-up: [`features/watches.md`](features/watches.md).**
+
+**How it works, in one breath:** Ava turns "notify me if/when X" into a watch via
+the `watch_create` tool (`tools/watches-mcp.ts`); the row lives in the `watches`
+table (`state/watches.ts`). A `setInterval` scheduler (`watches/scheduler.ts`,
+60 s tick, started at boot only if an LLM provider exists) finds due watches and
+runs each check as a **real agent turn through the server's own `/api/chat`** over
+loopback with an internal bearer token — so a check gets the full tool stack and is
+recorded as an openable chat session you can audit. The check prompt demands a
+strict trailing marker (`WATCH: TRIGGERED — …` / `WATCH: OK — …`); `TRIGGERED`
+fires a web-push and disables a one-shot watch. `GET/POST/DELETE /api/watches`
+(`routes/watches.ts`) is the management API for a future UI.
+
+```mermaid
+flowchart LR
+  ask["You: 'notify me if/when X'"]:::client --> tool[watch_create]:::tool
+  tool --> tbl[(watches table)]:::data
+  sched[scheduler tick 60s]:::server --> due{"due?<br/>enabled and past interval"}:::server
+  tbl --> due
+  due -->|yes| chat["POST /api/chat (self)<br/>internal token"]:::server
+  chat --> agent[full agent run + tools]:::server
+  agent --> marker["parse WATCH: marker"]:::server
+  marker --> rec[(record status + session)]:::data
+  marker -->|TRIGGERED| push[web-push to your devices]:::client
+  classDef client fill:#0b3,color:#fff
+  classDef server fill:#06c,color:#fff
+  classDef tool fill:#555,color:#fff
+  classDef data fill:#960,color:#fff
+```
+
+**Honest flags:** a watch only runs **while Ava is running** (in-process
+`setInterval`, no cloud cron, no back-fill); each check is a **full, paid agent
+run**, so intervals must be frugal (the tool guidance and rubric enforce this only
+by advice, not a spend cap); a check that forgets the marker records `unclear` and
+does **not** notify (a missed alert is preferred over a false one); and there is no
+notification de-dup, so a `once:false` watch can ping on every check while its
+condition holds (which is why one-shot is the default). See the feature doc for the
+complete list and the 2026-07-03 live verification.
 
 ---
 
@@ -426,8 +493,9 @@ flowchart LR
 | Allowlists / scrub | `server/src/tools/shell-allowlist.ts`, `security/` | [04](architecture/04-safety-policy-approvals.md) |
 | Auth / sessions / schema | `server/src/auth/`, `state/` | [05](architecture/05-auth-sessions-data-model.md) |
 | Voice | `server/src/routes/voice-realtime.ts`, `voice-provider-config.ts`, `voice/` | [06](architecture/06-voice-pipeline.md) |
-| Self-improvement | `server/src/self/` | [07](architecture/07-self-improvement.md) |
-| Memory / learning | `server/src/memory/`, `playbooks/`, `self/dev-log.ts` | [08](architecture/08-memory-learning-identity.md) |
+| Self-improvement | `server/src/self/` (incl. `changelog.ts`, `friction.ts`) | [07](architecture/07-self-improvement.md) |
+| Memory / learning | `server/src/memory/`, `playbooks/`, `self/dev-log.ts`, `self/changelog.ts` | [08](architecture/08-memory-learning-identity.md) |
+| Watches (monitoring) | `server/src/watches/`, `state/watches.ts`, `tools/watches-mcp.ts`, `routes/watches.ts` | [`features/watches.md`](features/watches.md) |
 | Process / Stop | `server/src/process/` | [02](architecture/02-agent-loop-and-orchestration.md) |
 | Web frontend | `web/src/` | [09](architecture/09-web-frontend.md) |
 

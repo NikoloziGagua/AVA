@@ -29,6 +29,7 @@ import { buildClaudeCodeTool } from "../tools/claude-code-mcp.js";
 import { buildChromeTools } from "../tools/chrome-mcp.js";
 import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
 import { buildScreenshotTool } from "../tools/screenshot/screenshot-mcp.js";
+import { buildLookAtScreenTool } from "../tools/screenshot/look-mcp.js";
 import { buildReadLogsTool } from "../tools/activity-log-mcp.js";
 import { buildSelfImproveTool, buildSelfImproveStatusTool, type IntentStatusSummary } from "../tools/self-improve-mcp.js";
 import { buildDiscussTools } from "../tools/discuss-mcp.js";
@@ -405,6 +406,10 @@ export function chatRoutes(
             }) as ToolDef,
             // Desktop screenshot capture — saves PNGs under Downloads/Ava/screenshots.
             buildScreenshotTool({ emit: noop }) as ToolDef,
+            // Honest screen-sight: capture + ONE vision call on a standard
+            // multimodal model. Covers describe/verify when computer_use's
+            // gated computer-use-preview model is unavailable.
+            ...(metered.openai ? [buildLookAtScreenTool({ openai: metered.openai }) as ToolDef] : []),
             ...(agentDeps.queueSelfImprove ? [buildSelfImproveTool({ queue: agentDeps.queueSelfImprove })] : []),
             ...(agentDeps.listSelfImprovements ? [buildSelfImproveStatusTool({ list: agentDeps.listSelfImprovements })] : []),
             ...(agentDeps.logsDir ? [buildReadLogsTool({ logsDir: agentDeps.logsDir })] : []),

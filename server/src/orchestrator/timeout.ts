@@ -12,6 +12,9 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   // timeout; 120s gives real visual tasks room to finish.
   computer_use: 120_000,
   control_app: 30_000,
+  // Capture + one vision call on a multi-MB PNG — 30s default is too tight
+  // when the vision model queues.
+  look_at_screen: 60_000,
   // Its own description tells the model to fan out up to 12 queries at up to
   // 20s each — the 30s unknown-tool default rejected exactly the sweeps the
   // tool exists for.

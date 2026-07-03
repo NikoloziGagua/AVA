@@ -30,7 +30,10 @@ export function buildScreenshotTool(opts: {
       name: "take_screenshot",
       description:
         "Capture a PNG screenshot of the current Windows desktop and save it under " +
-        "the owner's Downloads/Ava/screenshots folder. Returns the saved file path. " +
+        "the owner's Downloads/Ava/screenshots folder. Returns the saved file path " +
+        "ONLY — you cannot see the captured image through this tool, so never " +
+        "describe or make claims about what the screenshot shows. To actually SEE " +
+        "and describe what is on screen, use computer_use instead. " +
         "Args: { path?: string } — path is optional and must stay inside the " +
         "screenshots folder; omit it to auto-name the file.",
       inputSchema: {
@@ -53,7 +56,9 @@ export function buildScreenshotTool(opts: {
         emit({ kind: "screenshot.result", ok: false, result: text });
         return { ok: false, text };
       }
-      const text = `Saved screenshot to ${r.path} (${r.bytes} bytes, ${r.mimeType}).`;
+      const text =
+        `Saved screenshot to ${r.path} (${r.bytes} bytes, ${r.mimeType}). ` +
+        `Note: you have NOT seen this image — if the owner wants the screen described, use computer_use.`;
       emit({ kind: "screenshot.result", ok: true, result: text });
       return { ok: true, text };
     },

@@ -19,8 +19,9 @@ describe("approval flow (e2e)", () => {
 
         await page.goto(srv.url + "/");
 
-        // Composer input (input element with the "Talk to Ava…" placeholder).
-        const composer = page.getByPlaceholder(/Talk to Ava/i);
+        // Command bar on the orbit home screen ("Ask Ava, or tell her to do
+        // something…"); falls through to the chat composer ("Message Ava…").
+        const composer = page.getByPlaceholder(/Ask Ava|Message Ava/i);
         await composer.waitFor({ state: "visible", timeout: 10_000 });
 
         await composer.fill("run rm -rf C:/tmp/x");
@@ -35,11 +36,13 @@ describe("approval flow (e2e)", () => {
         // Resolved-state replaces the live card.
         await page.getByTestId("approval-card-resolved").waitFor({ state: "visible", timeout: 10_000 });
 
-        // Final assistant message contains "ok".
-        const final = page.getByTestId("final-message");
+        // Final assistant reply "ok". The live-stream bubble (testid
+        // final-message) is transient: once the run finishes the list refetches
+        // persisted messages and re-renders the reply without the testid — so
+        // assert on the visible reply text, which covers both render paths.
+        const final = page.getByText("ok", { exact: true }).first();
         await final.waitFor({ state: "visible", timeout: 10_000 });
-        const text = (await final.textContent()) ?? "";
-        expect(text.trim()).toBe("ok");
+        expect(((await final.textContent()) ?? "").trim()).toBe("ok");
 
         await ctx.close();
       } finally {

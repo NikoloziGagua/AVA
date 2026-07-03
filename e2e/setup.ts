@@ -21,6 +21,7 @@ import { approvalsRoutes } from "../server/src/routes/approvals.js";
 import { statusRoutes } from "../server/src/routes/status.js";
 import { buildPolicyHook } from "../server/src/policy/runtime.js";
 import type { RunOpts, AgentEvent } from "../server/src/orchestrator/agent.js";
+import type { LLMProvider } from "../server/src/orchestrator/llm/types.js";
 
 export type TestServer = {
   url: string;
@@ -78,11 +79,26 @@ export async function startTestServer(): Promise<TestServer> {
   // never actually used by the fake, but agentDeps.getChrome is awaited
   // unconditionally before invoking the impl.
   const stubChrome = {} as never;
+  // POST /api/chat 503s without a provider (no_llm_provider). The fake agent
+  // never touches it, so a loud stub satisfies the guard.
+  const fakeProvider: LLMProvider = {
+    name: "openai",
+    defaultOrchestratorModel: "e2e-fake",
+    defaultSideModel: "e2e-fake",
+    // eslint-disable-next-line require-yield
+    stream: async function* (): AsyncIterable<never> {
+      throw new Error("e2e fakeProvider.stream called — the agent stub should preempt it");
+    },
+    complete: async () => {
+      throw new Error("e2e fakeProvider.complete called — the agent stub should preempt it");
+    },
+  };
   const agentDeps = {
     pidfiles,
     fsRoots: [resolve(dataDir, "fs-root")],
     getChrome: async () => stubChrome,
     runAgentImpl: fakeRunAgent,
+    provider: fakeProvider,
   };
 
   const app = express();

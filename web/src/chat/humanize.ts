@@ -40,6 +40,7 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "chrome_type": return "Typing";
     case "chrome_press_key": return "Pressing a key";
     case "chrome_read_page": return "Reading the page";
+    case "chrome_snapshot": return "Mapping the page's controls";
     case "chrome_screenshot": return "Capturing the page";
     case "chrome_tabs": return "Checking tabs";
     case "computer_use": return a.task ? truncate(s(a.task), 50) : "Controlling the screen";

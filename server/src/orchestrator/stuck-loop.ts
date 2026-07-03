@@ -2,8 +2,19 @@ export const STUCK_WALLCLOCK_MS = 5 * 60_000;
 export const LEVENSHTEIN_THRESHOLD = 50;
 export const WINDOW_SIZE = 5;
 export const MAX_COMPARE_CHARS = 4000;
+/** The similarity halt needs SUSTAINED sameness. Without a floor it fired 15
+ *  seconds into a healthy Instagram run (two page-reads straddling a modal
+ *  look near-identical in innerText) and killed it mid-task — live 2026-07-03. */
+export const MIN_SIMILARITY_HALT_MS = 45_000;
 
 const VISUAL_TOOLS = new Set(["chrome_read_page", "chrome_screenshot", "computer_use"]);
+// Tools that ACT on the world. A succeeding click/type/navigate is progress by
+// definition, even though its result text ("clicked") is identical every time
+// and thus never "novel" under the levenshtein test.
+const ACTION_TOOLS = new Set([
+  "chrome_click", "chrome_type", "chrome_press_key", "chrome_navigate",
+  "fs_write", "shell", "control_app", "claude_code",
+]);
 
 export type ToolObservation = { tool: string; resultText: string; at: number };
 
@@ -75,7 +86,11 @@ export function createStuckLoop(opts?: {
     const prev = lastResultByTool.get(obs.tool);
     const novel = prev === undefined || levenshtein(prev, obs.resultText) > threshold;
     lastResultByTool.set(obs.tool, obs.resultText);
-    if (novel) progressAt = obs.at;
+    // Novel results are progress; so are non-failing ACTION tool calls (their
+    // success text is identical every time — "clicked" — but each one changed
+    // the world). Failed actions carry error text and stay subject to novelty.
+    const actedOk = ACTION_TOOLS.has(obs.tool) && !/^(error|timeout|no matches|BLOCKED|DENIED)/i.test(obs.resultText);
+    if (novel || actedOk) progressAt = obs.at;
     if (obs.at - progressAt >= wallclockMs) {
       return { halt: true, reason: "wallclock" };
     }
@@ -107,6 +122,11 @@ export function createStuckLoop(opts?: {
       const d = levenshtein(a.resultText, b.resultText);
       if (d > threshold) return { halt: false };
     }
+
+    // Similar visuals alone are not proof of a loop — a healthy SPA flow reads
+    // near-identical page text across a modal open/close. Halt only when the
+    // sameness has PERSISTED (window spans >= the floor).
+    if (obs.at - windowStart < MIN_SIMILARITY_HALT_MS) return { halt: false };
 
     return { halt: true, reason: "no-progress" };
   }

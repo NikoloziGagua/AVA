@@ -96,6 +96,7 @@ describe("screen-sight and watch tools (2026-07-03 stall fix)", () => {
     expect(classifyRisk("watch_create", { prompt: "x", interval_minutes: 30 }).tier).toBe("low");
     expect(classifyRisk("watch_delete", { id: "abc" }).tier).toBe("low");
     expect(classifyRisk("watch_list", {}).tier).toBe("read-only");
+    expect(classifyRisk("chrome_snapshot", {}).tier).toBe("read-only");
   });
   it(".env path-shaped watch args hard-block (prose mentions gate later, at the tool)", () => {
     expect(classifyRisk("watch_create", { prompt: "C:/x/.env" }).tier).toBe("blocked");

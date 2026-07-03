@@ -6,7 +6,7 @@ export type Classification = { tier: Tier; reason: string };
 
 const READ_ONLY_TOOLS = new Set([
   "fs_read", "fs_list", "fs_stat",
-  "chrome_read_page", "chrome_screenshot", "chrome_tabs",
+  "chrome_read_page", "chrome_screenshot", "chrome_tabs", "chrome_snapshot",
   "memory_read",
   // Pure reads that previously fell through to the unknown-tool default
   // ("medium" → ask) and paid a 15s veto stall on EVERY call — the API tools

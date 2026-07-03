@@ -18,6 +18,7 @@ export type Chrome = {
   type: (selector: string, text: string) => Promise<{ ok: boolean; reason?: string }>;
   press: (key: string) => Promise<{ ok: boolean; reason?: string }>;
   readPage: () => Promise<{ ok: boolean; text?: string; reason?: string }>;
+  snapshot: () => Promise<{ ok: boolean; text?: string; reason?: string }>;
   screenshot: () => Promise<{ ok: boolean; path?: string; reason?: string }>;
   tabs: () => Promise<{ ok: boolean; tabs?: Array<{ index: number; url: string; title: string }> }>;
   mouseClick: (x: number, y: number) => Promise<{ ok: boolean; reason?: string }>;
@@ -73,8 +74,29 @@ export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
       }
     },
     async click(selector) {
+      // Modern SPAs (Instagram!) render duplicate HIDDEN nodes with the same
+      // text. page.click() grabs the FIRST match, waits the full timeout for a
+      // hidden node to become actionable, and dies — observed live 2026-07-03
+      // ("text=Nika gagua" timeout, "Messages" hit a hidden duplicate). So:
+      // target the first VISIBLE match, and when that's impossible, fail FAST
+      // with a diagnosis the model can act on instead of a blind timeout.
       try {
-        await page.click(selector, { timeout: 10_000 });
+        const base = page.locator(selector);
+        // Brief grace for the node to render at all (SPA navigation).
+        try { await base.first().waitFor({ state: "attached", timeout: 3_000 }); } catch { /* diagnosed below */ }
+        const count = await base.count();
+        if (count === 0) {
+          return { ok: false, reason: `no matches for ${selector} — check chrome_read_page for the actual text/controls` };
+        }
+        const visible = base.filter({ visible: true });
+        const visibleCount = await visible.count();
+        if (visibleCount === 0) {
+          return {
+            ok: false,
+            reason: `${count} match(es) for ${selector}, none visible (hidden duplicates) — use a more specific selector, or scroll/open the right panel first`,
+          };
+        }
+        await visible.first().click({ timeout: 7_000 });
         return { ok: true };
       } catch (e) {
         return { ok: false, reason: String(e instanceof Error ? e.message : e) };
@@ -82,7 +104,17 @@ export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
     },
     async type(selector, text) {
       try {
-        await page.fill(selector, text, { timeout: 10_000 });
+        const base = page.locator(selector);
+        try { await base.first().waitFor({ state: "attached", timeout: 3_000 }); } catch { /* diagnosed below */ }
+        const count = await base.count();
+        if (count === 0) {
+          return { ok: false, reason: `no matches for ${selector} — check chrome_read_page for the actual field` };
+        }
+        const visible = base.filter({ visible: true });
+        if ((await visible.count()) === 0) {
+          return { ok: false, reason: `${count} match(es) for ${selector}, none visible — the real input is elsewhere; try a more specific selector` };
+        }
+        await visible.first().fill(text, { timeout: 7_000 });
         return { ok: true };
       } catch (e) {
         return { ok: false, reason: String(e instanceof Error ? e.message : e) };
@@ -99,6 +131,17 @@ export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
     async readPage() {
       try {
         const text = ((await page.evaluate("document.body.innerText")) as string) ?? "";
+        return { ok: true, text };
+      } catch (e) {
+        return { ok: false, reason: String(e instanceof Error ? e.message : e) };
+      }
+    },
+    async snapshot() {
+      // Accessibility snapshot with [ref=eN] element handles. On SPA soups
+      // (Instagram) text selectors hit the wrong node; refs are exact: click
+      // with selector "aria-ref=e12". Same mechanism playwright-mcp uses.
+      try {
+        const text = await page.ariaSnapshot({ mode: "ai", timeout: 10_000 });
         return { ok: true, text };
       } catch (e) {
         return { ok: false, reason: String(e instanceof Error ? e.message : e) };

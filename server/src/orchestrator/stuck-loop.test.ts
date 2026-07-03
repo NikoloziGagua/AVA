@@ -80,7 +80,7 @@ describe("createStuckLoop", () => {
       lastDec = guard.observe({
         tool: "chrome_screenshot",
         resultText: "frame-bytes-identical",
-        at: start + i * 1000,
+        at: start + i * 12_000, // sameness must PERSIST past the 45s floor to count as stuck
       });
     }
     expect(lastDec).toEqual({ halt: true, reason: "no-progress" });
@@ -103,7 +103,7 @@ describe("createStuckLoop", () => {
       lastDec = guard.observe({
         tool: "chrome_screenshot",
         resultText: frames[i]!,
-        at: start + i * 1000,
+        at: start + i * 12_000, // sameness must PERSIST past the 45s floor to count as stuck
       });
     }
     expect(lastDec).toEqual({ halt: false });
@@ -123,5 +123,41 @@ describe("createStuckLoop", () => {
       });
     }
     expect(lastDec).toEqual({ halt: false });
+  });
+});
+
+describe("2026-07-03 regressions: healthy fast flows must not halt", () => {
+  it("a 15s healthy SPA flow with two similar page-reads does NOT halt", () => {
+    const start = Date.now();
+    const guard = createStuckLoop({ now: () => start });
+    const obs = (tool: string, resultText: string, sec: number) =>
+      guard.observe({ tool, resultText, at: start + sec * 1000 });
+    obs("chrome_navigate", "loaded: Instagram • Messages", 2);
+    obs("chrome_read_page", "inbox list with lots of chats and stories", 4);
+    obs("chrome_click", "clicked", 6);
+    obs("chrome_read_page", "inbox list with lots of chats and stories", 8);
+    const last = obs("chrome_type", "typed", 10);
+    expect(last).toEqual({ halt: false });
+  });
+
+  it("succeeding action tools reset the no-progress wallclock even with identical result text", () => {
+    const start = Date.now();
+    const guard = createStuckLoop({ now: () => start, wallclockMs: 60_000 });
+    // clicks every 30s with identical "clicked" text — actions ARE progress,
+    // so the 60s wallclock never expires.
+    let dec = guard.observe({ tool: "chrome_click", resultText: "clicked", at: start + 30_000 });
+    dec = guard.observe({ tool: "chrome_click", resultText: "clicked", at: start + 60_000 });
+    dec = guard.observe({ tool: "chrome_click", resultText: "clicked", at: start + 90_000 });
+    expect(dec).toEqual({ halt: false });
+  });
+
+  it("persistent visual sameness past the floor still halts", () => {
+    const start = Date.now();
+    const guard = createStuckLoop({ now: () => start });
+    let dec: ReturnType<typeof guard.observe> | undefined;
+    for (let i = 0; i < 5; i++) {
+      dec = guard.observe({ tool: "chrome_read_page", resultText: "same wall same wall", at: start + i * 15_000 });
+    }
+    expect(dec).toEqual({ halt: true, reason: "no-progress" });
   });
 });

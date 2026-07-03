@@ -55,7 +55,11 @@ export function buildChromeTools(opts: {
     {
       tool: {
         name: "chrome_click",
-        description: "Click an element by CSS selector or text= selector.",
+        description:
+          "Click an element. Selector can be CSS, text=..., or an aria-ref handle " +
+          "from chrome_snapshot (selector: 'aria-ref=e12' — exact, preferred on " +
+          "complex apps where text matches the wrong node). Clicks the first " +
+          "VISIBLE match; hidden-duplicate matches fail fast with a diagnosis.",
         inputSchema: {
           type: "object",
           properties: { selector: { type: "string" } },
@@ -95,6 +99,26 @@ export function buildChromeTools(opts: {
       run: wrap("chrome_press_key", async (chrome, args) => {
         const r = await chrome.press(String(args.key ?? ""));
         return r.ok ? { ok: true, text: "pressed" } : { ok: false, text: `error: ${r.reason}` };
+      }),
+    },
+    {
+      tool: {
+        name: "chrome_snapshot",
+        description:
+          "Return the page's INTERACTIVE structure: an accessibility tree where every " +
+          "element carries a [ref=eN] handle. Use this instead of guessing selectors on " +
+          "complex apps (Instagram, Gmail): find the right button/link/textbox in the " +
+          "tree, then chrome_click / chrome_type with selector 'aria-ref=eN'.",
+        inputSchema: { type: "object", properties: {}, required: [] },
+      },
+      run: wrap("chrome_snapshot", async (chrome) => {
+        const r = await chrome.snapshot();
+        if (!r.ok) return { ok: false, text: `error: ${r.reason}` };
+        const t = r.text ?? "";
+        return {
+          ok: true,
+          text: t.length > 14000 ? t.slice(0, 14000) + "\n... [truncated — snapshot again after narrowing the page]" : t,
+        };
       }),
     },
     {

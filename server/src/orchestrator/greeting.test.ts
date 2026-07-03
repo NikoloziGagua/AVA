@@ -77,6 +77,29 @@ describe("decideGreeting", () => {
     expect(r.greet).toBe(false);
   });
 
+  it("suppresses the recap when the last message is fresh (<30min)", () => {
+    const db = openInMemoryDb();
+    seedDevice(db, "d1");
+    const prev = createSession(db, { title: "weather check" });
+    appendMessage(db, { sessionId: prev.id, role: "user", content: "check the weather" });
+    const s = createSession(db, { title: null });
+    // appendMessage stamps real Date.now(); 5 minutes later is still fresh.
+    const r = decideGreeting({ db, deviceId: "d1", sessionId: s.id, today: "2026-04-29", now: Date.now() + 5 * 60_000 });
+    expect(r.prefix).toContain("Do not recap");
+    expect(r.prefix).not.toContain("left off");
+  });
+
+  it("offers the left-off recap only for stale threads (>30min)", () => {
+    const db = openInMemoryDb();
+    seedDevice(db, "d1");
+    const prev = createSession(db, { title: "weather check" });
+    appendMessage(db, { sessionId: prev.id, role: "user", content: "check the weather" });
+    const s = createSession(db, { title: null });
+    const r = decideGreeting({ db, deviceId: "d1", sessionId: s.id, today: "2026-04-29", now: Date.now() + 31 * 60_000 });
+    expect(r.prefix).toContain("left off");
+    expect(r.prefix).not.toContain("Do not recap");
+  });
+
   it("uses morning/afternoon/evening based on hour", () => {
     const db = openInMemoryDb();
     seedDevice(db, "d1");

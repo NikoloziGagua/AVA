@@ -51,6 +51,13 @@ export function decideGreeting(opts: DecideGreetingOpts): GreetingDecision {
   const tod = timeOfDay(new Date(now));
   const last = getLastUserMessageBefore(opts.db, opts.sessionId);
 
+  // Recap "where we left off" only when the thread is actually stale — Sir
+  // remembers what he said half an hour ago, and recapping it reads as
+  // filler. (Live testing: the old unconditional recap+"what's next?" kept
+  // DISPLACING the answer to his current message.)
+  const RECAP_MIN_AGE_MS = 30 * 60_000;
+  const recapWorthy = !!last && now - last.created_at > RECAP_MIN_AGE_MS;
+
   let context: string;
   if (last) {
     const ago = humanAgo(now - last.created_at);
@@ -65,8 +72,13 @@ export function decideGreeting(opts: DecideGreetingOpts): GreetingDecision {
     `[GREETING CONTEXT]\n` +
     `This is Sir's first session today (${today}, ${tod}).\n` +
     `${context}\n` +
-    `Greet him with the time-of-day, then summarize where you and he left off, ` +
-    `then ask what's next. Keep it under three sentences.\n\n`;
+    `Open with a brief ${tod} greeting, then handle his message below — his ` +
+    `current request always comes first and gets a direct answer. ` +
+    (recapWorthy
+      ? `If his message doesn't itself state a task, add one short clause on ` +
+        `where you two left off and ask what's next. `
+      : `Do not recap previous sessions — he was here minutes ago. `) +
+    `Never let the greeting delay, dilute, or replace the answer.\n\n`;
 
   markGreetingSent(opts.db, opts.deviceId, today);
   return { greet: true, prefix };

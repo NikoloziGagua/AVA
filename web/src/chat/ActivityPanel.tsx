@@ -79,28 +79,39 @@ export function ActivityPanel({ steps, collapsed, onToggle, executing }: Activit
         {steps.length === 0 ? (
           <div className="hud text-[9px] text-white/30">No activity yet</div>
         ) : (
-          steps.map((s) => (
-            <div
-              key={s.key}
-              className="flex items-center gap-2.5 border-b py-1.5 text-[10.5px]"
-              style={{
-                borderColor: "rgba(255,255,255,0.05)",
-                color: s.status === "running" ? "#eafdff" : "rgba(255,255,255,0.55)",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              <span
+          steps.map((s) => {
+            const failed = s.status === "done" && s.ok === false;
+            return (
+              <div
+                key={s.key}
+                className="flex items-center gap-2.5 border-b py-1.5 text-[10.5px]"
                 style={{
-                  width: 13,
-                  textAlign: "center",
-                  color: s.status === "done" ? (s.ok === false ? "var(--ac-stop)" : "var(--ac-live)") : s.status === "running" ? "var(--ac)" : "rgba(255,255,255,0.4)",
+                  borderColor: "rgba(255,255,255,0.05)",
+                  color: s.status === "running" ? "#eafdff" : "rgba(255,255,255,0.55)",
+                  fontFamily: "var(--font-mono)",
                 }}
+                title={failed ? s.reasonFull ?? s.reason : undefined}
               >
-                {STATUS_GLYPH[s.status]}
-              </span>
-              <span className="truncate">{s.label}</span>
-            </div>
-          ))
+                <span
+                  style={{
+                    width: 13,
+                    textAlign: "center",
+                    color: s.status === "done" ? (s.ok === false ? "var(--ac-stop)" : "var(--ac-live)") : s.status === "running" ? "var(--ac)" : "rgba(255,255,255,0.4)",
+                  }}
+                >
+                  {STATUS_GLYPH[s.status]}
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate">{s.label}</span>
+                  {failed && s.reason && (
+                    <span className="truncate text-[9px]" style={{ color: "var(--ac-stop)", opacity: 0.75 }}>
+                      {s.reason}
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+          })
         )}
       </div>
     </aside>

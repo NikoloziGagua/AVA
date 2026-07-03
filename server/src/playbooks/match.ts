@@ -23,7 +23,16 @@ export type PlaybookIndexEntry = {
   trigger: string;
   keywords?: string[];
   uses?: number;
+  succ?: number;
+  fail?: number;
 };
+
+/** A playbook that keeps failing when recalled stops being offered. */
+export function isDemoted(e: { succ?: number; fail?: number }): boolean {
+  const succ = e.succ ?? 0;
+  const fail = e.fail ?? 0;
+  return fail >= 3 && fail > succ;
+}
 
 export function matchPlaybook(o: { prompt: string; index: PlaybookIndexEntry[] }): string | null {
   if (o.index.length === 0) return null;
@@ -32,16 +41,22 @@ export function matchPlaybook(o: { prompt: string; index: PlaybookIndexEntry[] }
 
   let best: { slug: string; score: number; uses: number } | null = null;
   for (const e of o.index) {
+    if (isDemoted(e)) continue;
     const trig = tokenize(e.trigger);
     if (trig.length === 0) continue;
     const kw = tokenize((e.keywords ?? []).join(" "));
     const trigHits = trig.filter((t) => prompt.has(t)).length;
-    // Most of the trigger must appear in the prompt, and at least two distinct
-    // trigger tokens (or the whole trigger when it's a single-token one).
+    // At least two distinct trigger tokens must appear (or the whole trigger
+    // when it's a single-token one) — keywords alone can never match.
     if (trigHits < Math.min(2, trig.length)) continue;
     const coverage = trigHits / trig.length;
-    if (coverage < 0.6) continue;
     const kwHits = kw.filter((t) => prompt.has(t)).length;
+    // Accept on strong trigger coverage, OR on decent coverage backed by
+    // keyword corroboration. Distill now produces short (≤8-word) canonical
+    // triggers, so paraphrases reach 0.6 far more often than under v1; the
+    // keyword path catches the rest without letting keywords alone steer.
+    const accepted = coverage >= 0.6 || (coverage >= 0.4 && kwHits >= 2);
+    if (!accepted) continue;
     const score = coverage + 0.1 * Math.min(kwHits, 5);
     const uses = e.uses ?? 0;
     if (!best || score > best.score || (score === best.score && uses > best.uses)) {

@@ -28,6 +28,7 @@ import { voiceEngineRoutes } from "./routes/voice-engine.js";
 import { chipsRoutes } from "./routes/chips.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
+import { playbooksRoutes } from "./routes/playbooks.js";
 import { ActiveRuns } from "./orchestrator/active-runs.js";
 import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
@@ -324,6 +325,7 @@ app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
   supported: provider?.name === "openai",
 }));
 app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
+app.use("/api/playbooks", playbooksRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
 app.use("/api/self", selfRoutes(db, requireToken(db), {
   startImprovement,
   revert: (id) => { const row = getIntent(db, id); if (row?.last_known_good) revertTo(cfg.repoRoot, row.last_known_good); },

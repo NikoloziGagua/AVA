@@ -46,7 +46,7 @@ import { rememberObservation } from "../memory/remember.js";
 import { maybeCapture } from "../playbooks/capture.js";
 import { matchPlaybook } from "../playbooks/match.js";
 import { loadPlaybookIndex, readPlaybook } from "../playbooks/store.js";
-import { bumpUse } from "../playbooks/mutate.js";
+import { bumpUse, recordOutcome } from "../playbooks/mutate.js";
 import type { RunStep } from "../playbooks/distill.js";
 
 const Body = z.object({
@@ -249,6 +249,9 @@ export function chatRoutes(
     // (documented in match.test.ts) is that pure paraphrases with no lexical
     // overlap no longer recall — the agent then simply runs without the hint.
     let playbookPrefix = "";
+    // Which playbook steered this run, if any — its win/loss record and
+    // rolling duration are updated when the run ends (recordOutcome below).
+    let recalledSlug: string | null = null;
     if (mode === "action" && !parsed.data.voice) {
       try {
         const index = loadPlaybookIndex(agentDeps.memoryDir);
@@ -257,11 +260,15 @@ export function chatRoutes(
           if (slug) {
             const pb = readPlaybook(agentDeps.memoryDir, slug);
             if (pb) {
+              recalledSlug = slug;
               bumpUse(agentDeps.memoryDir, slug, new Date().toISOString().slice(0, 10));
               const rubric = pb.stakes === "consequential"
                 ? "This is a known consequential task — follow these steps efficiently, but verify the result before reporting done."
                 : "This is a known routine task — follow these steps efficiently; no recheck needed.";
-              playbookPrefix = `[PLAYBOOK — ${pb.slug}]\n${rubric}\n${pb.steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n`;
+              const lessons = pb.lessons.length
+                ? `\nLessons from past runs (don't repeat these mistakes):\n${pb.lessons.map((l) => `- ${l}`).join("\n")}`
+                : "";
+              playbookPrefix = `[PLAYBOOK — ${pb.slug}]\n${rubric}${lessons}\n${pb.steps.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n\n`;
             }
           }
         }
@@ -280,16 +287,13 @@ export function chatRoutes(
       // Collect the run's tool steps so a successful >=2-tool run can be
       // distilled into a reusable playbook (best-effort, fire-and-forget).
       const runSteps: RunStep[] = [];
-      // Track whether ANY tool result in this run failed. A run that ends with a
-      // failed/partial tool must NOT be learned as a succeeded playbook.
-      let anyToolFailed = false;
+      const runStartMs = Date.now();
       const emit = (e: AgentEvent) => {
         if (e.kind === "tool_call") {
           runSteps.push({ tool: e.payload.tool, args: e.payload.args, ok: true });
         } else if (e.kind === "tool_result") {
           const s = runSteps[runSteps.length - 1];
           if (s && s.tool === e.payload.tool) s.ok = e.payload.ok;
-          if (!e.payload.ok) anyToolFailed = true;
         }
         // Normalize an empty/whitespace final to a graceful message so we never
         // stream or persist a blank assistant turn (the run did something — the
@@ -299,6 +303,7 @@ export function chatRoutes(
         }
         if (e.kind === "final") {
           const prov = agentDeps.provider;
+          const durationSecs = (Date.now() - runStartMs) / 1000;
           if (prov) {
             void maybeCapture({
               memoryDir: agentDeps.memoryDir,
@@ -306,12 +311,29 @@ export function chatRoutes(
               goal: parsed.data.text,
               steps: runSteps,
               outcome: e.payload.text,
-              // Only learn a playbook when no tool failed — capturing failed
-              // procedures as succeeded teaches Ava broken steps.
-              succeeded: !anyToolFailed,
+              // "succeeded" = the run delivered a final reply. Mid-run tool
+              // failures Ava recovered from are wanted material — the capture
+              // gate (shouldCapture) rejects trailing failures and mostly-
+              // failed runs, and distill turns recovered detours into lessons.
+              succeeded: true,
+              durationSecs,
               today: new Date().toISOString().slice(0, 10),
             });
           }
+          // Update the steering playbook's track record: reaching a final
+          // reply counts as a win for the procedure.
+          if (recalledSlug) {
+            try { recordOutcome(agentDeps.memoryDir, recalledSlug, { succeeded: true, secs: durationSecs }); }
+            catch (err) { console.warn("[playbooks] outcome record failed:", err instanceof Error ? err.message : err); }
+            recalledSlug = null; // count each run exactly once
+          }
+        }
+        if ((e.kind === "error" || e.kind === "killed") && recalledSlug) {
+          // The recalled playbook steered this run into a wall — count the loss
+          // so repeat offenders get demoted out of recall (match.isDemoted).
+          try { recordOutcome(agentDeps.memoryDir, recalledSlug, { succeeded: false }); }
+          catch (err) { console.warn("[playbooks] outcome record failed:", err instanceof Error ? err.message : err); }
+          recalledSlug = null; // a killed run can also emit error — count once
         }
         const id = buffer.append({ kind: e.kind, payload: e.payload });
         // persist:false (HYBRID voice handoff) still streams final/error over SSE

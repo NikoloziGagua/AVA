@@ -32,6 +32,9 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "fs_stat": return a.path ? `Checking ${baseName(s(a.path))}` : "Checking a file";
     case "fs_delete": return a.path ? `Deleting ${baseName(s(a.path))}` : "Deleting a file";
     case "claude_code": return "Writing code";
+    case "discuss_with_claude": return "Consulting Claude";
+    case "read_discussion": return "Reading a Claude consult";
+    case "read_claude_updates": return "Reading Claude's update notes";
     case "chrome_navigate": return a.url ? `Opening ${domain(s(a.url))}` : "Opening a page";
     case "chrome_click": return "Clicking";
     case "chrome_type": return "Typing";
@@ -40,10 +43,16 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "chrome_screenshot": return "Capturing the page";
     case "chrome_tabs": return "Checking tabs";
     case "computer_use": return a.task ? truncate(s(a.task), 50) : "Controlling the screen";
+    case "control_app": { const app = s(a.app) || s(a.name); return app ? `Controlling ${truncate(app, 30)}` : "Controlling an app"; }
+    case "find_places": return a.query ? `Finding places: ${truncate(s(a.query), 36)}` : "Finding places";
     case "take_screenshot": return "Taking a screenshot";
     case "memory_remember": return "Saving to memory";
     case "memory_forget": return "Updating memory";
     case "memory_read": return "Recalling from memory";
+    case "read_logs": return "Checking her own logs";
+    case "shopify_list_products": return "Listing store products";
+    case "shopify_get_product": return "Reading a product";
+    case "shopify_update_product": return "Updating a product";
     case "self_improve": return "Queuing a self-improvement";
     case "self_improve_status": return "Checking self-improvement status";
     default: return tool.replace(/_/g, " ").replace(/\b\w/, (c) => c.toUpperCase());

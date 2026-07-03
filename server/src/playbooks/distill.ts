@@ -19,12 +19,18 @@ function stakesOf(steps: RunStep[]): Stakes {
 
 export async function distillPlaybook(o: {
   provider: LLMProvider; goal: string; steps: RunStep[]; outcome: string; today: string;
+  /** Wall-clock duration of the run, seconds. Seeds avg_secs. */
+  durationSecs?: number;
 }): Promise<Playbook | null> {
   const system =
     "You distill a completed task into a reusable playbook. Reply with ONLY a JSON object: " +
-    '{ "trigger": "<one short line describing the kind of request this handles>", ' +
-    '"keywords": ["..."], "steps": ["<high-level step>", ...] }. ' +
-    "Steps are the gist of the approach, NOT exact values. No prose outside the JSON.";
+    '{ "trigger": "<GENERIC task class, max 8 words, verb-first, NO specific names/cities/paths>", ' +
+    '"keywords": ["..."], "steps": ["<high-level step>", ...], "lessons": ["<avoidance advice>", ...] }. ' +
+    "Steps are the gist of the SUCCESSFUL path only — never include detours that failed or were blocked. " +
+    "For every failed/blocked step (marked fail, or a page that turned out to be a bot-wall/captcha/dead end), " +
+    'write a lesson instead: short advice on what to skip and what to do directly (e.g. ' +
+    '"Google search bot-walls automation — go straight to wttr.in or timeanddate.com"). ' +
+    "lessons may be empty. Steps are the gist of the approach, NOT exact values. No prose outside the JSON.";
   const toolList = o.steps.map((s) => `${s.tool}(${JSON.stringify(s.args)}) -> ${s.ok ? "ok" : "fail"}`).join("\n");
   const user = `Goal: ${o.goal}\n\nTool steps:\n${toolList}\n\nOutcome: ${o.outcome}`;
   let text = "";
@@ -34,7 +40,7 @@ export async function distillPlaybook(o: {
   })) {
     if (ev.kind === "delta") text += ev.text;
   }
-  let parsed: { trigger?: string; keywords?: string[]; steps?: string[] };
+  let parsed: { trigger?: string; keywords?: string[]; steps?: string[]; lessons?: string[] };
   try {
     const json = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
     parsed = JSON.parse(json);
@@ -44,5 +50,8 @@ export async function distillPlaybook(o: {
     slug: slugify(parsed.trigger), trigger: parsed.trigger,
     keywords: (parsed.keywords ?? []).map(String), created: o.today, last_used: o.today,
     uses: 1, stakes: stakesOf(o.steps), steps: parsed.steps.map(String),
+    version: 1, succ: 0, fail: 0,
+    avg_secs: Math.round(o.durationSecs ?? 0),
+    lessons: Array.isArray(parsed.lessons) ? parsed.lessons.map(String).filter(Boolean) : [],
   };
 }

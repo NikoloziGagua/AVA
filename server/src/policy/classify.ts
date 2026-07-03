@@ -13,6 +13,7 @@ const READ_ONLY_TOOLS = new Set([
   // added for speed were the slowest to start. All of these only read state.
   "read_logs", "read_claude_updates", "read_discussion", "self_improve_status",
   "find_places", "shopify_list_products", "shopify_get_product",
+  "watch_list",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -107,6 +108,21 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   // without a high-risk gate, but not silent/read-only since it captures the screen.
   if (tool === "take_screenshot") {
     return { tier: "low", reason: "desktop screenshot saved inside Downloads/Ava/screenshots" };
+  }
+
+  // Same capture pathway plus a vision call describing it back to Ava. Reading
+  // Sir's own screen is exactly as sensitive as take_screenshot — low, no 15s
+  // approval stall (live session 2026-07-03: 11 stalled look approvals turned a
+  // 30-second task into minutes of waiting).
+  if (tool === "look_at_screen") {
+    return { tier: "low", reason: "screen capture + vision describe (read of Sir's own screen)" };
+  }
+
+  // Watch bookkeeping mutates only local scheduler rows; the real actions run
+  // later through the normal policy gates. Creating/removing a schedule Sir
+  // just asked for should not stall.
+  if (tool === "watch_create" || tool === "watch_delete") {
+    return { tier: "low", reason: "local watch schedule bookkeeping" };
   }
 
   if (tool === "memory_remember" || tool === "memory_forget") {

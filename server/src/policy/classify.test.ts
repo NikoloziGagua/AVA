@@ -87,3 +87,18 @@ describe("classifyRisk", () => {
     expect(classifyRisk("memory_forget", { category: "preferences", line: "old pref" }).tier).toBe("low");
   });
 });
+
+describe("screen-sight and watch tools (2026-07-03 stall fix)", () => {
+  it("look_at_screen is low — no approval stall for reading Sir's own screen", () => {
+    expect(classifyRisk("look_at_screen", { question: "what's on screen?" }).tier).toBe("low");
+  });
+  it("watch bookkeeping is low, watch_list read-only", () => {
+    expect(classifyRisk("watch_create", { prompt: "x", interval_minutes: 30 }).tier).toBe("low");
+    expect(classifyRisk("watch_delete", { id: "abc" }).tier).toBe("low");
+    expect(classifyRisk("watch_list", {}).tier).toBe("read-only");
+  });
+  it(".env path-shaped watch args hard-block (prose mentions gate later, at the tool)", () => {
+    expect(classifyRisk("watch_create", { prompt: "C:/x/.env" }).tier).toBe("blocked");
+    expect(classifyRisk("watch_create", { prompt: "report on env hygiene practices" }).tier).toBe("low");
+  });
+});

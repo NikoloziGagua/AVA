@@ -1,4 +1,4 @@
-import { useRef, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { useSelfJournal, isRunningStatus, planText, type Intent } from "./useSelfJournal.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
@@ -15,9 +15,30 @@ function statusLook(status: string): { spine: string; chip: string } {
 }
 
 export function SelfScreen(_props: { onClose?: () => void }) {
-  const { intents, paused, setPaused, revertLast, cancel, approve, reject } = useSelfJournal();
+  const { intents, paused, setPaused, improve, revertLast, cancel, approve, reject } =
+    useSelfJournal();
   const canRevert = intents.some((i) => i.status === "swapped");
   const reduced = useReducedMotion();
+
+  // Initiator: a user-written goal Ava should self-improve toward.
+  const [goal, setGoal] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [improveError, setImproveError] = useState<string | null>(null);
+
+  const onImprove = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const g = goal.trim();
+    if (!g || submitting) return;
+    setSubmitting(true);
+    setImproveError(null);
+    const r = await improve(g);
+    setSubmitting(false);
+    if (r.ok) {
+      setGoal(""); // the 4s poll surfaces the new intent in the journal
+    } else {
+      setImproveError(r.error ?? "couldn't start — try again");
+    }
+  };
 
   const scope = useRef<HTMLDivElement>(null);
   const countRef = useRef<HTMLSpanElement>(null);
@@ -72,6 +93,33 @@ export function SelfScreen(_props: { onClose?: () => void }) {
           <div className="hud text-[11px] tracking-[0.18em] text-white/55">
             {paused ? "AUTONOMOUS · PAUSED" : "AUTONOMOUS · ACTIVE"}
           </div>
+          <form aria-label="Start a self-improvement" onSubmit={onImprove} className="mt-4 flex gap-2">
+            <input
+              value={goal}
+              onChange={(e) => {
+                setGoal(e.target.value);
+                if (improveError) setImproveError(null);
+              }}
+              placeholder="Tell Ava what to improve about herself…"
+              aria-label="Improvement goal"
+              className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.02] px-3 text-xs placeholder:text-white/35 focus:border-[rgba(92,242,255,0.4)] focus:outline-none transition-colors"
+            />
+            <button
+              type="submit"
+              disabled={submitting || !goal.trim()}
+              onPointerDown={onDown}
+              onPointerUp={onUp}
+              onPointerLeave={onUp}
+              className="btn-deck btn-primary h-9 shrink-0 px-3 text-[11px] disabled:opacity-40"
+            >
+              {submitting ? "Starting…" : "Improve"}
+            </button>
+          </form>
+          {improveError && (
+            <div role="alert" className="mt-2 text-xs text-[var(--ac-stop)]">
+              {improveError}
+            </div>
+          )}
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               onClick={() => setPaused(!paused)}
@@ -105,8 +153,11 @@ export function SelfScreen(_props: { onClose?: () => void }) {
           title="Journal"
           span="lg:col-span-8"
           right={
-            <span className="chip chip-ac">
-              <span ref={countRef}>{intents.length}</span>
+            <span className="flex items-center gap-2">
+              {paused && <span className="chip chip-stop">PAUSED</span>}
+              <span className="chip chip-ac">
+                <span ref={countRef}>{intents.length}</span>
+              </span>
             </span>
           }
         >

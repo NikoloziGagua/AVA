@@ -49,11 +49,12 @@ describe("activity-steps", () => {
     expect(mid[0]).toMatchObject({ label: "Running sleep 5", ok: false });
     expect(currentTool(overlapping)).toBe("Running git status");
 
-    const both = deriveSteps([...overlapping, ev(4, "tool_result", { tool: "shell", ok: true, result: "clean" })]);
+    const allEvents = [...overlapping, ev(4, "tool_result", { tool: "shell", ok: true, result: "clean" })];
+    const both = deriveSteps(allEvents);
     expect(both.map((s) => s.status)).toEqual(["done", "done"]);
     expect(both[0]).toMatchObject({ label: "Running sleep 5", ok: false });
     expect(both[1]).toMatchObject({ label: "Running git status", ok: true });
-    expect(isExecuting(both)).toBe(false);
+    expect(isExecuting(allEvents)).toBe(false);
   });
 
   it("a failed result carries a short single-line reason plus a fuller tooltip reason", () => {

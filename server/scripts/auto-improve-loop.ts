@@ -20,6 +20,8 @@ import { buildClaudeCode } from "../src/tools/claude-code.js";
 import { buildProvider } from "../src/orchestrator/llm/factory.js";
 import { getClaudeSession, markClaudeSessionStarted } from "../src/self/claude-session.js";
 import { suggestImprovement } from "../src/self/suggest.js";
+import { appendChangelog } from "../src/self/changelog.js";
+import { recordMistake, listOpenMistakes, mistakeToGoal, resolveMistake } from "../src/self/friction.js";
 
 // Ava's overnight autonomous self-improvement loop. Ava suggests its own ideas
 // via its persistent Claude chat, then runs the gated pipeline (reflect ->
@@ -103,6 +105,12 @@ const deps: ImproverDeps = {
     return Promise.resolve();
   },
   emit: (e) => log(`  step: ${e.step}${e.ok === false ? " (FAIL)" : ""}`),
+  onSwapped: (intent, sha) => appendChangelog(cfg.memoryDir, { summary: intent.goal, commit: sha }),
+  onFailed: (intent, error) => recordMistake(cfg.memoryDir, {
+    surface: "tool",
+    summary: `self-improvement failed: ${intent.goal.slice(0, 120)}`,
+    detail: error.slice(0, 1000),
+  }),
 };
 
 async function main(): Promise<void> {
@@ -115,18 +123,31 @@ async function main(): Promise<void> {
   let shipped = 0;
   for (let i = 1; i <= MAX_ITERS; i++) {
     log(`--- iteration ${i}/${MAX_ITERS} (shipped ${shipped}) ---`);
-    const session = getClaudeSession(cfg.memoryDir);
+    // Grounded evidence beats invented ideas: drain the friction ledger (real
+    // problems Sir hit) before asking Claude to dream up new improvements.
+    // Skip mistakes that are themselves failed self-improvement attempts —
+    // re-fixing a failed fix on repeat is how the loop used to spin.
     let goal: string | null = null;
-    try {
-      goal = await suggestImprovement(advisor, { cwd: cfg.repoRoot, session });
-      markClaudeSessionStarted(cfg.memoryDir);
-    } catch (e) { log(`suggest error: ${e instanceof Error ? e.message : e}`); }
-
-    if (!goal) { log("Ava suggested no further goal — stopping."); break; }
-    log(`GOAL: ${goal}`);
+    let frictionId: string | null = null;
+    const openMistakes = listOpenMistakes(cfg.memoryDir)
+      .filter((m) => !m.summary.startsWith("self-improvement failed:"));
+    if (openMistakes.length) {
+      const m = openMistakes[0]!;
+      goal = mistakeToGoal(m);
+      frictionId = m.id;
+      log(`GOAL (friction ledger, ${m.count}x${m.reopened ? ", REOPENED" : ""}): ${m.summary}`);
+    } else {
+      const session = getClaudeSession(cfg.memoryDir);
+      try {
+        goal = await suggestImprovement(advisor, { cwd: cfg.repoRoot, session });
+        markClaudeSessionStarted(cfg.memoryDir);
+      } catch (e) { log(`suggest error: ${e instanceof Error ? e.message : e}`); }
+      if (!goal) { log("Ava suggested no further goal — stopping."); break; }
+      log(`GOAL: ${goal}`);
+    }
     if (SAFETY_RE.test(goal)) { log("goal targets a safety-critical area — skipping."); continue; }
 
-    const id = createIntent(db, { trigger: "schedule", goal });
+    const id = createIntent(db, { trigger: frictionId ? "friction" : "schedule", goal });
     try { await runImprovement(db, id, deps); }
     catch (e) { log(`runImprovement threw: ${e instanceof Error ? e.message : e}`); }
 
@@ -139,7 +160,11 @@ async function main(): Promise<void> {
       log("CLAUDE CREDITS EXHAUSTED — stopping the loop, as requested.");
       break;
     }
-    if (status === "swapped") { shipped++; consecFails = 0; log(`SHIPPED #${shipped}: ${it?.commit_sha?.slice(0, 12)}`); }
+    if (status === "swapped") {
+      shipped++; consecFails = 0; log(`SHIPPED #${shipped}: ${it?.commit_sha?.slice(0, 12)}`);
+      // A shipped friction fix closes the ledger entry (a recurrence reopens it).
+      if (frictionId && it?.commit_sha) resolveMistake(cfg.memoryDir, frictionId, it.commit_sha);
+    }
     else {
       consecFails++;
       if (consecFails >= MAX_CONSEC_FAILS) { log(`${consecFails} consecutive failures — stopping to avoid spinning.`); break; }

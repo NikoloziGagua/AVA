@@ -27,7 +27,21 @@ export type ImproverDeps = {
    *  rollback if newer work was committed on top in the meantime. */
   watch: (knownGood: string, swapped: string) => Promise<void>;
   emit: (e: { intentId: string; step: string; ok?: boolean }) => void;
+  /** Fired after a successful swap — bindings append the self-changelog here so
+   *  Ava keeps a cheap, durable record of how she has changed. */
+  onSwapped?: (intent: Intent, sha: string) => void;
+  /** Fired on a real failure (not a user cancel) — bindings record the friction
+   *  ledger entry here so failures become grounded goals for future cycles. */
+  onFailed?: (intent: Intent, error: string) => void;
 };
+
+// ─── Pause gate ──────────────────────────────────────────────────────────────
+// A real pause (the UI toggle used to be cosmetic): while paused, intake points
+// (POST /api/self/improve and the self_improve chat tool) refuse new work.
+// Already-running improvements finish; Cancel exists for those.
+let paused = false;
+export function setImprovementsPaused(p: boolean): void { paused = p; }
+export function improvementsPaused(): boolean { return paused; }
 
 let inFlight = false; // single-flight lock — one improvement mutates the tree at a time
 const pending: string[] = []; // intents waiting their turn (FIFO), drained on completion
@@ -158,6 +172,7 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     deps.swapTo(sha, knownGood);
     deps.emit({ intentId: id, step: "swapped", ok: true });
     updateIntent(db, id, { status: "swapped", outcome: "shipped" });
+    try { deps.onSwapped?.(intent, sha); } catch { /* changelog is best-effort */ }
 
     void deps.watch(knownGood, sha); // transient watchdog; rolls back if unhealthy (skips if newer work landed)
     await deps.restart();
@@ -171,6 +186,7 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     } else {
       updateIntent(db, id, { status: "failed", error: msg });
       deps.emit({ intentId: id, step: "failed", ok: false });
+      try { deps.onFailed?.(intent, msg); } catch { /* ledger is best-effort */ }
     }
   } finally {
     controllers.delete(id);

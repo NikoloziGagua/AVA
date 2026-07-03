@@ -1,0 +1,126 @@
+// @vitest-environment jsdom
+// Drives the REAL useSelfJournal hook with a routed fetch mock: response-shape
+// tolerance for GET /api/self, the improve() initiator, and the server-wired pause.
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
+
+vi.mock("../auth/tokens.js", () => ({ getToken: () => "test-token" }));
+
+import { useSelfJournal } from "./useSelfJournal.js";
+
+type Route = (init?: RequestInit) => { status: number; body: unknown };
+
+function mockFetch(routes: Record<string, Route>) {
+  const fn = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+    const route = routes[String(url)];
+    if (!route) throw new Error(`unmocked fetch: ${String(url)}`);
+    const { status, body } = route(init);
+    return { ok: status >= 200 && status < 300, status, json: async () => body } as Response;
+  });
+  vi.stubGlobal("fetch", fn);
+  return fn;
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("useSelfJournal", () => {
+  it("parses the new {improvements, paused} response shape", async () => {
+    mockFetch({
+      "/api/self": () => ({
+        status: 200,
+        body: { improvements: [{ id: "a", goal: "g", status: "queued" }], paused: true },
+      }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.intents).toHaveLength(1));
+    expect(result.current.paused).toBe(true);
+    unmount();
+  });
+
+  it("treats a legacy bare-array response as unpaused", async () => {
+    mockFetch({
+      "/api/self": () => ({ status: 200, body: [{ id: "a", goal: "g", status: "swapped" }] }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.intents).toHaveLength(1));
+    expect(result.current.paused).toBe(false);
+    unmount();
+  });
+
+  it("still reads the legacy {intents} object shape", async () => {
+    mockFetch({
+      "/api/self": () => ({ status: 200, body: { intents: [{ id: "a", goal: "g", status: "failed" }] } }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.intents).toHaveLength(1));
+    expect(result.current.paused).toBe(false);
+    unmount();
+  });
+
+  it("improve POSTs the trimmed goal with auth + json headers and reports ok", async () => {
+    const fn = mockFetch({
+      "/api/self": () => ({ status: 200, body: { improvements: [], paused: false } }),
+      "/api/self/improve": () => ({ status: 200, body: { id: "new" } }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(fn).toHaveBeenCalled());
+
+    let out: { ok: boolean; error?: string } | undefined;
+    await act(async () => {
+      out = await result.current.improve("  be kinder  ");
+    });
+    expect(out).toEqual({ ok: true });
+
+    const call = fn.mock.calls.find(([u]) => String(u) === "/api/self/improve");
+    expect(call).toBeTruthy();
+    const init = call![1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ goal: "be kinder" }));
+    expect(init.headers).toMatchObject({
+      authorization: "Bearer test-token",
+      "content-type": "application/json",
+    });
+    unmount();
+  });
+
+  it("improve surfaces HTTP 409 as a paused error", async () => {
+    mockFetch({
+      "/api/self": () => ({ status: 200, body: { improvements: [], paused: true } }),
+      "/api/self/improve": () => ({ status: 409, body: { error: "paused" } }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+
+    let out: { ok: boolean; error?: string } | undefined;
+    await act(async () => {
+      out = await result.current.improve("do a thing");
+    });
+    expect(out!.ok).toBe(false);
+    expect(out!.error).toMatch(/paused/i);
+    unmount();
+  });
+
+  it("setPaused POSTs /api/self/pause and follows the server's answer", async () => {
+    let serverPaused = false;
+    const fn = mockFetch({
+      "/api/self": () => ({ status: 200, body: { improvements: [], paused: serverPaused } }),
+      "/api/self/pause": (init) => {
+        serverPaused = (JSON.parse(String(init?.body)) as { paused: boolean }).paused;
+        return { status: 200, body: { paused: serverPaused } };
+      },
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(fn).toHaveBeenCalled());
+
+    await act(async () => {
+      await result.current.setPaused(true);
+    });
+    expect(result.current.paused).toBe(true);
+
+    const call = fn.mock.calls.find(([u]) => String(u) === "/api/self/pause");
+    expect(call).toBeTruthy();
+    const init = call![1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ paused: true }));
+    unmount();
+  });
+});

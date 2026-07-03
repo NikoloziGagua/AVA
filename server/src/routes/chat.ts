@@ -30,6 +30,7 @@ import { buildChromeTools } from "../tools/chrome-mcp.js";
 import { buildComputerUseTool } from "../tools/computer-use-mcp.js";
 import { buildScreenshotTool } from "../tools/screenshot/screenshot-mcp.js";
 import { buildLookAtScreenTool } from "../tools/screenshot/look-mcp.js";
+import { buildWatchTools } from "../tools/watches-mcp.js";
 import { buildReadLogsTool } from "../tools/activity-log-mcp.js";
 import { buildSelfImproveTool, buildSelfImproveStatusTool, type IntentStatusSummary } from "../tools/self-improve-mcp.js";
 import { buildDiscussTools } from "../tools/discuss-mcp.js";
@@ -420,6 +421,9 @@ export function chatRoutes(
             ...discussTools,
             ...memoryTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
+            // Standing background checks ("notify me if/when …") — the
+            // scheduler re-runs them; Ava just registers/lists/deletes here.
+            ...(buildWatchTools({ db }) as ToolDef[]),
           ];
         } else {
           // Voice/conversation must also reach the update log, since Sir asks

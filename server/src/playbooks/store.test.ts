@@ -8,7 +8,8 @@ function dir() { return mkdtempSync(join(tmpdir(), "ava-pb-")); }
 const sample = (over: Partial<Playbook> = {}): Playbook => ({
   slug: "download-electricity-bill", trigger: "download the electricity bill",
   keywords: ["electricity", "bill"], created: "2026-06-02", last_used: "2026-06-02",
-  uses: 1, stakes: "consequential", steps: ["open the billing page", "download the PDF to Downloads"], ...over,
+  uses: 1, stakes: "consequential", steps: ["open the billing page", "download the PDF to Downloads"],
+  version: 1, succ: 0, fail: 0, avg_secs: 0, lessons: [], ...over,
 });
 
 describe("playbook store", () => {

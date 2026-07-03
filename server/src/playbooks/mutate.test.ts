@@ -8,7 +8,8 @@ import { bumpUse, prunePlaybooks } from "./mutate.js";
 function dir() { return mkdtempSync(join(tmpdir(), "ava-pbm-")); }
 const pb = (slug: string, over: Partial<Playbook> = {}): Playbook => ({
   slug, trigger: slug, keywords: [], created: "2026-01-01", last_used: "2026-01-01",
-  uses: 1, stakes: "routine", steps: ["a", "b"], ...over,
+  uses: 1, stakes: "routine", steps: ["a", "b"],
+  version: 1, succ: 0, fail: 0, avg_secs: 0, lessons: [], ...over,
 });
 
 describe("bumpUse", () => {

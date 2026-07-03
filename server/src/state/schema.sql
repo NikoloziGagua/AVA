@@ -146,3 +146,16 @@ CREATE TABLE IF NOT EXISTS discussions (
   session_id TEXT
 );
 
+
+CREATE TABLE IF NOT EXISTS watches (
+  id TEXT PRIMARY KEY,
+  prompt TEXT NOT NULL,               -- what to check + what counts as triggered
+  interval_minutes INTEGER NOT NULL,
+  once INTEGER NOT NULL DEFAULT 1,    -- 1 = disable after first trigger
+  enabled INTEGER NOT NULL DEFAULT 1,
+  session_id TEXT,                    -- chat session holding every check run (visibility)
+  created_at INTEGER NOT NULL,
+  last_run_at INTEGER,
+  last_status TEXT,                   -- ok | triggered | unclear | error
+  last_result TEXT                    -- one-line latest status/reason
+);

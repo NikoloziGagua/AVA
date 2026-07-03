@@ -55,6 +55,10 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "shopify_update_product": return "Updating a product";
     case "self_improve": return "Queuing a self-improvement";
     case "self_improve_status": return "Checking self-improvement status";
+    case "look_at_screen": return "Looking at the screen";
+    case "watch_create": return "Setting up a watch";
+    case "watch_list": return "Listing watches";
+    case "watch_delete": return "Removing a watch";
     default: return tool.replace(/_/g, " ").replace(/\b\w/, (c) => c.toUpperCase());
   }
 }

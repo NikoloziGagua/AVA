@@ -8,7 +8,8 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pair": "tsx scripts/mint-pairing-code.ts"
+    "pair": "tsx scripts/mint-pairing-code.ts",
+    "self:loop": "tsx scripts/auto-improve-loop.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.81.0",

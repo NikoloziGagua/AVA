@@ -54,6 +54,7 @@ describe("chat playbook capture", () => {
     writePlaybook(memoryDir, {
       slug: "seeded", trigger: "seeded task", keywords: [], created: "2026-06-02",
       last_used: "2026-06-02", uses: 1, stakes: "routine", steps: ["a", "b"],
+      version: 1, succ: 0, fail: 0, avg_secs: 0, lessons: [],
     });
     await request(app).post("/api/chat").send({ text: "do the seeded task" }).expect(200);
   });

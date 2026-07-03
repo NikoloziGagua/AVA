@@ -29,6 +29,8 @@ import { chipsRoutes } from "./routes/chips.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
 import { playbooksRoutes } from "./routes/playbooks.js";
+import { watchesRoutes } from "./routes/watches.js";
+import { startWatchScheduler } from "./watches/scheduler.js";
 import { ActiveRuns } from "./orchestrator/active-runs.js";
 import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
@@ -49,7 +51,9 @@ import { verify } from "./self/verify.js";
 import { flightcheck } from "./self/flightcheck.js";
 import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
-import { runImprovement, cancelImprovement, approveImprovement, rejectImprovement, type ImproverDeps } from "./self/improver.js";
+import { runImprovement, cancelImprovement, approveImprovement, rejectImprovement, improvementsPaused, type ImproverDeps } from "./self/improver.js";
+import { appendChangelog } from "./self/changelog.js";
+import { recordMistake } from "./self/friction.js";
 import { createIntent, getIntent, listIntents, failStaleIntents } from "./self/intents.js";
 import { createDiscussion, getDiscussion, listDiscussions, failStaleDiscussions } from "./state/discussions.js";
 import { runDiscussion } from "./self/discuss.js";
@@ -224,6 +228,21 @@ function buildImproverDeps(): ImproverDeps {
       return Promise.resolve();
     },
     emit: (e) => { log.info({ self: e }, "self-improvement step"); },
+    // Every shipped change appends one changelog line — Ava stays aware of how
+    // she has evolved without re-reading her own code, and Claude gets recent
+    // history so it doesn't undo past fixes.
+    onSwapped: (intent, sha) => {
+      appendChangelog(cfg.memoryDir, { summary: intent.goal, commit: sha });
+    },
+    // Real failures land in the friction ledger — the overnight loop mines it
+    // for grounded goals before inventing new ideas.
+    onFailed: (intent, error) => {
+      recordMistake(cfg.memoryDir, {
+        surface: "tool",
+        summary: `self-improvement failed: ${intent.goal.slice(0, 120)}`,
+        detail: error.slice(0, 1000),
+      });
+    },
   };
 }
 
@@ -233,6 +252,9 @@ function startImprovement(id: string): void {
     log.error({ err: e instanceof Error ? e.message : String(e), id }, "self-improvement crashed"));
 }
 function queueSelfImprove(goal: string): string {
+  if (improvementsPaused()) {
+    throw new Error("self-improvement is paused — Sir can resume it from the Self screen");
+  }
   const id = createIntent(db, { trigger: "explicit", goal });
   startImprovement(id);
   return id;
@@ -326,6 +348,7 @@ app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
 }));
 app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
 app.use("/api/playbooks", playbooksRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
+app.use("/api/watches", watchesRoutes(db, requireToken(db)));
 app.use("/api/self", selfRoutes(db, requireToken(db), {
   startImprovement,
   revert: (id) => { const row = getIntent(db, id); if (row?.last_known_good) revertTo(cfg.repoRoot, row.last_known_good); },
@@ -389,6 +412,20 @@ process.on("uncaughtException", (err) => {
 
 const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
   log.info({ port: cfg.port, bind: cfg.bindAddr }, "ava server listening");
+  // Long-term monitoring: re-checks standing watches through this server's own
+  // /api/chat (full toolset + audit trail in each watch's session). Started
+  // only once the port is live, since checks call back over HTTP.
+  if (provider) {
+    startWatchScheduler({
+      db,
+      baseUrl: `http://127.0.0.1:${cfg.port}`,
+      token: () => watchInternalToken,
+      notify: (text) => notifyDone?.(text),
+      log,
+    });
+  } else {
+    log.warn({}, "watch scheduler disabled — no LLM provider");
+  }
 });
 // Without this handler a bind failure (EADDRINUSE from a half-dead prior
 // process — the documented self-dev restart collision) crash-looped with a raw
@@ -424,6 +461,12 @@ const hybridVoice = !!process.env.REALTIME_HYBRID;
   if (retired > 0) log.info({ retired }, "auth: revoked stale voice-internal tokens at boot");
 }
 const voiceInternalToken = issueToken(db, { label: "voice-internal" }).secret;
+// Same hygiene for the watch scheduler's internal credential.
+{
+  const retired = revokeTokensByLabel(db, "watch-internal");
+  if (retired > 0) log.info({ retired }, "auth: revoked stale watch-internal tokens at boot");
+}
+const watchInternalToken = issueToken(db, { label: "watch-internal" }).secret;
 async function runVoiceAction(
   sessionId: string | null,
   task: string,

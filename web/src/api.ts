@@ -259,3 +259,64 @@ export async function postMemoryLine(line: string): Promise<void> {
     body: JSON.stringify({ file: "preferences", line }),
   });
 }
+
+// ── Learned workflows (playbooks) + standing watches — Memory screen read surfaces.
+
+export type PlaybookRow = {
+  slug: string;
+  trigger: string;
+  keywords: string[];
+  created: string;
+  last_used: string;
+  uses: number;
+  stakes: "routine" | "consequential" | string;
+  steps: string[];
+  version: number;
+  succ: number;
+  fail: number;
+  avg_secs: number;
+  lessons: string[];
+};
+
+export async function fetchPlaybooks(): Promise<PlaybookRow[]> {
+  const j = await request<{ playbooks: PlaybookRow[] }>("/api/playbooks");
+  return j.playbooks ?? [];
+}
+
+export type WatchRow = {
+  id: string;
+  prompt: string;
+  interval_minutes: number;
+  /** 1 = disable after first trigger (SQLite boolean-as-int; may arrive as boolean). */
+  once: number | boolean;
+  enabled: number | boolean;
+  session_id: string | null;
+  created_at: number;
+  last_run_at: number | null;
+  last_status: "ok" | "triggered" | "unclear" | "error" | string | null;
+  last_result: string | null;
+  /** One-shot: fire once at this epoch-ms (newer column — may be absent). */
+  run_at?: number | null;
+  /** Recurring daily at "HH:MM" local (newer column — may be absent). */
+  daily_at?: string | null;
+  /** "check" | "reminder" (newer column — may be absent). */
+  kind?: string | null;
+};
+
+export async function fetchWatches(): Promise<WatchRow[]> {
+  const j = await request<{ watches: WatchRow[] }>("/api/watches");
+  return j.watches ?? [];
+}
+
+export async function setWatchEnabled(id: string, enabled: boolean): Promise<void> {
+  await request<{ ok: true }>(`/api/watches/${encodeURIComponent(id)}/enabled`, {
+    method: "POST",
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function deleteWatchApi(id: string): Promise<void> {
+  await request<{ deleted: boolean }>(`/api/watches/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}

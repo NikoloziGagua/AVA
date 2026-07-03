@@ -14,30 +14,61 @@ export function buildWatchTools(o: { db: Db }): ToolDef[] {
       tool: {
         name: "watch_create",
         description:
-          "Create a standing background watch: a check that re-runs on an interval and " +
-          "push-notifies the owner when its condition is met (price drops, site changes, " +
-          "news, deliveries). Args: { prompt: string — what to check AND what condition " +
-          "triggers the notification, self-contained since it runs without conversation " +
-          "context; interval_minutes: number (>=5 recommended; be frugal — each check " +
-          "costs a real agent run); once?: boolean (default true — stop after first trigger) }.",
+          "Create a scheduled background task. THREE MODES — " +
+          "(1) REMINDER: kind='reminder' + run_in_minutes OR at_local ('HH:MM' 24h; fires at " +
+          "the next occurrence — today if still ahead, else tomorrow). The prompt IS the " +
+          "notification text pushed to the owner at that moment. Free, instant. " +
+          "(2) MONITOR: a check that re-runs every interval_minutes and push-notifies when its " +
+          "condition is met (price drops, site changes, news). prompt must be self-contained " +
+          "(runs without conversation context). Be frugal: every check is a real agent run. " +
+          "(3) DAILY: daily_at='HH:MM' runs the prompt once per day at that time (e.g. a " +
+          "morning briefing). Args: { prompt, kind?: 'check'|'reminder', interval_minutes?, " +
+          "run_in_minutes?, at_local?, daily_at?, once? (default true; ignored for daily) }.",
         inputSchema: {
           type: "object",
           properties: {
-            prompt: { type: "string", description: "Self-contained check + trigger condition." },
-            interval_minutes: { type: "number", description: "Minutes between checks (>=1)." },
-            once: { type: "boolean", description: "Disable after first trigger (default true)." },
+            prompt: { type: "string", description: "Check+condition (self-contained), or the reminder text itself." },
+            kind: { type: "string", enum: ["check", "reminder"], description: "reminder = direct push, no agent run." },
+            interval_minutes: { type: "number", description: "Monitor mode: minutes between checks (>=5 recommended)." },
+            run_in_minutes: { type: "number", description: "One-shot: fire this many minutes from now." },
+            at_local: { type: "string", description: "One-shot: fire at next 'HH:MM' (24h local)." },
+            daily_at: { type: "string", description: "Recurring: fire every day at 'HH:MM' (24h local)." },
+            once: { type: "boolean", description: "Monitor mode: disable after first trigger (default true)." },
           },
-          required: ["prompt", "interval_minutes"],
+          required: ["prompt"],
         },
       },
       run: async (args) => {
         const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
-        const interval = Number(args.interval_minutes);
-        if (!prompt || !Number.isFinite(interval) || interval < 1) {
-          return { ok: false, text: "watch_create needs a non-empty prompt and interval_minutes >= 1" };
+        if (!prompt) return { ok: false, text: "watch_create needs a non-empty prompt" };
+        const kind = args.kind === "reminder" ? "reminder" as const : "check" as const;
+        let runAt: number | undefined;
+        if (Number.isFinite(Number(args.run_in_minutes)) && Number(args.run_in_minutes) > 0) {
+          runAt = Date.now() + Number(args.run_in_minutes) * 60_000;
+        } else if (typeof args.at_local === "string" && /^([01]?\d|2[0-3]):[0-5]\d$/.test(args.at_local)) {
+          const [h, m] = args.at_local.split(":").map(Number);
+          const d = new Date(); d.setHours(h!, m!, 0, 0);
+          if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); // next occurrence
+          runAt = d.getTime();
         }
-        const w = createWatch(o.db, { prompt, intervalMinutes: interval, once: args.once !== false });
-        return { ok: true, text: `watch created (${w.id}) — every ${w.interval_minutes}min${w.once ? ", stops after first trigger" : ""}. First check runs within a minute.` };
+        const dailyAt = typeof args.daily_at === "string" ? args.daily_at : undefined;
+        const interval = Number(args.interval_minutes);
+        if (!runAt && !dailyAt && (!Number.isFinite(interval) || interval < 1)) {
+          return { ok: false, text: "need one schedule: run_in_minutes / at_local / daily_at / interval_minutes" };
+        }
+        try {
+          const w = createWatch(o.db, {
+            prompt, kind, runAt, dailyAt,
+            intervalMinutes: Number.isFinite(interval) ? interval : undefined,
+            once: args.once !== false,
+          });
+          const when = runAt
+            ? `once at ${new Date(runAt).toLocaleString()}`
+            : dailyAt ? `daily at ${dailyAt}` : `every ${w.interval_minutes}min${w.once ? ", stops after first trigger" : ""}`;
+          return { ok: true, text: `${kind === "reminder" ? "reminder" : "watch"} created (${w.id}) — ${when}.` };
+        } catch (e) {
+          return { ok: false, text: e instanceof Error ? e.message : String(e) };
+        }
       },
     },
     {
@@ -49,8 +80,12 @@ export function buildWatchTools(o: { db: Db }): ToolDef[] {
       run: async () => {
         const all = listWatches(o.db);
         if (!all.length) return { ok: true, text: "no watches" };
+        const sched = (w: (typeof all)[number]) =>
+          w.run_at !== null ? `once at ${new Date(w.run_at).toLocaleString()}`
+            : w.daily_at ? `daily at ${w.daily_at}`
+              : `every ${w.interval_minutes}min`;
         const lines = all.map((w) =>
-          `${w.id} [${w.enabled ? "on" : "off"}] every ${w.interval_minutes}min — ${w.prompt.slice(0, 100)}` +
+          `${w.id} [${w.enabled ? "on" : "off"}] ${w.kind} ${sched(w)} — ${w.prompt.slice(0, 100)}` +
           (w.last_status ? ` | last: ${w.last_status}${w.last_result ? ` (${w.last_result.slice(0, 80)})` : ""}` : " | never run"));
         return { ok: true, text: lines.join("\n") };
       },

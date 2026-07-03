@@ -157,5 +157,8 @@ CREATE TABLE IF NOT EXISTS watches (
   created_at INTEGER NOT NULL,
   last_run_at INTEGER,
   last_status TEXT,                   -- ok | triggered | unclear | error
-  last_result TEXT                    -- one-line latest status/reason
+  last_result TEXT,                   -- one-line latest status/reason
+  run_at INTEGER,                     -- one-shot: fire once at/after this epoch-ms
+  daily_at TEXT,                      -- recurring: fire once per day at HH:MM local
+  kind TEXT NOT NULL DEFAULT 'check'  -- check = agent run | reminder = direct push
 );

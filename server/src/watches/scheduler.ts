@@ -108,21 +108,36 @@ export async function tickOnce(deps: SchedulerDeps): Promise<void> {
   const run = deps.runCheck ?? runCheckViaHttp;
   for (const w of due) {
     try {
+      // Pure reminders skip the agent entirely: the prompt IS the message.
+      // Direct push at the due moment — instant and free.
+      if (w.kind === "reminder") {
+        deps.notify(`Reminder: ${w.prompt.slice(0, 200)}`);
+        recordWatchRun(deps.db, w.id, { status: "triggered", result: "reminder delivered" });
+        if (w.run_at !== null || w.once) setWatchEnabled(deps.db, w.id, false);
+        continue;
+      }
       const r = await run(w, deps);
       if (r.kind === "error") {
         recordWatchRun(deps.db, w.id, { status: "error", result: r.message });
         deps.log.warn({ watch: w.id, err: r.message }, "watch check failed");
+        // A one-shot must not retry forever on a broken check — one attempt.
+        if (w.run_at !== null) setWatchEnabled(deps.db, w.id, false);
         continue;
       }
       const { status, detail } = parseWatchMarker(r.text);
       recordWatchRun(deps.db, w.id, { status, result: detail, sessionId: r.sessionId });
       if (status === "triggered") {
         deps.notify(`Watch triggered: ${detail.slice(0, 180)}`);
-        if (w.once) setWatchEnabled(deps.db, w.id, false);
+        // Interval watches honor `once`; daily briefings (daily_at) recur by
+        // design and are exempt from once-disabling.
+        if (w.once && !w.daily_at) setWatchEnabled(deps.db, w.id, false);
       }
+      // One-shots ran their one shot, whatever the outcome.
+      if (w.run_at !== null) setWatchEnabled(deps.db, w.id, false);
     } catch (e) {
       recordWatchRun(deps.db, w.id, { status: "error", result: e instanceof Error ? e.message : String(e) });
       deps.log.warn({ watch: w.id, err: e instanceof Error ? e.message : String(e) }, "watch check crashed");
+      if (w.run_at !== null) setWatchEnabled(deps.db, w.id, false);
     }
   }
 }

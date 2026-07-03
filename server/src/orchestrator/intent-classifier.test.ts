@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyIntent } from "./intent-classifier.js";
+import { classifyIntent, classifyTypedIntent } from "./intent-classifier.js";
 
 describe("classifyIntent", () => {
   it("treats greetings as conversation", () => {
@@ -71,5 +71,40 @@ describe("classifyIntent", () => {
   it("is case-insensitive", () => {
     expect(classifyIntent("RUN THE TESTS")).toBe("action");
     expect(classifyIntent("Open Chrome")).toBe("action");
+  });
+});
+
+describe("classifyTypedIntent (action-biased for typed text)", () => {
+  it("routes unmistakable chitchat to conversation", () => {
+    expect(classifyTypedIntent("hey")).toBe("conversation");
+    expect(classifyTypedIntent("good morning!")).toBe("conversation");
+    expect(classifyTypedIntent("thanks!")).toBe("conversation");
+    expect(classifyTypedIntent("thank you so much")).toBe("conversation");
+    expect(classifyTypedIntent("ok")).toBe("conversation");
+    expect(classifyTypedIntent("how are you?")).toBe("conversation");
+    expect(classifyTypedIntent("goodnight")).toBe("conversation");
+    expect(classifyTypedIntent("haha")).toBe("conversation");
+  });
+
+  it("keeps every task-shaped message on the action path", () => {
+    // Verbs OUTSIDE the voice classifier's list must still get tools.
+    expect(classifyTypedIntent("organize my downloads folder")).toBe("action");
+    expect(classifyTypedIntent("summarize this pdf for me")).toBe("action");
+    expect(classifyTypedIntent("book a table for two tomorrow")).toBe("action");
+    expect(classifyTypedIntent("what's the weather in Batumi")).toBe("action");
+    expect(classifyTypedIntent("remind me at 6pm to call Mom")).toBe("action");
+  });
+
+  it("length alone forces action (long messages are never chitchat)", () => {
+    expect(classifyTypedIntent("thanks for everything you did yesterday, and also please check my calendar")).toBe("action");
+  });
+
+  it("action signals win even in short messages", () => {
+    expect(classifyTypedIntent("open chrome")).toBe("action");
+    expect(classifyTypedIntent("run the tests")).toBe("action");
+  });
+
+  it("empty input stays conversation", () => {
+    expect(classifyTypedIntent("")).toBe("conversation");
   });
 });

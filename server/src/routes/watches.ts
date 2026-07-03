@@ -5,9 +5,12 @@ import { createWatch, listWatches, deleteWatch, setWatchEnabled } from "../state
 
 const CreateBody = z.object({
   prompt: z.string().min(1).max(2000),
-  interval_minutes: z.number().min(1).max(24 * 60),
+  interval_minutes: z.number().min(1).max(24 * 60).optional(),
   once: z.boolean().optional(),
-});
+  run_at: z.number().optional(),                                  // epoch ms one-shot
+  daily_at: z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/).optional(),
+  kind: z.enum(["check", "reminder"]).optional(),
+}).refine((b) => b.interval_minutes || b.run_at || b.daily_at, { message: "need a schedule" });
 const ToggleBody = z.object({ enabled: z.boolean() });
 
 /** Read/manage surface for standing watches (long-term monitoring). */
@@ -17,7 +20,12 @@ export function watchesRoutes(db: Db, auth: RequestHandler): Router {
   r.post("/", auth, (req, res) => {
     const p = CreateBody.safeParse(req.body);
     if (!p.success) { res.status(400).json({ error: "bad_request" }); return; }
-    res.json({ watch: createWatch(db, { prompt: p.data.prompt, intervalMinutes: p.data.interval_minutes, once: p.data.once }) });
+    res.json({
+      watch: createWatch(db, {
+        prompt: p.data.prompt, intervalMinutes: p.data.interval_minutes, once: p.data.once,
+        runAt: p.data.run_at, dailyAt: p.data.daily_at, kind: p.data.kind,
+      }),
+    });
   });
   r.post("/:id/enabled", auth, (req, res) => {
     const p = ToggleBody.safeParse(req.body);

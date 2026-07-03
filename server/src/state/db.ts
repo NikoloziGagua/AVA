@@ -16,6 +16,11 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "sessions", "deleted_at", "INTEGER");
   tryAddColumn(db, "sessions", "pinned", "INTEGER NOT NULL DEFAULT 0");
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at)");
+  // Watches v2: one-shot reminders (run_at), daily schedules (daily_at), and
+  // the reminder kind (direct push at the due time — no agent run needed).
+  tryAddColumn(db, "watches", "run_at", "INTEGER");
+  tryAddColumn(db, "watches", "daily_at", "TEXT");
+  tryAddColumn(db, "watches", "kind", "TEXT NOT NULL DEFAULT 'check'");
   return db;
 }
 

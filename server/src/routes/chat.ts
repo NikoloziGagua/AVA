@@ -9,7 +9,7 @@ import { appendMessage, listMessages, listMessagesAfterId } from "../state/messa
 import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
-import { classifyIntent } from "../orchestrator/intent-classifier.js";
+import { classifyIntent, classifyTypedIntent } from "../orchestrator/intent-classifier.js";
 import { decideGreeting } from "../orchestrator/greeting.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { autoTitle } from "../orchestrator/auto-title.js";
@@ -238,11 +238,15 @@ export function chatRoutes(
     // classifier — greetings/chitchat take the fast side-model conversation path,
     // and only genuine action requests spin up the full agent.
     // Override via FORCE_INTENT=conversation to force the chitchat path for text.
-    const intent = classifyIntent(parsed.data.text);
+    // Voice: conversation-biased classifier (misheard speech must not
+    // auto-execute). Typed: action-biased classifier — only unmistakable
+    // chitchat skips the tool agent (a task in conversation mode would
+    // silently lose its tools; chitchat in action mode only loses a second).
+    const intent = parsed.data.voice
+      ? classifyIntent(parsed.data.text)
+      : classifyTypedIntent(parsed.data.text);
     const mode: "conversation" | "action" =
-      process.env.FORCE_INTENT === "conversation" ? "conversation"
-        : parsed.data.voice ? intent
-          : "action";
+      process.env.FORCE_INTENT === "conversation" ? "conversation" : intent;
 
     // Recall: in action mode with saved playbooks, match this request to a known
     // playbook locally and inject its steps + a stakes rubric. This used to be a

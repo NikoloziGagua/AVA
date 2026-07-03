@@ -61,3 +61,30 @@ export function classifyIntent(message: string): Intent {
   }
   return "conversation";
 }
+
+// ─── Typed-text routing ──────────────────────────────────────────────────────
+// Voice trusts classifyIntent (conversation-biased) because misheard speech
+// should not auto-execute. Typed text has the OPPOSITE cost asymmetry: sending
+// a real task to conversation mode strips the tools and the run silently
+// fails, while sending chitchat to action mode merely wastes a second. So a
+// typed message is ACTION unless it is unmistakably chitchat: short, no action
+// signals, and matching an explicit small-talk shape.
+const CHITCHAT_PATTERNS: RegExp[] = [
+  /^(hi|hey|heyy+|hello|yo|sup|good\s*(morning|afternoon|evening|night)|morning|gm|gn)\b[\s!.,]*$/i,
+  /^(thanks?|thank\s+you|thx|ty|cheers|appreciated|nice|great|perfect|awesome|cool|amazing|lovely|beautiful|well\s+done|good\s+(job|work|girl))\b[\s!.,\w]{0,20}$/i,
+  /^(ok|okay|okey|kk|sure|yes|yep|yeah|no|nope|nah|alright|fine|got\s+it|understood|sounds\s+good)\b[\s!.,]*$/i,
+  /^(bye|goodbye|goodnight|see\s+you|later|cya|brb|talk\s+later)\b[\s!.,]*$/i,
+  /^(how\s+are\s+you|how('s|\s+is)\s+it\s+going|what('s|\s+is)\s+up|you\s+(there|awake|up|around))\b.{0,15}$/i,
+  /^(lol|haha+|lmao|xd|:\)|:d|<3|❤️|😂|👍|🙏)[\s!.,]*$/i,
+];
+
+export function classifyTypedIntent(message: string): Intent {
+  const trimmed = message?.trim() ?? "";
+  if (!trimmed) return "conversation";
+  if (trimmed.length > 60) return "action";
+  if (classifyIntent(trimmed) === "action") return "action";
+  for (const re of CHITCHAT_PATTERNS) {
+    if (re.test(trimmed)) return "conversation";
+  }
+  return "action";
+}

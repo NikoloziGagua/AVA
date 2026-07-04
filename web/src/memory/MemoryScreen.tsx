@@ -6,6 +6,7 @@ import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { MemoryBrain, type BrainNode } from "../components/ava/MemoryBrain.js";
 import { PlaybooksSection } from "./PlaybooksSection.js";
 import { WatchesSection } from "./WatchesSection.js";
+import { PeopleSection } from "./PeopleSection.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { isCoarsePointer } from "../lib/media.js";
@@ -195,10 +196,12 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
         </>
       )}
 
-      {/* Learning + monitoring read surfaces — Ava's playbooks and standing
-          watches stay visible in BOTH views (below the brain in Mind mode). */}
+      {/* Learning + monitoring + reach read surfaces — Ava's playbooks, standing
+          watches, and people map stay visible in BOTH views (below the brain in
+          Mind mode). */}
       <PlaybooksSection />
       <WatchesSection />
+      <PeopleSection />
     </PanelShell>
   );
 }

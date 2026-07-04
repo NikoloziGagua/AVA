@@ -1,6 +1,7 @@
 import type { Db } from "../state/db.js";
 import { enforce } from "./enforce.js";
 import { createApproval, waitForDecision, type Approval } from "../state/approvals.js";
+import { redactSensitiveArgs } from "../orchestrator/redact.js";
 
 export type PolicyEvent =
   | { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } }
@@ -29,7 +30,9 @@ export type PolicyHook = (toolName: string, args: unknown) => Promise<PolicyOutc
 function summarize(toolName: string, args: unknown): string {
   const argSnippet = (() => {
     try {
-      const s = JSON.stringify(args);
+      // Approval summaries land in the DB and push notifications — redact
+      // credentials the same way the event stream does.
+      const s = JSON.stringify(redactSensitiveArgs(args));
       return s.length > 200 ? s.slice(0, 200) + "…" : s;
     } catch {
       return "<unserialisable>";

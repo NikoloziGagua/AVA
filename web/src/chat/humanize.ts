@@ -60,6 +60,18 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "watch_create": return "Setting up a watch";
     case "watch_list": return "Listing watches";
     case "watch_delete": return "Removing a watch";
+    case "instagram_send_dm": return a.person ? `Messaging ${truncate(s(a.person), 24)} on Instagram` : "Sending an Instagram DM";
+    case "instagram_open_chat": return a.person ? `Opening ${truncate(s(a.person), 24)}'s Instagram chat` : "Opening an Instagram chat";
+    case "instagram_read_chat": return a.person ? `Reading ${truncate(s(a.person), 24)}'s Instagram chat` : "Reading an Instagram chat";
+    case "instagram_status": return "Checking Instagram login";
+    case "instagram_login": return "Logging in to Instagram";
+    case "instagram_submit_code": return "Submitting the verification code";
+    case "whatsapp_send_message": return a.person ? `Messaging ${truncate(s(a.person), 24)} on WhatsApp` : "Sending a WhatsApp message";
+    case "whatsapp_open_chat": return a.person ? `Opening ${truncate(s(a.person), 24)}'s WhatsApp chat` : "Opening a WhatsApp chat";
+    case "whatsapp_read_chat": return "Reading a WhatsApp chat";
+    case "whatsapp_status": return "Checking WhatsApp login";
+    case "person_remember": return a.name ? `Remembering ${truncate(s(a.name), 24)}` : "Updating the people map";
+    case "person_list": return "Checking the people map";
     default: return tool.replace(/_/g, " ").replace(/\b\w/, (c) => c.toUpperCase());
   }
 }

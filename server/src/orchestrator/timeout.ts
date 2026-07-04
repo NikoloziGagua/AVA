@@ -8,6 +8,11 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   chrome_navigate: 30_000, chrome_click: 10_000, chrome_type: 10_000,
   chrome_press_key: 5_000, chrome_read_page: 15_000, chrome_screenshot: 15_000, chrome_tabs: 5_000,
   chrome_snapshot: 15_000,
+  // App-module workflows chain several navigations + verification reads.
+  instagram_send_dm: 90_000, instagram_open_chat: 60_000, instagram_read_chat: 60_000,
+  instagram_status: 45_000, instagram_login: 60_000, instagram_submit_code: 30_000,
+  whatsapp_send_message: 90_000, whatsapp_open_chat: 60_000, whatsapp_status: 45_000,
+  whatsapp_read_chat: 60_000,
   // Was 60s against an inner loop of up to 100 model iterations — a guaranteed
   // budget blowout. The dispatch-level abort (agent.ts) now cancels the loop on
   // timeout; 120s gives real visual tasks room to finish.

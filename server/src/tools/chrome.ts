@@ -19,6 +19,7 @@ export type Chrome = {
   press: (key: string) => Promise<{ ok: boolean; reason?: string }>;
   readPage: () => Promise<{ ok: boolean; text?: string; reason?: string }>;
   snapshot: () => Promise<{ ok: boolean; text?: string; reason?: string }>;
+  url: () => string;
   screenshot: () => Promise<{ ok: boolean; path?: string; reason?: string }>;
   tabs: () => Promise<{ ok: boolean; tabs?: Array<{ index: number; url: string; title: string }> }>;
   mouseClick: (x: number, y: number) => Promise<{ ok: boolean; reason?: string }>;
@@ -214,6 +215,9 @@ export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
     viewport() {
       const vp = page.viewportSize() ?? { width: 1280, height: 720 };
       return vp;
+    },
+    url() {
+      try { return page.url(); } catch { return ""; }
     },
     isAlive() {
       return alive;

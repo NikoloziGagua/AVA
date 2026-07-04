@@ -13,7 +13,7 @@ const READ_ONLY_TOOLS = new Set([
   // added for speed were the slowest to start. All of these only read state.
   "read_logs", "read_claude_updates", "read_discussion", "self_improve_status",
   "find_places", "shopify_list_products", "shopify_get_product",
-  "watch_list",
+  "watch_list", "person_list",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -124,6 +124,15 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   if (tool === "watch_create" || tool === "watch_delete") {
     return { tier: "low", reason: "local watch schedule bookkeeping" };
   }
+
+  // App modules. Sends are Sir-initiated with Sir's words (the rubric forbids
+  // autonomous sends), and speed is the point — low, no 15s stall. Login/code
+  // fill forms in Ava's own browser with values Sir just provided; the people
+  // map is local data.
+  if (/^(instagram|whatsapp)_(send_dm|send_message|open_chat|read_chat|status|login|submit_code)$/.test(tool)) {
+    return { tier: "low", reason: "app-module action Sir initiated" };
+  }
+  if (tool === "person_remember") return { tier: "low", reason: "local people-map update" };
 
   if (tool === "memory_remember" || tool === "memory_forget") {
     return { tier: "low", reason: "memory mutation stays inside the local memory dir" };

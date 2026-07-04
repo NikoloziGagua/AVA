@@ -10,6 +10,7 @@ import type { Db } from "../state/db.js";
 import type { Approval } from "../state/approvals.js";
 import { withTimeout, TOOL_BUDGET_MS } from "./timeout.js";
 import { createStuckLoop } from "./stuck-loop.js";
+import { redactSensitiveArgs } from "./redact.js";
 import { loadProjectIndex, detectProject, readProjectFile, type ProjectEntry } from "../memory/project-index.js";
 import {
   classifyActionResult,
@@ -248,7 +249,10 @@ export async function runAgent(opts: RunOpts): Promise<void> {
 
     for (const call of pendingCalls) {
       if (abort.signal.aborted) break;
-      emit({ kind: "tool_call", payload: { tool: call.name, args: call.args } });
+      // Emit REDACTED args: the event stream feeds the UI, transcripts, and
+      // playbook capture — none of which may see credentials (instagram_login).
+      // The tool itself dispatches with the raw args below.
+      emit({ kind: "tool_call", payload: { tool: call.name, args: redactSensitiveArgs(call.args) } });
 
       const detected = detectProjectInArgs(call.args, projectIndex);
       if (detected && detected.slug !== loadedProjectSlug) {

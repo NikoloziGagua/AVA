@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { fetchSuggestedChips, type SuggestedChip } from "../api.js";
+import { isCoarsePointer } from "../lib/media.js";
 import { gsap, useGSAP } from "../lib/gsap.js";
 import { D, EASE, SHADOW, press } from "../lib/deckMotion.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
@@ -28,6 +29,14 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
 
   useEffect(() => {
     fetchSuggestedChips().then(setChips).catch(() => {});
+  }, []);
+
+  // Desktop autofocus: when the chat opens, put the caret straight in the
+  // composer — there's a hardware keyboard, so Sir can just start typing.
+  // Coarse pointers (phones) skip this: autofocus would pop the soft keyboard
+  // over the conversation uninvited.
+  useEffect(() => {
+    if (!isCoarsePointer()) taRef.current?.focus();
   }, []);
 
   useEffect(() => {
@@ -89,6 +98,10 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
     onSend(t);
     setText("");
     if (taRef.current) taRef.current.style.height = "48px";
+    // Keep the caret in the box after a mouse-click send (Enter-sends already
+    // keeps focus; clicking the arrow button steals it). Desktop only — on
+    // phones refocusing would pin the soft keyboard open.
+    if (!isCoarsePointer()) taRef.current?.focus();
   }
 
   const pressHandlers = {
@@ -104,7 +117,9 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
       // (env() is 0 on desktop, so this stays the old pb-3 there).
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" }}
     >
-      <div className="mx-auto w-full max-w-[760px]">
+      {/* lg: match the widened desktop reading column so the composer lines up
+          with the messages instead of sitting narrower than them. */}
+      <div className="mx-auto w-full max-w-[760px] lg:max-w-[860px]">
         {chips.length > 0 && (
           <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 mb-1">
             {chips.map((c) => (

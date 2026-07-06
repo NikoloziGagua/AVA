@@ -4,14 +4,14 @@ import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
-import type { MemoryView } from "../../api.js";
+import type { MemoryView, PersonRow, PlaybookRow, WatchRow } from "../../api.js";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
 
 /** A picked graph node, handed to `onSelect` for the inspector card.
  *  kind "neuron" = background cortex tissue (never selectable/hovered). */
 export type BrainNode = {
   id: string;
-  kind: "core" | "category" | "observation" | "preference" | "project" | "neuron";
+  kind: "core" | "category" | "observation" | "preference" | "project" | "person" | "playbook" | "watch" | "neuron";
   label: string;
   text: string;
   category?: string;
@@ -21,6 +21,10 @@ export type BrainNode = {
 
 export interface MemoryBrainProps {
   memory: MemoryView;
+  /** Everything else Ava knows — each becomes a cortical lobe when present. */
+  people?: PersonRow[];
+  playbooks?: PlaybookRow[];
+  watches?: WatchRow[];
   onSelect?: (node: BrainNode | null) => void;
   /** When false, the gentle idle auto-rotation pauses (drag/zoom + pulses still run). */
   spinning?: boolean;
@@ -160,8 +164,10 @@ function fibDir(i: number, total: number, seed: number, out: THREE.Vector3): THR
   return out.normalize();
 }
 
-/** Build the node + edge model and the one-shot layout from a MemoryView. */
-function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: GraphEdge[] } {
+type BrainExtras = { people: PersonRow[]; playbooks: PlaybookRow[]; watches: WatchRow[] };
+
+/** Build the node + edge model and the one-shot layout from everything Ava knows. */
+function buildGraph(memory: MemoryView, extras: BrainExtras): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
 
@@ -195,64 +201,144 @@ function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: GraphEdge[
     color: THREE.Color;
     leaves: Array<Omit<GraphNode, "pos"> & { recency: number }>;
   }
-  const hubs: HubSpec[] = [];
+  // Hubs are keyed by LABEL and merged: an observation category named
+  // "preferences" folds into the dedicated preferences lobe instead of
+  // spawning a second identically-named hub (the double-PREFERENCES bug).
+  const hubMap = new Map<string, HubSpec>();
+  const getHub = (label: string): HubSpec => {
+    let h = hubMap.get(label);
+    if (!h) {
+      h = { id: `hub:${label}`, label, color: categoryColor(label), leaves: [] };
+      hubMap.set(label, h);
+    }
+    return h;
+  };
 
   // observation category hubs
   for (const [cat, lines] of obsByCat) {
-    const color = categoryColor(cat);
-    const leaves = lines.map((l, i) => ({
-      id: `obs:${l.raw}`,
-      kind: "observation" as const,
-      label: l.text.length > 48 ? l.text.slice(0, 47) + "…" : l.text,
-      text: l.text,
-      category: l.category,
-      confidence: l.confidence,
-      date: l.date,
-      color: color.clone(),
-      size: CONF_SIZE[l.confidence],
-      dim: l.superseded != null,
-      // recency rank for the >MAX_NODES trim: confidence weight + position bias.
-      recency:
-        (l.confidence === "high" ? 3 : l.confidence === "medium" ? 2 : 1) * 1000 +
-        (lines.length - i) +
-        (l.superseded != null ? -5000 : 0),
-    }));
-    hubs.push({ id: `hub:${cat}`, label: cat, color, leaves });
+    const hub = getHub(cat);
+    lines.forEach((l, i) => {
+      hub.leaves.push({
+        id: `obs:${l.raw}`,
+        kind: "observation" as const,
+        label: l.text.length > 48 ? l.text.slice(0, 47) + "…" : l.text,
+        text: l.text,
+        category: l.category,
+        confidence: l.confidence,
+        date: l.date,
+        color: hub.color.clone(),
+        size: CONF_SIZE[l.confidence],
+        dim: l.superseded != null,
+        // recency rank for the >MAX_NODES trim: confidence weight + position bias.
+        recency:
+          (l.confidence === "high" ? 3 : l.confidence === "medium" ? 2 : 1) * 1000 +
+          (lines.length - i) +
+          (l.superseded != null ? -5000 : 0),
+      });
+    });
   }
 
-  // preferences hub
+  // preferences
   {
-    const color = categoryColor("preferences");
-    const leaves = memory.preferences.lines.map((line, i) => ({
-      id: `pref:${line}`,
-      kind: "preference" as const,
-      label: line.length > 48 ? line.slice(0, 47) + "…" : line,
-      text: line,
-      category: "preferences",
-      color: color.clone(),
-      size: CONF_SIZE.medium,
-      dim: false,
-      recency: 2000 + (memory.preferences.lines.length - i),
-    }));
-    hubs.push({ id: "hub:preferences", label: "preferences", color, leaves });
+    const hub = getHub("preferences");
+    memory.preferences.lines.forEach((line, i) => {
+      hub.leaves.push({
+        id: `pref:${line}`,
+        kind: "preference" as const,
+        label: line.length > 48 ? line.slice(0, 47) + "…" : line,
+        text: line,
+        category: "preferences",
+        color: hub.color.clone(),
+        size: CONF_SIZE.medium,
+        dim: false,
+        recency: 2000 + (memory.preferences.lines.length - i),
+      });
+    });
   }
 
-  // projects hub
+  // projects
   {
-    const color = categoryColor("projects");
-    const leaves = memory.projects.map((p, i) => ({
-      id: `proj:${p.slug}`,
-      kind: "project" as const,
-      label: p.slug,
-      text: p.body?.trim() || p.slug,
-      category: "projects",
-      color: color.clone(),
-      size: CONF_SIZE.high,
-      dim: false,
-      recency: 2500 + (memory.projects.length - i),
-    }));
-    hubs.push({ id: "hub:projects", label: "projects", color, leaves });
+    const hub = getHub("projects");
+    memory.projects.forEach((p, i) => {
+      hub.leaves.push({
+        id: `proj:${p.slug}`,
+        kind: "project" as const,
+        label: p.slug,
+        text: p.body?.trim() || p.slug,
+        category: "projects",
+        color: hub.color.clone(),
+        size: CONF_SIZE.high,
+        dim: false,
+        recency: 2500 + (memory.projects.length - i),
+      });
+    });
   }
+
+  // people — Sir's people map: who they are across apps.
+  {
+    const hub = getHub("people");
+    extras.people.forEach((p, i) => {
+      const idents = [
+        p.instagram?.username ? `IG @${p.instagram.username}${p.instagram.threadId ? " ✓" : ""}` : "",
+        p.whatsapp?.username || p.whatsapp?.phone ? `WA ${p.whatsapp?.username ?? p.whatsapp?.phone}` : "",
+      ].filter(Boolean).join(" · ");
+      const aliases = p.aliases?.length ? ` (${p.aliases.join(", ")})` : "";
+      hub.leaves.push({
+        id: `person:${p.id}`,
+        kind: "person" as const,
+        label: p.name,
+        text: `${p.name}${aliases}${idents ? ` — ${idents}` : ""}${p.notes ? `. ${p.notes}` : ""}`,
+        category: "people",
+        color: hub.color.clone(),
+        size: CONF_SIZE.high + 2, // people matter — the biggest leaves
+        dim: false,
+        recency: 3200 + (extras.people.length - i),
+      });
+    });
+  }
+
+  // skills — learned playbooks, sized by how proven they are.
+  {
+    const hub = getHub("skills");
+    extras.playbooks.forEach((b, i) => {
+      const record = `used ${b.uses}×${b.succ || b.fail ? `, ${b.succ}W/${b.fail}L` : ""}${b.avg_secs ? `, ~${b.avg_secs}s` : ""}`;
+      hub.leaves.push({
+        id: `pb:${b.slug}`,
+        kind: "playbook" as const,
+        label: b.trigger.length > 48 ? b.trigger.slice(0, 47) + "…" : b.trigger,
+        text: `${b.trigger} — ${record}. ${b.steps.length} steps${b.lessons?.length ? `; ${b.lessons.length} lesson${b.lessons.length === 1 ? "" : "s"}` : ""}.`,
+        category: "skills",
+        color: hub.color.clone(),
+        size: Math.min(CONF_SIZE.high + 3, 11 + b.uses * 1.5),
+        dim: false,
+        recency: 2900 + (extras.playbooks.length - i),
+      });
+    });
+  }
+
+  // schedule — standing watches, reminders, routines.
+  {
+    const hub = getHub("schedule");
+    extras.watches.forEach((w, i) => {
+      const when = w.run_at
+        ? "once"
+        : w.daily_at ? `daily ${w.daily_at}` : `every ${w.interval_minutes}min`;
+      hub.leaves.push({
+        id: `watch:${w.id}`,
+        kind: "watch" as const,
+        label: w.prompt.length > 48 ? w.prompt.slice(0, 47) + "…" : w.prompt,
+        text: `${w.prompt} — ${when}${w.last_status ? `; last: ${w.last_status}${w.last_result ? ` (${w.last_result})` : ""}` : "; never run"}`,
+        category: "schedule",
+        color: hub.color.clone(),
+        size: CONF_SIZE.medium,
+        dim: !w.enabled,
+        recency: 2700 + (extras.watches.length - i),
+      });
+    });
+  }
+
+  // Empty lobes are noise — only categories that HOLD something get a region.
+  const hubs = [...hubMap.values()].filter((h) => h.leaves.length > 0);
 
   // ── budget: if leaves blow past MAX_NODES, keep the strongest/most-recent and
   // warn (never silently truncate). Core + hubs are always kept.
@@ -444,7 +530,7 @@ function makeHaloTexture(): THREE.Texture {
   return tex;
 }
 
-export function MemoryBrain({ memory, onSelect, spinning = true, className }: MemoryBrainProps) {
+export function MemoryBrain({ memory, people, playbooks, watches, onSelect, spinning = true, className }: MemoryBrainProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   // Keep the latest onSelect without re-running the heavy effect on each render.
@@ -535,7 +621,11 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     scene.add(group);
 
     // ── build geometry ─────────────────────────────────────────────────────────
-    const { nodes, edges } = buildGraph(memory);
+    const { nodes, edges } = buildGraph(memory, {
+      people: people ?? [],
+      playbooks: playbooks ?? [],
+      watches: watches ?? [],
+    });
     const count = nodes.length;
 
     const positions = new Float32Array(count * 3);
@@ -1371,7 +1461,9 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       // Tear down the imperative label overlay (and all hub/hover label children).
       if (overlay.parentElement === container) container.removeChild(overlay);
     };
-  }, [memory, reduced]);
+    // people/playbooks/watches arrive memoized from MindStage (stable identity
+    // unless the CONTENT changed), so polls don't rebuild the GL scene.
+  }, [memory, people, playbooks, watches, reduced]);
 
   const style: CSSProperties = { position: "absolute", inset: 0, overflow: "hidden" };
   return <div ref={containerRef} className={className} style={style} />;

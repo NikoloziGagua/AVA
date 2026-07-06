@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Pencil, Trash2, Check, X, Plus, Pause, Play } from "lucide-react";
-import { fetchMemory, type MemoryView, patchMemoryLine, postMemoryLine } from "../api.js";
+import {
+  fetchMemory, fetchPeople, fetchPlaybooks, fetchWatches,
+  type MemoryView, type PersonRow, type PlaybookRow, type WatchRow,
+  patchMemoryLine, postMemoryLine,
+} from "../api.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { MemoryBrain, type BrainNode } from "../components/ava/MemoryBrain.js";
@@ -221,9 +225,41 @@ function MindStage({
   onSelect: (n: BrainNode | null) => void;
 }) {
   const [spinning, setSpinning] = useState(true);
+  // Everything else Ava knows joins the cortex: people, learned skills,
+  // standing watches. Content-compared before setState so the 60s poll never
+  // rebuilds the GL scene when nothing changed.
+  const [extras, setExtras] = useState<{ people: PersonRow[]; playbooks: PlaybookRow[]; watches: WatchRow[] }>({
+    people: [], playbooks: [], watches: [],
+  });
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const [people, playbooks, watches] = await Promise.all([
+          fetchPeople().catch(() => [] as PersonRow[]),
+          fetchPlaybooks().catch(() => [] as PlaybookRow[]),
+          fetchWatches().catch(() => [] as WatchRow[]),
+        ]);
+        if (!alive) return;
+        const next = { people, playbooks, watches };
+        setExtras((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      } catch { /* best-effort — the brain renders without extras */ }
+    };
+    void load();
+    const t = setInterval(load, 60_000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
   const items =
-    memory.observations.lines.length + memory.preferences.lines.length + memory.projects.length;
-  const hubs = new Set(memory.observations.lines.map((l) => l.category)).size + 2; // + preferences/projects
+    memory.observations.lines.length + memory.preferences.lines.length + memory.projects.length +
+    extras.people.length + extras.playbooks.length + extras.watches.length;
+  const hubLabels = new Set(memory.observations.lines.map((l) => l.category));
+  if (memory.preferences.lines.length) hubLabels.add("preferences");
+  if (memory.projects.length) hubLabels.add("projects");
+  if (extras.people.length) hubLabels.add("people");
+  if (extras.playbooks.length) hubLabels.add("skills");
+  if (extras.watches.length) hubLabels.add("schedule");
+  const hubs = hubLabels.size;
   return (
     <div className="lg:col-span-12" data-panel-section>
       {/* No framing box — the network floats free over the panel backdrop, bigger. */}
@@ -242,7 +278,14 @@ function MindStage({
               "radial-gradient(ellipse 85% 80% at 50% 50%, transparent 38%, rgba(0,0,0,0.55) 86%)",
           }}
         />
-        <MemoryBrain memory={memory} onSelect={onSelect} spinning={spinning} />
+        <MemoryBrain
+          memory={memory}
+          people={extras.people}
+          playbooks={extras.playbooks}
+          watches={extras.watches}
+          onSelect={onSelect}
+          spinning={spinning}
+        />
 
         {/* Telemetry rail, top-left — what the cortex is holding right now. */}
         <div className="pointer-events-none absolute left-4 top-3 hud text-[9px] tracking-[0.22em] text-white/40">
@@ -278,6 +321,9 @@ const KIND_LABEL: Record<BrainNode["kind"], string> = {
   observation: "observation",
   preference: "preference",
   project: "project",
+  person: "person",
+  playbook: "skill",
+  watch: "watch",
   neuron: "neuron", // background tissue — unselectable, present for type completeness
 };
 

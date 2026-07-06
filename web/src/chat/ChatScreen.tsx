@@ -169,6 +169,12 @@ export function ChatScreen({
       return next;
     });
   }
+  // Docked-rail flag (xl): when the Activity panel is expanded it sits as a
+  // docked right rail, so (a) the composer indents to stay centered under the
+  // conversation column and (b) MessageList hides the inline tool chips that
+  // would duplicate the rail's step list. Both effects are xl-gated in CSS, so
+  // nothing changes below xl.
+  const railDocked = steps.length > 0 && !activityCollapsed;
   // Auto-expand the panel the moment a run starts doing things — desktop only;
   // on small screens the expanded panel overlays the conversation, so popping
   // it open uninvited would hide the chat mid-task.
@@ -255,8 +261,10 @@ export function ChatScreen({
             {/* relative wrapper so the EdgeFade strips pin to the VISIBLE scroll
                 edges (the viewport-height column), not the scroller's full
                 content box. They sit OUTSIDE the scroll node as absolute,
-                pointer-events-none siblings over it. */}
-            <div className="relative mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col">
+                pointer-events-none siblings over it.
+                lg: widen to a comfortable laptop reading column (860px) — the
+                phone-width 760px read as a narrow strip on desktop. */}
+            <div className="relative mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col lg:max-w-[860px]">
               <MessageList
                 history={history}
                 liveEvents={liveEvents}
@@ -267,6 +275,7 @@ export function ChatScreen({
                 executing={executing}
                 runningTool={runningTool}
                 headerState={headerState}
+                toolChipsDocked={railDocked}
               />
               <EdgeFade edge="top" />
               <EdgeFade edge="bottom" />
@@ -281,13 +290,18 @@ export function ChatScreen({
             />
           )}
         </div>
-        <Composer
-          onSend={send}
-          onKill={kill}
-          onMicTap={() => onEnterVoice?.()}
-          busy={busy}
-          seed={seed}
-        />
+        {/* xl + docked rail: indent by the rail's occupied width (320px + mr-3)
+            so the composer stays centered under the conversation column instead
+            of centering on the viewport and sliding under the rail. */}
+        <div className={railDocked ? "xl:mr-[332px] xl:transition-[margin] xl:duration-300" : "xl:transition-[margin] xl:duration-300"}>
+          <Composer
+            onSend={send}
+            onKill={kill}
+            onMicTap={() => onEnterVoice?.()}
+            busy={busy}
+            seed={seed}
+          />
+        </div>
       </div>
     </div>
   );

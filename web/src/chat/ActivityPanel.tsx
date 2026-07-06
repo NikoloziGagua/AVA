@@ -19,6 +19,11 @@ const STATUS_GLYPH: Record<ActivityStep["status"], string> = { done: "✓", runn
  * column left the conversation a one-word-per-line sliver): both states pin to
  * the right edge of the (relative) chat row — the tab floats mid-edge, the
  * expanded list overlays the conversation at ≤85vw/320px.
+ *
+ * At `xl` it becomes a proper desktop right rail: 320px, inset from the edges,
+ * restyled by `.activity-rail`'s xl media query (theme.css) from a hard
+ * border-left divider into a floating glass card — full height of the chat
+ * area with its own scroll, sitting beside the conversation, never over it.
  */
 export function ActivityPanel({ steps, collapsed, onToggle, executing }: ActivityPanelProps) {
   const doneCount = steps.filter((s) => s.status === "done").length;
@@ -47,15 +52,7 @@ export function ActivityPanel({ steps, collapsed, onToggle, executing }: Activit
   }
 
   return (
-    <aside
-      className="absolute inset-y-0 right-0 z-20 flex w-[min(85vw,320px)] flex-col p-3.5 sm:static sm:w-[280px] sm:flex-none"
-      style={{
-        borderLeft: "1px solid rgba(92,242,255,0.2)",
-        background: "rgba(6,10,16,0.55)",
-        backdropFilter: "blur(16px)",
-        WebkitBackdropFilter: "blur(16px)",
-      }}
-    >
+    <aside className="activity-rail absolute inset-y-0 right-0 z-20 flex w-[min(85vw,320px)] flex-col p-3.5 sm:static sm:w-[280px] sm:flex-none xl:my-3 xl:mr-3 xl:w-[320px] xl:p-4">
       <div className="flex items-center gap-2">
         {executing && (
           <span
@@ -75,7 +72,9 @@ export function ActivityPanel({ steps, collapsed, onToggle, executing }: Activit
         </button>
       </div>
 
-      <div className="no-scrollbar mt-3 flex flex-col overflow-y-auto">
+      {/* flex-1 + min-h-0 so a long run scrolls INSIDE the rail (its own
+          scroll) instead of growing the aside past the chat area. */}
+      <div className="no-scrollbar mt-3 flex min-h-0 flex-1 flex-col overflow-y-auto">
         {steps.length === 0 ? (
           <div className="hud text-[9px] text-white/30">No activity yet</div>
         ) : (

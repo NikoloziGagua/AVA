@@ -51,7 +51,11 @@ export function MessageActions({ text, onRetry }: MessageActionsProps) {
   }
 
   return (
-    <div className="flex gap-1">
+    // Desktop (lg+): dim at rest, full strength on bubble hover (AvaBubble
+    // carries group/msg) or keyboard focus — the always-bright row read as
+    // button clutter on a laptop, but fully hiding it left a blank band inside
+    // the bubble. Mobile keeps them always visible (no hover there).
+    <div className="flex gap-1 transition-opacity duration-200 lg:opacity-40 lg:group-hover/msg:opacity-100 lg:focus-within:opacity-100">
       {onRetry && (
         <ActBtn label="Retry" onClick={onRetry}>
           <RefreshCcw size={13} />

@@ -43,6 +43,13 @@ export interface MessageListProps {
   executing?: boolean;
   runningTool?: string | null;
   headerState?: "idle" | "thinking" | "responding";
+  /**
+   * True when the Activity panel is expanded (docked as a right rail at xl).
+   * Hides the inline tool-call chips at xl only — there they'd mirror the
+   * rail's step list line for line. Below xl (and whenever the rail is
+   * collapsed) the chips stay, as they're the only live-step surface.
+   */
+  toolChipsDocked?: boolean;
 }
 
 export function MessageList({
@@ -55,6 +62,7 @@ export function MessageList({
   executing = false,
   runningTool,
   headerState = "idle",
+  toolChipsDocked = false,
 }: MessageListProps) {
   const reduced = useReducedMotion();
   const internalRef = useRef<HTMLDivElement>(null);
@@ -186,7 +194,7 @@ export function MessageList({
   }, [lastFinal]);
 
   return (
-    <div ref={attachScroller} className="no-scrollbar relative flex-1 overflow-y-auto px-4 py-6 space-y-5">
+    <div ref={attachScroller} className="soft-scrollbar relative flex-1 overflow-y-auto px-4 py-6 space-y-5 lg:px-6">
       {history.map((m) => (
         <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
           {m.role === "user" ? (
@@ -226,7 +234,12 @@ export function MessageList({
           );
         }
         if (e.kind === "tool_call") {
-          return <ToolCallChip key={key} label={humanizeTool(e.payload.tool, e.payload.args)} />;
+          // Docked rail (xl) already lists this step — skip the inline twin.
+          return (
+            <div key={key} className={toolChipsDocked ? "xl:hidden" : undefined}>
+              <ToolCallChip label={humanizeTool(e.payload.tool, e.payload.args)} />
+            </div>
+          );
         }
         if (e.kind === "tool_result") {
           // Success is already reflected live in the Activity panel and the
@@ -320,7 +333,7 @@ function OwnerBubble({ text, reduced }: { text: string; reduced: boolean }) {
       data-bubble
       onPointerEnter={() => ref.current && hoverLift(ref.current, true, reduced)}
       onPointerLeave={() => ref.current && hoverLift(ref.current, false, reduced)}
-      className="lg-sweep group relative max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14.5px] text-white/95"
+      className="lg-sweep group relative max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14.5px] text-white/95 lg:max-w-[82%]"
       style={{
         background:
           "linear-gradient(135deg, rgba(214,238,244,0.16), rgba(159,198,212,0.05))",
@@ -344,7 +357,9 @@ function OwnerBubble({ text, reduced }: { text: string; reduced: boolean }) {
 function AvaBubble({ children, reduced }: { children: React.ReactNode; reduced: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   return (
-    <div className="flex items-start gap-3 max-w-[88%]">
+    // group/msg: desktop hover-reveals the action row (see MessageActions) —
+    // scoped/named so it can't collide with other `group` uses in the tree.
+    <div className="group/msg flex items-start gap-3 max-w-[88%] lg:max-w-[92%]">
       <div className="shrink-0 mt-1">
         <Orb state="idle" size={22} />
       </div>

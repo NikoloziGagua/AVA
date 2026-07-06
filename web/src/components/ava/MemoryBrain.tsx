@@ -1,12 +1,17 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { MemoryView } from "../../api.js";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
 
-/** A picked graph node, handed to `onSelect` for the inspector card. */
+/** A picked graph node, handed to `onSelect` for the inspector card.
+ *  kind "neuron" = background cortex tissue (never selectable/hovered). */
 export type BrainNode = {
   id: string;
-  kind: "core" | "category" | "observation" | "preference" | "project";
+  kind: "core" | "category" | "observation" | "preference" | "project" | "neuron";
   label: string;
   text: string;
   category?: string;
@@ -84,20 +89,24 @@ function truncate(s: string, max: number): string {
   return t.length > max ? t.slice(0, max - 1).trimEnd() + "…" : t;
 }
 
-// Point sizes (world units; sizeAttenuation on). Core > hubs > leaves.
+// Point sizes (world units; sizeAttenuation on). Core > hubs > leaves > tissue.
 const SIZE_CORE = 40;
-const SIZE_HUB = 26;
+const SIZE_HUB = 24;
 const CONF_SIZE: Record<"low" | "medium" | "high", number> = {
   high: 16,
   medium: 12.5,
   low: 9,
 };
+const SIZE_TISSUE_MIN = 4.5;
 
 const MAX_NODES = 400;
+// Background cortex neurons: enough that the brain silhouette reads even when
+// memory is sparse; they carry cascades but are never hovered/selected.
+const TISSUE_COUNT = 460;
 // Samples per curved edge: each edge becomes CURVE_SEG line segments along a
 // quadratic bézier, so pulses travel along an organic dendrite, not a chord.
 const CURVE_SEG = 10;
-const DUST_COUNT = 400;
+const DUST_COUNT = 260;
 
 // A full graph node with its computed position + render attributes.
 interface GraphNode extends BrainNode {
@@ -107,13 +116,48 @@ interface GraphNode extends BrainNode {
   dim: boolean; // superseded observations render faint
 }
 
-// An edge with the hub tint that colors its pulse + its layer kind.
+// An edge of the connectome. Kinds: 0 = lobe fiber (hub↔leaf), 1 = short
+// cortical mesh (nearest neighbours), 2 = long-range association fiber arcing
+// through the interior (bows INWARD — white matter).
 interface GraphEdge {
   a: number;
   b: number;
   tint: THREE.Color;
-  /** 0 = primary spoke (core→hub, hub→leaf), 1 = dim cross-link web. */
-  kind: 0 | 1;
+  kind: 0 | 1 | 2;
+}
+
+// ── brain anatomy ────────────────────────────────────────────────────────────
+// The cortex is a SHELL: an x-stretched ellipsoid split into two hemispheres by
+// a longitudinal fissure, flattened underneath, viewed coronally (camera on
+// +z). All sampling is deterministic (hash01 by seed).
+const BRAIN = { rx: 235, ry: 150, rz: 150, fissure: 38, floor: -0.72 };
+
+/** Map a unit direction onto the cortex shell (depth 0 = surface, 1 = deep). */
+function brainPoint(dir: THREE.Vector3, depth: number, out: THREE.Vector3): THREE.Vector3 {
+  const shell = 1 - depth * 0.22; // cortex occupies the outer ~22%
+  out.set(dir.x * BRAIN.rx * shell, dir.y * BRAIN.ry * shell, dir.z * BRAIN.rz * shell);
+  // Flatten the underside (brains sit on a base, they don't taper to a ball).
+  if (out.y < BRAIN.ry * BRAIN.floor) out.y = BRAIN.ry * BRAIN.floor + (out.y - BRAIN.ry * BRAIN.floor) * 0.35;
+  // Longitudinal fissure: REFLECT midline mass outward so the canyon gets two
+  // dense glowing walls (like real medial surfaces) instead of a soft void.
+  const gap = BRAIN.fissure * (0.4 + 0.6 * Math.max(0, out.y / BRAIN.ry + 0.35));
+  if (Math.abs(out.x) < gap) {
+    const sgn = out.x >= 0 ? 1 : -1;
+    out.x = sgn * (gap + (gap - Math.abs(out.x)) * 0.35);
+  }
+  return out;
+}
+
+/** Deterministic unit direction n-th sample (fibonacci sphere + jitter). */
+function fibDir(i: number, total: number, seed: number, out: THREE.Vector3): THREE.Vector3 {
+  const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+  const t = total > 1 ? i / (total - 1) : 0.5;
+  const y = 1 - t * 2 + jitter(seed, 3, 0.16);
+  const clampedY = Math.max(-1, Math.min(1, y));
+  const ringR = Math.sqrt(Math.max(0, 1 - clampedY * clampedY));
+  const theta = GOLDEN * i + jitter(seed, 4, 0.35);
+  out.set(Math.cos(theta) * ringR, clampedY, Math.sin(theta) * ringR);
+  return out.normalize();
 }
 
 /** Build the node + edge model and the one-shot layout from a MemoryView. */
@@ -127,9 +171,11 @@ function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: GraphEdge[
     kind: "core",
     label: "Ava",
     text: memory.personality?.trim() || "Ava — central memory core.",
-    pos: new THREE.Vector3(0, 0, 0),
+    // The thalamus sits DEEP and slightly low — never in the fissure line,
+    // where its bloom would plug the two-hemisphere read from above.
+    pos: new THREE.Vector3(0, -34, -6),
     color: CORE_COLOR.clone(),
-    size: SIZE_CORE,
+    size: 30,
     dim: false,
   });
 
@@ -228,25 +274,17 @@ function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: GraphEdge[
     );
   }
 
-  // ── place hubs on a fibonacci (golden-spiral) sphere around the core ─────────
-  const HUB_RADIUS = 170;
-  const GOLDEN = Math.PI * (3 - Math.sqrt(5)); // ~2.399963
+  // ── CORTICAL LOBES: each category claims a region of the brain SHELL ────────
+  // Hub = the lobe's anchor on the surface; its leaves scatter around it within
+  // an angular neighbourhood at cortex depth. The result is a brain-shaped
+  // point cloud with colored functional regions, not floating star-bursts.
+  const scratchDir = new THREE.Vector3();
   const hubIndices: number[] = [];
   hubs.forEach((hub, h) => {
     const hubIndex = nodes.length;
     hubIndices.push(hubIndex);
-    // Even sphere distribution + a small deterministic radius wobble so it reads
-    // organic rather than a perfect shell.
-    const t = hubCount > 1 ? h / (hubCount - 1) : 0.5;
-    const y = 1 - t * 2; // 1 → -1
-    const ringR = Math.sqrt(Math.max(0, 1 - y * y));
-    const theta = GOLDEN * h;
-    const rad = HUB_RADIUS * (0.9 + hash01(h * 13 + 3) * 0.25);
-    const hubPos = new THREE.Vector3(
-      Math.cos(theta) * ringR * rad,
-      y * rad,
-      Math.sin(theta) * ringR * rad,
-    );
+    const hubDir = fibDir(h, Math.max(2, hubCount), h * 977 + 5, new THREE.Vector3());
+    const hubPos = brainPoint(hubDir, 0.15, new THREE.Vector3());
     nodes.push({
       id: hub.id,
       kind: "category",
@@ -258,71 +296,111 @@ function buildGraph(memory: MemoryView): { nodes: GraphNode[]; edges: GraphEdge[
       size: SIZE_HUB,
       dim: false,
     });
-    edges.push({ a: 0, b: hubIndex, tint: hub.color.clone(), kind: 0 }); // core → hub
 
-    // ── leaves cluster in a small jittered cloud just outside the hub ──────────
-    const cloud = 46 + Math.min(36, hub.leaves.length * 1.4);
-    const leafIndices: number[] = [];
+    // Leaves: jittered directions in the lobe's angular neighbourhood, placed
+    // at varying cortex depth so the region has thickness, not a decal.
+    const spread = 0.34 + Math.min(0.3, hub.leaves.length * 0.02);
     hub.leaves.forEach((leaf, li) => {
       const seed = h * 1009 + li * 31 + 1;
-      // Direction biased outward from the core through the hub, plus jitter.
-      const dir = hubPos
-        .clone()
-        .normalize()
-        .multiplyScalar(0.6)
-        .add(new THREE.Vector3(jitter(seed, 0, 1), jitter(seed, 1, 1), jitter(seed, 2, 1)))
+      scratchDir
+        .copy(hubDir)
+        .add(new THREE.Vector3(jitter(seed, 0, spread), jitter(seed, 1, spread), jitter(seed, 2, spread)))
         .normalize();
-      const dist = cloud * (0.55 + hash01(seed) * 0.9);
-      const leafPos = hubPos.clone().add(dir.multiplyScalar(dist));
+      const leafPos = brainPoint(scratchDir, hash01(seed * 3 + 7) * 0.5, new THREE.Vector3());
       const leafIndex = nodes.length;
-      leafIndices.push(leafIndex);
-      nodes.push({
-        ...leaf,
-        pos: leafPos,
-      });
-      edges.push({ a: hubIndex, b: leafIndex, tint: hub.color.clone(), kind: 0 }); // hub → leaf
+      nodes.push({ ...leaf, pos: leafPos });
+      edges.push({ a: hubIndex, b: leafIndex, tint: hub.color.clone(), kind: 0 }); // lobe fiber
     });
-
-    // ── cross-link web: faint dendrites between SIBLING leaves so each cluster
-    // reads as interconnected tissue, not a star burst. Deterministic ~40% of
-    // adjacent sibling pairs link up; drawn dim (kind 1) so the spokes stay primary.
-    for (let li = 0; li + 1 < leafIndices.length; li++) {
-      if (hash01(h * 7919 + li * 233 + 5) < 0.4) {
-        edges.push({ a: leafIndices[li]!, b: leafIndices[li + 1]!, tint: hub.color.clone(), kind: 1 });
-      }
-    }
   });
 
-  // ── hub ring: whisper-faint long arcs between neighbouring hubs — the cortex's
-  // association fibres. Only with 3+ hubs (a 2-hub "ring" is just a doubled edge).
-  if (hubIndices.length >= 3) {
-    for (let h = 0; h < hubIndices.length; h++) {
-      const a = hubIndices[h]!;
-      const b = hubIndices[(h + 1) % hubIndices.length]!;
-      edges.push({ a, b, tint: nodes[b]!.color.clone(), kind: 1 });
+  // ── BACKGROUND TISSUE: dim neurons filling the whole shell so the brain
+  // silhouette reads even with sparse memory. Tinted faintly toward the
+  // nearest lobe so regions bleed into their surroundings.
+  const tissueStart = nodes.length;
+  for (let i = 0; i < TISSUE_COUNT; i++) {
+    const dir = fibDir(i, TISSUE_COUNT, i * 613 + 41, new THREE.Vector3());
+    // Depth biased hard toward the SURFACE: the outline is what makes the
+    // point cloud read as a brain, so the shell must be the dense part.
+    const d01 = hash01(i * 379 + 11);
+    const pos = brainPoint(dir, d01 * d01 * 0.6, new THREE.Vector3());
+    // Nearest hub tint (falls back to base cyan when there are no hubs).
+    let best = -1;
+    let bestD = Infinity;
+    for (const hi of hubIndices) {
+      const d = pos.distanceToSquared(nodes[hi]!.pos);
+      if (d < bestD) { bestD = d; best = hi; }
+    }
+    const tint = best >= 0 ? nodes[best]!.color.clone() : new THREE.Color("#5cf2ff");
+    tint.lerp(new THREE.Color("#356a78"), 0.55); // recede behind the data
+    nodes.push({
+      id: `tissue:${i}`,
+      kind: "neuron",
+      label: "",
+      text: "",
+      pos,
+      color: tint,
+      size: SIZE_TISSUE_MIN + 1.5 + hash01(i * 97 + 3) * 4.5,
+      dim: false,
+    });
+  }
+
+  // ── CONNECTOME ───────────────────────────────────────────────────────────────
+  // 1. Short cortical mesh: every neuron (data + tissue, not core) links to its
+  //    2 nearest neighbours — dense local dendrites, the "network" texture.
+  const meshable: number[] = [];
+  for (let i = 1; i < nodes.length; i++) meshable.push(i);
+  const seen = new Set<string>();
+  const K = 2;
+  for (const i of meshable) {
+    // brute-force nearest neighbours (runs once; ≤ ~550 nodes → fine)
+    const dists: Array<{ j: number; d: number }> = [];
+    for (const j of meshable) {
+      if (j === i) continue;
+      dists.push({ j, d: nodes[i]!.pos.distanceToSquared(nodes[j]!.pos) });
+    }
+    dists.sort((a, b) => a.d - b.d);
+    const MAX_MESH_LEN_SQ = 95 * 95; // no long chords masquerading as "local"
+    let added = 0;
+    for (let k = 0; k < dists.length && added < K; k++) {
+      const j = dists[k]!.j;
+      // The second link respects the length cap; the first always lands so no
+      // neuron is orphaned from the connectome.
+      if (added > 0 && dists[k]!.d > MAX_MESH_LEN_SQ) break;
+      // Local fibers don't jump the longitudinal fissure near the midline —
+      // hemispheres must read as separate bodies (only kind-2 fibers cross).
+      const xa = nodes[i]!.pos.x;
+      const xb = nodes[j]!.pos.x;
+      if (Math.sign(xa) !== Math.sign(xb) && Math.min(Math.abs(xa), Math.abs(xb)) < 55) continue;
+      const key = i < j ? `${i}:${j}` : `${j}:${i}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const tint = nodes[i]!.kind === "neuron" ? nodes[j]!.color : nodes[i]!.color;
+      edges.push({ a: i, b: j, tint: tint.clone(), kind: 1 });
+      added++;
     }
   }
 
-  // ── long-range association fibres: faint arcs between leaves of DIFFERENT
-  // clusters. A few dozen of these span the empty middle volume and make the
-  // graph read as one connected cortex instead of isolated star-bursts.
-  // Deterministic picks; capped so a small memory never turns into spaghetti.
-  const leafIdx: Array<{ idx: number; hub: number }> = [];
-  nodes.forEach((n, i) => {
-    if (n.kind !== "core" && n.kind !== "category") {
-      leafIdx.push({ idx: i, hub: hubIndices.findIndex((hi) => nodes[hi]!.category === n.category) });
-    }
-  });
-  const want = Math.min(36, Math.floor(leafIdx.length * 0.7));
+  // 2. Long-range association fibers: a handful of arcs THROUGH the interior
+  //    (white matter) between distant regions — including cross-hemisphere
+  //    fibers over the corpus callosum. Deterministic picks, capped.
+  const want = Math.min(16, Math.floor(meshable.length * 0.08));
   let made = 0;
-  for (let k = 0; k < want * 4 && made < want; k++) {
-    const a = leafIdx[Math.floor(hash01(k * 433 + 7) * leafIdx.length)];
-    const b = leafIdx[Math.floor(hash01(k * 991 + 19) * leafIdx.length)];
-    if (!a || !b || a.idx === b.idx || a.hub === b.hub) continue;
-    edges.push({ a: a.idx, b: b.idx, tint: nodes[b.idx]!.color.clone(), kind: 1 });
+  for (let k = 0; k < want * 6 && made < want; k++) {
+    const a = meshable[Math.floor(hash01(k * 433 + 7) * meshable.length)]!;
+    const b = meshable[Math.floor(hash01(k * 991 + 19) * meshable.length)]!;
+    if (a === b) continue;
+    const da = nodes[a]!.pos.distanceTo(nodes[b]!.pos);
+    if (da < BRAIN.rx * 0.85) continue; // long-range only
+    edges.push({ a, b, tint: nodes[b]!.color.clone(), kind: 2 });
     made++;
   }
 
+  // 3. The core (thalamus, at the origin) wires into each lobe hub.
+  for (const hi of hubIndices) {
+    edges.push({ a: 0, b: hi, tint: nodes[hi]!.color.clone(), kind: 2 });
+  }
+
+  void tissueStart;
   return { nodes, edges };
 }
 
@@ -419,13 +497,21 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     const camera = new THREE.PerspectiveCamera(55, width / height, 1, 5000);
     const CAM_MIN = 200;
     const CAM_MAX = 1100;
-    let camDist = 440; // closer default — the network fills the stage with presence
+    let camDist = 505; // frames the full silhouette with breathing room
     camera.position.set(0, 0, camDist);
 
     const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
     renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
     renderer.setSize(width, height);
     renderer.setClearColor(0x000000, 0);
+    // BLOOM (the SYNAPSES trick): hot pixels — firing somas, cascade heads —
+    // spill real light. The stage behind this canvas is near-black, so bloom
+    // over the transparent clear reads clean.
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 1.05, 0.6, 0.15);
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
     const canvas = renderer.domElement;
     canvas.style.width = "100%";
     canvas.style.height = "100%";
@@ -439,10 +525,11 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     // portrait canvas it shoved the graph past the side edges (sparse, clipped).
     // Derived from the canvas aspect at setup AND on every resize.
     const applyGroupScale = () => {
-      // Landscape keeps the wide cinematic spread but with enough vertical body
-      // that the network fills the tall stage instead of banding across its middle.
-      if (camera.aspect >= 1) group.scale.set(2.15, 0.85, 1);
-      else group.scale.set(1.15, 1.05, 1); // portrait — near-uniform so it fits the frame
+      // The brain SILHOUETTE is the design — scale near-uniformly and let the
+      // anatomy (wide hemispheres, coronal view) fill the stage. A hard
+      // horizontal stretch would smear the shape back into a blob.
+      if (camera.aspect >= 1) group.scale.set(1.22, 1.0, 1.05);
+      else group.scale.set(0.82, 0.95, 1); // portrait — fit both hemispheres
     };
     applyGroupScale();
     scene.add(group);
@@ -456,12 +543,15 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     const sizes = new Float32Array(count);
     const seeds = new Float32Array(count); // per-node phase for the twinkle
     const baseSizes = new Float32Array(count); // immutable copy for hover bump
+    // Firing clock per node: the shader brightens + swells a soma briefly after
+    // its aFlash time (cascade arrivals). -1e4 = never fired.
+    const flashes = new Float32Array(count).fill(-1e4);
     for (let i = 0; i < count; i++) {
       const n = nodes[i]!;
       positions[i * 3] = n.pos.x;
       positions[i * 3 + 1] = n.pos.y;
       positions[i * 3 + 2] = n.pos.z;
-      const dimK = n.dim ? 0.4 : 1;
+      const dimK = n.dim ? 0.4 : n.kind === "neuron" ? 0.74 : 1;
       colors[i * 3] = n.color.r * dimK;
       colors[i * 3 + 1] = n.color.g * dimK;
       colors[i * 3 + 2] = n.color.b * dimK;
@@ -477,6 +567,9 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     pointsGeo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
     pointsGeo.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
     pointsGeo.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+    const flashAttr = new THREE.BufferAttribute(flashes, 1);
+    flashAttr.setUsage(THREE.DynamicDrawUsage);
+    pointsGeo.setAttribute("aFlash", flashAttr);
 
     // Shared chunks: per-node decorrelated twinkle (replaces the old global pulse
     // where every node breathed in unison) + a view-depth fade so far nodes recede
@@ -484,8 +577,10 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     const POINT_VERTEX = `
       attribute float size;
       attribute float aSeed;
+      attribute float aFlash;
       varying vec3 vColor;
       varying float vDepth;
+      varying float vFlash;
       uniform float uTime;
       uniform float uScale;
       uniform float uPixelRatio;
@@ -494,8 +589,11 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         vDepth = -mv.z;
         float tw = 1.0 + 0.07 * sin(uTime * 1.6 + aSeed * 6.2831);
-        // size attenuation: shrink with distance, scale by DPR + twinkle.
-        float s = min(size * uScale, 86.0);
+        // Action-potential flash: swell fast, decay ~0.8s after the cascade
+        // wavefront arrives at this soma.
+        float dt = uTime - aFlash;
+        vFlash = dt >= 0.0 ? exp(-dt * 2.6) : 0.0;
+        float s = min(size * uScale, 86.0) * (1.0 + vFlash * 0.9);
         gl_PointSize = s * tw * uPixelRatio * (300.0 / -mv.z);
         gl_Position = projectionMatrix * mv;
       }
@@ -506,12 +604,15 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       uniform float uCamDist;
       varying vec3 vColor;
       varying float vDepth;
+      varying float vFlash;
       void main() {
         vec4 t = texture2D(uTex, gl_PointCoord);
         if (t.a < 0.02) discard;
         float fade = smoothstep(uCamDist + 320.0, uCamDist - 160.0, vDepth);
-        float a = t.a * uAlpha * mix(0.52, 1.0, fade);
-        gl_FragColor = vec4(vColor, 1.0) * a;
+        // A firing soma lifts toward hot white — the visible "spike".
+        vec3 col = mix(vColor, vec3(0.95, 1.0, 1.0), vFlash * 0.75);
+        float a = t.a * uAlpha * mix(0.52, 1.0, fade) * (1.0 + vFlash * 0.6);
+        gl_FragColor = vec4(col, 1.0) * a;
       }
     `;
 
@@ -573,6 +674,12 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     const lineSeed = new Float32Array(edges.length * vertsPerEdge);
     const lineKind = new Float32Array(edges.length * vertsPerEdge);
     const lineTint = new Float32Array(edges.length * vertsPerEdge * 3);
+    // Cascade wiring: per-edge fire time (-1e4 = idle), travel direction flag,
+    // and world length (converts a shared speed into per-edge progress rate).
+    const lineFire = new Float32Array(edges.length * vertsPerEdge).fill(-1e4);
+    const lineFlip = new Float32Array(edges.length * vertsPerEdge);
+    const lineLen = new Float32Array(edges.length * vertsPerEdge);
+    const edgeLens = new Float32Array(edges.length);
 
     const va = new THREE.Vector3();
     const vb = new THREE.Vector3();
@@ -600,16 +707,23 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       vb.copy(nodes[edge.b]!.pos);
       mid.copy(va).add(vb).multiplyScalar(0.5);
       const len = va.distanceTo(vb);
-      // Outward bow (away from the core) + a sideways arc, both deterministic.
+      edgeLens[e] = len;
       dir.copy(vb).sub(va).normalize();
       perp.copy(dir).cross(Math.abs(dir.y) > 0.92 ? RIGHT : UP).normalize();
       const side = (hash01(e * 911 + 29) - 0.5) * 2; // [-1, 1]
-      const bowOut = len * (edge.kind === 1 ? 0.16 : 0.1);
-      const bowSide = len * 0.16 * side;
-      ctrl
-        .copy(mid)
-        .add(mid.lengthSq() > 1 ? mid.clone().normalize().multiplyScalar(bowOut) : perp.clone().multiplyScalar(bowOut))
-        .add(perp.multiplyScalar(bowSide));
+      const bowSide = len * 0.14 * side;
+      if (edge.kind === 2) {
+        // Long-range association fiber: bow INWARD through the interior — the
+        // white matter beneath the cortex, not an arc over the surface.
+        ctrl.copy(mid).multiplyScalar(0.28).add(perp.clone().multiplyScalar(bowSide * 0.5));
+      } else {
+        // Cortical fibers hug the shell: gentle outward bow + sideways arc.
+        const bowOut = len * (edge.kind === 1 ? 0.14 : 0.09);
+        ctrl
+          .copy(mid)
+          .add(mid.lengthSq() > 1 ? mid.clone().normalize().multiplyScalar(bowOut) : perp.clone().multiplyScalar(bowOut))
+          .add(perp.multiplyScalar(bowSide));
+      }
 
       const seed = hash01(e * 2654435761 + 11); // deterministic phase per edge
       bez(0, va, ctrl, vb, samplePrev);
@@ -630,6 +744,8 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
         lineSeed[vi + 1] = seed;
         lineKind[vi] = edge.kind;
         lineKind[vi + 1] = edge.kind;
+        lineLen[vi] = len;
+        lineLen[vi + 1] = len;
         lineTint[vi * 3] = edge.tint.r;
         lineTint[vi * 3 + 1] = edge.tint.g;
         lineTint[vi * 3 + 2] = edge.tint.b;
@@ -645,13 +761,22 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     lineGeo.setAttribute("aSeed", new THREE.BufferAttribute(lineSeed, 1));
     lineGeo.setAttribute("aKind", new THREE.BufferAttribute(lineKind, 1));
     lineGeo.setAttribute("aTint", new THREE.BufferAttribute(lineTint, 3));
+    lineGeo.setAttribute("aLen", new THREE.BufferAttribute(lineLen, 1));
+    const fireAttr = new THREE.BufferAttribute(lineFire, 1);
+    fireAttr.setUsage(THREE.DynamicDrawUsage);
+    lineGeo.setAttribute("aFire", fireAttr);
+    const flipAttr = new THREE.BufferAttribute(lineFlip, 1);
+    flipAttr.setUsage(THREE.DynamicDrawUsage);
+    lineGeo.setAttribute("aFlip", flipAttr);
 
     // uPulseOn = 0 freezes the travelling band (reduced motion) → faint static lines.
+    const CASCADE_SPEED = 340; // world units / second — the action-potential speed
     const lineMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uSpeed: { value: 0.32 }, // pulse cycles per second along an edge
+        uSpeed: { value: 0.13 }, // ambient shimmer drift (slow)
         uPulseOn: { value: reduced ? 0 : 1 },
+        uCascadeSpeed: { value: CASCADE_SPEED },
         uCamDist: { value: camDist },
         uBase: { value: new THREE.Color("#5cf2ff") }, // resting filament
         uPulseColor: { value: new THREE.Color("#dffaff") }, // bright near-white-cyan band
@@ -661,16 +786,25 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
         attribute float aSeed;
         attribute float aKind;
         attribute vec3 aTint;
+        attribute float aFire;
+        attribute float aFlip;
+        attribute float aLen;
         varying float vProgress;
         varying float vSeed;
         varying float vKind;
         varying vec3 vTint;
         varying float vDepth;
+        varying float vFire;
+        varying float vFlip;
+        varying float vLen;
         void main() {
           vProgress = aProgress;
           vSeed = aSeed;
           vKind = aKind;
           vTint = aTint;
+          vFire = aFire;
+          vFlip = aFlip;
+          vLen = aLen;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
           vDepth = -mv.z;
           gl_Position = projectionMatrix * mv;
@@ -681,6 +815,7 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
         uniform float uTime;
         uniform float uSpeed;
         uniform float uPulseOn;
+        uniform float uCascadeSpeed;
         uniform float uCamDist;
         uniform vec3 uBase;
         uniform vec3 uPulseColor;
@@ -689,26 +824,36 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
         varying float vKind;
         varying vec3 vTint;
         varying float vDepth;
+        varying float vFire;
+        varying float vFlip;
+        varying float vLen;
         void main() {
-          // Resting filament: primary spokes glow a readable hub-tinted cyan; the
-          // cross-link web sits far dimmer so structure stays legible. (Additive —
-          // brightness ≈ col * alpha.)
-          float strength = mix(1.0, 0.32, vKind);
-          vec3 base = mix(uBase, vTint, 0.45) * 0.75 * strength;
-          // Pulse head position in [0,1), per-edge phase from the seed; flows 0→1.
-          // The web pulses slower + weaker than the spokes.
-          float speed = uSpeed * mix(1.0, 0.55, vKind);
-          float p = fract(uTime * speed + vSeed);
-          // Wrapped distance from this fragment's progress to the pulse head so the
-          // band crosses the 0/1 seam seamlessly.
-          float d = vProgress - p;
-          d = d - floor(d + 0.5); // wrap into [-0.5, 0.5]
-          // Narrow gaussian → a tight bright travelling band, tinted toward the hub.
-          float pulse = exp(-(d * d) / (2.0 * 0.018 * 0.018)) * uPulseOn * mix(1.0, 0.35, vKind);
-          vec3 col = base + mix(uPulseColor, vTint, 0.35) * pulse;
-          // View-depth fade: far filaments recede instead of flattening the image.
-          float fade = smoothstep(uCamDist + 320.0, uCamDist - 160.0, vDepth);
-          float a = (0.6 * strength + pulse * 0.4) * mix(0.45, 1.0, fade);
+          // Resting connectome: lobe fibers (kind 0) glow strongest, the short
+          // cortical mesh (1) is quiet tissue, long-range fibers (2) sit between.
+          float strength = vKind < 0.5 ? 1.0 : (vKind < 1.5 ? 0.30 : 0.40);
+          vec3 base = mix(uBase, vTint, 0.45) * 0.62 * strength;
+          // Ambient shimmer: a slow faint band drifting along every fiber keeps
+          // the cortex alive between thoughts (much subtler than a cascade).
+          float p0 = fract(uTime * uSpeed * mix(1.0, 0.5, min(vKind, 1.0)) + vSeed);
+          float d0 = vProgress - p0;
+          d0 = d0 - floor(d0 + 0.5);
+          float shimmer = exp(-(d0 * d0) / (2.0 * 0.02 * 0.02)) * uPulseOn * 0.28;
+          // CASCADE — the action potential. When this edge's fire time passes,
+          // one bright wavefront runs a→b (or b→a when flipped) at a shared
+          // world speed, then the fiber goes quiet again.
+          float dt = uTime - vFire;
+          float head = dt * uCascadeSpeed / max(vLen, 1.0);
+          float prog = mix(vProgress, 1.0 - vProgress, step(0.5, vFlip));
+          float dc = prog - head;
+          float travelling = step(0.0, dt) * step(head - 1.25, 0.0);
+          float cascade = exp(-(dc * dc) / (2.0 * 0.035 * 0.035)) * travelling * uPulseOn;
+          // Refractory afterglow: the whole fiber cools down after the wave.
+          float after = step(0.0, dt) * exp(-max(dt - vLen / uCascadeSpeed, 0.0) * 1.4) * 0.22 * step(1.25, head);
+          vec3 col = base
+            + mix(uPulseColor, vTint, 0.3) * (cascade * 1.35 + shimmer)
+            + vTint * after;
+          float fade = smoothstep(uCamDist + 340.0, uCamDist - 170.0, vDepth);
+          float a = (0.5 * strength + cascade * 0.5 + shimmer * 0.3 + after * 0.4) * mix(0.4, 1.0, fade);
           gl_FragColor = vec4(col, a);
         }
       `,
@@ -720,6 +865,54 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
     lines.renderOrder = 0;
     group.add(lines);
 
+    // ── CASCADE SCHEDULER: thoughts made visible ─────────────────────────────
+    // Every 1.3–2.5s a neuron fires (data nodes preferred — memories think).
+    // The spike propagates outward over the connectome: each hop travels its
+    // edge at CASCADE_SPEED, arrival flashes the soma, and branches thin out
+    // with depth. Deterministic sequence (hash01 by cascade counter) so replays
+    // are stable and nothing here depends on Math.random.
+    const adj: Array<Array<{ e: number; other: number }>> = Array.from({ length: count }, () => []);
+    edges.forEach((ed, e) => {
+      adj[ed.a]!.push({ e, other: ed.b });
+      adj[ed.b]!.push({ e, other: ed.a });
+    });
+    const dataIdx: number[] = [];
+    nodes.forEach((n, i) => { if (n.kind !== "neuron") dataIdx.push(i); });
+    let cascadeN = 0;
+    let nextCascadeAt = 0.9;
+    const igniteCascade = (t: number) => {
+      cascadeN++;
+      const pool = dataIdx.length ? dataIdx : adj.map((_, i) => i);
+      const seedNode = pool[Math.floor(hash01(cascadeN * 7919 + 13) * pool.length)]!;
+      const visited = new Set<number>([seedNode]);
+      flashes[seedNode] = t;
+      let frontier: Array<{ node: number; at: number }> = [{ node: seedNode, at: t }];
+      for (let depth = 0; depth < 4 && frontier.length; depth++) {
+        const keepP = depth === 0 ? 1 : depth === 1 ? 0.72 : 0.42;
+        const next: typeof frontier = [];
+        for (const f of frontier) {
+          for (const { e, other } of adj[f.node]!) {
+            if (visited.has(other)) continue;
+            if (hash01(cascadeN * 104729 + e * 31 + other * 7) > keepP) continue;
+            visited.add(other);
+            const flipped = edges[e]!.b === f.node; // wave runs f.node → other
+            const vi0 = e * vertsPerEdge;
+            for (let v = 0; v < vertsPerEdge; v++) {
+              lineFire[vi0 + v] = f.at;
+              lineFlip[vi0 + v] = flipped ? 1 : 0;
+            }
+            const arrive = f.at + edgeLens[e]! / CASCADE_SPEED;
+            flashes[other] = arrive;
+            next.push({ node: other, at: arrive });
+          }
+        }
+        frontier = next;
+      }
+      fireAttr.needsUpdate = true;
+      flipAttr.needsUpdate = true;
+      flashAttr.needsUpdate = true;
+    };
+
     // ── neural dust: a sparse twinkling particle shell around the graph ──────────
     // Pure atmosphere (not pickable, not labelled): tiny mercury/cyan motes drifting
     // with the same rotation, fading in and out of the dark. One draw call.
@@ -730,7 +923,7 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       // Deterministic shell placement: radius 230..520, uniform-ish direction.
       const u = hash01(i * 37 + 1) * 2 - 1;
       const phi = hash01(i * 101 + 9) * Math.PI * 2;
-      const r = 230 + hash01(i * 211 + 3) * 290;
+      const r = 200 + hash01(i * 211 + 3) * 140; // tight aura hugging the cortex
       const ring = Math.sqrt(Math.max(0, 1 - u * u));
       dustPos[i * 3] = Math.cos(phi) * ring * r;
       dustPos[i * 3 + 1] = u * r;
@@ -923,8 +1116,11 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
 
     // ── interaction state ──────────────────────────────────────────────────────
     // Drag → target rotation; the rAF lerps current → target for smoothness.
-    const rot = { x: 0, y: 0 };
-    const rotTarget = { x: 0, y: 0 };
+    // Opening pose: a 3/4 dorsal tilt — the two hemispheres + longitudinal
+    // fissure are what make the silhouette unmistakably a BRAIN, and they only
+    // read from above. (Coronal head-on collapses into one oval.)
+    const rot = { x: 0.52, y: -0.14 };
+    const rotTarget = { x: 0.52, y: -0.14 };
     let dragging = false;
     let moved = 0;
     let lastX = 0;
@@ -958,10 +1154,13 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       ndc.y = -((clientY - r.top) / Math.max(1, r.height)) * 2 + 1;
       raycaster.setFromCamera(ndc, camera);
       const hits = raycaster.intersectObject(points, false);
-      if (hits.length === 0) return -1;
-      // intersectObject returns nearest-first; take the first with an index.
-      const idx = hits[0]!.index;
-      return idx == null ? -1 : idx;
+      // Background tissue neurons are scenery: skip to the nearest MEMORY node.
+      for (const hit of hits) {
+        const idx = hit.index;
+        if (idx == null) continue;
+        if (nodes[idx]!.kind !== "neuron") return idx;
+      }
+      return -1;
     }
 
     const onPointerDown = (e: PointerEvent) => {
@@ -1070,6 +1269,8 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       camera.updateProjectionMatrix();
       applyGroupScale(); // re-derive the spread when orientation/aspect changes
       renderer.setSize(w, h);
+      composer.setSize(w, h);
+      bloom.resolution.set(w, h);
       const pr = renderer.getPixelRatio();
       pointsMat.uniforms.uPixelRatio!.value = pr;
       haloMat.uniforms.uPixelRatio!.value = pr;
@@ -1102,6 +1303,11 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
         haloMat.uniforms.uTime!.value = t;
         dustMat.uniforms.uTime!.value = t;
         group.rotation.z = Math.sin(t * 0.07) * 0.015; // barely-there sway — feels alive
+        // Fire the next thought-cascade when its moment arrives.
+        if (t >= nextCascadeAt) {
+          igniteCascade(t);
+          nextCascadeAt = t + 1.3 + hash01(cascadeN * 77 + 3) * 1.2;
+        }
       }
       // Depth-fade anchor follows the zoom so the fade band stays centred on the graph.
       lineMat.uniforms.uCamDist!.value = camDist;
@@ -1112,7 +1318,7 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       // Keep the camera matrices current BEFORE we project labels to screen.
       camera.updateMatrixWorld();
       updateLabels();
-      renderer.render(scene, camera);
+      composer.render();
     };
 
     const tick = (now: number) => {
@@ -1158,6 +1364,7 @@ export function MemoryBrain({ memory, onSelect, spinning = true, className }: Me
       dustMat.dispose();
       sprite.dispose();
       haloSprite.dispose();
+      composer.dispose();
       renderer.dispose();
       renderer.forceContextLoss();
       if (canvas.parentElement === container) container.removeChild(canvas);

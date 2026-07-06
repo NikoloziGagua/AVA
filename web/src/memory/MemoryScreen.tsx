@@ -274,10 +274,11 @@ function MindStage({
 
 const KIND_LABEL: Record<BrainNode["kind"], string> = {
   core: "core",
-  category: "hub",
+  category: "lobe",
   observation: "observation",
   preference: "preference",
   project: "project",
+  neuron: "neuron", // background tissue — unselectable, present for type completeness
 };
 
 /** The selected-node detail card overlaying the brain stage. */

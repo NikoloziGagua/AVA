@@ -1,8 +1,21 @@
-import { getToken } from "./auth/tokens.js";
+import { getToken, clearToken } from "./auth/tokens.js";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(message);
+  }
+}
+
+/**
+ * Central 401 recovery: an expired/invalid token must be cleared and the shell
+ * notified so it can route back to pairing. The event name is a cross-agent
+ * contract — App.tsx listens for exactly `ava:unauthorized` and setPaired(false).
+ * We only clear the token + dispatch; we never navigate here.
+ */
+function handleUnauthorized(): void {
+  clearToken();
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") {
+    window.dispatchEvent(new Event("ava:unauthorized"));
   }
 }
 
@@ -18,6 +31,7 @@ async function request<T>(
   const text = await r.text();
   const body: unknown = text ? JSON.parse(text) : undefined;
   if (!r.ok) {
+    if (r.status === 401) handleUnauthorized();
     const msg = (body as { error?: string })?.error ?? `HTTP ${r.status}`;
     throw new ApiError(r.status, msg);
   }
@@ -249,7 +263,10 @@ export async function patchMemoryLine(input: {
     const j = await r.json();
     return { ok: false, stale: j.current };
   }
-  if (!r.ok) throw new ApiError(r.status, "patch_failed");
+  if (!r.ok) {
+    if (r.status === 401) handleUnauthorized();
+    throw new ApiError(r.status, "patch_failed");
+  }
   return { ok: true };
 }
 

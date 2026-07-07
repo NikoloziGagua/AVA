@@ -40,6 +40,12 @@ export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
       gsap.set(railRef.current, { width: focused ? 580 : 460 });
       return;
     }
+    // `y` is already a compositor transform. `width` stays a layout tween (not
+    // transform:scaleX): the rail's only child is CommandBar's rounded pill, and
+    // scaleX would visibly distort its corners/border/text through the whole
+    // 0.55s tween. Because this rail is position:absolute (out of flow), the
+    // width change reflows only its own small subtree, never the page — so the
+    // per-frame cost is contained and the trade favors no distortion here.
     gsap.to(railRef.current, {
       width: focused ? 580 : 460,
       y: focused ? -6 : 0,
@@ -72,7 +78,10 @@ export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
         }}
       />
 
-      <div className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center">
+      {/* Hero nudged above dead-center (top-[46%]) and the command bar raised
+          (bottom-28) so the two read as one grouped hero instead of a stray bar
+          orphaned at the very bottom edge on the 1440×900 desktop target. */}
+      <div className="absolute left-1/2 top-[46%] z-20 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center">
         <div className="hud mb-4 text-[10px] text-white/40">I AM</div>
         <button onClick={onEnterVoice} aria-label="speak to Ava" className="cursor-pointer">
           <Orb size={150} state="idle" flipId="ava-orb" />
@@ -97,7 +106,7 @@ export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
           off-center while its width animates. Auto margins re-center every frame. */}
       <div
         ref={railRef}
-        className="absolute inset-x-0 bottom-12 z-20 mx-auto max-w-[86%]"
+        className="absolute inset-x-0 bottom-28 z-20 mx-auto max-w-[86%]"
         style={{ width: 460 }}
       >
         <CommandBar onSubmit={onCommand} onFocusChange={onBarFocus} />

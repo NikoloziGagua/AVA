@@ -77,6 +77,16 @@ export interface TranscriptGateInput {
   noSpeechProb?: number | null;
   /** Transcriber average logprob, if reported. */
   avgLogprob?: number | null;
+  /**
+   * True when the transcript comes from an EXPLICIT push-to-talk commit — the
+   * owner physically held to talk and released. A held commit can't be a silence
+   * hallucination, so the anti-hallucination heuristics (the phrase denylist plus
+   * the too-brief / no-speech / low-confidence signals, which all exist to reject
+   * whisper's silence words under automatic VAD) are skipped and only the
+   * empty/whitespace check applies. This is why deliberate short commands
+   * ("okay", "yeah", "thanks", "so", "bye") were silently vanishing.
+   */
+  pushToTalk?: boolean;
 }
 
 export type TranscriptGateReason =
@@ -123,6 +133,16 @@ export function gateTranscript(
   if (text.length === 0) {
     return { accept: false, reason: "empty", text };
   }
+
+  // Push-to-talk short-circuit: an explicit held commit is real speech by
+  // construction, so past the empty/whitespace check above it is always accepted.
+  // The denylist + brevity/confidence heuristics below only make sense for
+  // automatic VAD (which fires on silence); applying them to a deliberate commit
+  // is exactly what dropped one-word commands like "okay" / "yeah" / "thanks".
+  if (input.pushToTalk) {
+    return { accept: true, reason: "ok", text };
+  }
+
   if (text.length < config.minChars) {
     return { accept: false, reason: "too_short", text };
   }

@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useGSAP } from "../../lib/gsap.js";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
 import { buildPanelEnter, setPanelStatic } from "../../lib/deckMotion.js";
@@ -32,6 +32,23 @@ export function PanelShell({ title, grid = false, bg, children }: {
 }) {
   const scope = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
+  // Defer the default NeuralField's WebGL construction OUT of the enter window:
+  // building + compiling the fragment program synchronously as the panel washes
+  // in stalls the transition. Mount it once the browser is idle after entry (the
+  // bloom + dot-grid backdrop already cover the stage, so nothing looks missing).
+  const [bgReady, setBgReady] = useState(false);
+  useEffect(() => {
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    if (ric) {
+      const id = ric(() => setBgReady(true), { timeout: 600 });
+      const cic = (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback;
+      return () => cic?.(id);
+    }
+    const t = window.setTimeout(() => setBgReady(true), 420);
+    return () => window.clearTimeout(t);
+  }, []);
   useGSAP(
     () => {
       const root = scope.current;
@@ -44,7 +61,7 @@ export function PanelShell({ title, grid = false, bg, children }: {
 
   return (
     <div ref={scope} className="no-scrollbar relative h-full overflow-y-auto text-white" style={{ background: "#000" }}>
-      {bg === undefined ? <NeuralField opacity={0.4} /> : bg}
+      {bg === undefined ? (bgReady ? <NeuralField opacity={0.4} /> : null) : bg}
       <div
         data-panel-bloom
         aria-hidden
@@ -57,7 +74,7 @@ export function PanelShell({ title, grid = false, bg, children }: {
       />
       <div
         data-panel-stage
-        className="relative mx-auto w-full max-w-7xl px-6 sm:px-10 lg:px-14 pt-28 pb-24 will-change-transform"
+        className="relative mx-auto w-full max-w-7xl px-6 sm:px-10 lg:px-14 pt-28 pb-24"
       >
         <div data-panel-titlewrap className="mb-10">
           <h1

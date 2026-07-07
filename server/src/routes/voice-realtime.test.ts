@@ -7,6 +7,8 @@ import {
   toolResultFrames,
   sessionHelloFrame,
   actionStartedFrame,
+  bargeInFrame,
+  recoverFrame,
   loadRealtimeVadConfig,
   vadForReasoning,
   turnDetectionFor,
@@ -368,8 +370,10 @@ describe("enter_push_to_talk session mode (server VAD disabled)", () => {
 });
 
 describe("vadForReasoning (the toggle tunes voice snappiness)", () => {
-  it("fast = snappy (short silence wait), thorough = patient", () => {
-    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "fast").silenceMs).toBe(300);
+  it("fast rides through short mid-sentence pauses, thorough is patient", () => {
+    // 'fast' was 300ms — it ended a turn on a natural pause and Ava barged into the
+    // owner. 500ms keeps it snappy without cutting the owner off mid-sentence.
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "fast").silenceMs).toBe(500);
     expect(vadForReasoning(DEFAULT_REALTIME_VAD, "thorough").silenceMs).toBe(700);
   });
   it("leaves the other VAD fields untouched", () => {
@@ -483,6 +487,43 @@ describe("decideTranscriptForward — the silence/hallucination chokepoint", () 
     expect(d.forward).toBe(true);
     expect(d.accept).toBe(true);
     expect(d.text).toBe("open chrome and search my downloads");
+  });
+
+  it("push-to-talk forwards a deliberate short command the denylist would drop", () => {
+    // Under VAD "okay" is a silence hallucination and dropped; a HELD commit is
+    // real speech, so threading pushToTalk through makes it pass.
+    const vad = decideTranscriptForward(transcriptEvt("okay"), 1000, gate);
+    expect(vad.forward).toBe(false);
+    expect(vad.reason).toBe("hallucination_phrase");
+
+    const held = decideTranscriptForward(transcriptEvt("okay"), 1000, gate, true);
+    expect(held.forward).toBe(true);
+    expect(held.accept).toBe(true);
+    expect(held.text).toBe("okay");
+  });
+
+  it("push-to-talk forwards a short/low-confidence held commit but still drops empty", () => {
+    // too_brief (80ms) would drop under VAD; a held commit skips that heuristic.
+    const brief = decideTranscriptForward(
+      transcriptEvt("go", { audio_end_ms: 1080 }),
+      1000,
+      gate,
+      true,
+    );
+    expect(brief.forward).toBe(true);
+    // An empty held commit is still rejected (the one PTT check).
+    const empty = decideTranscriptForward(transcriptEvt(""), 1000, gate, true);
+    expect(empty.forward).toBe(false);
+    expect(empty.reason).toBe("empty");
+  });
+});
+
+describe("voice barge-in + PTT recovery control frames", () => {
+  it("bargeInFrame tells the client to stop Ava's audio when the owner talks over her", () => {
+    expect(JSON.parse(bargeInFrame())).toEqual({ type: "ava.barge_in" });
+  });
+  it("recoverFrame carries the drop reason so the client re-arms listening", () => {
+    expect(JSON.parse(recoverFrame("empty"))).toEqual({ type: "ava.recover", reason: "empty" });
   });
 });
 

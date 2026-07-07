@@ -6,6 +6,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { MemoryView, PersonRow, PlaybookRow, WatchRow } from "../../api.js";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
+import { glPaused } from "../../lib/deckMotion.js";
 
 /** A picked graph node, handed to `onSelect` for the inspector card.
  *  kind "neuron" = background cortex tissue (never selectable/hovered). */
@@ -490,6 +491,21 @@ function buildGraph(memory: MemoryView, extras: BrainExtras): { nodes: GraphNode
   return { nodes, edges };
 }
 
+// Re-entering the Memory screen rebuilds the whole scene, and the O(n²) nearest-
+// neighbour mesh is the costly part of buildGraph. Cache the last result keyed by
+// a content signature so a re-mount with identical memory reuses the layout
+// instead of recomputing it. Safe because nodes/edges are read-only after
+// construction (the effect only READS pos/color into GL buffers) and at most one
+// MemoryBrain is ever mounted at a time.
+let _graphCache: { sig: string; graph: { nodes: GraphNode[]; edges: GraphEdge[] } } | null = null;
+function buildGraphMemo(memory: MemoryView, extras: BrainExtras): { nodes: GraphNode[]; edges: GraphEdge[] } {
+  const sig = JSON.stringify({ memory, extras });
+  if (_graphCache && _graphCache.sig === sig) return _graphCache.graph;
+  const graph = buildGraph(memory, extras);
+  _graphCache = { sig, graph };
+  return graph;
+}
+
 /** A soft radial-gradient sprite so each point glows (white core → transparent). */
 function makeSpriteTexture(): THREE.Texture {
   const size = 128;
@@ -621,7 +637,7 @@ export function MemoryBrain({ memory, people, playbooks, watches, onSelect, spin
     scene.add(group);
 
     // ── build geometry ─────────────────────────────────────────────────────────
-    const { nodes, edges } = buildGraph(memory, {
+    const { nodes, edges } = buildGraphMemo(memory, {
       people: people ?? [],
       playbooks: playbooks ?? [],
       watches: watches ?? [],
@@ -1371,8 +1387,12 @@ export function MemoryBrain({ memory, people, playbooks, watches, onSelect, spin
 
     // ── render loop ────────────────────────────────────────────────────────────
     let frameId = 0;
-    const start = performance.now();
-    const renderOnce = (now: number) => {
+    // A monotonic clock in seconds that ONLY advances while the loop is actually
+    // rendering. Pausing (page transition / hidden tab) freezes it, so the edge
+    // pulses + cascade schedule never jump forward on resume.
+    let clock = 0;
+    let prevNow = performance.now();
+    const renderOnce = (t: number) => {
       // Smooth toward the drag target while animating; under reduced motion we
       // render single frames on interaction, so snap straight to target instead.
       if (reduced) {
@@ -1387,7 +1407,6 @@ export function MemoryBrain({ memory, people, playbooks, watches, onSelect, spin
       group.rotation.y = rot.y;
       // shader clocks: edge pulses, node twinkle, dust drift + a whisper of roll
       if (!reduced) {
-        const t = (now - start) / 1000;
         lineMat.uniforms.uTime!.value = t;
         pointsMat.uniforms.uTime!.value = t;
         haloMat.uniforms.uTime!.value = t;
@@ -1412,9 +1431,20 @@ export function MemoryBrain({ memory, people, playbooks, watches, onSelect, spin
     };
 
     const tick = (now: number) => {
-      renderOnce(now);
       frameId = requestAnimationFrame(tick);
+      const dt = now - prevNow;
+      prevNow = now;
+      // Idle the loop while a page transition is mid-flight (a fresh GL context is
+      // building under the opaque incoming screen) or the tab is hidden. The clock
+      // is frozen (dt discarded) so nothing jumps when it resumes.
+      if (document.hidden || glPaused()) return;
+      clock += dt;
+      renderOnce(clock / 1000);
     };
+    // On return from a hidden tab, rebase so the first frame's dt isn't the whole
+    // hidden gap (rAF is throttled/stopped while hidden).
+    const onVisibility = () => { if (!document.hidden) prevNow = performance.now(); };
+    document.addEventListener("visibilitychange", onVisibility);
 
     // Under reduced motion there's no rAF loop, so interaction (drag / zoom / hover)
     // must repaint on demand — a single coalesced frame per event. This is purely
@@ -1425,12 +1455,12 @@ export function MemoryBrain({ memory, people, playbooks, watches, onSelect, spin
       if (!reduced || reducedFrame) return;
       reducedFrame = requestAnimationFrame(() => {
         reducedFrame = 0;
-        renderOnce(performance.now());
+        renderOnce(0);
       });
     };
 
     if (reduced) {
-      renderOnce(start); // initial static frame; subsequent frames are on-demand
+      renderOnce(0); // initial static frame; subsequent frames are on-demand
     } else {
       frameId = requestAnimationFrame(tick);
     }
@@ -1440,6 +1470,7 @@ export function MemoryBrain({ memory, people, playbooks, watches, onSelect, spin
       if (frameId) cancelAnimationFrame(frameId);
       if (reducedFrame) cancelAnimationFrame(reducedFrame);
       window.removeEventListener("resize", resize);
+      document.removeEventListener("visibilitychange", onVisibility);
       canvas.removeEventListener("pointerdown", onPointerDown);
       canvas.removeEventListener("pointermove", onPointerMove);
       canvas.removeEventListener("pointerup", onPointerUp);

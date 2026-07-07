@@ -121,7 +121,8 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
           with the messages instead of sitting narrower than them. */}
       <div className="mx-auto w-full max-w-[760px] lg:max-w-[860px]">
         {chips.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 mb-1">
+          <div className="relative -mx-1 mb-1">
+            <div className="flex gap-2 overflow-x-auto pb-2 px-1">
             {chips.map((c) => (
               <button
                 key={c.id}
@@ -154,6 +155,15 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
                 />
               </button>
             ))}
+            </div>
+            {/* Right-edge fade: signals "scroll for more" so the last chip reads
+                as clipped-by-design, not truncated mid-word. Over the near-black
+                composer backdrop this is invisible when nothing overflows. */}
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 right-0 w-10"
+              style={{ background: "linear-gradient(90deg, rgba(0,0,0,0), rgba(0,0,0,0.92))" }}
+            />
           </div>
         )}
         <div

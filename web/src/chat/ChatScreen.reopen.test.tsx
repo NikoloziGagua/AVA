@@ -10,18 +10,31 @@ import { render, screen, fireEvent, waitFor, act, cleanup } from "@testing-libra
 const fetchSession = vi.fn();
 const sendMessage = vi.fn();
 const kill = vi.fn();
-vi.mock("../api.js", () => ({
-  fetchSession: (...a: unknown[]) => fetchSession(...a),
-  fetchSuggestedChips: () => Promise.resolve([]),
-  approveApproval: () => Promise.resolve(),
-  denyApproval: () => Promise.resolve(),
-  api: {
-    sendMessage: (...a: unknown[]) => sendMessage(...a),
-    kill: (...a: unknown[]) => kill(...a),
-  },
-}));
+vi.mock("../api.js", () => {
+  // Mirror the real ApiError so ChatScreen's `e instanceof ApiError` 401
+  // special-case works against the mocked module.
+  class ApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  }
+  return {
+    ApiError,
+    fetchSession: (...a: unknown[]) => fetchSession(...a),
+    fetchSuggestedChips: () => Promise.resolve([]),
+    approveApproval: () => Promise.resolve(),
+    denyApproval: () => Promise.resolve(),
+    api: {
+      sendMessage: (...a: unknown[]) => sendMessage(...a),
+      kill: (...a: unknown[]) => kill(...a),
+    },
+  };
+});
 
 import { ChatScreen } from "./ChatScreen.js";
+import { ApiError } from "../api.js";
 
 // Controllable EventSource stand-in: tests push the server's replayed/live SSE
 // events through emit(), exactly the shape useChatStream listens for.
@@ -135,6 +148,69 @@ describe("ChatScreen reopen", () => {
       lastES().emit("done", {}, 3);
     });
     expect(screen.getAllByText("Notepad is open, Sir.")).toHaveLength(1);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
+  });
+
+  it("does NOT duplicate the final when a trailing `system` recovery row is present", async () => {
+    // The known bug: recovery.ts appends a `system` "Server restarted…" row to a
+    // mid-run session. The old dedupe took the last MAPPED-assistant bubble (that
+    // system row), which never matched the server's strict latest-assistant replay
+    // → the real final ("a2") got appended a second time.
+    fetchSession.mockResolvedValue({
+      session,
+      messages: [
+        msg(1, "user", "q1"),
+        msg(2, "assistant", "a1 earlier reply"),
+        msg(3, "user", "q2"),
+        msg(4, "assistant", "a2 the real final"),
+        msg(5, "system", "Server restarted; this task may have been interrupted. Send a new message to continue."),
+      ],
+    });
+    render(<ChatScreen sessionId="s1" {...noNav} />);
+
+    // Full transcript renders, including the real final and the system notice.
+    expect(await screen.findByText("a2 the real final")).toBeTruthy();
+    // The system row is a distinct notice, NOT attributed to Ava.
+    expect(screen.getByText(/Server restarted/)).toBeTruthy();
+
+    // The server replays the strict latest-assistant-after-last-user as `final`.
+    act(() => {
+      lastES().emit("final", { text: "a2 the real final" }, 1);
+      lastES().emit("done", {}, 2);
+    });
+
+    // Deduped against the RAW-rule seed → the final is NOT re-rendered.
+    expect(screen.getAllByText("a2 the real final")).toHaveLength(1);
+    expect(screen.queryByTestId("final-message")).toBeNull();
+  });
+});
+
+describe("ChatScreen send failure", () => {
+  async function typeAndSend(text: string) {
+    const ta = await screen.findByPlaceholderText("Message Ava…");
+    fireEvent.change(ta, { target: { value: text } });
+    fireEvent.keyDown(ta, { key: "Enter" });
+  }
+
+  it("recovers from a failed send instead of stranding an infinite spinner", async () => {
+    sendMessage.mockRejectedValue(new ApiError(500, "boom"));
+    render(<ChatScreen sessionId={null} {...noNav} />);
+
+    await typeAndSend("hello there");
+    // Optimistic user bubble appears immediately…
+    expect(await screen.findByText("hello there")).toBeTruthy();
+    // …then a visible assistant error bubble replaces the stuck spinner.
+    expect(await screen.findByText(/didn't send/i)).toBeTruthy();
+    // Pending cleared → composer offers send again, not an inert Stop.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
+  });
+
+  it("special-cases a 401 with a re-pair message", async () => {
+    sendMessage.mockRejectedValue(new ApiError(401, "unauthorized"));
+    render(<ChatScreen sessionId={null} {...noNav} />);
+
+    await typeAndSend("are you there");
+    expect(await screen.findByText(/re-pair this device/i)).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
   });
 });

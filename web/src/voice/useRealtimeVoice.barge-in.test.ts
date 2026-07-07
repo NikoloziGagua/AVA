@@ -32,6 +32,9 @@ vi.mock("../api.js", () => ({
   // same value the hook optimistically starts with so no engine-reconnect fires.
   fetchVoiceEngine: vi.fn(() => Promise.resolve("openai")),
   setVoiceEngine: vi.fn(() => Promise.resolve()),
+  // The hook seeds the transcript scrollback from persisted session messages;
+  // resolve to none so seeding is a no-op in these turn-taking tests.
+  fetchSession: vi.fn(() => Promise.resolve({ session: {}, messages: [] })),
 }));
 // Stable token so the speak fetch has an auth header without touching storage.
 vi.mock("../auth/tokens.js", () => ({ getToken: () => "tkn" }));
@@ -487,25 +490,25 @@ describe("useRealtimeVoice — caption_user must not reopen the mic mid-task (It
   });
 });
 
-describe("useRealtimeVoice — enter push-to-talk turn-taking (effectful)", () => {
+describe("useRealtimeVoice — hold-to-talk turn-taking (effectful)", () => {
   it("does NOT forward mic audio between turns (background/room audio stays local)", async () => {
     const { hook, ws } = await bootPtt();
     expect(hook.result.current.inputMode).toBe("enter_push_to_talk");
     expect(hook.result.current.capturing).toBe(false);
 
     // Even though state is "listening", PTT forwards ONLY while capturing — so an
-    // un-pressed mic frame is dropped. This is the "TV won't interrupt me" guard.
+    // un-held mic frame is dropped. This is the "TV won't interrupt me" guard.
     const node = FakeAudioWorkletNode.last!;
     act(() => { node.port.onmessage?.({ data: new ArrayBuffer(4800) }); });
     expect(ws.appendCount).toBe(0);
   });
 
-  it("Enter starts a turn → mic forwards; Enter again commits the captured buffer", async () => {
+  it("hold (startPtt) forwards mic; release (finishPtt) commits the captured buffer", async () => {
     const { hook, ws } = await bootPtt();
     const node = FakeAudioWorkletNode.last!;
 
-    // Press Enter (start the turn).
-    act(() => { hook.result.current.togglePushToTalk(); });
+    // Press-and-hold (pointer down / Space down → startPtt).
+    act(() => { hook.result.current.startPtt(); });
     expect(hook.result.current.capturing).toBe(true);
 
     // Now mic frames forward upstream (a full ≥100ms buffer, so the commit guard
@@ -513,25 +516,191 @@ describe("useRealtimeVoice — enter push-to-talk turn-taking (effectful)", () =
     act(() => { node.port.onmessage?.({ data: new ArrayBuffer(4800) }); });
     expect(ws.appendCount).toBe(1);
 
-    // Press Enter again (finish the turn) → commit is sent, state → thinking.
-    act(() => { hook.result.current.togglePushToTalk(); });
+    // Release (pointer up / Space up → finishPtt) → commit is sent, state → thinking.
+    act(() => { hook.result.current.finishPtt(); });
     expect(ws.sent.some((s) => s.includes("input_audio_buffer.commit"))).toBe(true);
     expect(hook.result.current.capturing).toBe(false);
     expect(hook.result.current.state).toBe("thinking");
   });
 
-  it("a too-short tap does NOT commit an empty buffer (keeps the turn open)", async () => {
+  it("a too-short hold does NOT commit an empty buffer and surfaces a 'hold longer' hint", async () => {
     const { hook, ws } = await bootPtt();
     const node = FakeAudioWorkletNode.last!;
 
-    act(() => { hook.result.current.togglePushToTalk(); }); // start
+    act(() => { hook.result.current.startPtt(); }); // hold
     // Forward only a tiny amount (< MIN_COMMIT_BYTES = 4800) of audio.
     act(() => { node.port.onmessage?.({ data: new ArrayBuffer(128) }); });
 
-    act(() => { hook.result.current.togglePushToTalk(); }); // try to finish
-    // The server would reject a sub-100ms buffer ("buffer too small … 0.00ms"),
-    // so finishPtt refuses: no commit, and the turn stays open for more speech.
+    act(() => { hook.result.current.finishPtt(); }); // release too fast
+    // The server would reject a sub-100ms buffer ("buffer too small … 0.00ms"), so
+    // finishPtt refuses to commit — and tells the owner they released early instead
+    // of silently no-op'ing. Capture ends (they let go of the key/button).
     expect(ws.sent.some((s) => s.includes("input_audio_buffer.commit"))).toBe(false);
+    expect(hook.result.current.capturing).toBe(false);
+    expect(hook.result.current.hint).toMatch(/hold/i);
+  });
+
+  it("togglePushToTalk still works as the secondary tap affordance", async () => {
+    const { hook, ws } = await bootPtt();
+    const node = FakeAudioWorkletNode.last!;
+    act(() => { hook.result.current.togglePushToTalk(); }); // tap → start
     expect(hook.result.current.capturing).toBe(true);
+    act(() => { node.port.onmessage?.({ data: new ArrayBuffer(4800) }); });
+    act(() => { hook.result.current.togglePushToTalk(); }); // tap → finish
+    expect(ws.sent.some((s) => s.includes("input_audio_buffer.commit"))).toBe(true);
+    expect(hook.result.current.state).toBe("thinking");
+  });
+
+  it("startPtt while Ava is responding interrupts her first (explicit new turn)", async () => {
+    const { hook, ws } = await bootPtt();
+    // Latch hybrid so the realtime model's audio actually drives "responding".
+    await act(async () => { ws.fireMessage({ type: "ava.session", sessionId: "s0", mode: "hybrid" }); });
+    await act(async () => { ws.fireMessage({ type: "response.created" }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
+    await flush();
+    expect(hook.result.current.state).toBe("responding");
+
+    act(() => { hook.result.current.startPtt(); });
+    // interrupt() ran → response.cancel sent upstream and we're capturing a new turn.
+    expect(ws.sent.some((s) => s.includes("response.cancel"))).toBe(true);
+    expect(hook.result.current.capturing).toBe(true);
+  });
+});
+
+// Fix (stuck-in-thinking): finishPtt flips to "thinking" BEFORE the server accepts
+// the commit. If nothing comes back, the client recovers to "listening" — via a
+// timer, or (deterministically) via the proxy's `ava.recover` frame.
+describe("useRealtimeVoice — push-to-talk stuck-in-thinking recovery", () => {
+  it("recovers to listening with a soft hint after the timeout when no reply arrives", async () => {
+    const { hook } = await bootPtt();
+    const node = FakeAudioWorkletNode.last!;
+    vi.useFakeTimers();
+
+    act(() => { hook.result.current.startPtt(); });
+    act(() => { node.port.onmessage?.({ data: new ArrayBuffer(4800) }); });
+    act(() => { hook.result.current.finishPtt(); });
+    expect(hook.result.current.state).toBe("thinking");
+
+    // No transcript / response / audio comes back. Past the recovery window we
+    // re-arm listening and hint the owner instead of hanging in "thinking" forever.
+    act(() => { vi.advanceTimersByTime(6000); });
+    expect(hook.result.current.state).toBe("listening");
+    expect(hook.result.current.hint).toMatch(/didn't catch/i);
+  });
+
+  it("an accepted transcript cancels the recovery timer (no false 'didn't catch that')", async () => {
+    const { hook, ws } = await bootPtt();
+    await act(async () => { ws.fireMessage({ type: "ava.session", sessionId: "s0", mode: "hybrid" }); });
+    const node = FakeAudioWorkletNode.last!;
+    vi.useFakeTimers();
+
+    act(() => { hook.result.current.startPtt(); });
+    act(() => { node.port.onmessage?.({ data: new ArrayBuffer(4800) }); });
+    act(() => { hook.result.current.finishPtt(); });
+    expect(hook.result.current.state).toBe("thinking");
+
+    // The server accepts the turn → caption_user. This disarms the recovery.
+    act(() => { ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "what time is it" }); });
+    act(() => { vi.advanceTimersByTime(8000); });
+    expect(hook.result.current.state).toBe("thinking"); // a reply is coming
+    expect(hook.result.current.hint).toBeNull();          // no stale recovery hint
+  });
+
+  it("the proxy's ava.recover frame recovers immediately (deterministic, no timer)", async () => {
+    const { hook, ws } = await bootPtt();
+    const node = FakeAudioWorkletNode.last!;
+
+    act(() => { hook.result.current.startPtt(); });
+    act(() => { node.port.onmessage?.({ data: new ArrayBuffer(4800) }); });
+    act(() => { hook.result.current.finishPtt(); });
+    expect(hook.result.current.state).toBe("thinking");
+
+    act(() => { ws.fireMessage({ type: "ava.recover", reason: "empty" }); });
+    expect(hook.result.current.state).toBe("listening");
+    expect(hook.result.current.hint).toMatch(/didn't catch/i);
+  });
+});
+
+// Fix (transcript display): committed You/Ava turns accumulate into a scrollback so
+// the user's words don't vanish when Ava replies, and Ava's streaming rides ONE
+// stable interim line (no per-token remount / re-animation).
+describe("useRealtimeVoice — transcript scrollback + interim line", () => {
+  it("commits the user turn and Ava's turn as separate scrollback rows", async () => {
+    const { hook, ws } = await bootHybrid();
+
+    await act(async () => { ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "hey ava" }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "hi " }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "Sir" }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.done", transcript: "hi Sir" }); });
+    await flush();
+
+    const turns = hook.result.current.turns;
+    expect(turns.map((t) => [t.who, t.text])).toEqual([
+      ["you", "hey ava"],
+      ["ava", "hi Sir"],
+    ]);
+    // The user's turn is still present after Ava replied (it no longer vanishes).
+    expect(turns[0]).toMatchObject({ who: "you", text: "hey ava" });
+  });
+
+  it("Ava's streaming updates the interim line in place (stable identity), then clears on done", async () => {
+    const { hook, ws } = await bootHybrid();
+
+    await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "one " }); });
+    expect(hook.result.current.interim).toEqual({ who: "ava", text: "one " });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "two" }); });
+    // Same interim line, text updated in place (no per-token remount).
+    expect(hook.result.current.interim).toEqual({ who: "ava", text: "one two" });
+
+    await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.done", transcript: "one two" }); });
+    await flush();
+    expect(hook.result.current.interim).toBeNull();
+    expect(hook.result.current.turns.at(-1)).toMatchObject({ who: "ava", text: "one two" });
+  });
+});
+
+// Fix (second-mic + orb honesty): amplitude is derived from the SAME forwarded PCM,
+// so there is no second getUserMedia and the meter only reacts when audio is sent.
+describe("useRealtimeVoice — amplitude from the forwarded PCM (no second mic)", () => {
+  it("rises on a loud forwarded frame while listening", async () => {
+    const { hook } = await bootHybrid();
+    const node = FakeAudioWorkletNode.last!;
+    expect(hook.result.current.amplitude).toBe(0);
+
+    const buf = new Int16Array([20000, -20000, 20000, -20000]).buffer;
+    act(() => { node.port.onmessage?.({ data: buf }); });
+    expect(hook.result.current.amplitude).toBeGreaterThan(0);
+  });
+
+  it("stays 0 in push-to-talk between turns (mic closed → orb calm)", async () => {
+    const { hook, ws } = await bootPtt();
+    const node = FakeAudioWorkletNode.last!;
+    const buf = new Int16Array([20000, -20000, 20000, -20000]).buffer;
+    act(() => { node.port.onmessage?.({ data: buf }); });
+    expect(hook.result.current.amplitude).toBe(0);
+    expect(ws.appendCount).toBe(0);
+  });
+});
+
+// Fix (voice barge-in): a server-driven ava.barge_in frame stops Ava's audio
+// locally so her tail can't keep playing after the owner talked over her.
+describe("useRealtimeVoice — server-driven voice barge-in", () => {
+  it("ava.barge_in stops the realtime audio, clears the interim, and drops the late tail", async () => {
+    const { hook, ws } = await bootHybrid();
+    await act(async () => { ws.fireMessage({ type: "response.created" }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "let me tell you" }); });
+    await flush();
+    expect(hook.result.current.state).toBe("responding");
+    expect(hook.result.current.interim).not.toBeNull();
+
+    await act(async () => { ws.fireMessage({ type: "ava.barge_in" }); });
+    await flush();
+    expect(hook.result.current.interim).toBeNull();
+
+    // A LATE delta from the cancelled turn must be dropped (epoch advanced).
+    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
+    await flush();
+    expect(hook.result.current.state).not.toBe("responding");
   });
 });

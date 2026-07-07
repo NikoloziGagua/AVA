@@ -99,7 +99,11 @@ export function loadRealtimeVadConfig(
  * she never talks over you). Other VAD fields (threshold/prefix) are unchanged.
  */
 export function vadForReasoning(base: RealtimeVadConfig, level: ReasoningLevel): RealtimeVadConfig {
-  return { ...base, silenceMs: level === "fast" ? 300 : 700 };
+  // "fast" was 300ms, which ended a turn on a natural mid-sentence pause — Ava
+  // barged into the OWNER. 500ms rides through those short pauses while still
+  // feeling snappy; real responsiveness now comes from voice barge-in (the owner
+  // can talk over her) rather than an ultra-short endpoint. Both stay env-tunable.
+  return { ...base, silenceMs: level === "fast" ? 500 : 700 };
 }
 
 /**
@@ -588,6 +592,25 @@ export function actionResultFrame(text: string): string {
 }
 
 /**
+ * Sent when the owner talks OVER Ava (voice barge-in): the proxy has cancelled
+ * her in-flight response upstream, and this tells the client to stop playing her
+ * audio locally and open the new turn instead of letting her tail keep speaking.
+ */
+export function bargeInFrame(): string {
+  return JSON.stringify({ type: "ava.barge_in" });
+}
+
+/**
+ * Sent when a PUSH-TO-TALK commit is dropped at the gate (e.g. it transcribed to
+ * nothing). The client sits in "thinking" after a commit; without this it would
+ * wait for the recovery timer. This lets it recover to "listening" deterministically
+ * with a soft "didn't catch that" hint the instant the proxy knows there's no reply.
+ */
+export function recoverFrame(reason: string): string {
+  return JSON.stringify({ type: "ava.recover", reason });
+}
+
+/**
  * Satisfy the model's do_on_computer call WITHOUT a response.create, so the
  * realtime model stays silent — the client narrates the steps and speaks the
  * result instead (one voice per task). Contrast toolResultFrames, which also
@@ -658,6 +681,7 @@ export function decideTranscriptForward(
   },
   speechStartMs: number | null,
   gateConfig: TranscriptGateConfig,
+  pushToTalk = false,
 ): ForwardDecision {
   const tr = readTranscriptionCompleted(evt);
   if (!tr) {
@@ -665,7 +689,7 @@ export function decideTranscriptForward(
   }
   const speechMs = speechDurationMs(speechStartMs, evt);
   const verdict = gateTranscript(
-    { text: tr.text, speechMs, avgLogprob: tr.avgLogprob },
+    { text: tr.text, speechMs, avgLogprob: tr.avgLogprob, pushToTalk },
     gateConfig,
   );
   return {
@@ -780,7 +804,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // a secret key is set, else the raw api_key. Done before the session Promise
       // so the executor stays synchronous.
       const humeUrl = await resolveHumeWsUrl(providerConfig.hume);
-      const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume, humeUrl);
+      const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume, humeUrl, pushToTalk);
       if (opened) return;
       log.warn("realtime: hume upstream did not establish — falling back to OpenAI");
     }
@@ -1012,9 +1036,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       }
 
       // Gate finished transcripts: a rejected one is dropped here and NEVER
-      // reaches the browser, so silence/noise produces no user turn at all.
+      // reaches the browser, so silence/noise produces no user turn at all. In
+      // push-to-talk the gate skips its hallucination heuristics (a held commit is
+      // real speech), so short deliberate commands ("okay"/"yeah") get through.
       const decision = evt
-        ? decideTranscriptForward(evt, speechStartMs, gateConfig)
+        ? decideTranscriptForward(evt, speechStartMs, gateConfig, pushToTalk)
         : null;
       if (decision?.isTranscript) {
         speechStartMs = null; // consume the in-flight utterance's timing
@@ -1024,15 +1050,29 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           log.info(
             `realtime: dropped transcript reason=${decision.reason} speechMs=${decision.speechMs ?? "?"} text=${JSON.stringify(decision.text)}`,
           );
+          // Push-to-talk: the client is stuck in "thinking" after its commit and
+          // no reply is coming. Tell it to recover deterministically instead of
+          // waiting out its safety timer (an empty/blank commit is the only PTT
+          // drop now that the gate skips the denylist for held commits).
+          if (pushToTalk) {
+            try { if (client.readyState === WebSocket.OPEN) client.send(recoverFrame(decision.reason)); } catch { /* */ }
+          }
           return; // do not forward — no phantom turn, no /api/chat call
         }
         if (hybrid && responseActive) {
-          // Ava is still speaking. A transcript now is almost always a
-          // hallucination / echo / noise — starting a new response would cut her
-          // off mid-sentence (the reported bug). Drop it: no interrupt, and no
-          // phantom "you" caption on the client.
-          log.info(`realtime: ignored transcript while Ava is speaking (no interrupt): ${JSON.stringify(decision.text)}`);
-          return;
+          // VOICE BARGE-IN: the owner talked OVER Ava (VAD keeps the mic forwarding
+          // during "responding"). Reaching here means the transcript already passed
+          // the gate — confident speech, not echo/silence — so treat it as a real
+          // interruption: cancel Ava's in-flight response upstream and open a NEW
+          // turn with these words instead of dropping them (the old behaviour, which
+          // made "talk over her to stop her" do nothing). The gate + browser echo
+          // cancellation keep Ava's own tail from retriggering this.
+          log.info(`realtime: barge-in — owner spoke over Ava; cancelling response for ${JSON.stringify(decision.text)}`);
+          try { upstream.send(JSON.stringify({ type: "response.cancel" })); } catch { /* */ }
+          responseActive = false;
+          flushAssistantTurn(); // persist whatever Ava managed to say before the cut
+          try { if (client.readyState === WebSocket.OPEN) client.send(bargeInFrame()); } catch { /* */ }
+          // fall through: persist the user turn + response.create for the new turn
         }
         log.info(`realtime: accepted transcript text=${JSON.stringify(decision.text)}`);
         // SINGLE place the spoken USER turn is stored. Both earlier branches
@@ -1109,6 +1149,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     requestedSessionId: string | null,
     hume: HumeProviderConfig,
     wsUrl: string,
+    pushToTalk = false,
   ): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const hybrid = !!deps.runAction;
@@ -1196,9 +1237,13 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             { type: "conversation.item.input_audio_transcription.completed", transcript: t.userTranscript },
             null,
             gateConfig,
+            pushToTalk,
           );
           if (!decision.forward) {
             log.info(`realtime(hume): dropped transcript reason=${decision.reason} text=${JSON.stringify(decision.text)}`);
+            if (pushToTalk) {
+              try { if (client.readyState === WebSocket.OPEN) client.send(recoverFrame(decision.reason)); } catch { /* */ }
+            }
             return;
           }
           if (hybrid && sessionId) {

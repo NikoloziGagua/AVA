@@ -50,18 +50,23 @@ export function TubelightNav({ items, activeName, className }: TubelightNavProps
               <motion.div
                 layoutId="ava-lamp"
                 className="absolute inset-0 rounded-full"
-                style={{ background: "rgba(92,242,255,0.10)", zIndex: 0 }}
+                style={{ background: "rgba(92,242,255,0.10)", zIndex: 0, willChange: "transform" }}
                 transition={{ type: "spring", stiffness: 320, damping: 30 }}
               >
-                {/* the "tubelight" bar + glows above the active item */}
+                {/* The "tubelight" bar above the active item. Its bloom is drawn
+                    with box-shadow (a cached compositor layer) rather than
+                    blur()-filtered glow divs, so the moving lamp never re-rasters
+                    a blurred subtree as it springs between items. */}
                 <div
                   className="absolute -top-1.5 left-1/2 h-1 w-8 -translate-x-1/2 rounded-b-full"
-                  style={{ background: "var(--ac)" }}
-                >
-                  <div className="absolute -left-2 -top-2 h-5 w-12 rounded-full blur-md" style={{ background: "rgba(92,242,255,0.3)" }} />
-                  <div className="absolute -top-1 h-5 w-8 rounded-full blur-md" style={{ background: "rgba(92,242,255,0.3)" }} />
-                  <div className="absolute left-2 top-0 h-4 w-4 rounded-full blur-sm" style={{ background: "rgba(92,242,255,0.3)" }} />
-                </div>
+                  style={{
+                    background: "var(--ac)",
+                    boxShadow:
+                      "0 0 10px 2px rgba(92,242,255,0.55)," +
+                      "0 -2px 12px 2px rgba(92,242,255,0.45)," +
+                      "0 6px 18px 1px rgba(92,242,255,0.30)",
+                  }}
+                />
               </motion.div>
             )}
           </button>

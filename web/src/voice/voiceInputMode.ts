@@ -52,19 +52,26 @@ export function saveVoiceInputMode(mode: VoiceInputMode): void {
  *                           (between the start-Enter and the finish-Enter).
  *                           Between turns, nothing is sent, so the TV / room /
  *                           Ava's own reply can't become a phantom turn.
- *   - vad                 → forward while the client is in the "listening" state,
- *                           which is closed during thinking/responding so Ava's
- *                           reply isn't re-heard (unchanged behaviour).
+ *   - vad                 → forward while "listening" AND while "responding". The
+ *                           latter is what enables VOICE BARGE-IN: the mic stays
+ *                           open while Ava speaks so talking over her interrupts
+ *                           her (the server treats a confident transcript during
+ *                           her reply as a barge-in). Browser echo cancellation +
+ *                           the server transcript gate keep her own audio from
+ *                           retriggering. The mic is still closed during the brief
+ *                           "thinking" window (no reply is playing to talk over).
  */
 export function shouldForwardMic(opts: {
   mode: VoiceInputMode;
   muted: boolean;
   capturing: boolean;
   listening: boolean;
+  /** True while Ava is speaking her reply — VAD forwards here for barge-in. */
+  responding?: boolean;
 }): boolean {
   if (opts.muted) return false;
   if (opts.mode === "enter_push_to_talk") return opts.capturing;
-  return opts.listening;
+  return opts.listening || !!opts.responding;
 }
 
 /**

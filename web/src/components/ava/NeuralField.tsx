@@ -1,5 +1,6 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
+import { glPaused } from "../../lib/deckMotion.js";
 
 export interface NeuralFieldProps {
   /** Output ceiling — kept low so it sits behind the panel bloom. */
@@ -198,6 +199,10 @@ export function NeuralField({
     let frameId = 0;
     const start = performance.now();
     const draw = (now: number) => {
+      frameId = requestAnimationFrame(draw);
+      // Idle the shader while a page transition is mid-flight or the tab is
+      // hidden — one fewer live GL loop competing for the frame during the swap.
+      if (document.hidden || glPaused()) return;
       cur.x += (target.x - cur.x) * 0.04;
       cur.y += (target.y - cur.y) * 0.04;
       // Ramp opacity 0→target over the first 600ms so the field never pops in
@@ -207,7 +212,6 @@ export function NeuralField({
       glx.uniform1f(uTime, (now - start) / 1000);
       glx.uniform2f(uPointer, cur.x, cur.y);
       glx.drawArrays(glx.TRIANGLES, 0, 3);
-      frameId = requestAnimationFrame(draw);
     };
 
     if (reduced) {

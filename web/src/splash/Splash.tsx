@@ -4,9 +4,12 @@ import { Orb } from "../components/ava/Orb.js";
 import { NebulaBackground } from "../components/ava/NebulaBackground.js";
 
 /**
- * Cinematic intro: the mercury orb materializes (scale + blur in) and "AVA"
- * reveals letter-by-letter, then hands off to the home (the orb carries over via
- * GSAP Flip — same `flipId`).
+ * Cinematic intro: the mercury orb materializes (scale + fade) and "AVA" reveals
+ * letter-by-letter (rise + fade), then hands off to the home (the orb carries
+ * over via GSAP Flip — same `flipId`).
+ *
+ * Reveals are compositor-only (opacity + transform) — no animated filter:blur,
+ * which forces a full-quality re-raster every frame and hitches the intro.
  */
 export function Splash({ onDone }: { onDone: () => void }) {
   useEffect(() => {
@@ -21,8 +24,8 @@ export function Splash({ onDone }: { onDone: () => void }) {
       <NebulaBackground />
       <div className="absolute left-1/2 top-1/2 flex -translate-x-1/2 -translate-y-1/2 flex-col items-center">
         <motion.div
-          initial={{ scale: 0.4, opacity: 0, filter: "blur(22px)" }}
-          animate={{ scale: 1, opacity: 1, filter: "blur(0px)" }}
+          initial={{ scale: 0.4, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 1, ease: [0.22, 1, 0.36, 1] }}
         >
           <Orb size={140} state="idle" flipId="ava-orb" />
@@ -31,8 +34,8 @@ export function Splash({ onDone }: { onDone: () => void }) {
           {letters.map((ch, i) => (
             <motion.span
               key={i}
-              initial={{ y: 40, opacity: 0, filter: "blur(8px)" }}
-              animate={{ y: 0, opacity: 1, filter: "blur(0px)" }}
+              initial={{ y: 40, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.5 + i * 0.1, duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
               className="inline-block"
             >

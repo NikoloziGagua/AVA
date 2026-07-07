@@ -72,6 +72,36 @@ describe("gateTranscript", () => {
   });
 });
 
+describe("gateTranscript — push-to-talk skips the anti-hallucination heuristics", () => {
+  it("accepts deliberate short commands that the denylist would otherwise drop", () => {
+    // These are silence hallucinations under VAD, but a HELD commit is real speech.
+    for (const phrase of ["okay", "yeah", "thanks", "so", "bye", "you"]) {
+      const vad = gateTranscript({ text: phrase });
+      expect(vad.accept, `${phrase} dropped under VAD`).toBe(false);
+      expect(vad.reason).toBe("hallucination_phrase");
+      const held = gateTranscript({ text: phrase, pushToTalk: true });
+      expect(held.accept, `${phrase} must pass under push-to-talk`).toBe(true);
+      expect(held.reason).toBe("ok");
+    }
+  });
+
+  it("accepts a held commit even when the speech blip is short / low-confidence", () => {
+    // too_brief + low_confidence are silence heuristics; a held commit skips them.
+    expect(gateTranscript({ text: "go", speechMs: 80, pushToTalk: true }).accept).toBe(true);
+    expect(gateTranscript({ text: "go", avgLogprob: -3.5, pushToTalk: true }).accept).toBe(true);
+    expect(gateTranscript({ text: "go", noSpeechProb: 0.95, pushToTalk: true }).accept).toBe(true);
+  });
+
+  it("still rejects a truly empty/whitespace held commit (the only PTT check)", () => {
+    expect(gateTranscript({ text: "", pushToTalk: true }).reason).toBe("empty");
+    expect(gateTranscript({ text: "   \n ", pushToTalk: true }).reason).toBe("empty");
+  });
+
+  it("normalizes the accepted held text", () => {
+    expect(gateTranscript({ text: "  okay  ", pushToTalk: true }).text).toBe("okay");
+  });
+});
+
 describe("loadTranscriptGateConfig", () => {
   it("falls back to defaults with an empty environment", () => {
     expect(loadTranscriptGateConfig({})).toEqual(DEFAULT_TRANSCRIPT_GATE);

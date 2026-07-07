@@ -1,8 +1,9 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Home, Plus, List, Brain, Settings2, Sparkles } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
 import { TubelightNav, type TubelightItem } from "./components/ava/TubelightNav.js";
+import { SCREEN, markTransition } from "./lib/deckMotion.js";
 import { useReducedMotion } from "./lib/useReducedMotion.js";
 import { getToken } from "./auth/tokens.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
@@ -26,33 +27,79 @@ type View =
   | { name: "self" }
   | { name: "list" };
 
+// Only these surfaces own the mercury Orb (with flipId="ava-orb"): splash → home
+// hero → voice hero. ChatScreen renders NO orb, so it must not be listed here —
+// otherwise entering chat would capture the still-exiting orbit orb and the next
+// orb view would Flip from a stale snapshot.
+const VIEWS_WITH_ORB = ["splash", "orbit", "voice"];
+
+/** Which nav lamp to light for a view. Voice/splash return undefined (no nav). */
+function navForView(v: View): string | undefined {
+  switch (v.name) {
+    case "orbit": return "Home";
+    // Opening an EXISTING chat is "viewing history" → Chats; only a brand-new
+    // (sessionId === null) composition lights "New".
+    case "chat": return v.sessionId === null ? "New" : "Chats";
+    case "memory": return "Memory";
+    case "rules": return "Rules";
+    case "self": return "Self";
+    case "list": return "Chats";
+    default: return undefined;
+  }
+}
+
 export function App() {
   const [paired, setPaired] = useState<boolean>(!!getToken());
   const [view, setView] = useState<View>({ name: "splash" });
-
-  // GSAP Flip: the orb (shared `flipId="ava-orb"`) flies between surfaces —
-  // splash → home hero → chat header avatar → voice hero — instead of cutting.
-  // Best-effort: matches the single orb carrying the flip id across the DOM swap;
-  // if it's absent (panels) or motion is reduced, it simply doesn't animate.
   const reduced = useReducedMotion();
+
+  // Expired/invalid token → back to pairing. api.ts dispatches `ava:unauthorized`
+  // (+ clearToken) on a 401; we just listen and drop back to the pairing screen.
+  useEffect(() => {
+    const h = () => setPaired(false);
+    window.addEventListener("ava:unauthorized", h);
+    return () => window.removeEventListener("ava:unauthorized", h);
+  }, []);
+
+  // ── Transition window: mark it so the always-on WebGL loops idle during the
+  // overlap, and flag the deck panels so their glass tree drops backdrop-filter
+  // (no per-frame re-blur while a subtree opacity-fades).
+  const [transitioning, setTransitioning] = useState(false);
+  useEffect(() => {
+    const ms = SCREEN.enter * 1000 + 40;
+    markTransition(ms);
+    setTransitioning(true);
+    const t = window.setTimeout(() => setTransitioning(false), ms);
+    return () => window.clearTimeout(t);
+  }, [view]);
+
+  // GSAP Flip: the shared orb glides between the surfaces that own it (splash →
+  // home → voice) instead of cutting. The query is SCOPED to the entering view's
+  // subtree (via data-view) so the concurrently-mounted exiting orb can't be
+  // captured, and Flip.from targets that same entering orb explicitly. Panels
+  // (and chat) own no orb → the state is nulled so a stale orb can't drive them.
   const flipStateRef = useRef<ReturnType<typeof Flip.getState> | null>(null);
   useLayoutEffect(() => {
-    // Only Flip between surfaces that actually own the orb. Panels (memory /
-    // rules / self / list) have no orb, so running Flip during those transitions
-    // would hijack the *exiting* home orb. Reduced motion: skip entirely.
-    const VIEWS_WITH_ORB = ["splash", "orbit", "chat", "voice"];
     if (reduced || !VIEWS_WITH_ORB.includes(view.name)) {
       flipStateRef.current = null;
       return;
     }
-    const orb = document.querySelector("[data-flip-id='ava-orb']");
+    const orb = document.querySelector(`[data-view='${view.name}'] [data-flip-id='ava-orb']`);
     if (!orb) {
       flipStateRef.current = null;
       return;
     }
     if (flipStateRef.current) {
       try {
-        Flip.from(flipStateRef.current, { duration: 0.55, ease: "power2.inOut", absolute: true, scale: true });
+        // `targets: orb` pins the animation to the ENTERING orb (ignores the
+        // exiting one); no `scale:true` — the shorthand can't be reset by GSAP
+        // and logged "scale not eligible for reset" on every orb view.
+        Flip.from(flipStateRef.current, {
+          targets: orb,
+          duration: SCREEN.orb,
+          ease: "power2.inOut",
+          absolute: true,
+        });
       } catch { /* degrade to no animation */ }
     }
     try { flipStateRef.current = Flip.getState(orb); } catch { flipStateRef.current = null; }
@@ -68,27 +115,34 @@ export function App() {
     { name: "Rules", icon: Settings2, onSelect: () => setView({ name: "rules" }) },
     { name: "Self", icon: Sparkles, onSelect: () => setView({ name: "self" }) },
   ];
-  const NAV_FOR_VIEW: Record<string, string> = {
-    orbit: "Home", chat: "New", memory: "Memory", rules: "Rules", self: "Self", list: "Chats",
-  };
-  const showNav = view.name in NAV_FOR_VIEW;
+  const activeNav = navForView(view);
+  const showNav = activeNav !== undefined;
+
+  // Shared enter/exit timings — every screen uses the same tokens. Out is faster
+  // than in so the outgoing layer clears before the incoming settles.
+  const enterT = { duration: reduced ? 0.14 : SCREEN.enter, ease: SCREEN.easeEnter };
+  const exitT = { duration: reduced ? 0.1 : SCREEN.exit, ease: SCREEN.easeExit };
+  const exitTo = { ...SCREEN.exitTo, transition: exitT };
+  const deckTransition = transitioning || undefined;
 
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
 
   return (
-    <div className="relative w-full h-full bg-black text-white">
+    <div className="relative w-full h-full overflow-hidden bg-black text-white">
       <GlassFilter />
       {/* No mode="wait": the home/voice screens have infinite CSS animations
           (nebula drift, orb morph) that never "finish", so mode="wait" would
-          wait forever for exit-complete and never mount the next view (panels
-          appeared dead/black). Default concurrent mode cross-fades cleanly. */}
+          wait forever for exit-complete and never mount the next view. Default
+          concurrent mode cross-dissolves — and every screen now enters/exits with
+          the SAME tokens so the swap reads as one coherent motion, not a pile of
+          mismatched pops and fades. */}
       <AnimatePresence>
         {view.name === "splash" && (
           <motion.div
             key="splash"
+            data-view="splash"
             className="absolute inset-0"
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.6 }}
+            exit={exitTo}
           >
             <Splash onDone={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -96,11 +150,12 @@ export function App() {
         {view.name === "orbit" && (
           <motion.div
             key="orbit"
+            data-view="orbit"
             className="absolute inset-0"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 1.04 }}
-            transition={{ duration: 0.45, ease: [0.4, 0, 0.2, 1] }}
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
           >
             <OrbitScreen
               onCommand={(text) => setView({ name: "chat", sessionId: null, initialText: text })}
@@ -111,11 +166,12 @@ export function App() {
         {view.name === "chat" && (
           <motion.div
             key={`chat-${view.sessionId ?? "new"}`}
+            data-view="chat"
             className="absolute inset-0"
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.45, ease: [0.4, 0, 0.2, 1] }}
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
           >
             <ChatScreen
               sessionId={view.sessionId}
@@ -131,11 +187,12 @@ export function App() {
         {view.name === "voice" && (
           <motion.div
             key="voice"
+            data-view="voice"
             className="absolute inset-0"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
           >
             <VoiceScreen
               initialSessionId={view.sessionId}
@@ -150,11 +207,13 @@ export function App() {
         {view.name === "memory" && (
           <motion.div
             key="memory"
+            data-view="memory"
+            data-deck-transition={deckTransition}
             className="absolute inset-0"
-            initial={{ opacity: 1 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reduced ? 0.12 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
           >
             <MemoryScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -162,11 +221,13 @@ export function App() {
         {view.name === "rules" && (
           <motion.div
             key="rules"
+            data-view="rules"
+            data-deck-transition={deckTransition}
             className="absolute inset-0"
-            initial={{ opacity: 1 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reduced ? 0.12 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
           >
             <RulesScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -174,11 +235,13 @@ export function App() {
         {view.name === "self" && (
           <motion.div
             key="self"
+            data-view="self"
+            data-deck-transition={deckTransition}
             className="absolute inset-0"
-            initial={{ opacity: 1 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reduced ? 0.12 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
           >
             <SelfScreen onClose={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -186,11 +249,13 @@ export function App() {
         {view.name === "list" && (
           <motion.div
             key="list"
+            data-view="list"
+            data-deck-transition={deckTransition}
             className="absolute inset-0"
-            initial={{ opacity: 1 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reduced ? 0.12 : 0.22, ease: [0.22, 1, 0.36, 1] }}
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
           >
             <ChatListScreen
               onClose={() => setView({ name: "orbit" })}
@@ -202,7 +267,8 @@ export function App() {
 
       {/* Persistent deck nav: stays mounted (so the cyan lamp springs smoothly
           between panels) and fades out on the immersive hero views (splash/voice).
-          Chat now joins the deck — NAV_FOR_VIEW maps it to the "New" lamp. */}
+          Chat joins the deck — the lamp lights "New" for a fresh chat, "Chats"
+          for an existing one. */}
       <motion.div
         className="absolute left-1/2 z-30 -translate-x-1/2"
         animate={{ opacity: showNav ? 1 : 0, y: showNav ? 0 : -14 }}
@@ -213,7 +279,7 @@ export function App() {
           top: "calc(env(safe-area-inset-top, 0px) + 1.5rem)",
         }}
       >
-        <TubelightNav items={navItems} activeName={NAV_FOR_VIEW[view.name]} />
+        <TubelightNav items={navItems} activeName={activeNav} />
       </motion.div>
     </div>
   );

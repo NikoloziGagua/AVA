@@ -21,6 +21,15 @@
   --motion-cinematic: 600ms;
   --ease-cinematic: cubic-bezier(0.22, 1, 0.36, 1);
 
+  /* ── Screen transition tokens (App AnimatePresence + deck panels). Out is
+     faster than in so the outgoing layer clears before the incoming settles.
+     The JS mirror lives in lib/deckMotion.ts (SCREEN). */
+  --dur-enter: 340ms;
+  --dur-exit: 220ms;
+  --dur-orb: 440ms;
+  --ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
+
   /* ── Premium remodel palette (cyan command-deck) ──────────────────────── */
   --ac: #5cf2ff;          /* cyan accent — the lead */
   --ac-live: #39ffb0;     /* live / success */
@@ -51,6 +60,20 @@
   border: 1px solid var(--glass-border);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+}
+
+/* ── Transition perf: while a screen is mid-swap, drop backdrop-filter on the
+   glass tree. Opacity-fading a subtree densely populated with live
+   backdrop-filter surfaces (.lg-slab / .bg-card / .glass / .activity-rail)
+   forces the browser to re-sample + re-blur every surface each frame — a repaint
+   storm. The slabs keep their translucent base so they still read as panels for
+   the ~340ms window; the blur returns the instant the swap settles. */
+[data-deck-transition] .lg-slab,
+[data-deck-transition] .bg-card,
+[data-deck-transition] .glass,
+[data-deck-transition] .activity-rail {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* Liquid mercury fill — the Orb core and mini-avatars. */
@@ -364,6 +387,13 @@
 
 html, body, #root {
   height: 100%;
+  /* Fixed-viewport SPA: every screen is position:absolute inset-0 and scrolls
+     internally (MessageList, panels, activity rail own their own overflow). The
+     document must NEVER scroll — without this, a transition layer that exits at
+     scale:1.01 or enters at translateY(8px) paints past the viewport edge and
+     the browser flashes ugly side + bottom scrollbars mid-swap. Clip at the
+     root so transient transform overflow is invisible, never scrollable. */
+  overflow: hidden;
   background: var(--ava-bg);
   color: var(--ava-fg);
   font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;

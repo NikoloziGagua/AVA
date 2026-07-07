@@ -34,6 +34,14 @@ describe("classifyRealtimeEvent", () => {
       .toEqual({ kind: "error", message: "boom" });
   });
 
+  it("recognizes the Ava barge-in + recover control frames", () => {
+    expect(classifyRealtimeEvent({ type: "ava.barge_in" })).toEqual({ kind: "barge_in" });
+    expect(classifyRealtimeEvent({ type: "ava.recover", reason: "empty" }))
+      .toEqual({ kind: "recover", reason: "empty" });
+    // reason is optional → defaults to empty string
+    expect(classifyRealtimeEvent({ type: "ava.recover" })).toEqual({ kind: "recover", reason: "" });
+  });
+
   it("carries the proxy mode on the session hello (hybrid vs transcribe)", () => {
     expect(classifyRealtimeEvent({ type: "ava.session", sessionId: "s1", mode: "hybrid" }))
       .toEqual({ kind: "session", sessionId: "s1", mode: "hybrid" });

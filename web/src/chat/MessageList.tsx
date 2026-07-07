@@ -14,7 +14,10 @@ import type { StreamEvent } from "./useChatStream.js";
 
 export type ChatMessage =
   | { role: "user"; text: string; id: string }
-  | { role: "assistant"; text: string; id: string };
+  | { role: "assistant"; text: string; id: string }
+  // `system` rows are server notices (e.g. the "Server restarted…" recovery
+  // message) — rendered as a centered notice, never attributed to Ava.
+  | { role: "system"; text: string; id: string };
 
 export interface MessageListProps {
   history: ChatMessage[];
@@ -194,8 +197,21 @@ export function MessageList({
   }, [lastFinal]);
 
   return (
-    <div ref={attachScroller} className="soft-scrollbar relative flex-1 overflow-y-auto px-4 py-6 space-y-5 lg:px-6">
-      {history.map((m) => (
+    <div ref={attachScroller} className="soft-scrollbar relative flex-1 overflow-y-auto px-4 py-6 lg:px-6">
+      {/* Bottom-anchor: min-h-full + justify-end pins a short conversation just
+          above the composer (newest-near-composer convention) instead of
+          stranding it at the top of a tall desktop column; long chats overflow
+          and scroll normally, with endRef keeping the view pinned to the last. */}
+      <div className="flex min-h-full flex-col justify-end space-y-5">
+      {history.map((m) => {
+        if (m.role === "system") {
+          return (
+            <div key={m.id} className="flex justify-center">
+              <SystemNotice text={m.text} />
+            </div>
+          );
+        }
+        return (
         <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
           {m.role === "user" ? (
             <OwnerBubble text={m.text} reduced={reduced} />
@@ -217,7 +233,8 @@ export function MessageList({
             </AvaBubble>
           )}
         </div>
-      ))}
+        );
+      })}
 
       {liveEvents.map((e) => {
         const key = `${e.runEpoch}-${e.id}`;
@@ -315,7 +332,27 @@ export function MessageList({
         </div>
       )}
 
-      <div ref={endRef} />
+        <div ref={endRef} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A server-originated notice (e.g. the "Server restarted…" recovery row) — a
+ * centered, muted pill so it reads as a system event, NOT an Ava reply. Keeping
+ * it visually distinct is also what stops it from poisoning the reopen dedupe.
+ */
+function SystemNotice({ text }: { text: string }) {
+  return (
+    <div
+      className="max-w-[80%] rounded-full px-4 py-1.5 text-center text-[11.5px] leading-snug text-white/55"
+      style={{
+        background: "rgba(255,255,255,0.04)",
+        border: "1px solid rgba(255,255,255,0.08)",
+      }}
+    >
+      {text}
     </div>
   );
 }

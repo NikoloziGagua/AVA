@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { api, fetchSession } from "../api.js";
+import { api, fetchSession, ApiError } from "../api.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
@@ -23,6 +23,29 @@ export interface ChatScreenProps {
   onEnterVoice?: () => void;
 }
 
+/**
+ * The text of the most recent assistant message that follows the last user
+ * message — the SAME rule the server replays on stream connect
+ * (chat.ts `latestAssistantAfterLastUser`). Computed from the RAW server rows so
+ * a trailing `system` recovery row (recovery.ts appends "Server restarted…")
+ * can't poison the compare: the old code mapped `system`→assistant and took the
+ * last such bubble, which never matched the server's strict-assistant replay and
+ * duplicated the final on reopen.
+ */
+function latestAssistantAfterLastUser(
+  messages: Array<{ role: string; content: string }>,
+): string | null {
+  let lastUserIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") { lastUserIdx = i; break; }
+  }
+  for (let i = messages.length - 1; i > lastUserIdx; i--) {
+    const m = messages[i]!;
+    if (m.role === "assistant" && m.content.trim()) return m.content;
+  }
+  return null;
+}
+
 export function ChatScreen({
   sessionId: requestedSessionId,
   initialText,
@@ -31,6 +54,11 @@ export function ChatScreen({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [runEpoch, setRunEpoch] = useState(0);
+  // Reopen fetch failure (401 / network / deleted id). Non-null → render a
+  // retry/error panel instead of a silent blank screen with a live composer.
+  const [loadError, setLoadError] = useState<unknown>(null);
+  // Bumped by the error panel's Retry to re-run the reopen fetch.
+  const [reloadNonce, setReloadNonce] = useState(0);
   const { events } = useChatStream(sessionId, runEpoch);
   const [seed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
   // Synchronous optimistic-send flag: flips true the same frame send() fires,
@@ -52,6 +80,7 @@ export function ChatScreen({
 
   useEffect(() => {
     let cancelled = false;
+    setLoadError(null);
     if (requestedSessionId === null) {
       setSessionId(null);
       setHistory([]);
@@ -64,18 +93,28 @@ export function ChatScreen({
         if (cancelled) return;
         const loaded: ChatMessage[] = data.messages.map((m) => ({
           id: `s-${m.id}`,
-          role: m.role === "user" ? "user" : "assistant",
+          // `system` rows stay `system` (rendered as a notice) — collapsing them
+          // into assistant bubbles both misattributed them to Ava AND broke the
+          // reopen dedupe below.
+          role: m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant",
           text: m.content,
         }));
-        seededLastAssistantRef.current =
-          [...loaded].reverse().find((m) => m.role === "assistant")?.text ?? null;
+        // Dedupe target = server's replay rule over the RAW rows (not the last
+        // mapped bubble), so a trailing `system` row can't shadow the real final.
+        seededLastAssistantRef.current = latestAssistantAfterLastUser(data.messages);
         setHistory(loaded);
         setSessionId(requestedSessionId);
         setRunEpoch(0);
       })
-      .catch(() => {});
+      .catch((e) => {
+        if (cancelled) return;
+        // 401 is already centralized in api.ts (clearToken + ava:unauthorized →
+        // App routes to pairing); here we just surface a panel so the screen is
+        // never a silent dead blank.
+        setLoadError(e);
+      });
     return () => { cancelled = true; };
-  }, [requestedSessionId]);
+  }, [requestedSessionId, reloadNonce]);
 
   // Promote a completed run's final into history exactly once.
   // Bug fix: previously the lastFinal lived in `events` only; on the next
@@ -192,9 +231,29 @@ export function ChatScreen({
   async function send(text: string) {
     setHistory((prev) => [...prev, { role: "user", text, id: `u-${Date.now()}` }]);
     setPending(true); // optimistic — same frame as send, before the awaited POST
-    const r = await api.sendMessage(sessionId, text);
-    setSessionId(r.sessionId);
-    setRunEpoch((n) => n + 1);
+    try {
+      const r = await api.sendMessage(sessionId, text);
+      setSessionId(r.sessionId);
+      setRunEpoch((n) => n + 1);
+    } catch (e) {
+      // A failed POST (401 / offline / 5xx / 409) must NOT strand the chat: drop
+      // the optimistic thinking flag (no events will ever arrive to clear it) and
+      // append a visible assistant error bubble. It becomes the last assistant
+      // message, so MessageActions offers Retry (retryLast re-sends this turn).
+      // 401 is centrally handled in api.ts (clearToken + ava:unauthorized).
+      setPending(false);
+      const is401 = e instanceof ApiError && e.status === 401;
+      setHistory((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          role: "assistant",
+          text: is401
+            ? "Session expired — re-pair this device to continue."
+            : "That didn't send, Sir. Tap retry to try again.",
+        },
+      ]);
+    }
   }
 
   // Command bar on home opens a fresh chat with text to send — fire it exactly
@@ -229,8 +288,10 @@ export function ChatScreen({
               transition={{ duration: 0.4 }}
             >
               <motion.div
-                initial={{ opacity: 0, filter: "blur(20px)", y: 8 }}
-                animate={{ opacity: 1, filter: "blur(0px)", y: 0 }}
+                // Compositor-only reveal (opacity + translateY) — animating
+                // filter:blur here forced a full-quality per-frame raster.
+                initial={{ opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
                 className="text-[10px] tracking-[0.45em] uppercase text-white/40 mb-3"
               >
@@ -265,20 +326,40 @@ export function ChatScreen({
                 lg: widen to a comfortable laptop reading column (860px) — the
                 phone-width 760px read as a narrow strip on desktop. */}
             <div className="relative mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col lg:max-w-[860px]">
-              <MessageList
-                history={history}
-                liveEvents={liveEvents}
-                onRetry={retryLast}
-                scrollerRef={scrollerRef}
-                onScrollerMount={setScrollerNode}
-                optimisticThinking={optimisticThinking}
-                executing={executing}
-                runningTool={runningTool}
-                headerState={headerState}
-                toolChipsDocked={railDocked}
-              />
-              <EdgeFade edge="top" />
-              <EdgeFade edge="bottom" />
+              {loadError ? (
+                <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+                  <div className="max-w-sm text-sm leading-relaxed text-white/70">
+                    {loadError instanceof ApiError && loadError.status === 401
+                      ? "Session expired — re-pair this device to continue."
+                      : "Couldn't load this conversation, Sir. Check your connection and try again."}
+                  </div>
+                  {!(loadError instanceof ApiError && loadError.status === 401) && (
+                    <button
+                      onClick={() => setReloadNonce((n) => n + 1)}
+                      className="btn-deck btn-primary"
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <MessageList
+                    history={history}
+                    liveEvents={liveEvents}
+                    onRetry={retryLast}
+                    scrollerRef={scrollerRef}
+                    onScrollerMount={setScrollerNode}
+                    optimisticThinking={optimisticThinking}
+                    executing={executing}
+                    runningTool={runningTool}
+                    headerState={headerState}
+                    toolChipsDocked={railDocked}
+                  />
+                  <EdgeFade edge="top" />
+                  <EdgeFade edge="bottom" />
+                </>
+              )}
             </div>
           </div>
           {steps.length > 0 && (
@@ -290,10 +371,14 @@ export function ChatScreen({
             />
           )}
         </div>
-        {/* xl + docked rail: indent by the rail's occupied width (320px + mr-3)
-            so the composer stays centered under the conversation column instead
-            of centering on the viewport and sliding under the rail. */}
-        <div className={railDocked ? "xl:mr-[332px] xl:transition-[margin] xl:duration-300" : "xl:transition-[margin] xl:duration-300"}>
+        {/* xl + docked rail: shift the composer left so it stays centered under
+            the conversation column (the rail occupies ~332px on the right).
+            translateX (compositor-only) instead of animating margin, which would
+            reflow the whole conversation column every frame. Half the rail width
+            (~166px) matches the recentering the old mr-[332px] produced. */}
+        <div
+          className={`xl:transition-transform xl:duration-300 ${railDocked ? "xl:-translate-x-[166px]" : "xl:translate-x-0"}`}
+        >
           <Composer
             onSend={send}
             onKill={kill}

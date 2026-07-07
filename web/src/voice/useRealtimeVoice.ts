@@ -15,13 +15,14 @@ import {
   shouldDropAudioDelta,
   hasEnoughAudio,
 } from "./voiceInputMode.js";
-import { shouldToggleOnEnter } from "./pushToTalk.js";
+import { shouldStartHold, shouldFinishHold } from "./pushToTalk.js";
 import { splitForSpeech } from "./speech-chunks.js";
 import { humanizeTool } from "../chat/humanize.js";
 import {
   api,
   approveApproval,
   denyApproval,
+  fetchSession,
   fetchVoiceEngine,
   setVoiceEngine as apiSetVoiceEngine,
   type VoiceEngine,
@@ -35,6 +36,29 @@ const SAMPLE_RATE = 24000;
 // longer fallback reopens "listening" once she's been silent + idle this long,
 // regardless of the missed event. Generous so a real reply is never clipped.
 const REOPEN_FALLBACK_MS = 4000;
+
+// Push-to-talk recovery: finishPtt flips to "thinking" the instant it commits,
+// BEFORE the server has accepted the transcript. If the commit yields no reply
+// (dropped at the gate, or upstream rejects), nothing ever re-arms "listening" —
+// the mic stays shut forever. This timer is the client-side safety net: if no
+// transcript/response/audio arrives within the window, recover to "listening"
+// with a soft hint. (The proxy also sends an explicit `ava.recover` frame when it
+// drops a PTT commit, so recovery is usually deterministic, not timer-driven.)
+const PTT_RECOVERY_MS = 5500;
+
+/** RMS amplitude (0..1) of one PCM16 mic frame — drives the orb meter from the
+ *  SAME audio actually forwarded upstream, so there's no second always-on mic and
+ *  the meter can't react to the room when nothing is being sent. */
+function pcm16Amplitude(buf: ArrayBuffer): number {
+  const view = new Int16Array(buf);
+  if (view.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < view.length; i++) {
+    const v = view[i]! / 0x8000;
+    sum += v * v;
+  }
+  return Math.min(1, Math.sqrt(sum / view.length) * 3);
+}
 
 // What the voice client does with a (already gated) realtime event. The only
 // path that produces a reply is `agent_turn` → POST /api/chat (the full
@@ -130,6 +154,14 @@ export interface RealtimeCaption {
   text: string;
 }
 
+// A committed conversation turn shown in the voice transcript scrollback. `id` is
+// stable per turn so the list renders without remounting existing rows.
+export interface VoiceTurn {
+  id: string;
+  who: "you" | "ava";
+  text: string;
+}
+
 export interface PendingApproval {
   id: string;
   tool: string;
@@ -182,6 +214,16 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const [state, setState] = useState<RealtimeState>("idle");
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [caption, setCaption] = useState<RealtimeCaption | null>(null);
+  // Transcript scrollback (committed You/Ava turns) + ONE live interim line that
+  // updates in place while capturing / while Ava streams. Replaces the single
+  // overwriting caption in the UI — the user's turn no longer vanishes when Ava
+  // replies, and the interim line has a stable identity so it never re-animates.
+  const [turns, setTurns] = useState<VoiceTurn[]>([]);
+  const [interim, setInterim] = useState<RealtimeCaption | null>(null);
+  // Amplitude (0..1) derived from the PCM frames actually forwarded upstream.
+  const [amplitude, setAmplitude] = useState(0);
+  // Soft, non-error hint under the orb ("didn't catch that", "hold a bit longer").
+  const [hint, setHint] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
@@ -240,6 +282,13 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     setInputModeState(m);
   }, []);
 
+  // The orb meter must reflect ONLY audio actually forwarded upstream: force
+  // amplitude to 0 whenever the mic isn't live (muted, PTT-idle between turns, or
+  // VAD not listening/responding). While live, the worklet drives it from the PCM.
+  const micLive =
+    !muted && (inputMode === "enter_push_to_talk" ? capturing : (state === "listening" || state === "responding"));
+  useEffect(() => { if (!micLive) setAmplitude(0); }, [micLive]);
+
   // Fetch the current engine on mount so the toggle reflects the active setting.
   useEffect(() => {
     let live = true;
@@ -278,7 +327,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const actionResultReceivedRef = useRef(false); // task's final result spoken (mic may reopen)
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // end-of-turn debounce
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // hands-free recovery (Fix 1)
+  const pttRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // stuck-in-thinking recovery (PTT)
   const pttBytesRef = useRef(0); // bytes forwarded in the current push-to-talk turn (Fix 3)
+  const turnSeqRef = useRef(0); // monotonic id source for committed transcript turns
+  const seededSessionRef = useRef<string | null>(null); // session whose history we've already seeded
+  const lastAmpTsRef = useRef(0); // throttle the amplitude state updates (~audio-callback rate is too fast)
   // Barge-in epoch (Item 1). interrupt() bumps interruptEpochRef AND sends
   // response.cancel upstream so the realtime model stops generating. But late
   // audio deltas already in flight still arrive after the cancel; the realtime
@@ -322,10 +375,42 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     actionResultReceivedRef.current = false;
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
+    if (pttRecoveryTimerRef.current) { clearTimeout(pttRecoveryTimerRef.current); pttRecoveryTimerRef.current = null; }
 
     try { wsRef.current?.close(); } catch { /* */ }
     wsRef.current = null;
   }, [stopAgentStream]);
+
+  // Append a committed turn to the transcript scrollback, skipping empties and an
+  // immediate exact duplicate of the last row (a streamed turn that's also flushed).
+  const commitTurn = useCallback((who: "you" | "ava", text: string) => {
+    const t = text.trim();
+    if (!t) return;
+    setTurns((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.who === who && last.text === t) return prev;
+      return [...prev, { id: `vt-${turnSeqRef.current++}`, who, text: t }];
+    });
+  }, []);
+
+  const clearPttRecovery = useCallback(() => {
+    if (pttRecoveryTimerRef.current) { clearTimeout(pttRecoveryTimerRef.current); pttRecoveryTimerRef.current = null; }
+  }, []);
+
+  // Arm the stuck-in-thinking safety net after a PTT commit (see PTT_RECOVERY_MS).
+  const armPttRecovery = useCallback(() => {
+    clearPttRecovery();
+    pttRecoveryTimerRef.current = setTimeout(() => {
+      pttRecoveryTimerRef.current = null;
+      // Only recover if we're genuinely stuck: still "thinking", nothing playing,
+      // no action running. A real reply would have moved us on and cleared this.
+      if (stateRef.current === "thinking" && !actionPendingRef.current && !playerRef.current?.playing) {
+        setInterim(null);
+        setHint("Didn't catch that, Sir — hold and try again.");
+        setState("listening");
+      }
+    }, PTT_RECOVERY_MS);
+  }, [clearPttRecovery]);
 
   // Synthesize one clip — null on any failure (the worker just skips it).
   const fetchClip = useCallback(async (text: string): Promise<Blob | null> => {
@@ -415,7 +500,14 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   // adopt the session id the server returns and speak the final reply.
   const runAgentTurn = useCallback((text: string) => {
     stopAgentStream();
+    // The server accepted our turn → the PTT commit succeeded; disarm the recovery
+    // net and drop any stale hint. Commit the user turn to the scrollback so it
+    // stays visible when Ava replies.
+    clearPttRecovery();
+    setHint(null);
     setCaption({ who: "you", text });
+    commitTurn("you", text);
+    setInterim(null);
     setState("thinking");
 
     void (async () => {
@@ -444,6 +536,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         try {
           const p = JSON.parse((e as MessageEvent).data) as { tool: string };
           setCaption({ who: "ava", text: `…${p.tool}` });
+          setInterim({ who: "ava", text: `…${p.tool}` });
           // Fix 1: the moment Ava starts doing something, say "on it" so the
           // wait isn't dead air. Fires once, ahead of the spoken reply.
           if (!acked) { acked = true; enqueueSpeak("On it, Sir."); }
@@ -457,6 +550,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         try {
           const p = JSON.parse((e as MessageEvent).data) as { text: string };
           replyText += p.text;
+          setInterim({ who: "ava", text: replyText });
           if (!firstSpoken) {
             const m = /^[\s\S]*?[.!?](\s|$)/.exec(replyText);
             if (m && m[0].trim().length >= 10) { firstSpoken = m[0]; enqueueSpeak(firstSpoken); }
@@ -479,6 +573,8 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         try {
           const p = JSON.parse((e as MessageEvent).data) as { text: string };
           setCaption({ who: "ava", text: p.text });
+          commitTurn("ava", p.text);
+          setInterim(null);
           // Speak whatever streaming hasn't already said: the rest after the
           // first sentence, or the whole reply if nothing streamed.
           const remainder = firstSpoken && p.text.startsWith(firstSpoken)
@@ -504,7 +600,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       es.addEventListener("done", finish);
       es.addEventListener("killed", finish);
     })();
-  }, [enqueueSpeak, stopAgentStream]);
+  }, [enqueueSpeak, stopAgentStream, commitTurn, clearPttRecovery]);
 
   const clearSettle = useCallback(() => {
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
@@ -594,27 +690,40 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         }
         avaCaptionRef.current = "";
         genDoneRef.current = false;
+        // The server accepted our turn → the PTT commit landed; disarm the recovery
+        // net + hint, commit the user turn to the scrollback, and clear the interim.
+        clearPttRecovery();
+        setHint(null);
         setCaption({ who: "you", text: eff.text });
+        commitTurn("you", eff.text);
+        setInterim(null);
         setState("thinking");
         return;
       case "working":
         // do_on_computer is running on the server — show progress, keep the mic
         // closed, and don't let the tool-call response's done flip us to idle.
         actionPendingRef.current = true;
+        clearPttRecovery();
         setCaption({ who: "ava", text: eff.task ? `…${eff.task}` : "…working on it" });
+        setInterim({ who: "ava", text: eff.task ? `…${eff.task}` : "…working on it" });
         setState("thinking");
         return;
       case "step":
         actionPendingRef.current = true;
+        clearPttRecovery();
         {
           const phrase = humanizeTool(eff.tool, eff.args);
           setCaption({ who: "ava", text: phrase });
+          setInterim({ who: "ava", text: phrase });
           enqueueSpeak(phrase);
         }
         return;
       case "result":
         actionResultReceivedRef.current = true;
+        clearPttRecovery();
         setCaption({ who: "ava", text: eff.text });
+        commitTurn("ava", eff.text.trim() || "Done.");
+        setInterim(null);
         // The mic reopens when the speak queue drains, so an empty result must
         // still enqueue a clip — otherwise hands-free would hang after the task.
         // Don't depend on the server's "Done." fallback for this safety property.
@@ -628,6 +737,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         playTurnEpochRef.current = interruptEpochRef.current;
         genDoneRef.current = false;
         avaCaptionRef.current = "";
+        clearPttRecovery(); // a fresh generation started → not stuck
         setState("thinking");
         return;
       case "play_audio":
@@ -638,6 +748,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         // stops further generation; this guards the deltas already in flight.)
         if (shouldDropAudioDelta(playTurnEpochRef.current, interruptEpochRef.current)) return;
         clearSettle();              // new audio → cancel any pending end-of-turn
+        clearPttRecovery();         // Ava is speaking → the commit wasn't dropped
         actionPendingRef.current = false; // audio = Ava speaking the reply/result
         actionResultReceivedRef.current = false;
         genDoneRef.current = false;
@@ -647,13 +758,27 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       case "ava_delta":
         avaCaptionRef.current += eff.text;
         setCaption({ who: "ava", text: avaCaptionRef.current });
+        // Ava's streaming transcript rides the ONE interim line (stable identity),
+        // updated in place — no per-token remount/re-animation (the flicker fix).
+        setInterim({ who: "ava", text: avaCaptionRef.current });
         return;
       case "ava_done":
         if (eff.text) setCaption({ who: "ava", text: eff.text });
+        // Promote the streamed chit-chat turn to a committed scrollback row.
+        commitTurn("ava", eff.text || avaCaptionRef.current);
         avaCaptionRef.current = "";
+        setInterim(null);
         return;
       case "gen_done":
         genDoneRef.current = true;
+        // If the spoken turn ended without an ava_done (some flows only send
+        // response.done), promote whatever streamed into a committed row. A
+        // tool-call response.done has no accumulated caption, so this no-ops there.
+        if (avaCaptionRef.current.trim()) {
+          commitTurn("ava", avaCaptionRef.current);
+          avaCaptionRef.current = "";
+          setInterim(null);
+        }
         // Don't end the turn on the raw event — debounce it. A tool-call response
         // also emits done (no audio, actionPending) and is correctly ignored; the
         // real reply ends via the audio draining + the settle timer.
@@ -665,7 +790,25 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       case "ignore":
         return;
     }
-  }, [ensurePlayer, clearSettle, scheduleListen, enqueueSpeak]);
+  }, [ensurePlayer, clearSettle, scheduleListen, enqueueSpeak, commitTurn, clearPttRecovery]);
+
+  // Stop ALL of Ava's spoken output locally — the realtime PCM player, the TTS
+  // clip queue, and any in-flight clip — and advance the barge-in epoch so late
+  // realtime deltas from the cancelled turn are dropped. Shared by the on-screen
+  // interrupt() (which ALSO tells the server/agent to stop) and a server-driven
+  // voice barge-in (where the proxy already cancelled upstream).
+  const stopSpokenOutput = useCallback(() => {
+    interruptEpochRef.current += 1;
+    try { playerRef.current?.interrupt(); } catch { /* */ }
+    speakEpochRef.current += 1;
+    speakQueueRef.current.length = 0;
+    try { ttsRef.current?.pause(); } catch { /* */ }
+    ttsRef.current = null;
+    ttsDoneRef.current?.();
+    ttsDoneRef.current = null;
+    if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
+    if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
+  }, []);
 
   const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
     const action = classifyRealtimeEvent(evt);
@@ -674,6 +817,32 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     if (action.kind === "session") {
       if (action.mode) hybridRef.current = action.mode === "hybrid";
       if (action.sessionId) setSessionId(action.sessionId);
+      return;
+    }
+    // Ava-specific control frames, handled the same in hybrid + transcribe:
+    if (action.kind === "recover") {
+      // A push-to-talk commit was dropped server-side — recover deterministically
+      // instead of waiting out the client timer.
+      clearPttRecovery();
+      if (stateRef.current === "thinking") {
+        setInterim(null);
+        setHint("Didn't catch that, Sir — hold and try again.");
+        setState("listening");
+      }
+      return;
+    }
+    if (action.kind === "barge_in") {
+      // The owner talked over Ava; the proxy already cancelled her response
+      // upstream and is opening a new turn (its caption_user + response follow).
+      // Stop her audio locally and move to "thinking" so her cancelled tail can't
+      // keep us in "responding" while the new turn spins up.
+      stopSpokenOutput();
+      actionPendingRef.current = false;
+      actionResultReceivedRef.current = false;
+      genDoneRef.current = false;
+      avaCaptionRef.current = "";
+      setInterim(null);
+      if (stateRef.current === "responding") setState("thinking");
       return;
     }
     if (hybridRef.current) {
@@ -693,7 +862,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       default:
         return;
     }
-  }, [handleHybridAction, runAgentTurn]);
+  }, [handleHybridAction, runAgentTurn, stopSpokenOutput, clearPttRecovery]);
 
   const startingRef = useRef(false);
   // Auto-reconnect on a transient abnormal close (e.g. 1006, or upstream 1011),
@@ -755,18 +924,32 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
           node.port.onmessage = (ev) => {
             // Single forwarding rule (see shouldForwardMic): VAD forwards while
-            // "listening" (closed during thinking/responding so Ava's reply isn't
-            // re-heard); push-to-talk forwards ONLY while a turn is being
-            // captured, so background/external audio between turns never leaves
-            // the device.
+            // "listening" AND "responding" (the latter enables voice barge-in —
+            // talking over Ava interrupts her); push-to-talk forwards ONLY while a
+            // turn is being captured, so background/external audio between turns
+            // never leaves the device.
             if (!shouldForwardMic({
               mode: inputModeRef.current,
               muted: mutedRef.current,
               capturing: capturingRef.current,
               listening: stateRef.current === "listening",
+              // Barge-in forwards during a spoken REPLY, but NOT during a
+              // do_on_computer task's narrated steps (actionPending) — there the
+              // mic must stay closed so Ava's multi-clip TTS narration can't be
+              // re-heard/transcribed into a phantom turn.
+              responding: stateRef.current === "responding" && !actionPendingRef.current,
             })) return;
             if (ws.readyState !== WebSocket.OPEN) return;
             const buf = ev.data as ArrayBuffer;
+            // Orb meter (Fix): amplitude is derived from THIS forwarded PCM — the
+            // single capture stream — so there is no second always-on mic and the
+            // meter only reacts when audio is actually being sent. Throttled, since
+            // the worklet posts a frame every render quantum (~5ms).
+            const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+            if (now - lastAmpTsRef.current > 45) {
+              lastAmpTsRef.current = now;
+              setAmplitude(pcm16Amplitude(buf));
+            }
             // Fix 3: track how much real audio this push-to-talk turn forwarded,
             // so finishPtt can refuse to commit an empty/too-short buffer.
             if (inputModeRef.current === "enter_push_to_talk") pttBytesRef.current += buf.byteLength;
@@ -844,6 +1027,13 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   // a reconnect the session keeps whatever mode it opened with — so silence ends
   // the turn and empty buffers get committed ("0.00ms"). A fresh start() reads the
   // mode from the URL, so only an already-active session needs this.
+  //
+  // FUTURE (low-priority tuning, deliberately NOT done here to avoid churn/risk):
+  // turn_detection can be flipped over the LIVE socket via an upstream
+  // `session.update` the proxy translates from a small control frame, avoiding the
+  // teardown + CONNECTING flash + re-seed of N history turns (real OpenAI cost) on
+  // every VAD↔PTT toggle. The reconnect path below is proven and correct; the live
+  // switch is an optimization to weigh against re-seed cost, so it's left as a note.
   useEffect(() => {
     const prev = prevInputModeRef.current;
     prevInputModeRef.current = inputMode;
@@ -885,6 +1075,8 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     cleanup();
     setState("idle");
     setCaption(null);
+    setInterim(null);
+    setHint(null);
   }, [cleanup]);
 
   // "+new conversation": drop the current session and reconnect forcing a fresh
@@ -894,15 +1086,20 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     forceNewRef.current = true;
     setSessionId(null);
     sessionIdRef.current = null;
+    seededSessionRef.current = null; // a fresh conversation has no history to seed
     intentionalStopRef.current = false; // we DO want the reconnect to fire
     reconnectRef.current = 0;
     setCapturing(false);
     capturingRef.current = false;
     setCaption(null);
+    setTurns([]);       // clear the transcript scrollback for the new conversation
+    setInterim(null);
+    setHint(null);
+    clearPttRecovery();
     cleanup();
     setState("connecting");
     window.setTimeout(() => { if (!intentionalStopRef.current) startRef.current(); }, 150);
-  }, [cleanup]);
+  }, [cleanup, clearPttRecovery]);
 
   // Barge-in: stop Ava speaking / abort the in-flight agent run and return to
   // listening. Kills the server-side run too so tools don't keep executing.
@@ -923,26 +1120,19 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       try { ws.send(JSON.stringify({ type: "response.cancel" })); } catch { /* */ }
       try { ws.send(JSON.stringify({ type: "input_audio_buffer.clear" })); } catch { /* */ }
     }
-    // Hybrid: cut the model's spoken audio immediately and end the turn.
-    try { playerRef.current?.interrupt(); } catch { /* */ }
-    // Bug B: the realtime player isn't the only voice — task steps/results and
-    // transcribe-path replies speak via TTS (/api/speak). Stop those too, or the
-    // owner can't cut Ava off mid-sentence. Bump the epoch so the in-flight drain
-    // aborts, drop the queue, halt the current clip, and end its await.
-    speakEpochRef.current += 1;
-    speakQueueRef.current.length = 0;
-    try { ttsRef.current?.pause(); } catch { /* */ }
-    ttsRef.current = null;
-    ttsDoneRef.current?.();
-    ttsDoneRef.current = null;
-    if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
-    if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
+    // Hybrid: cut the model's spoken audio immediately and end the turn. Also stop
+    // the TTS voice (task steps/results + transcribe-path replies speak via
+    // /api/speak) so the owner can cut Ava off mid-sentence — this bumps the
+    // barge-in + speak epochs, drops the queue, halts the clip, and clears timers.
+    stopSpokenOutput();
+    clearPttRecovery();
     genDoneRef.current = false;
     actionPendingRef.current = false;
     actionResultReceivedRef.current = false;
     avaCaptionRef.current = "";
+    setInterim(null);
     setState("listening");
-  }, [stopAgentStream]);
+  }, [stopAgentStream, stopSpokenOutput, clearPttRecovery]);
 
   // ─── Enter push-to-talk turn-taking ────────────────────────────────────────
   // Start a turn: re-open the mic, and — because pressing Enter is an EXPLICIT
@@ -956,10 +1146,12 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     // the first audio chunks are dropped and the turn commits empty.
     capturingRef.current = true;
     pttBytesRef.current = 0; // Fix 3: fresh byte count for this turn
+    clearPttRecovery();      // a new hold supersedes any pending recovery
+    setHint(null);           // clear "hold a bit longer" / "didn't catch that"
     for (const t of streamRef.current?.getAudioTracks() ?? []) t.enabled = true;
     setCapturing(true);
     setState("listening");
-  }, [interrupt]);
+  }, [interrupt, clearPttRecovery]);
 
   // Finish a turn: stop appending mic audio immediately, suspend the local input
   // stream (so nothing more is captured), commit the buffered audio and let the
@@ -968,10 +1160,17 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const finishPtt = useCallback(() => {
     if (inputModeRef.current !== "enter_push_to_talk") return;
     if (!capturingRef.current) return;
-    // Fix 3: a too-quick tap captured nothing — don't commit an empty buffer (the
-    // server rejects it: "buffer too small … 0.00ms"). Keep the turn open so the
-    // owner can simply keep talking and press Enter again.
-    if (!hasEnoughAudio(pttBytesRef.current)) return;
+    // Fix 3 + feedback: a too-quick release captured nothing — don't commit an
+    // empty buffer (the server rejects it: "buffer too small … 0.00ms"). Reopen the
+    // turn's affordance and tell the owner they released too fast, instead of
+    // silently no-op'ing (the old confusing behaviour).
+    if (!hasEnoughAudio(pttBytesRef.current)) {
+      capturingRef.current = false;
+      setCapturing(false);
+      for (const t of streamRef.current?.getAudioTracks() ?? []) t.enabled = false;
+      setHint("Hold a little longer, Sir.");
+      return;
+    }
     capturingRef.current = false; // Fix 2: stop forwarding immediately
     setCapturing(false);
     for (const t of streamRef.current?.getAudioTracks() ?? []) t.enabled = false;
@@ -983,26 +1182,47 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       try { ws.send(JSON.stringify({ type: "input_audio_buffer.commit" })); } catch { /* */ }
     }
     setState("thinking");
-  }, []);
+    // Stuck-in-thinking recovery: we flipped to "thinking" before the server has
+    // accepted anything. If no transcript/response arrives, re-arm "listening".
+    armPttRecovery();
+  }, [armPttRecovery]);
 
-  // The single Enter action: finish if a turn is in flight, otherwise start one.
+  // The single tap/toggle action, kept for the secondary tap affordance + tests:
+  // finish if a turn is in flight, otherwise start one. The PRIMARY gesture is
+  // hold (pointer down/up on the button, Space keydown/keyup) via startPtt/finishPtt.
   const togglePushToTalk = useCallback(() => {
     if (capturingRef.current) finishPtt();
     else startPtt();
   }, [finishPtt, startPtt]);
 
-  // Bind Enter globally while in push-to-talk mode. shouldToggleOnEnter ignores
-  // key-repeat (held Enter), modifier combos, and Enter typed in an input/
-  // textarea/contenteditable so it never fights the keyboard composer.
+  // Push-to-talk is HOLD, not toggle: bind Space (keydown starts, keyup commits)
+  // globally while in that mode. shouldStartHold ignores auto-repeat (a held key
+  // fires repeated keydowns), modifier combos, and Space typed in an input/
+  // textarea/contenteditable. preventDefault stops the page scrolling and stops a
+  // focused button from also activating — so Enter never double-dispatches (it's
+  // no longer bound here at all). A lost keyup (blur/tab-away mid-hold) commits via
+  // the blur handler so a turn can't stay stuck open.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!shouldToggleOnEnter(e, inputModeRef.current)) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!shouldStartHold(e, inputModeRef.current)) return;
       e.preventDefault();
-      togglePushToTalk();
+      startPtt();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [togglePushToTalk]);
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!shouldFinishHold(e, inputModeRef.current)) return;
+      e.preventDefault();
+      finishPtt();
+    };
+    const onBlur = () => { if (capturingRef.current) finishPtt(); };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, [startPtt, finishPtt]);
 
   const approve = useCallback(() => {
     setPendingApproval((cur) => {
@@ -1020,6 +1240,30 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
   // Dismiss the error surface WITHOUT leaving voice — the X button exits.
   const clearError = useCallback(() => setErrorMsg(null), []);
+  const clearHint = useCallback(() => setHint(null), []);
+
+  // Seed the transcript scrollback from the session's persisted history (the proxy
+  // already stores both user + assistant voice turns). Best-effort: fires once per
+  // session id, skipped for a freshly-forced "+new" conversation, and only when the
+  // scrollback is still empty so it can't clobber live turns. A failure is silent.
+  useEffect(() => {
+    if (!sessionId) return;
+    if (forceNewRef.current) return;
+    if (seededSessionRef.current === sessionId) return;
+    seededSessionRef.current = sessionId;
+    let live = true;
+    void fetchSession(sessionId)
+      .then(({ messages }) => {
+        if (!live) return;
+        const seeded: VoiceTurn[] = messages
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({ id: `seed-${m.id}`, who: m.role === "user" ? "you" : "ava", text: m.content }));
+        if (seeded.length === 0) return;
+        setTurns((prev) => (prev.length === 0 ? seeded : prev));
+      })
+      .catch(() => { /* history seed is best-effort */ });
+    return () => { live = false; };
+  }, [sessionId]);
 
   useEffect(() => () => { intentionalStopRef.current = true; cleanup(); }, [cleanup]);
 
@@ -1027,6 +1271,12 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     state,
     sessionId,
     caption,
+    // Transcript display: committed scrollback + one live interim line + orb meter.
+    turns,
+    interim,
+    amplitude,
+    hint,
+    clearHint,
     errorMsg,
     clearError,
     muted,
@@ -1042,6 +1292,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     inputMode,
     setInputMode,
     capturing,
+    // Push-to-talk: HOLD is primary (startPtt/finishPtt); togglePushToTalk is the
+    // secondary tap affordance kept for accessibility + tests.
+    startPtt,
+    finishPtt,
     togglePushToTalk,
     // Voice-engine (how Ava's voice is produced) controls.
     voiceEngine,

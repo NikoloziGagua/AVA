@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { useReducedMotion } from "../../lib/useReducedMotion.js";
+import { glPaused } from "../../lib/deckMotion.js";
 
 export interface DottedSurfaceProps {
   className?: string;
@@ -68,6 +69,10 @@ export function DottedSurface({ className }: DottedSurfaceProps) {
 
     function tick() {
       frameId = requestAnimationFrame(tick);
+      // Idle the loop while a page transition is mid-flight (this surface is on
+      // the outgoing/incoming hero, invisible under the opaque swap) or while the
+      // tab is hidden — no wave update, no GL draw, resumes on the next frame.
+      if (document.hidden || glPaused()) return;
       const positionAttribute = geometry.attributes.position as THREE.BufferAttribute | undefined;
       if (!positionAttribute) return;
       const arr = positionAttribute.array as Float32Array;

@@ -17,6 +17,47 @@ export const EASE = "cinematic";
 /** The one motion clock for the whole deck. */
 export const D = { fast: 0.2, press: 0.12, screen: 0.3, section: 0.5, materialize: 0.6 } as const;
 
+/**
+ * ── App-wide SCREEN transition tokens (motion/react) ─────────────────────────
+ * One coherent system for every page-to-page swap. Out is faster than in so the
+ * outgoing layer clears before the incoming settles; every screen enters and
+ * exits identically. The literal CSS curves also live in theme.css
+ * (--ease-enter / --ease-exit / --dur-enter / --dur-exit / --dur-orb).
+ */
+export const SCREEN = {
+  enter: 0.34, // --dur-enter
+  exit: 0.22, // --dur-exit (out faster than in)
+  orb: 0.44, // --dur-orb — the shared-orb Flip
+  /** Panel content cascade waits this long so container wash-in and the stagger
+   *  are sequential, never stacked. */
+  contentDelay: 0.12,
+  easeEnter: [0.22, 1, 0.36, 1] as [number, number, number, number],
+  easeExit: [0.4, 0, 0.2, 1] as [number, number, number, number],
+  /** Identical entry/exit states for EVERY screen. */
+  from: { opacity: 0, y: 8, scale: 0.99 },
+  to: { opacity: 1, y: 0, scale: 1 },
+  exitTo: { opacity: 0, scale: 1.01 },
+} as const;
+
+/**
+ * ── GL transition gate ───────────────────────────────────────────────────────
+ * The always-on WebGL loops (DottedSurface / NeuralField / MemoryBrain) idle
+ * while a page transition is mid-flight. During the concurrent AnimatePresence
+ * overlap the OUTGOING screen keeps rendering its GL under the opaque incoming
+ * screen while a fresh context builds — several rAF loops + a synchronous build
+ * in the same frames is exactly when the frame budget blows. App marks the
+ * window (markTransition); the loops short-circuit their tick until it passes.
+ */
+let _transitionUntil = 0;
+export function markTransition(durationMs: number): void {
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  _transitionUntil = Math.max(_transitionUntil, now + durationMs);
+}
+export function glPaused(): boolean {
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  return now < _transitionUntil;
+}
+
 /** Card resting + hover/lift shadow strings (so hover handlers and CSS agree). */
 export const SHADOW = {
   rest: "0 1px 0 0 rgba(255,255,255,.07) inset, 0 0 0 1px rgba(92,242,255,.04) inset, 0 24px 60px -24px rgba(0,0,0,.8)",
@@ -37,7 +78,10 @@ export const SHADOW = {
  *   7. [data-panel-section]    per-section specular sweep (--sweep-x -130%→130%)
  */
 export function buildPanelEnter(_root: HTMLElement, _title: string): gsap.core.Timeline {
-  const tl = gsap.timeline({ defaults: { ease: EASE } });
+  // Lead-in: hold the content cascade for ~120ms so the App container's opacity
+  // wash-in finishes first, then the sections cascade — sequential, not stacked
+  // (both starting at t=0 read as a muddy double-move).
+  const tl = gsap.timeline({ delay: SCREEN.contentDelay, defaults: { ease: EASE } });
   // Calm open. The owner disliked the title "glow + glitch" on every open, so the
   // ScrambleText decode and the titlewrap specular sweep are both gone — the title
   // simply fades up and its mercury underline draws out. (No [data-panel-stage]

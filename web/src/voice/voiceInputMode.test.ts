@@ -42,16 +42,26 @@ describe("shouldForwardMic — the background-audio chokepoint", () => {
     expect(shouldForwardMic({ mode: "enter_push_to_talk", muted: true, capturing: true, listening: true })).toBe(false);
   });
 
-  it("VAD forwards only while listening", () => {
+  it("VAD forwards while listening", () => {
     expect(shouldForwardMic({ mode: "vad", muted: false, capturing: false, listening: true })).toBe(true);
     expect(shouldForwardMic({ mode: "vad", muted: false, capturing: false, listening: false })).toBe(false);
   });
 
-  it("push-to-talk forwards ONLY while capturing — never between turns", () => {
+  it("VAD ALSO forwards while responding — this is what enables voice barge-in", () => {
+    // Talking over Ava must reach the server so it can treat it as an interrupt;
+    // pre-fix the mic was closed during "responding" so barge-in did nothing.
+    expect(shouldForwardMic({ mode: "vad", muted: false, capturing: false, listening: false, responding: true })).toBe(true);
+    // ...but never when muted.
+    expect(shouldForwardMic({ mode: "vad", muted: true, capturing: false, listening: false, responding: true })).toBe(false);
+  });
+
+  it("push-to-talk forwards ONLY while capturing — never between turns or while Ava speaks", () => {
     // Capturing a turn: audio flows regardless of the listening flag.
     expect(shouldForwardMic({ mode: "enter_push_to_talk", muted: false, capturing: true, listening: false })).toBe(true);
     // Between turns: nothing is sent, even though the session is "listening".
     expect(shouldForwardMic({ mode: "enter_push_to_talk", muted: false, capturing: false, listening: true })).toBe(false);
+    // The barge-in "responding" forward is VAD-only — PTT stays closed unless held.
+    expect(shouldForwardMic({ mode: "enter_push_to_talk", muted: false, capturing: false, listening: false, responding: true })).toBe(false);
   });
 });
 

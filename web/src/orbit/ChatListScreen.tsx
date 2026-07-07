@@ -42,8 +42,26 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
   // Fetch failure is its own state (MemoryScreen's err pattern) — swallowing it
   // into the empty list lied with "NO CHATS YET" when the server was down.
   const [err, setErr] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  // A QUEUE of pending deletes, each with its OWN 5s timer — deleting a second
+  // chat no longer silently flushes the first's undo window (the old single-slot
+  // state committed the prior delete immediately). The toast reflects the latest;
+  // undo is LIFO.
+  const [pendingDeletes, setPendingDeletes] = useState<PendingDelete[]>([]);
   const reduced = useReducedMotion();
+
+  // Mirror the queue into a ref so the unmount cleanup can commit any still-open
+  // deletes without re-subscribing (deps: []). Leaving the screen mid-undo must
+  // honor the delete (the window is gone) AND clear the timer so no setState
+  // fires on an unmounted component.
+  const pendingRef = useRef<PendingDelete[]>([]);
+  useEffect(() => { pendingRef.current = pendingDeletes; }, [pendingDeletes]);
+  useEffect(() => () => {
+    for (const p of pendingRef.current) {
+      clearTimeout(p.timeoutId);
+      commitDelete(p.session);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Flip snapshot taken in a list-mutating handler; consumed by the layout-effect
   // below after React commits the new DOM (per deckMotion §3a pattern). Covers BOTH
@@ -124,24 +142,32 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
 
   function handleDelete(s: SessionRow) {
     snapshotForFlip();
-    if (pendingDelete) {
-      clearTimeout(pendingDelete.timeoutId);
-      commitDelete(pendingDelete.session);
-    }
     setSessions((prev) => prev.filter((x) => x.id !== s.id));
+    // Each delete gets its own independent timer; prior pending deletes keep
+    // their full undo window (no silent flush).
     const timeoutId = setTimeout(() => {
       commitDelete(s);
-      setPendingDelete(null);
+      setPendingDeletes((prev) => prev.filter((p) => p.session.id !== s.id));
     }, UNDO_WINDOW_MS);
-    setPendingDelete({ session: s, timeoutId });
+    setPendingDeletes((prev) => [...prev, { session: s, timeoutId }]);
   }
 
+  // Undo the most recent pending delete (LIFO — matches the toast, which shows
+  // the latest).
   function handleUndo() {
-    if (!pendingDelete) return;
+    const last = pendingDeletes[pendingDeletes.length - 1];
+    if (!last) return;
     snapshotForFlip();
-    clearTimeout(pendingDelete.timeoutId);
-    setSessions((prev) => [pendingDelete.session, ...prev]);
-    setPendingDelete(null);
+    clearTimeout(last.timeoutId);
+    setSessions((prev) => [last.session, ...prev]);
+    setPendingDeletes((prev) => prev.filter((p) => p !== last));
+  }
+
+  // Commit a specific pending delete now (the toast's dismiss/X).
+  function commitNow(p: PendingDelete) {
+    clearTimeout(p.timeoutId);
+    commitDelete(p.session);
+    setPendingDeletes((prev) => prev.filter((x) => x !== p));
   }
 
   // Optimistic pin/unpin: flip s.pinned locally (which moves the row between the table
@@ -321,29 +347,28 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
         </PanelSection>
       </div>
 
-      {pendingDelete && (
-        <div className="sticky bottom-6 z-20 mx-auto max-w-md">
-          <Alert
-            variant="info"
-            close
-            className="lg-slab border-0"
-            onClose={() => {
-              if (pendingDelete) {
-                clearTimeout(pendingDelete.timeoutId);
-                commitDelete(pendingDelete.session);
-              }
-              setPendingDelete(null);
-            }}
-          >
-            <AlertDescription>
-              Deleted "{pendingDelete.session.title ?? "Untitled"}".
-              <button className="ml-2 underline decoration-[var(--ac)] underline-offset-2 hover:text-[var(--ac)]" onClick={handleUndo}>
-                undo
-              </button>
-            </AlertDescription>
-          </Alert>
-        </div>
-      )}
+      {pendingDeletes.length > 0 && (() => {
+        const latest = pendingDeletes[pendingDeletes.length - 1]!;
+        const extra = pendingDeletes.length - 1;
+        return (
+          <div className="sticky bottom-6 z-20 mx-auto max-w-md">
+            <Alert
+              variant="info"
+              close
+              className="lg-slab border-0"
+              onClose={() => commitNow(latest)}
+            >
+              <AlertDescription>
+                Deleted "{latest.session.title ?? "Untitled"}"
+                {extra > 0 ? ` (+${extra} more)` : ""}.
+                <button className="ml-2 underline decoration-[var(--ac)] underline-offset-2 hover:text-[var(--ac)]" onClick={handleUndo}>
+                  undo
+                </button>
+              </AlertDescription>
+            </Alert>
+          </div>
+        );
+      })()}
     </PanelShell>
   );
 }

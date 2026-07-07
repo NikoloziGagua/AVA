@@ -20,6 +20,12 @@ export function SelfScreen(_props: { onClose?: () => void }) {
   const canRevert = intents.some((i) => i.status === "swapped");
   const reduced = useReducedMotion();
 
+  // Left-column summary — gives the short CONTROLS rail useful body so it isn't a
+  // tall void beside the full-height Journal on desktop.
+  const runningCount = intents.filter((i) => isRunningStatus(i.status)).length;
+  const awaitingCount = intents.filter((i) => i.status === "awaiting_approval").length;
+  const appliedCount = intents.filter((i) => i.status === "swapped").length;
+
   // Initiator: a user-written goal Ava should self-improve toward.
   const [goal, setGoal] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -147,6 +153,27 @@ export function SelfScreen(_props: { onClose?: () => void }) {
               ? "Paused — Ava won't act on self-improvements."
               : "Active — Ava may refine how it works for you."}
           </div>
+
+          {/* Summary — fills the otherwise-empty lower half of the left rail. */}
+          <div className="mt-6 border-t border-white/[0.07] pt-4">
+            <div className="hud mb-3 text-[10px] tracking-[0.2em] text-white/40">SUMMARY</div>
+            <div className="grid grid-cols-3 gap-2">
+              <StatTile label="Total" value={intents.length} />
+              <StatTile label="Running" value={runningCount} accent="var(--ac-exec)" />
+              <StatTile label="Applied" value={appliedCount} accent="var(--ac-live)" />
+            </div>
+            {awaitingCount > 0 && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-[rgba(92,242,255,0.25)] bg-[rgba(92,242,255,0.05)] px-3 py-2">
+                <span
+                  className="h-1.5 w-1.5 shrink-0 rounded-full"
+                  style={{ background: "var(--ac)", boxShadow: "0 0 6px rgba(92,242,255,.8)" }}
+                />
+                <span className="text-[11px] text-white/70">
+                  {awaitingCount} awaiting your approval
+                </span>
+              </div>
+            )}
+          </div>
         </PanelSection>
 
         <PanelSection
@@ -187,6 +214,21 @@ export function SelfScreen(_props: { onClose?: () => void }) {
           )}
         </PanelSection>
       </PanelShell>
+    </div>
+  );
+}
+
+/** A compact metric cell for the Controls summary rail. */
+function StatTile({ label, value, accent }: { label: string; value: number; accent?: string }) {
+  return (
+    <div className="rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 py-2.5 text-center">
+      <div
+        className="text-lg font-semibold tabular-nums leading-none"
+        style={{ color: accent ?? "rgba(255,255,255,0.9)" }}
+      >
+        {value}
+      </div>
+      <div className="hud mt-1.5 text-[9px] tracking-[0.14em] text-white/40">{label}</div>
     </div>
   );
 }

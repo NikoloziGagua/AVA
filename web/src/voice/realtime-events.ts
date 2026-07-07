@@ -21,6 +21,9 @@ export type RealtimeAction =
   | { kind: "ava_transcript_delta"; text: string }
   | { kind: "ava_transcript_done"; text: string }
   | { kind: "response_done" }
+  // Ava-specific control frames from the proxy (not OpenAI realtime events):
+  | { kind: "barge_in" }             // owner talked over Ava → stop her audio locally
+  | { kind: "recover"; reason: string } // a PTT commit was dropped → re-arm listening
   | { kind: "error"; message: string }
   | { kind: "ignore" };
 
@@ -46,6 +49,10 @@ export function classifyRealtimeEvent(evt: { type?: string;[k: string]: unknown 
       const text = (evt.text as string | undefined) ?? "";
       return { kind: "action_result", text };
     }
+    case "ava.barge_in":
+      return { kind: "barge_in" };
+    case "ava.recover":
+      return { kind: "recover", reason: (evt.reason as string | undefined) ?? "" };
     case "input_audio_buffer.speech_started":
       return { kind: "speech_started" };
     case "input_audio_buffer.speech_stopped":

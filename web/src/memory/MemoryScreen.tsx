@@ -41,6 +41,9 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
   // Mind (the 3D brain) is the front door — the list is the editing back office.
   const [view, setView] = useState<ViewMode>("mind");
   const [selected, setSelected] = useState<BrainNode | null>(null);
+  // Surfaced when an edit/delete hits a 409 (the line changed on disk since load
+  // — e.g. Ava wrote memory concurrently). Without this the edit silently vanished.
+  const [notice, setNotice] = useState<string | null>(null);
 
   async function load() {
     try { setM(await fetchMemory()); }
@@ -48,15 +51,36 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
   }
   useEffect(() => { load(); }, []);
 
+  // Every observation/preference mutation goes through here so a conflict is
+  // never silently lost: patchMemoryLine returns {ok:false} on a 409, and we tell
+  // the user their change didn't land before repainting the server's latest.
+  async function patchLine(input: Parameters<typeof patchMemoryLine>[0]) {
+    const res = await patchMemoryLine(input);
+    if (!res.ok) {
+      setNotice("That line changed elsewhere since you opened it — showing the latest. Reapply your edit if you still need it.");
+    }
+    await load();
+  }
+
   // Plain (non-PanelShell) early returns so PanelShell mounts fresh with real
   // content and its enter stagger plays from the start.
   if (err) return <div className="flex h-full items-center justify-center bg-black text-sm text-red-400">error: {err}</div>;
-  if (!m) return <div className="flex h-full items-center justify-center bg-black text-sm text-white/50">Loading memory…</div>;
+  if (!m) return <MemoryLoading />;
 
   const obs = cat === "all" ? m.observations.lines : m.observations.lines.filter((l) => l.category === cat);
 
   return (
     <PanelShell title="Memory" grid>
+      {notice && (
+        <div className="lg:col-span-12" data-panel-section>
+          <div className="flex items-start justify-between gap-3 rounded-xl border border-[rgba(255,212,121,0.35)] bg-[rgba(255,212,121,0.08)] px-4 py-2.5 text-xs text-[#ffe6ad]">
+            <span className="leading-relaxed">{notice}</span>
+            <button onClick={() => setNotice(null)} className="btn-deck btn-ghost h-7 shrink-0 px-2" aria-label="dismiss notice">
+              <X size={14} strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
+      )}
       {/* View toggle — List (dashboard) vs Mind (3D memory brain). Spans the grid. */}
       <div className="lg:col-span-12 mb-1 flex justify-end" data-panel-section>
         <SegmentedTabs<ViewMode>
@@ -99,14 +123,8 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
             <ObservationRow
               key={l.raw}
               line={l}
-              onEdit={async (newLine) => {
-                await patchMemoryLine({ file: "observations", oldLine: l.raw, newLine });
-                await load();
-              }}
-              onDelete={async () => {
-                await patchMemoryLine({ file: "observations", oldLine: l.raw });
-                await load();
-              }}
+              onEdit={(newLine) => patchLine({ file: "observations", oldLine: l.raw, newLine })}
+              onDelete={() => patchLine({ file: "observations", oldLine: l.raw })}
             />
           ))}
         </div>
@@ -126,14 +144,8 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
             <PreferenceRow
               key={line}
               line={line}
-              onEdit={async (newLine) => {
-                await patchMemoryLine({ file: "preferences", oldLine: line, newLine });
-                await load();
-              }}
-              onDelete={async () => {
-                await patchMemoryLine({ file: "preferences", oldLine: line });
-                await load();
-              }}
+              onEdit={(newLine) => patchLine({ file: "preferences", oldLine: line, newLine })}
+              onDelete={() => patchLine({ file: "preferences", oldLine: line })}
             />
           ))}
           <NewPreferenceInput
@@ -215,6 +227,8 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
  * inspector that overlays the top-right corner when a node is selected. The brain
  * computes its layout once and disposes its GL resources on unmount.
  */
+type Extras = { people: PersonRow[]; playbooks: PlaybookRow[]; watches: WatchRow[] };
+
 function MindStage({
   memory,
   selected,
@@ -225,47 +239,69 @@ function MindStage({
   onSelect: (n: BrainNode | null) => void;
 }) {
   const [spinning, setSpinning] = useState(true);
-  // Everything else Ava knows joins the cortex: people, learned skills,
-  // standing watches. Content-compared before setState so the 60s poll never
-  // rebuilds the GL scene when nothing changed.
-  const [extras, setExtras] = useState<{ people: PersonRow[]; playbooks: PlaybookRow[]; watches: WatchRow[] }>({
-    people: [], playbooks: [], watches: [],
-  });
+  // Everything else Ava knows joins the cortex: people, learned skills, standing
+  // watches. These load BEFORE the first MemoryBrain mount so the three.js scene
+  // is constructed exactly ONCE with full data — the old empty→populated update
+  // changed the effect deps and forced a full GL teardown + rebuild. `null` =
+  // not loaded yet (brain stays behind the skeleton until it resolves).
+  const [extras, setExtras] = useState<Extras | null>(null);
+  // Defer the heavy GL construction OUT of the panel's entry animation window:
+  // only flip ready once the browser is idle after entry settles. Combined with
+  // the extras gate, the brain builds one scene, once, AFTER the transition.
+  const [idleReady, setIdleReady] = useState(false);
+
   useEffect(() => {
     let alive = true;
     const load = async () => {
-      try {
-        const [people, playbooks, watches] = await Promise.all([
-          fetchPeople().catch(() => [] as PersonRow[]),
-          fetchPlaybooks().catch(() => [] as PlaybookRow[]),
-          fetchWatches().catch(() => [] as WatchRow[]),
-        ]);
-        if (!alive) return;
-        const next = { people, playbooks, watches };
-        setExtras((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
-      } catch { /* best-effort — the brain renders without extras */ }
+      const [people, playbooks, watches] = await Promise.all([
+        fetchPeople().catch(() => [] as PersonRow[]),
+        fetchPlaybooks().catch(() => [] as PlaybookRow[]),
+        fetchWatches().catch(() => [] as WatchRow[]),
+      ]);
+      if (!alive) return;
+      const next: Extras = { people, playbooks, watches };
+      // Content-compare so the 60s poll never rebuilds the GL scene unchanged.
+      setExtras((prev) => (prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
     };
     void load();
     const t = setInterval(load, 60_000);
     return () => { alive = false; clearInterval(t); };
   }, []);
 
+  useEffect(() => {
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    if (ric) {
+      const id = ric(() => setIdleReady(true), { timeout: 700 });
+      const cic = (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback;
+      return () => cic?.(id);
+    }
+    const t = window.setTimeout(() => setIdleReady(true), 480);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  const ex: Extras = extras ?? { people: [], playbooks: [], watches: [] };
+  const brainReady = extras !== null && idleReady;
+
   const items =
     memory.observations.lines.length + memory.preferences.lines.length + memory.projects.length +
-    extras.people.length + extras.playbooks.length + extras.watches.length;
+    ex.people.length + ex.playbooks.length + ex.watches.length;
   const hubLabels = new Set(memory.observations.lines.map((l) => l.category));
   if (memory.preferences.lines.length) hubLabels.add("preferences");
   if (memory.projects.length) hubLabels.add("projects");
-  if (extras.people.length) hubLabels.add("people");
-  if (extras.playbooks.length) hubLabels.add("skills");
-  if (extras.watches.length) hubLabels.add("schedule");
+  if (ex.people.length) hubLabels.add("people");
+  if (ex.playbooks.length) hubLabels.add("skills");
+  if (ex.watches.length) hubLabels.add("schedule");
   const hubs = hubLabels.size;
   return (
-    <div className="lg:col-span-12" data-panel-section>
-      {/* No framing box — the network floats free over the panel backdrop, bigger. */}
+    <div className="lg:col-span-12 -mt-2" data-panel-section>
+      {/* No framing box — the network floats free over the panel backdrop.
+          Height is capped to fit within the 1440×900 fold under the ~290px
+          header (so the brain — the marquee visual — never clips at the bottom). */}
       <div
         className="relative w-full overflow-hidden"
-        style={{ height: "min(82vh, 900px)" }}
+        style={{ height: "min(66vh, calc(100vh - 320px))", minHeight: "420px" }}
       >
         {/* Stage atmosphere BEHIND the canvas: a deep radial well that grounds the
             network in space + a faint cyan breath at its heart. Pure CSS, static. */}
@@ -278,14 +314,18 @@ function MindStage({
               "radial-gradient(ellipse 85% 80% at 50% 50%, transparent 38%, rgba(0,0,0,0.55) 86%)",
           }}
         />
-        <MemoryBrain
-          memory={memory}
-          people={extras.people}
-          playbooks={extras.playbooks}
-          watches={extras.watches}
-          onSelect={onSelect}
-          spinning={spinning}
-        />
+        {brainReady ? (
+          <MemoryBrain
+            memory={memory}
+            people={ex.people}
+            playbooks={ex.playbooks}
+            watches={ex.watches}
+            onSelect={onSelect}
+            spinning={spinning}
+          />
+        ) : (
+          <BrainSkeleton />
+        )}
 
         {/* Telemetry rail, top-left — what the cortex is holding right now. */}
         <div className="pointer-events-none absolute left-4 top-3 hud text-[9px] tracking-[0.22em] text-white/40">
@@ -310,6 +350,52 @@ function MindStage({
 
         {/* Inspector card, top-right corner, shown on selection. */}
         {selected && <NodeInspector node={selected} onClose={() => onSelect(null)} />}
+      </div>
+    </div>
+  );
+}
+
+/** Placeholder shown in the Mind stage while the three.js brain is deferred —
+ *  a faint pulsing cyan orb + status line, so the ~idle-defer reads as intentional
+ *  (never a blank frame) and no GL is built during the panel's entry animation. */
+function BrainSkeleton() {
+  return (
+    <div className="absolute inset-0 grid place-items-center" aria-hidden>
+      <div
+        className="animate-pulse h-40 w-40 rounded-full"
+        style={{
+          background: "radial-gradient(circle at 50% 45%, rgba(92,242,255,0.28), transparent 68%)",
+          boxShadow: "0 0 80px -12px rgba(92,242,255,0.4)",
+        }}
+      />
+      <div className="hud absolute bottom-6 text-[9px] tracking-[0.22em] text-white/30">
+        forming neural map…
+      </div>
+    </div>
+  );
+}
+
+/** Full-screen memory load state — a lightweight skeleton (pulsing orb + ghost
+ *  cards) instead of bare "Loading memory…" text, matching the app's visual bar. */
+function MemoryLoading() {
+  return (
+    <div className="relative flex h-full flex-col items-center justify-center gap-7 overflow-hidden bg-black">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{ background: "radial-gradient(ellipse 60% 50% at 50% 42%, rgba(92,242,255,0.08), transparent 62%)" }}
+      />
+      <div
+        className="animate-pulse h-24 w-24 rounded-full"
+        style={{
+          background: "radial-gradient(circle at 50% 40%, rgba(92,242,255,0.5), rgba(92,242,255,0.05) 70%)",
+          boxShadow: "0 0 60px -10px rgba(92,242,255,0.5)",
+        }}
+      />
+      <div className="hud text-[10px] tracking-[0.22em] text-white/40">assembling memory…</div>
+      <div className="flex w-full max-w-4xl gap-4 px-8">
+        <div className="animate-pulse h-40 flex-1 rounded-2xl border border-white/5 bg-white/[0.03]" />
+        <div className="animate-pulse h-40 flex-1 rounded-2xl border border-white/5 bg-white/[0.03]" />
       </div>
     </div>
   );

@@ -1,0 +1,779 @@
+{
+  "generatedAt": 1785007932496,
+  "generator": "scripts/explorer-reality-check.mjs",
+  "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
+  "verifiedSymbols": [
+    {
+      "capability": "conversation.text-turn",
+      "path": "server/src/routes/chat.ts",
+      "symbol": "chatRoutes",
+      "kind": "route"
+    },
+    {
+      "capability": "conversation.text-turn",
+      "path": "web/src/chat/useChatStream.ts",
+      "symbol": "useChatStream",
+      "kind": "implementation"
+    },
+    {
+      "capability": "voice.realtime",
+      "path": "web/src/voice/useRealtimeVoice.ts",
+      "symbol": "useRealtimeVoice",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interpretation.request-mode",
+      "path": "server/src/orchestrator/system-prompt.ts",
+      "symbol": "buildSystemPrompt",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interpretation.request-mode",
+      "path": "server/src/orchestrator/tool-rubric.ts",
+      "symbol": "TOOL_RUBRIC",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interpretation.request-mode",
+      "path": "server/src/routes/chat.ts",
+      "symbol": "chatRoutes",
+      "kind": "route"
+    },
+    {
+      "capability": "orchestration.agent-loop",
+      "path": "server/src/orchestrator/agent.ts",
+      "symbol": "runAgent",
+      "kind": "implementation"
+    },
+    {
+      "capability": "orchestration.agent-loop",
+      "path": "server/src/orchestrator/tool-registry.ts",
+      "symbol": "buildToolRegistry",
+      "kind": "implementation"
+    },
+    {
+      "capability": "orchestration.agent-loop",
+      "path": "server/src/orchestrator/agent-v2.test.ts",
+      "symbol": "runAgent",
+      "kind": "test"
+    },
+    {
+      "capability": "browser.persistent-control",
+      "path": "server/src/tools/chrome.ts",
+      "symbol": "buildChrome",
+      "kind": "implementation"
+    },
+    {
+      "capability": "browser.persistent-control",
+      "path": "server/src/tools/chrome-mcp.ts",
+      "symbol": "buildChromeTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "browser.persistent-control",
+      "path": "server/src/tools/chrome-mcp.test.ts",
+      "symbol": "buildChromeTools",
+      "kind": "test"
+    },
+    {
+      "capability": "desktop.native-control",
+      "path": "server/src/tools/control-app-mcp.ts",
+      "symbol": "buildControlAppTool",
+      "kind": "implementation"
+    },
+    {
+      "capability": "desktop.native-control",
+      "path": "server/src/tools/control-app-mcp.test.ts",
+      "symbol": "buildControlAppTool",
+      "kind": "test"
+    },
+    {
+      "capability": "desktop.native-control",
+      "path": "server/src/tools/shell-tool.ts",
+      "symbol": "buildShellTool",
+      "kind": "implementation"
+    },
+    {
+      "capability": "shell-files.shell",
+      "path": "server/src/tools/shell-tool.ts",
+      "symbol": "buildShellTool",
+      "kind": "implementation"
+    },
+    {
+      "capability": "shell-files.shell",
+      "path": "server/src/tools/shell.ts",
+      "symbol": "runShell",
+      "kind": "implementation"
+    },
+    {
+      "capability": "shell-files.shell",
+      "path": "server/src/tools/shell.test.ts",
+      "symbol": "shell",
+      "kind": "test"
+    },
+    {
+      "capability": "shell-files.filesystem",
+      "path": "server/src/tools/filesystem-mcp.ts",
+      "symbol": "buildFilesystemTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "shell-files.filesystem",
+      "path": "server/src/tools/filesystem.ts",
+      "symbol": "buildFilesystem",
+      "kind": "implementation"
+    },
+    {
+      "capability": "shell-files.filesystem",
+      "path": "server/src/tools/filesystem.test.ts",
+      "symbol": "filesystem",
+      "kind": "test"
+    },
+    {
+      "capability": "shell-files.filesystem",
+      "path": "server/src/security/path-allowlist.ts",
+      "symbol": "buildPathAllowlist",
+      "kind": "implementation"
+    },
+    {
+      "capability": "coding.project-work",
+      "path": "server/src/tools/claude-code-mcp.ts",
+      "symbol": "buildClaudeCodeTool",
+      "kind": "implementation"
+    },
+    {
+      "capability": "instagram.messaging",
+      "path": "server/src/apps/instagram-mcp.ts",
+      "symbol": "buildInstagramTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "instagram.connection",
+      "path": "server/src/apps/instagram.ts",
+      "symbol": "ensureReady",
+      "kind": "implementation"
+    },
+    {
+      "capability": "instagram.connection",
+      "path": "server/src/apps/instagram.ts",
+      "symbol": "login",
+      "kind": "implementation"
+    },
+    {
+      "capability": "instagram.connection",
+      "path": "server/src/apps/instagram.ts",
+      "symbol": "submitCode",
+      "kind": "implementation"
+    },
+    {
+      "capability": "instagram.send-dm",
+      "path": "server/src/apps/instagram.ts",
+      "symbol": "sendDm",
+      "kind": "implementation"
+    },
+    {
+      "capability": "instagram.send-dm",
+      "path": "server/src/apps/instagram-mcp.ts",
+      "symbol": "instagram_send_dm",
+      "kind": "implementation"
+    },
+    {
+      "capability": "instagram.send-dm",
+      "path": "server/src/apps/instagram.test.ts",
+      "symbol": "sendDm",
+      "kind": "test"
+    },
+    {
+      "capability": "whatsapp.messaging",
+      "path": "server/src/apps/whatsapp-mcp.ts",
+      "symbol": "buildWhatsappTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "whatsapp.connection",
+      "path": "server/src/apps/whatsapp.ts",
+      "symbol": "ensureReady",
+      "kind": "implementation"
+    },
+    {
+      "capability": "whatsapp.connection",
+      "path": "server/src/apps/whatsapp-mcp.ts",
+      "symbol": "whatsapp_status",
+      "kind": "implementation"
+    },
+    {
+      "capability": "whatsapp.send-message",
+      "path": "server/src/apps/whatsapp.ts",
+      "symbol": "sendMessage",
+      "kind": "implementation"
+    },
+    {
+      "capability": "whatsapp.send-message",
+      "path": "server/src/apps/whatsapp-mcp.ts",
+      "symbol": "whatsapp_send_message",
+      "kind": "implementation"
+    },
+    {
+      "capability": "whatsapp.send-message",
+      "path": "server/src/apps/whatsapp.test.ts",
+      "symbol": "sendMessage",
+      "kind": "test"
+    },
+    {
+      "capability": "people.identity-resolution",
+      "path": "server/src/apps/people.ts",
+      "symbol": "listPeople/upsertPerson",
+      "kind": "implementation"
+    },
+    {
+      "capability": "people.identity-resolution",
+      "path": "server/src/apps/instagram-mcp.ts",
+      "symbol": "buildPeopleTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.durable",
+      "path": "server/src/tools/memory-mcp.ts",
+      "symbol": "buildMemoryTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "playbooks.procedural-memory",
+      "path": "server/src/playbooks/capture.ts",
+      "symbol": "maybeCapture",
+      "kind": "implementation"
+    },
+    {
+      "capability": "playbooks.procedural-memory",
+      "path": "server/src/playbooks/match.ts",
+      "symbol": "matchPlaybook",
+      "kind": "implementation"
+    },
+    {
+      "capability": "automation.watches",
+      "path": "server/src/tools/watches-mcp.ts",
+      "symbol": "buildWatchTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "notifications.push-approvals",
+      "path": "server/src/policy/enforce.ts",
+      "symbol": "enforce",
+      "kind": "implementation"
+    },
+    {
+      "capability": "notifications.push-approvals",
+      "path": "server/src/push/deliver.ts",
+      "symbol": "buildDeliverer",
+      "kind": "implementation"
+    },
+    {
+      "capability": "notifications.push-approvals",
+      "path": "web/src/approvals/ApprovalCard.tsx",
+      "symbol": "ApprovalCard",
+      "kind": "implementation"
+    },
+    {
+      "capability": "vision.screen-inspection",
+      "path": "server/src/tools/screenshot/screenshot-mcp.ts",
+      "symbol": "buildScreenshotTool",
+      "kind": "implementation"
+    },
+    {
+      "capability": "vision.screen-inspection",
+      "path": "server/src/tools/screenshot/look-mcp.ts",
+      "symbol": "buildLookAtScreenTool",
+      "kind": "implementation"
+    },
+    {
+      "capability": "vision.screen-inspection",
+      "path": "server/src/tools/screenshot/screenshot.test.ts",
+      "symbol": "screenshot",
+      "kind": "test"
+    },
+    {
+      "capability": "services.google-places",
+      "path": "server/src/tools/places-mcp.ts",
+      "symbol": "buildPlacesTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "services.google-places",
+      "path": "server/src/tools/places-mcp.test.ts",
+      "symbol": "buildPlacesTools",
+      "kind": "test"
+    },
+    {
+      "capability": "services.shopify-products",
+      "path": "server/src/tools/shopify-mcp.ts",
+      "symbol": "buildShopifyTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "services.shopify-products",
+      "path": "server/src/tools/shopify-mcp.test.ts",
+      "symbol": "buildShopifyTools",
+      "kind": "test"
+    },
+    {
+      "capability": "self-improvement.pipeline",
+      "path": "server/src/self/verify.ts",
+      "symbol": "verify",
+      "kind": "implementation"
+    },
+    {
+      "capability": "developer-collaboration.claude",
+      "path": "server/src/tools/update-log-mcp.ts",
+      "symbol": "buildUpdateLogTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "developer-collaboration.claude",
+      "path": "server/src/tools/discuss-mcp.ts",
+      "symbol": "buildDiscussTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "developer-collaboration.claude",
+      "path": "server/src/tools/discuss-mcp.test.ts",
+      "symbol": "buildDiscussTools",
+      "kind": "test"
+    },
+    {
+      "capability": "security.risk-policy",
+      "path": "server/src/policy/classify.ts",
+      "symbol": "classifyRisk",
+      "kind": "implementation"
+    },
+    {
+      "capability": "security.risk-policy",
+      "path": "server/src/policy/enforce.ts",
+      "symbol": "enforce",
+      "kind": "implementation"
+    },
+    {
+      "capability": "security.risk-policy",
+      "path": "server/src/policy/classify.test.ts",
+      "symbol": "classifyRisk",
+      "kind": "test"
+    },
+    {
+      "capability": "security.secret-redaction",
+      "path": "server/src/security/scrub.ts",
+      "symbol": "scrubSecrets",
+      "kind": "implementation"
+    },
+    {
+      "capability": "security.secret-redaction",
+      "path": "server/src/security/scrub.test.ts",
+      "symbol": "scrubSecrets",
+      "kind": "test"
+    },
+    {
+      "capability": "verification.outcome-evidence",
+      "path": "server/src/apps/instagram.ts",
+      "symbol": "sendDm",
+      "kind": "implementation"
+    },
+    {
+      "capability": "verification.outcome-evidence",
+      "path": "server/src/apps/whatsapp.ts",
+      "symbol": "sendMessage",
+      "kind": "implementation"
+    },
+    {
+      "capability": "verification.outcome-evidence",
+      "path": "server/src/tools/screenshot/look-mcp.ts",
+      "symbol": "buildLookAtScreenTool",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.pwa",
+      "path": "web/src/App.tsx",
+      "symbol": "App",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.pwa",
+      "path": "web/src/components/ava/TubelightNav.tsx",
+      "symbol": "TubelightNav",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.pwa",
+      "path": "server/src/routes/auth.ts",
+      "symbol": "authRoutes",
+      "kind": "route"
+    }
+  ],
+  "verifiedRoutes": [
+    {
+      "capability": "conversation.text-turn",
+      "route": "/api/chat"
+    },
+    {
+      "capability": "conversation.text-turn",
+      "route": "/api/sessions"
+    },
+    {
+      "capability": "orchestration.agent-loop",
+      "route": "/api/chat"
+    },
+    {
+      "capability": "browser.persistent-control",
+      "route": "/api/capabilities"
+    },
+    {
+      "capability": "memory.durable",
+      "route": "/api/memory"
+    },
+    {
+      "capability": "playbooks.procedural-memory",
+      "route": "/api/playbooks"
+    },
+    {
+      "capability": "automation.watches",
+      "route": "/api/watches"
+    },
+    {
+      "capability": "notifications.push-approvals",
+      "route": "/api/push/subscribe"
+    },
+    {
+      "capability": "self-improvement.pipeline",
+      "route": "/api/self"
+    },
+    {
+      "capability": "security.risk-policy",
+      "route": "/api/rules"
+    },
+    {
+      "capability": "interface.pwa",
+      "route": "/api/auth/pair"
+    },
+    {
+      "capability": "interface.pwa",
+      "route": "/api/health"
+    }
+  ],
+  "realTools": [
+    {
+      "name": "instagram_open_profile",
+      "file": "server/src/apps/instagram-mcp.ts"
+    },
+    {
+      "name": "instagram_send_dm",
+      "file": "server/src/apps/instagram-mcp.ts"
+    },
+    {
+      "name": "instagram_open_chat",
+      "file": "server/src/apps/instagram-mcp.ts"
+    },
+    {
+      "name": "instagram_read_chat",
+      "file": "server/src/apps/instagram-mcp.ts"
+    },
+    {
+      "name": "instagram_status",
+      "file": "server/src/apps/instagram-mcp.ts"
+    },
+    {
+      "name": "instagram_login",
+      "file": "server/src/apps/instagram-mcp.ts"
+    },
+    {
+      "name": "instagram_submit_code",
+      "file": "server/src/apps/instagram-mcp.ts"
+    },
+    {
+      "name": "person_remember",
+      "file": "server/src/apps/instagram-mcp.ts"
+    },
+    {
+      "name": "person_list",
+      "file": "server/src/apps/instagram-mcp.ts"
+    },
+    {
+      "name": "whatsapp_send_message",
+      "file": "server/src/apps/whatsapp-mcp.ts"
+    },
+    {
+      "name": "whatsapp_open_chat",
+      "file": "server/src/apps/whatsapp-mcp.ts"
+    },
+    {
+      "name": "whatsapp_read_chat",
+      "file": "server/src/apps/whatsapp-mcp.ts"
+    },
+    {
+      "name": "whatsapp_status",
+      "file": "server/src/apps/whatsapp-mcp.ts"
+    },
+    {
+      "name": "do_on_computer",
+      "file": "server/src/routes/voice-realtime.ts"
+    },
+    {
+      "name": "read_logs",
+      "file": "server/src/tools/activity-log-mcp.ts"
+    },
+    {
+      "name": "chrome_open",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "chrome_navigate",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "chrome_click",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "chrome_type",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "chrome_press_key",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "chrome_snapshot",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "chrome_read_page",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "chrome_screenshot",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "chrome_tabs",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "claude_code",
+      "file": "server/src/tools/claude-code-mcp.ts"
+    },
+    {
+      "name": "computer_use",
+      "file": "server/src/tools/computer-use-mcp.ts"
+    },
+    {
+      "name": "control_app",
+      "file": "server/src/tools/control-app-mcp.ts"
+    },
+    {
+      "name": "discuss_with_claude",
+      "file": "server/src/tools/discuss-mcp.ts"
+    },
+    {
+      "name": "read_discussion",
+      "file": "server/src/tools/discuss-mcp.ts"
+    },
+    {
+      "name": "fs_read",
+      "file": "server/src/tools/filesystem-mcp.ts"
+    },
+    {
+      "name": "fs_write",
+      "file": "server/src/tools/filesystem-mcp.ts"
+    },
+    {
+      "name": "fs_list",
+      "file": "server/src/tools/filesystem-mcp.ts"
+    },
+    {
+      "name": "fs_stat",
+      "file": "server/src/tools/filesystem-mcp.ts"
+    },
+    {
+      "name": "fs_delete",
+      "file": "server/src/tools/filesystem-mcp.ts"
+    },
+    {
+      "name": "memory_read",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_remember",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_forget",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "find_places",
+      "file": "server/src/tools/places-mcp.ts"
+    },
+    {
+      "name": "look_at_screen",
+      "file": "server/src/tools/screenshot/look-mcp.ts"
+    },
+    {
+      "name": "take_screenshot",
+      "file": "server/src/tools/screenshot/screenshot-mcp.ts"
+    },
+    {
+      "name": "self_improve",
+      "file": "server/src/tools/self-improve-mcp.ts"
+    },
+    {
+      "name": "self_improve_status",
+      "file": "server/src/tools/self-improve-mcp.ts"
+    },
+    {
+      "name": "shell",
+      "file": "server/src/tools/shell-tool.ts"
+    },
+    {
+      "name": "shopify_list_products",
+      "file": "server/src/tools/shopify-mcp.ts"
+    },
+    {
+      "name": "shopify_get_product",
+      "file": "server/src/tools/shopify-mcp.ts"
+    },
+    {
+      "name": "shopify_update_product",
+      "file": "server/src/tools/shopify-mcp.ts"
+    },
+    {
+      "name": "read_claude_updates",
+      "file": "server/src/tools/update-log-mcp.ts"
+    },
+    {
+      "name": "watch_create",
+      "file": "server/src/tools/watches-mcp.ts"
+    },
+    {
+      "name": "watch_list",
+      "file": "server/src/tools/watches-mcp.ts"
+    },
+    {
+      "name": "watch_delete",
+      "file": "server/src/tools/watches-mcp.ts"
+    }
+  ],
+  "undeclaredTools": [
+    "do_on_computer",
+    "read_logs",
+    "computer_use"
+  ],
+  "problems": [
+    {
+      "capability": "voice.realtime",
+      "path": "server/src/routes/voice-realtime.ts",
+      "symbol": "voiceRealtimeRoutes",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "coding.project-work",
+      "path": "server/src/tools/claude-code.ts",
+      "symbol": "runClaudeCode",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "memory.durable",
+      "path": "server/src/memory/remember.ts",
+      "symbol": "remember",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "memory.durable",
+      "path": "server/src/memory/forget.ts",
+      "symbol": "forget",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "notifications.push-approvals",
+      "path": "server/src/routes/approvals.ts",
+      "symbol": "approvalRoutes",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "self-improvement.pipeline",
+      "path": "server/src/self/improver.ts",
+      "symbol": "SelfImprover",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "self-improvement.pipeline",
+      "path": "server/src/self/swap.ts",
+      "symbol": "swap",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "self-improvement.pipeline",
+      "path": "server/src/self/watchdog.ts",
+      "symbol": "watchdog",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "security.secret-redaction",
+      "path": "server/src/orchestrator/redact.ts",
+      "symbol": "redactToolArgs",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "security.secret-redaction",
+      "path": "server/src/orchestrator/redact.test.ts",
+      "symbol": "redactToolArgs",
+      "kind": "missing_symbol"
+    },
+    {
+      "capability": "verification.outcome-evidence",
+      "path": "server/src/orchestrator/tool-result-consistency.ts",
+      "symbol": "checkToolResultConsistency",
+      "kind": "missing_symbol"
+    },
+    {
+      "kind": "undeclared_tool",
+      "tool": "do_on_computer",
+      "file": "server/src/routes/voice-realtime.ts"
+    },
+    {
+      "kind": "undeclared_tool",
+      "tool": "read_logs",
+      "file": "server/src/tools/activity-log-mcp.ts"
+    },
+    {
+      "kind": "undeclared_tool",
+      "tool": "computer_use",
+      "file": "server/src/tools/computer-use-mcp.ts"
+    },
+    {
+      "kind": "declared_route_missing",
+      "capability": "voice.realtime",
+      "route": "/api/voice/realtime"
+    },
+    {
+      "kind": "declared_route_missing",
+      "capability": "voice.realtime",
+      "route": "/api/voice/transcribe"
+    },
+    {
+      "kind": "declared_route_missing",
+      "capability": "voice.realtime",
+      "route": "/api/voice/speak"
+    },
+    {
+      "kind": "declared_route_missing",
+      "capability": "notifications.push-approvals",
+      "route": "/api/approvals"
+    },
+    {
+      "kind": "declared_route_missing",
+      "capability": "security.risk-policy",
+      "route": "/api/approvals"
+    },
+    {
+      "kind": "declared_route_missing",
+      "capability": "interface.pwa",
+      "route": "/api/status"
+    }
+  ]
+}

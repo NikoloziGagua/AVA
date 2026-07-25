@@ -14,3 +14,14 @@ chrome-profile/
 .vite/
 .pm2/
 *.tsbuildinfo
+
+# Scratch and staging areas from Forge patch runs and installer testing.
+# Working directories, not source — they hold copies of files that live
+# elsewhere in this repo, so committing them would create a second, silently
+# diverging copy of the real thing.
+forge-backups/
+forge-codex-patch-work/
+forge-remodel-work/
+installer-test-target/
+installer-test-target-fail/
+Stuff/

@@ -4,7 +4,21 @@ export type BootSmokeFn = (cwd: string) => Promise<{ ok: boolean; log: string }>
 
 // Order matters: tests first (cheapest signal), then build web + server so the
 // boot smoke-test below runs the freshly-built `dist/`.
-const CHECKS = ["npm test", "npm -w web run build", "npm -w server run build"];
+/**
+ * `test:explorer-contract` is in here deliberately.
+ *
+ * It bridges the two Explorer registries AND runs the reality check that
+ * resolves every declared symbol, tool and route against the real source tree.
+ * Without it in this list, AVA can rewrite her own source, break her own
+ * capability map, and report every gate green — which is exactly how eleven
+ * dead symbols and six dead routes reached the interface as authoritative fact.
+ */
+const CHECKS = [
+  "npm test",
+  "npm -w web run build",
+  "npm -w server run build",
+  "npm run test:explorer-contract",
+];
 
 export async function verify(o: {
   cwd: string; run: RunFn; bootSmoke: BootSmokeFn; signal?: AbortSignal;

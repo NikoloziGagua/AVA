@@ -121,20 +121,30 @@ function ReviewsView({
   taskTotal: number;
   onOpenTask: (taskId?: string) => void;
 }) {
+  /**
+   * Friction, not everything.
+   *
+   * This used to also match `verification.status === "not_recorded"`, which the
+   * server hard-codes on every single row — so the filter selected 100% of
+   * tasks and the counter beneath it could never vary. A tab promising to "find
+   * friction" that returns the whole list is the one place this product
+   * overclaimed about itself. Until verification events actually exist, friction
+   * means what was genuinely observed to go wrong: a failed run, or recorded
+   * tool errors.
+   */
   const candidates = tasks.filter(
-    (task) =>
-      task.status === "failed" ||
-      task.errorCount > 0 ||
-      task.verification.status === "not_recorded" ||
-      task.verification.status === "not_verified",
+    (task) => task.status === "failed" || task.errorCount > 0,
   );
   return (
     <div className="space-y-5">
       <div>
         <div className="hud text-[10px] text-[var(--ac)]">Review studio</div>
         <h2 className="mt-2 text-xl font-semibold text-white/90">Find friction before turning it into a lesson.</h2>
-        <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-white/42">
-          Explorer can already identify evidence gaps and failed runs. Immutable annotations and approved lesson records are the next persistence slice.
+        <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-white/60">
+          These are runs that were observed to go wrong — a failed run, or one with recorded tool
+          errors. Evidence gaps are not friction and are not listed here: no run in this build
+          records independent verification, so counting that would flag everything. Immutable
+          annotations and approved lesson records are the next persistence slice.
         </p>
       </div>
       <FoundationNotice

@@ -319,4 +319,54 @@ describe("Explorer execution store", () => {
     expect(task.events.filter((event) => event.type === "task_cancelled")).toHaveLength(1);
     db.close();
   });
+
+  it("records AVA halting herself as the runtime's decision, not Niko's", () => {
+    const db = openInMemoryDb();
+    const session = createSession(db, { title: "Halted run" });
+    createExplorerTask(db, {
+      id: "halt-run",
+      sessionId: session.id,
+      originalRequest: "do the thing",
+      mode: "action",
+    });
+
+    // The stuck-loop detector kills the run. Nobody pressed stop.
+    recordExplorerAgentEvent(db, "halt-run", {
+      kind: "killed",
+      payload: { reason: "stuck" },
+    }, { at: 200 });
+
+    const task = getExplorerTask(db, "halt-run")!;
+    expect(task.status).toBe("cancelled");
+    // The whole point: this must NOT read as a human decision.
+    expect(task.outcome).toBe("halted_by_runtime");
+    expect(task.outcome).not.toBe("cancelled_by_user");
+
+    const cancelled = task.events.find((event) => event.type === "task_cancelled")!;
+    expect(cancelled.title).toContain("AVA stopped herself");
+    expect(cancelled.title).toContain("stuck");
+    db.close();
+  });
+
+  it("still credits Niko when Niko actually cancels", () => {
+    const db = openInMemoryDb();
+    const session = createSession(db, { title: "Cancelled run" });
+    createExplorerTask(db, {
+      id: "manual-run",
+      sessionId: session.id,
+      originalRequest: "do the thing",
+      mode: "action",
+    });
+
+    recordExplorerAgentEvent(db, "manual-run", {
+      kind: "killed",
+      payload: { reason: "manual" },
+    }, { at: 200 });
+
+    const task = getExplorerTask(db, "manual-run")!;
+    expect(task.outcome).toBe("cancelled_by_user");
+    expect(task.events.find((e) => e.type === "task_cancelled")!.title)
+      .toContain("Cancelled by Niko");
+    db.close();
+  });
 });

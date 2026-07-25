@@ -14,7 +14,16 @@ export type ExplorerTaskOutcome =
   /** Legacy value from the first instrumentation draft. */
   | "completed_without_verification"
   | "failed_safely"
+  /** Niko pressed stop. */
   | "cancelled_by_user"
+  /**
+   * AVA stopped herself — a stuck-loop detector, a wall-clock budget, a tool
+   * timeout. Kept distinct from `cancelled_by_user` because attributing the
+   * machine's own safety saves to the human both misreports who decided and
+   * hides the near-misses, which are the most interesting evidence an
+   * autonomous agent produces.
+   */
+  | "halted_by_runtime"
   | "interrupted"
   | "ended_without_result";
 

@@ -376,20 +376,28 @@ export function recordExplorerAgentEvent(
           "SELECT status FROM explorer_tasks WHERE id = ?",
         ).get(taskId) as { status: ExplorerTaskStatus } | undefined;
         if (!task || task.status !== "running") return null;
+        // AVA halting herself is not Niko cancelling. The runtime kills a run
+        // for its own reasons — a stuck loop, a wall-clock budget — and
+        // recording every one of those as `cancelled_by_user` credits the human
+        // with a decision the machine made. That is precisely the kind of quiet
+        // misattribution Explorer exists to refuse, and it hides the safety
+        // saves that are the most interesting evidence an agent produces.
+        const reason = event.payload.reason ?? "manual";
+        const selfHalted = reason !== "manual";
         const id = appendEvent(db, taskId, {
           type: "task_cancelled",
-          title: "Task cancelled",
+          title: selfHalted ? `AVA stopped herself — ${reason}` : "Cancelled by Niko",
           status: "cancelled",
-          output: { reason: event.payload.reason ?? "manual" },
+          output: { reason, initiator: selfHalted ? "runtime" : "user" },
           at,
         });
         db.prepare(`
           UPDATE explorer_tasks
           SET status = 'cancelled',
-              outcome = 'cancelled_by_user',
+              outcome = ?,
               completed_at = ?
           WHERE id = ? AND status = 'running'
-        `).run(at, taskId);
+        `).run(selfHalted ? "halted_by_runtime" : "cancelled_by_user", at, taskId);
         return id;
       }
       case "done": {
@@ -514,14 +522,49 @@ export function markStaleExplorerTasksInterrupted(
   })();
 }
 
+/**
+ * One page of tasks, with the page chosen BEFORE the events are joined.
+ *
+ * The obvious form of this query — join everything, aggregate, then LIMIT —
+ * has `LIMIT ? OFFSET ?` right there in the SQL and looks paginated. It is not:
+ * SQLite must build every group across the whole `explorer_events` table before
+ * it can order and slice, so the cost grows with all history ever recorded
+ * rather than with the page size. Against nine months of data that measured
+ * ~2 seconds per call, and the UI re-issues it every 8 seconds while the Tasks
+ * tab is open. better-sqlite3 is synchronous, so that stall belongs to the
+ * whole server — chat SSE, the voice proxy and the watch scheduler all wait.
+ *
+ * Selecting the page from `explorer_tasks` first lets the index on
+ * (started_at, id) do the ordering, and the aggregate then runs over the
+ * events of at most `limit` tasks.
+ */
 export function listExplorerTasks(
   db: Db,
   options: { limit?: number; offset?: number; status?: ExplorerTaskStatus } = {},
 ): ExplorerTaskSummary[] {
   const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
   const offset = Math.max(0, Math.floor(options.offset ?? 0));
-  const where = options.status ? " WHERE t.status = ?" : "";
-  const sql = `${TASK_SELECT}${where} GROUP BY t.id ORDER BY t.started_at DESC, t.id DESC LIMIT ? OFFSET ?`;
+  const where = options.status ? "WHERE status = ?" : "";
+  const sql = `
+    WITH page AS (
+      SELECT * FROM explorer_tasks
+      ${where}
+      ORDER BY started_at DESC, id DESC
+      LIMIT ? OFFSET ?
+    )
+    SELECT
+      t.*,
+      s.title AS session_title,
+      COUNT(e.id) AS event_count,
+      COALESCE(SUM(CASE WHEN e.type = 'tool_call_started' THEN 1 ELSE 0 END), 0) AS tool_call_count,
+      COALESCE(SUM(CASE WHEN e.status = 'error' THEN 1 ELSE 0 END), 0) AS error_count,
+      GROUP_CONCAT(e.capability_ids, char(10)) AS capability_json
+    FROM page t
+    LEFT JOIN sessions s ON s.id = t.session_id
+    LEFT JOIN explorer_events e ON e.task_id = t.id
+    GROUP BY t.id
+    ORDER BY t.started_at DESC, t.id DESC
+  `;
   const rows = options.status
     ? db.prepare(sql).all(options.status, limit, offset)
     : db.prepare(sql).all(limit, offset);

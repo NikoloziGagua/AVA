@@ -1,7 +1,8 @@
 import "./net-tuning.js"; // MUST be first: happy-eyeballs for IPv6-only/NAT64 networks
 import express from "express";
 import { fileURLToPath } from "node:url";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -28,6 +29,18 @@ import { voiceEngineRoutes } from "./routes/voice-engine.js";
 import { chipsRoutes } from "./routes/chips.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
+import {
+  buildCapabilitySnapshot,
+  capabilityRoutes,
+  type BrowserReadiness,
+  type CapabilityRouteDeps,
+} from "./routes/capabilities.js";
+import { explorerRoutes } from "./routes/explorer.js";
+import { missionControlRoutes } from "./routes/mission-control.js";
+import { apiNotFound } from "./routes/api-fallback.js";
+import { markStaleExplorerTasksInterrupted } from "./explorer/store.js";
+import { ObservabilityService } from "./observability/store.js";
+import type { ObservabilityParentContext } from "./observability/types.js";
 import { playbooksRoutes } from "./routes/playbooks.js";
 import { watchesRoutes } from "./routes/watches.js";
 import { peopleRoutes } from "./routes/people.js";
@@ -39,6 +52,7 @@ import { killTree } from "./process/kill-tree.js";
 import { runRecovery } from "./state/recovery.js";
 import { buildChrome } from "./tools/chrome.js";
 import { buildVoiceClients } from "./tools/voice-clients.js";
+import { DEFAULT_VOICE } from "./routes/voice-defaults.js";
 import { buildDeliverer } from "./push/deliver.js";
 import { buildProvider } from "./orchestrator/llm/factory.js";
 import { bootstrapMemoryDir } from "./memory/bootstrap.js";
@@ -65,6 +79,40 @@ const startedAt = Date.now();
 const cfg = loadConfig();
 const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
+const observability = new ObservabilityService(db);
+const orphanedMissionRuns = observability.store.markOrphanedRuns();
+const purgedMissionDetails = observability.store.purgeExpiredDetails();
+if (
+  orphanedMissionRuns > 0 ||
+  purgedMissionDetails.compactedRuns > 0 ||
+  purgedMissionDetails.deletedRuns > 0
+) {
+  log.info(
+    { orphanedMissionRuns, purgedMissionDetails },
+    "mission-control: reconciled persisted observability state",
+  );
+}
+const missionRetentionTimer = setInterval(() => {
+  try {
+    const result = observability.store.purgeExpiredDetails();
+    if (result.compactedRuns > 0 || result.deletedRuns > 0) {
+      log.info({ result }, "mission-control: applied retention policy");
+    }
+  } catch (error) {
+    log.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      "mission-control: retention pass failed",
+    );
+  }
+}, 6 * 60 * 60 * 1_000);
+missionRetentionTimer.unref?.();
+const interruptedExplorerTasks = markStaleExplorerTasksInterrupted(db);
+if (interruptedExplorerTasks > 0) {
+  log.info(
+    { interruptedExplorerTasks },
+    "explorer: closed tasks orphaned by restart",
+  );
+}
 // Reconcile self-improvement intents orphaned by a previous restart: nothing is
 // in flight at boot, so any non-terminal intent is dead — mark it failed so it
 // doesn't report as forever-"implementing".
@@ -96,22 +144,182 @@ await runRecovery({ db, pidfiles, kill: (pid) => killTree(pid) });
 bootstrapMemoryDir({ dir: cfg.memoryDir });
 
 let chromePromise: ReturnType<typeof buildChrome> | null = null;
+let chromeLauncherPromise: Promise<void> | null = null;
+let lastChromeEndpointSuccessAt = 0;
+const CHROME_READINESS_GRACE_MS = 15_000;
+const chromeLauncherPath = fileURLToPath(
+  new URL("../../scripts/start-ava-browser.ps1", import.meta.url),
+);
+
+/**
+ * Run the same visible-browser launcher the owner could double-click. It is
+ * idempotent: when AVA Chrome is already listening, it verifies and foregrounds
+ * the window; otherwise it creates the dedicated profile window.
+ */
+async function runChromeLauncher(): Promise<void> {
+  if (process.platform !== "win32") return;
+  if (chromeLauncherPromise) return chromeLauncherPromise;
+  chromeLauncherPromise = new Promise<void>((resolve, reject) => {
+    execFile(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        chromeLauncherPath,
+      ],
+      { timeout: 30_000, windowsHide: true },
+      (error) => error ? reject(error) : resolve(),
+    );
+  }).finally(() => {
+    chromeLauncherPromise = null;
+  });
+  return chromeLauncherPromise;
+}
+
+async function chromeEndpointAlive(
+  cdpUrl: string,
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const endpoint = new URL("/json/version", cdpUrl).toString();
+    const response = await fetch(endpoint, { signal: controller.signal });
+    if (!response.ok) return false;
+    const body = await response.json() as { webSocketDebuggerUrl?: unknown };
+    const alive =
+      typeof body.webSocketDebuggerUrl === "string" &&
+      body.webSocketDebuggerUrl.length > 0;
+    if (alive) lastChromeEndpointSuccessAt = Date.now();
+    return alive;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function chromeEndpointReachable(
+  cdpUrl: string,
+  timeoutMs = 400,
+): Promise<boolean> {
+  let endpoint: URL;
+  try {
+    endpoint = new URL(cdpUrl);
+  } catch {
+    return false;
+  }
+  const port = Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80));
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return false;
+  const host = endpoint.hostname.replace(/^\[(.*)\]$/, "$1");
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const socket = createConnection({ host, port });
+    const finish = (reachable: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(reachable);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
 async function getChrome() {
   if (chromePromise) {
     try {
       const existing = await chromePromise;
-      if (existing.isAlive()) return existing;
+      const endpointReady =
+        !cfg.chromeCdpUrl || await chromeEndpointAlive(cfg.chromeCdpUrl, 1_500);
+      if (existing.isAlive() && endpointReady) return existing;
     } catch {
       // build previously rejected — fall through and rebuild
     }
     log.info("chrome window was closed/disconnected — rebuilding");
     chromePromise = null;
   }
+  // A fresh Chrome request runs AVA's launcher herself, creating the dedicated
+  // logged-in CDP window before Playwright attaches.
+  if (cfg.chromeCdpUrl) {
+    try {
+      await runChromeLauncher();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(
+        { err: message },
+        "AVA Chrome launcher failed",
+      );
+      throw new Error(`AVA Chrome launcher failed: ${message}`);
+    }
+  }
   chromePromise = buildChrome({
     profileDir: cfg.chromeProfileDir,
     screenshotDir: cfg.screenshotDir,
+    executablePath: cfg.chromeExecutablePath,
+    cdpUrl: cfg.chromeCdpUrl,
   });
   return chromePromise;
+}
+
+/**
+ * Read-only browser health for the Capability Center. Never launches Chrome:
+ * it checks an already-built context, then the configured local CDP helper.
+ */
+async function browserReadiness(): Promise<BrowserReadiness> {
+  // The PWA's initial WebGL render can briefly delay Chrome's DevTools HTTP
+  // endpoint. Preserve a very recent successful probe so opening Explorer
+  // cannot turn a known-live browser into a false red status while it renders.
+  if (
+    lastChromeEndpointSuccessAt > 0 &&
+    Date.now() - lastChromeEndpointSuccessAt <= CHROME_READINESS_GRACE_MS
+  ) {
+    return { ready: true, mode: "attached" };
+  }
+  if (chromePromise) {
+    try {
+      const existing = await Promise.race([
+        chromePromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 150)),
+      ]);
+      const endpointReady =
+        !cfg.chromeCdpUrl || await chromeEndpointAlive(cfg.chromeCdpUrl);
+      if (existing?.isAlive() && endpointReady) {
+        return { ready: true, mode: "attached" };
+      }
+    } catch {
+      // A rejected prior launch is the state the Capability Center should show.
+    }
+  }
+  const cdp = cfg.chromeCdpUrl?.replace(/\/+$/, "");
+  if (cdp) {
+    // Chrome's DevTools HTTP endpoint can briefly take over a second to answer
+    // while the AVA interface and its WebGL shell are loading. A 900 ms probe
+    // produced false "Chrome unavailable" cards even though the endpoint was
+    // healthy. This remains bounded, but allows a busy local browser to answer.
+    if (await chromeEndpointAlive(cdp, 1_200)) {
+      return { ready: true, mode: "attached" };
+    }
+    // A busy renderer can delay /json/version even while Chrome's dedicated
+    // CDP listener is accepting connections. Preserve that weaker distinction
+    // instead of displaying the browser and every account workflow as offline.
+    if (await chromeEndpointReachable(cdp)) {
+      return { ready: true, mode: "reachable" };
+    }
+  }
+  return { ready: false, mode: "offline" };
+}
+
+// The desktop runtime starts AVA Chrome before Node. Warm the short-lived
+// readiness evidence before accepting UI traffic, when the browser is idle.
+if (cfg.chromeCdpUrl) {
+  await chromeEndpointAlive(cfg.chromeCdpUrl, 2_500);
 }
 // Single-tenant by design: the persistent chromium context is shared across all
 // chat runs in this process. Concurrent runs would race on the same active page;
@@ -306,6 +514,7 @@ const agentDeps = {
   pushDeliver,
   notifyDone,
   provider,  // LLMProvider | null
+  observability,
   logsDir: cfg.logsDir,
   // Reliable API integrations — wired only when BOTH/the needed creds are set in .env.
   shopify: cfg.shopifyStore && cfg.shopifyAdminToken
@@ -336,7 +545,23 @@ const openai = cfg.openaiApiKey ? new (await import("openai")).default({ apiKey:
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.use("/api", healthRoutes(startedAt));
+const capabilityRouteDeps: CapabilityRouteDeps = {
+  db,
+  startedAt,
+  provider: provider?.name ?? null,
+  memoryDir: cfg.memoryDir,
+  browserReadiness,
+  brainModel: provider?.defaultOrchestratorModel ?? "not configured",
+  voiceModel: process.env.REALTIME_MODEL || "gpt-realtime-2.1",
+  voiceName: process.env.REALTIME_VOICE || DEFAULT_VOICE,
+  voiceReady: !!(cfg.openaiApiKey || process.env.HUME_API_KEY),
+  shopifyReady: !!(cfg.shopifyStore && cfg.shopifyAdminToken),
+  googlePlacesReady: !!cfg.googlePlacesApiKey,
+  screenVisionReady: !!cfg.openaiApiKey,
+  pushReady: !!(cfg.vapidPublicKey && cfg.vapidPrivateKey),
+};
+
+app.use("/api", healthRoutes(startedAt, { provider: provider?.name ?? null }));
 app.use("/api/auth", authRoutes(db, requireToken(db)));
 app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps, { anthropic, openai }));
 app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
@@ -348,6 +573,15 @@ app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
   supported: provider?.name === "openai",
 }));
 app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
+app.use("/api/capabilities", capabilityRoutes(requireToken(db), capabilityRouteDeps));
+app.use("/api/explorer", explorerRoutes(requireToken(db), {
+  db,
+  runs,
+  startedAt,
+  memoryDir: cfg.memoryDir,
+  capabilitySnapshot: () => buildCapabilitySnapshot(capabilityRouteDeps),
+}));
+app.use("/api/mission-control", missionControlRoutes(requireToken(db), observability));
 app.use("/api/playbooks", playbooksRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
 app.use("/api/watches", watchesRoutes(db, requireToken(db)));
 app.use("/api/people", peopleRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
@@ -370,8 +604,19 @@ app.use("/api", voiceRoutes({
 }));
 // Get/set how Ava's voice is produced (openai | hume).
 app.use("/api/voice/engine", voiceEngineRoutes(db, requireToken(db)));
+// API misses must stay JSON. Without this, a stale/mismatched frontend receives
+// Express's HTML 404 and can only report an opaque JSON parse error.
+app.use("/api", apiNotFound());
 
-app.use("/", statusRoutes({ db, runs, startedAt }));
+app.use("/", statusRoutes({
+  db,
+  runs,
+  startedAt,
+  provider: provider?.name ?? null,
+  memoryDir: cfg.memoryDir,
+  bindAddr: cfg.bindAddr,
+  port: cfg.port,
+}));
 
 const webDistDir = fileURLToPath(new URL("../../web/dist/", import.meta.url));
 app.use("/", express.static(webDistDir));
@@ -474,11 +719,25 @@ async function runVoiceAction(
   task: string,
   onStep?: (tool: string, args: unknown) => void,
   signal?: AbortSignal,
+  observabilityContext?: ObservabilityParentContext,
 ): Promise<{ text: string; sessionId: string | null }> {
   const base = `http://127.0.0.1:${cfg.port}`;
   const auth = { authorization: `Bearer ${voiceInternalToken}` };
+  const cancelled = () => {
+    const error = new Error("voice action cancelled");
+    error.name = "AbortError";
+    return error;
+  };
+  const responseFailure = async (response: Response, stage: string) => {
+    let detail = "";
+    try {
+      const body = await response.json() as { error?: string; message?: string };
+      detail = body.error || body.message || "";
+    } catch { /* status is still enough */ }
+    return new Error(`${stage} failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+  };
   // If the voice connection already dropped before we started, don't run at all.
-  if (signal?.aborted) return { text: "", sessionId };
+  if (signal?.aborted) throw cancelled();
   try {
     const postChat = () => fetch(`${base}/api/chat`, {
       method: "POST",
@@ -487,7 +746,12 @@ async function runVoiceAction(
       // the spoken result, so this internal run executes tools but persists nothing
       // (single source of truth for voice turns; no double-store). Independent of
       // `voice` (do NOT overload it): this flag only gates message storage.
-      body: JSON.stringify({ sessionId, text: task, persist: false }),
+      body: JSON.stringify({
+        sessionId,
+        text: task,
+        persist: false,
+        observability: observabilityContext,
+      }),
       signal,
     });
     let post = await postChat();
@@ -498,21 +762,25 @@ async function runVoiceAction(
     if (post.status === 409 && sessionId) {
       await fetch(`${base}/api/chat/${sessionId}/kill`, { method: "POST", headers: auth }).catch(() => {});
       await new Promise((r) => setTimeout(r, 250));
+      if (signal?.aborted) throw cancelled();
       post = await postChat();
     }
+    if (!post.ok) throw await responseFailure(post, "action start");
     const started = (await post.json()) as { sessionId?: string };
     const sid = started.sessionId ?? sessionId;
-    if (!sid) return { text: "I couldn't start that, Sir.", sessionId };
+    if (!sid) throw new Error("action start returned no session");
     // If the voice connection drops mid-run, kill the loopback run so it stops
     // executing tools (and frees the shared browser) instead of finishing into a
     // dead socket — the zombie-run fix.
     const killOnAbort = () => { void fetch(`${base}/api/chat/${sid}/kill`, { method: "POST", headers: auth }).catch(() => {}); };
     signal?.addEventListener("abort", killOnAbort, { once: true });
     const res = await fetch(`${base}/api/chat/${sid}/stream`, { headers: auth, signal });
+    if (!res.ok) throw await responseFailure(res, "action stream");
     const reader = res.body?.getReader();
-    if (!reader) return { text: "Done.", sessionId: sid };
+    if (!reader) throw new Error("action stream returned no readable body");
     const decoder = new TextDecoder();
     let buf = "", curEvent = "", finalText = "", stop = false;
+    let terminal: "completed" | "failed" | "cancelled" | null = null;
     while (!stop) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -523,10 +791,21 @@ async function runVoiceAction(
         if (line.startsWith("event:")) curEvent = line.slice(6).trim();
         else if (line.startsWith("data:")) {
           const data = line.slice(5).trim();
-          if (curEvent === "final") { try { finalText = (JSON.parse(data) as { text: string }).text; } catch { /* */ } stop = true; }
+          if (curEvent === "final") {
+            try { finalText = (JSON.parse(data) as { text: string }).text; } catch { /* */ }
+            terminal = "completed";
+            stop = true;
+          }
           else if (curEvent === "tool_call") { try { const p = JSON.parse(data) as { tool: string; args?: unknown }; onStep?.(p.tool, p.args); } catch { /* */ } }
-          else if (curEvent === "error") { try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ } stop = true; }
-          else if (curEvent === "killed") stop = true;
+          else if (curEvent === "error") {
+            try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ }
+            terminal = "failed";
+            stop = true;
+          }
+          else if (curEvent === "killed") {
+            terminal = "cancelled";
+            stop = true;
+          }
           // approval_required no longer stalls voice: the policy auto-approves
           // after the 15s veto window, so we keep reading and speak the result.
         }
@@ -534,10 +813,21 @@ async function runVoiceAction(
     }
     try { await reader.cancel(); } catch { /* */ }
     signal?.removeEventListener("abort", killOnAbort); // ran to completion — don't kill on a later close
-    return { text: finalText || "Done.", sessionId: sid };
+    if (signal?.aborted || terminal === "cancelled") throw cancelled();
+    if (terminal === "failed") {
+      return {
+        text: finalText || "That didn't work, Sir — the action stream failed without an error message.",
+        sessionId: sid,
+      };
+    }
+    if (terminal !== "completed" || !finalText.trim()) {
+      throw new Error("action ended without a final, verifiable result");
+    }
+    return { text: finalText, sessionId: sid };
   } catch (e) {
-    // An abort surfaces here as an AbortError; the connection is gone, so the
-    // (now-empty) result is never spoken anyway.
+    if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) {
+      throw cancelled();
+    }
     return { text: `That didn't work, Sir — ${e instanceof Error ? e.message : String(e)}`, sessionId };
   }
 }
@@ -555,6 +845,7 @@ const realtimeProxy = buildRealtimeProxy({
   apiKey: cfg.openaiApiKey,
   memoryDir: cfg.memoryDir,
   runAction: runVoiceAction,
+  observability,
   voice: process.env.REALTIME_VOICE || undefined,
   providerConfig: resolveVoiceProvider(),
   log,
@@ -570,6 +861,6 @@ try {
 } catch (e) {
   log.warn(
     { err: e instanceof Error ? e.message : String(e) },
-    "systray failed to start — server still running. Mint a pairing code with: npm -w server run pair",
+    "systray failed to start — server still running. Mint a pairing code with: npm.cmd -w server run pair",
   );
 }

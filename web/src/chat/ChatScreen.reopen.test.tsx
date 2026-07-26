@@ -213,4 +213,13 @@ describe("ChatScreen send failure", () => {
     expect(await screen.findByText(/re-pair this device/i)).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
   });
+
+  it("explains when the server has no LLM provider configured", async () => {
+    sendMessage.mockRejectedValue(new ApiError(503, "no_llm_provider"));
+    render(<ChatScreen sessionId={null} {...noNav} />);
+
+    await typeAndSend("are you there");
+    expect(await screen.findByText(/no AI provider is configured/i)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
+  });
 });

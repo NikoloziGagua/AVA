@@ -1,10 +1,25 @@
 import { getToken, clearToken } from "./auth/tokens.js";
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  readonly name = "ApiError";
+
+  constructor(
+    public status: number,
+    message: string,
+    public code: string = status === 0 ? "server_unreachable" : "http_error",
+    public action: string | null = null,
+    public path: string | null = null,
+  ) {
     super(message);
   }
 }
+
+type ApiFailureBody = {
+  error?: string;
+  message?: string;
+  action?: string;
+  retryable?: boolean;
+};
 
 /**
  * Central 401 recovery: an expired/invalid token must be cleared and the shell
@@ -27,13 +42,75 @@ async function request<T>(
   headers.set("content-type", "application/json");
   const token = getToken();
   if (token) headers.set("authorization", `Bearer ${token}`);
-  const r = await fetch(path, { ...init, headers });
+  let r: Response;
+  try {
+    r = await fetch(path, { ...init, headers });
+  } catch {
+    const action = "Start or restart the AVA Desktop Runtime, then try again.";
+    throw new ApiError(
+      0,
+      `AVA's server is unreachable. ${action}`,
+      "server_unreachable",
+      action,
+      path,
+    );
+  }
   const text = await r.text();
-  const body: unknown = text ? JSON.parse(text) : undefined;
+  let body: unknown;
+  let parsedJson = false;
+  if (text) {
+    try {
+      body = JSON.parse(text) as unknown;
+      parsedJson = true;
+    } catch {
+      body = undefined;
+    }
+  }
   if (!r.ok) {
     if (r.status === 401) handleUnauthorized();
-    const msg = (body as { error?: string })?.error ?? `HTTP ${r.status}`;
-    throw new ApiError(r.status, msg);
+    const failure =
+      parsedJson && body && typeof body === "object"
+        ? body as ApiFailureBody
+        : {};
+    const staleExplorer =
+      path.startsWith("/api/explorer") &&
+      r.status === 404 &&
+      (!parsedJson || failure.error === "api_route_not_found");
+    if (staleExplorer) {
+      const action =
+        failure.action ??
+        "Rebuild and restart the AVA Desktop Runtime, then refresh Explorer.";
+      throw new ApiError(
+        r.status,
+        `Explorer is not available in the running AVA server. The interface and server builds do not match. ${action}`,
+        "explorer_api_unavailable",
+        action,
+        path,
+      );
+    }
+    const code = failure.error ?? `http_${r.status}`;
+    const action = failure.action ?? null;
+    const message = failure.message ?? failure.error ?? `AVA API returned HTTP ${r.status}.`;
+    throw new ApiError(
+      r.status,
+      action ? `${message} ${action}` : message,
+      code,
+      action,
+      path,
+    );
+  }
+  if (text && !parsedJson) {
+    const action =
+      path.startsWith("/api/explorer")
+        ? "Restart the AVA Desktop Runtime so the Explorer API and interface use the same build."
+        : "Restart the AVA Desktop Runtime and retry the request.";
+    throw new ApiError(
+      r.status,
+      `AVA returned a non-JSON response where API data was expected. ${action}`,
+      "invalid_api_response",
+      action,
+      path,
+    );
   }
   return body as T;
 }
@@ -45,7 +122,7 @@ export const api = {
       body: JSON.stringify({ code, label }),
     }),
   sendMessage: (sessionId: string | null, text: string, opts?: { voice?: boolean }) =>
-    request<{ sessionId: string }>("/api/chat", {
+    request<{ sessionId: string; taskId?: string }>("/api/chat", {
       method: "POST",
       body: JSON.stringify({ sessionId, text, voice: opts?.voice }),
     }),
@@ -225,6 +302,346 @@ export async function setVoiceEngine(engine: VoiceEngine): Promise<void> {
   });
 }
 
+export type CapabilitySnapshot = {
+  generatedAt: number;
+  uptimeMs: number;
+  core: {
+    brain: { ready: boolean; provider: string | null; model: string };
+    voice: { ready: boolean; provider: VoiceEngine; model: string; speaker: string };
+    browser: {
+      ready: boolean;
+      mode: "attached" | "reachable" | "offline";
+      helper: string;
+    };
+    memory: {
+      ready: boolean;
+      preferences: number;
+      observations: number;
+      projects: number;
+      people: number;
+      playbooks: number;
+    };
+  };
+  integrations: {
+    instagram: boolean;
+    whatsapp: boolean;
+    gmailCalendar: boolean;
+    shopify: boolean;
+    googlePlaces: boolean;
+    screenVision: boolean;
+    push: boolean;
+  };
+  automations: {
+    watches: number;
+    schedulerReady: boolean;
+    selfImprovement: boolean;
+  };
+};
+
+export async function fetchCapabilities(): Promise<CapabilitySnapshot> {
+  return request<CapabilitySnapshot>("/api/capabilities");
+}
+
+// ── Explorer: durable, redacted execution evidence.
+//
+// Explorer deliberately has its own contracts instead of treating chat sessions
+// as tasks. A session can contain many runs, and pre-Explorer history has no
+// recoverable tool trace. The API reports that coverage explicitly.
+
+export type ExplorerTaskStatus =
+  | "running"
+  | "finished"
+  /** Legacy value produced before final responses were separated from success. */
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export type ExplorerVerificationStatus =
+  | "verified"
+  | "partially_verified"
+  | "not_verified"
+  | "not_recorded";
+
+export type ExplorerTaskCoverage = {
+  source: "instrumented_runtime";
+  historicalBackfill: false;
+  note: string;
+};
+
+export type ExplorerTaskSummary = {
+  id: string;
+  sessionId: string | null;
+  sessionTitle: string | null;
+  status: ExplorerTaskStatus;
+  outcome: string | null;
+  mode: "conversation" | "action" | null;
+  verification: {
+    status: ExplorerVerificationStatus;
+    reason: string;
+  };
+  startedAt: number;
+  completedAt: number | null;
+  durationMs: number | null;
+  eventCount: number;
+  toolCallCount: number;
+  errorCount: number;
+  capabilityIds: string[];
+  evidence: {
+    source: "instrumented_runtime";
+    label: "observed";
+  };
+};
+
+export type ExplorerEventStatus =
+  | "running"
+  | "success"
+  | "error"
+  | "waiting"
+  | "approved"
+  | "denied"
+  | "expired"
+  | "cancelled";
+
+export type ExplorerEvent = {
+  id: number;
+  taskId: string;
+  sequence: number;
+  type: string;
+  title: string;
+  status: ExplorerEventStatus;
+  occurredAt: number;
+  durationMs: number | null;
+  toolName: string | null;
+  capabilityIds: string[];
+  input: unknown;
+  output: unknown;
+  error: string | null;
+  privacyLevel: "normal" | "personal" | "sensitive" | "secret_redacted" | string;
+  evidence: {
+    source: "instrumented_runtime";
+    proves: string;
+    verification: "not_independently_verified" | string;
+  };
+};
+
+export type ExplorerTaskDetail = ExplorerTaskSummary & {
+  originalRequest: string;
+  finalResponse: string | null;
+  error?: string | null;
+  events: ExplorerEvent[];
+  coverage: ExplorerTaskCoverage;
+};
+
+export type ExplorerTasksResponse = {
+  tasks: ExplorerTaskSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  coverage: ExplorerTaskCoverage;
+  generatedAt: number;
+  apiVersion: number;
+};
+
+export type ExplorerLiveTask = {
+  id: string;
+  sessionId: string | null;
+  sessionTitle: string | null;
+  status: "running";
+  mode: "conversation" | "action" | null;
+  startedAt: number | null;
+  elapsedMs: number | null;
+  currentStage: string;
+  eventCount: number;
+  traceAvailable: boolean;
+  source: "active_run_registry";
+};
+
+export type ExplorerCapabilityReadiness =
+  | "ready"
+  | "partially_ready"
+  | "setup_required"
+  | "unavailable"
+  | "unknown";
+
+export type ExplorerCapabilityHealth =
+  | "healthy"
+  | "degraded"
+  | "unavailable"
+  | "unknown";
+
+export type ExplorerRuntimeCapability = {
+  id: string;
+  domainId: string;
+  name: string;
+  description: string;
+  stability: "stable" | "beta";
+  moduleReference: string;
+  dependencies: string[];
+  verificationMethods: string[];
+  readiness: ExplorerCapabilityReadiness;
+  health: ExplorerCapabilityHealth;
+  reason: string;
+  statusConfidence: "high" | "medium" | "low";
+  lastChecked: number;
+  evidence: Array<{
+    kind: "configuration" | "runtime_probe" | "local_store" | "dependency";
+    source: string;
+    summary: string;
+    observedAt: number;
+  }>;
+};
+
+export type ExplorerRuntimeDomain = {
+  id: string;
+  name: string;
+  description: string;
+};
+
+export async function fetchExplorerTasks(
+  options: {
+    limit?: number;
+    offset?: number;
+    status?: ExplorerTaskStatus;
+  } = {},
+): Promise<ExplorerTasksResponse> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  if (options.status) params.set("status", options.status);
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return request<ExplorerTasksResponse>(`/api/explorer/tasks${suffix}`);
+}
+
+export async function fetchExplorerTask(id: string): Promise<{ task: ExplorerTaskDetail }> {
+  const response = await request<{
+    task: Omit<ExplorerTaskDetail, "coverage">;
+    coverage: ExplorerTaskCoverage;
+    apiVersion: number;
+  }>(
+    `/api/explorer/tasks/${encodeURIComponent(id)}`,
+  );
+  return {
+    task: {
+      ...response.task,
+      coverage: response.coverage,
+    },
+  };
+}
+
+export async function fetchExplorerLive(): Promise<{
+  tasks: ExplorerLiveTask[];
+  generatedAt: number;
+  source: "active_run_registry";
+  apiVersion: number;
+}> {
+  return request("/api/explorer/live");
+}
+
+export async function fetchExplorerRuntimeCapabilities(): Promise<{
+  domains: ExplorerRuntimeDomain[];
+  capabilities: ExplorerRuntimeCapability[];
+  generatedAt: number;
+  sources: string[];
+  apiVersion: number;
+}> {
+  return request("/api/explorer/capabilities");
+}
+
+export type ExplorerMeta = {
+  ok: true;
+  service: "ava-explorer";
+  apiVersion: number;
+  instrumentation: "enabled";
+  serverStartedAt: number;
+  coverage: ExplorerTaskCoverage;
+  endpoints: string[];
+};
+
+export async function fetchExplorerMeta(): Promise<ExplorerMeta> {
+  return request<ExplorerMeta>("/api/explorer/meta");
+}
+
+export type ExplorerLearnedWorkflowStep = {
+  id: string;
+  sequence: number;
+  label: string;
+  source: "stored_playbook_step";
+};
+
+export type ExplorerLearnedWorkflow = {
+  id: string;
+  slug: string;
+  trigger: string;
+  keywords: string[];
+  stakes: "routine" | "consequential";
+  revision: number;
+  created: string | null;
+  lastUsed: string | null;
+  steps: ExplorerLearnedWorkflowStep[];
+  lessons: string[];
+  metrics: {
+    recalls: number;
+    successfulRecalledRuns: number;
+    failedRecalledRuns: number;
+    observedOutcomes: number;
+    successRate: number | null;
+    averageSuccessfulDurationMs: number | null;
+  };
+  evidenceState: "observed_outcomes" | "definition_only";
+  provenance: {
+    source: "procedural_memory_playbook";
+    sourceId: string;
+    storedDefinition: true;
+    creationMethod: "not_recorded";
+    metricsSource: "playbook_recall_counters";
+    note: string;
+  };
+  capabilityMapping: {
+    status: "not_recorded";
+    capabilityIds: [];
+    reason: string;
+  };
+  taskLinkage: {
+    status: "not_recorded";
+    taskIds: [];
+    reason: string;
+  };
+};
+
+export type ExplorerLearnedWorkflowsResponse = {
+  workflows: ExplorerLearnedWorkflow[];
+  summary: {
+    total: number;
+    withObservedOutcomes: number;
+    definitionOnly: number;
+    totalRecalls: number;
+    successfulRecalledRuns: number;
+    failedRecalledRuns: number;
+  };
+  source: {
+    id: "procedural_memory_playbooks";
+    type: "local_playbook_store";
+    status: "available";
+    parsedRecords: number;
+    excludedUnparseableRecords: number;
+    readAt: number;
+    note: string;
+  };
+  coverage: {
+    capabilityLinksRecorded: false;
+    taskLinksRecorded: false;
+    note: string;
+  };
+  generatedAt: number;
+  apiVersion: number;
+};
+
+export async function fetchExplorerLearnedWorkflows(): Promise<ExplorerLearnedWorkflowsResponse> {
+  return request<ExplorerLearnedWorkflowsResponse>("/api/explorer/workflows");
+}
+
 export type MemoryView = {
   personality: string;
   memoryIndex: string;
@@ -361,4 +778,214 @@ export async function deleteWatchApi(id: string): Promise<void> {
   await request<{ deleted: boolean }>(`/api/watches/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+}
+
+// ── Mission Control: AVA-owned, correlated operational observability.
+
+export type MissionRun = {
+  id: string;
+  traceId: string;
+  parentRunId: string | null;
+  rootTaskId: string | null;
+  sessionId: string | null;
+  runKind: string;
+  runtimeId: string;
+  runtimeType: string;
+  hostRuntimeId: string | null;
+  ownerType: string;
+  ownerId: string | null;
+  ownerRole: string | null;
+  title: string;
+  objective: string | null;
+  status: string;
+  outcome: string | null;
+  verificationStatus: string;
+  privacyLevel: string;
+  compactSummary: string | null;
+  version: number;
+  startedAt: number;
+  updatedAt: number;
+  lastEventAt: number;
+  completedAt: number | null;
+  staleAfterMs: number;
+  stale: boolean;
+  controlAvailable: boolean;
+  directCostMicrousd: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+  eventCount: number;
+  errorCount: number;
+  retryCount: number;
+};
+
+export type MissionEvent = {
+  seq: number;
+  eventId: string;
+  schemaVersion: number;
+  runId: string;
+  traceId: string;
+  spanId: string;
+  parentSpanId: string | null;
+  causationEventId: string | null;
+  producerId: string;
+  producerEventId: string | null;
+  producerSequence: number | null;
+  runtimeId: string;
+  runtimeType: string;
+  hostRuntimeId: string | null;
+  actorType: string;
+  actorId: string | null;
+  actorRole: string | null;
+  type: string;
+  status: string;
+  title: string;
+  summary: string | null;
+  visibility: "summary" | "detail" | "sensitive_collapsed" | "system_only";
+  privacyLevel: string;
+  payload: unknown;
+  error: string | null;
+  actionId: string | null;
+  actionOwner: "executor" | "observer" | "router" | null;
+  actionCounted: boolean;
+  providerRequestId: string | null;
+  costKind: string | null;
+  costMicrousd: number | null;
+  accountingApplied: boolean;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cachedTokens: number | null;
+  durationMs: number | null;
+  occurredAt: number;
+  receivedAt: number;
+  terminal: boolean;
+  late: boolean;
+  projectionApplied: boolean;
+};
+
+export type MissionMeta = {
+  ok: true;
+  service: "ava-mission-control";
+  apiVersion: number;
+  schemaVersion: number;
+  serverAuthority: "ava";
+  controls: ["stop"];
+  eventBounds: {
+    min: number | null;
+    max: number | null;
+  };
+};
+
+export async function fetchMissionMeta(): Promise<MissionMeta> {
+  return request<MissionMeta>("/api/mission-control/meta");
+}
+
+export async function fetchMissionRuns(limit = 50): Promise<MissionRun[]> {
+  const response = await request<{ runs: MissionRun[] }>(
+    `/api/mission-control/runs?limit=${Math.max(1, Math.min(100, limit))}`,
+  );
+  return response.runs;
+}
+
+export async function fetchMissionRun(id: string): Promise<{
+  run: MissionRun;
+  events: MissionEvent[];
+}> {
+  return request(`/api/mission-control/runs/${encodeURIComponent(id)}`);
+}
+
+export async function stopMissionRun(id: string, expectedVersion: number): Promise<MissionRun> {
+  const response = await request<{ accepted: true; run: MissionRun }>(
+    `/api/mission-control/runs/${encodeURIComponent(id)}/stop`,
+    {
+      method: "POST",
+      body: JSON.stringify({ expectedVersion }),
+    },
+  );
+  return response.run;
+}
+
+type MissionStreamOptions = {
+  after?: number;
+  onEvent: (event: MissionEvent) => void;
+  onGap?: () => void;
+  onState?: (state: "connecting" | "live" | "reconnecting" | "offline") => void;
+};
+
+/** Authenticated fetch-SSE with cursor replay; EventSource cannot set AVA's token. */
+export function subscribeMissionEvents(options: MissionStreamOptions): () => void {
+  const controller = new AbortController();
+  let cursor = Math.max(0, options.after ?? 0);
+  let reconnectMs = 500;
+
+  const connect = async () => {
+    while (!controller.signal.aborted) {
+      options.onState?.(cursor ? "reconnecting" : "connecting");
+      try {
+        const headers = new Headers({ accept: "text/event-stream" });
+        const token = getToken();
+        if (token) headers.set("authorization", `Bearer ${token}`);
+        const response = await fetch(
+          `/api/mission-control/stream?after=${cursor}`,
+          { headers, signal: controller.signal },
+        );
+        if (response.status === 401) {
+          handleUnauthorized();
+          return;
+        }
+        if (!response.ok || !response.body) throw new Error(`stream_http_${response.status}`);
+        options.onState?.("live");
+        reconnectMs = 500;
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let eventName = "";
+        let data = "";
+        const dispatch = () => {
+          if (eventName === "mission_event" && data) {
+            const event = JSON.parse(data) as MissionEvent;
+            if (event.seq > cursor) {
+              cursor = event.seq;
+              options.onEvent(event);
+            }
+          } else if (eventName === "gap") {
+            options.onGap?.();
+          }
+          eventName = "";
+          data = "";
+        };
+        while (!controller.signal.aborted) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r\n/g, "\n");
+          let boundary = buffer.indexOf("\n\n");
+          while (boundary >= 0) {
+            const block = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            for (const line of block.split("\n")) {
+              if (line.startsWith("event:")) eventName = line.slice(6).trim();
+              else if (line.startsWith("data:")) {
+                data += `${data ? "\n" : ""}${line.slice(5).trimStart()}`;
+              }
+            }
+            dispatch();
+            boundary = buffer.indexOf("\n\n");
+          }
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        options.onState?.("offline");
+      }
+      await new Promise<void>((resolve) => {
+        const id = window.setTimeout(resolve, reconnectMs);
+        controller.signal.addEventListener("abort", () => {
+          window.clearTimeout(id);
+          resolve();
+        }, { once: true });
+      });
+      reconnectMs = Math.min(5_000, reconnectMs * 2);
+    }
+  };
+  void connect();
+  return () => controller.abort();
 }

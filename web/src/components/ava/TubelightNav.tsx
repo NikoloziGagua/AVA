@@ -42,7 +42,7 @@ export function TubelightNav({ items, activeName, className }: TubelightNavProps
               setActive(i);
               item.onSelect();
             }}
-            className="relative cursor-pointer rounded-full px-4 py-2 text-[13px] font-semibold text-white/70 transition-colors hover:text-white flex items-center gap-2"
+            className="relative flex cursor-pointer items-center gap-2 rounded-full px-3 py-2 text-[13px] font-semibold text-white/70 transition-colors hover:text-white sm:px-4"
           >
             <Icon size={16} className="relative z-10" />
             <span className="relative z-10 hidden sm:inline">{item.name}</span>

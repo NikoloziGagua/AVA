@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Radar } from "lucide-react";
 import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { NebulaBackground } from "../components/ava/NebulaBackground.js";
 import { Orb } from "../components/ava/Orb.js";
@@ -12,6 +13,7 @@ export interface OrbitScreenProps {
   /** Submit from the command bar → open a new chat seeded with this text. */
   onCommand: (text: string) => void;
   onEnterVoice: () => void;
+  onExplore: () => void;
 }
 
 function isTypingTarget(e: KeyboardEvent): boolean {
@@ -24,7 +26,7 @@ function isTypingTarget(e: KeyboardEvent): boolean {
  * DottedSurface + Nebula behind a glass tubelight nav, the mercury Orb hero, the
  * AVA wordmark, and a command bar. Press Space (or click the orb) to talk.
  */
-export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
+export function OrbitScreen({ onCommand, onEnterVoice, onExplore }: OrbitScreenProps) {
   // Touch devices have no spacebar (and Space is a press, not a hold) — the
   // hint must say what's actually true for the device in hand.
   const touch = isCoarsePointer();
@@ -99,6 +101,14 @@ export function OrbitScreen({ onCommand, onEnterVoice }: OrbitScreenProps) {
             <>PRESS <span style={{ color: "var(--ac)" }}>SPACE</span> TO SPEAK · OR TYPE</>
           )}
         </div>
+        <button
+          type="button"
+          onClick={onExplore}
+          className="hud mt-5 flex items-center gap-2 rounded-full border border-[rgba(92,242,255,.16)] bg-[rgba(92,242,255,.055)] px-4 py-2 text-[9px] text-[var(--ac-text)] transition-colors hover:border-[rgba(92,242,255,.35)] hover:bg-[rgba(92,242,255,.10)]"
+        >
+          <Radar size={13} />
+          EXPLORE WHAT AVA CAN DO
+        </button>
       </div>
 
       {/* Centered via auto margins (NOT translateX(-50%)): GSAP's y-tween would

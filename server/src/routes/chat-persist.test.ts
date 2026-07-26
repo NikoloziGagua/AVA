@@ -5,7 +5,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
-import { listMessages } from "../state/messages.js";
+import { appendMessage, listMessages } from "../state/messages.js";
+import { createSession } from "../state/sessions.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { chatRoutes } from "./chat.js";
 import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
@@ -42,7 +43,7 @@ function setup() {
     },
     { anthropic: null, openai: null },
   ));
-  return { app, db };
+  return { app, db, runAgentImpl };
 }
 
 describe("chat persist flag", () => {
@@ -56,6 +57,53 @@ describe("chat persist flag", () => {
     // Let the fire-and-forget run emit its `final` event.
     await new Promise((r) => setTimeout(r, 30));
     expect(listMessages(db, sessionId)).toEqual([]);
+  });
+
+  it("persist:false executes the transient task in a resumed session and retains prior history", async () => {
+    const { app, db, runAgentImpl } = setup();
+    const session = createSession(db, { title: "Codex voice session" });
+    appendMessage(db, {
+      sessionId: session.id,
+      role: "user",
+      content: "Open Codex in my AVA project.",
+    });
+    appendMessage(db, {
+      sessionId: session.id,
+      role: "assistant",
+      content: "Codex is open.",
+    });
+    // This is the incomplete spoken transcript that caused the realtime model to
+    // generate the more precise transient action below.
+    appendMessage(db, {
+      sessionId: session.id,
+      role: "user",
+      content: "You are",
+    });
+    const transientTask =
+      "Find and focus the existing Codex terminal, send /resume, and report its output.";
+
+    await request(app)
+      .post("/api/chat")
+      .send({ sessionId: session.id, text: transientTask, persist: false })
+      .expect(200);
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(runAgentImpl).toHaveBeenCalledTimes(1);
+    const opts = runAgentImpl.mock.calls[0]?.[0] as unknown as {
+      prompt: string;
+      priorMessages: Array<{ role: string; content: string }>;
+    };
+    expect(opts.prompt).toContain(transientTask);
+    expect(opts.prompt).not.toContain("You are");
+    expect(opts.priorMessages).toEqual([
+      { role: "user", content: "Open Codex in my AVA project." },
+      { role: "assistant", content: "Codex is open." },
+    ]);
+    expect(listMessages(db, session.id).map((m) => [m.role, m.content])).toEqual([
+      ["user", "Open Codex in my AVA project."],
+      ["assistant", "Codex is open."],
+      ["user", "You are"],
+    ]);
   });
 
   it("by default (persist omitted) the user turn AND the assistant final are stored", async () => {

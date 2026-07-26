@@ -61,6 +61,7 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "watch_list": return "Listing watches";
     case "watch_delete": return "Removing a watch";
     case "instagram_send_dm": return a.person ? `Messaging ${truncate(s(a.person), 24)} on Instagram` : "Sending an Instagram DM";
+    case "instagram_open_profile": return a.person ? `Opening ${truncate(s(a.person), 24)}'s Instagram profile` : "Opening an Instagram profile";
     case "instagram_open_chat": return a.person ? `Opening ${truncate(s(a.person), 24)}'s Instagram chat` : "Opening an Instagram chat";
     case "instagram_read_chat": return a.person ? `Reading ${truncate(s(a.person), 24)}'s Instagram chat` : "Reading an Instagram chat";
     case "instagram_status": return "Checking Instagram login";

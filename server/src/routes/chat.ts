@@ -52,6 +52,15 @@ import { matchPlaybook } from "../playbooks/match.js";
 import { loadPlaybookIndex, readPlaybook } from "../playbooks/store.js";
 import { bumpUse, recordOutcome } from "../playbooks/mutate.js";
 import type { RunStep } from "../playbooks/distill.js";
+import {
+  cancelExplorerTaskIfRunning,
+  createExplorerTask,
+  failExplorerTaskIfRunning,
+  recordExplorerAgentEvent,
+} from "../explorer/store.js";
+import { AgentObservabilityRecorder } from "../observability/agent-adapter.js";
+import type { ObservabilityService } from "../observability/store.js";
+import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -64,6 +73,14 @@ const Body = z.object({
   // the voice-turn storage (user transcript + spoken result), so the internal
   // /api/chat run must not double-store. Independent of `voice`. Defaults to true.
   persist: z.boolean().optional(),
+  // An internal handoff may attach this run beneath a voice/Forge/Codex span.
+  // It carries identifiers only; AVA still owns dispatch and policy.
+  observability: z.object({
+    traceId: z.string().min(1).max(160),
+    parentRunId: z.string().min(1).max(160),
+    parentSpanId: z.string().min(1).max(160).nullish(),
+    causationEventId: z.string().min(1).max(160).nullish(),
+  }).optional(),
 });
 
 
@@ -95,6 +112,8 @@ export type AgentDeps = {
   googlePlacesApiKey?: string | null;
   /** Optional override; lets tests substitute a fake agent loop. Defaults to runAgent. */
   runAgentImpl?: typeof runAgent;
+  /** Shared Mission Control stream. Optional keeps isolated route tests simple. */
+  observability?: ObservabilityService;
 };
 
 export type Metered = { anthropic: Anthropic | null; openai: OpenAI | null };
@@ -231,7 +250,17 @@ export function chatRoutes(
         role: m.role as "user" | "assistant",
         content: m.content,
       }));
-    const latestUserText = latestRow?.content ?? parsed.data.text;
+    // A persist:false voice handoff deliberately does not append its generated
+    // computer-action instruction to chat history. The latest stored row is the
+    // owner's spoken transcript that caused that handoff, so using it here would
+    // silently discard the more precise action instruction (for example, a
+    // generated "focus Codex and run /resume" task became the fragment "You are").
+    // Keep the earlier rows as history, but make the transient request itself the
+    // final user prompt that the tool-capable agent executes.
+    const latestUserText =
+      parsed.data.persist === false
+        ? parsed.data.text
+        : latestRow?.content ?? parsed.data.text;
     // TEXT defaults to "action" mode so every typed turn has the full tool stack
     // (the classifier was too conservative — casual "look up X" stayed in
     // conversation mode and Ava said "I can't access Google"). VOICE, however,
@@ -290,12 +319,88 @@ export function chatRoutes(
       ? (parsed.data.voice ? "none" : mapReasoning(getReasoningLevel(db), mode))
       : undefined;
 
+    const runStartMs = Date.now();
+    let explorerTraceReady = false;
+    try {
+      createExplorerTask(db, {
+        id: runId,
+        sessionId,
+        originalRequest: parsed.data.text,
+        mode,
+        startedAt: runStartMs,
+      });
+      explorerTraceReady = true;
+    } catch (err) {
+      // Observability must never prevent the requested task from running.
+      console.warn("[explorer] task start record failed:", err instanceof Error ? err.message : err);
+    }
+
+    let missionRecorder: AgentObservabilityRecorder | null = null;
+    let unregisterMissionStop = () => {};
+    if (agentDeps.observability) {
+      try {
+        const parentContext = parsed.data.observability;
+        const parentRun = parentContext
+          ? agentDeps.observability.getRun(parentContext.parentRunId)
+          : null;
+        agentDeps.observability.startRun({
+          id: runId,
+          traceId: parentContext?.traceId,
+          parentRunId: parentContext?.parentRunId ?? null,
+          rootTaskId: parentRun?.rootTaskId ?? parentRun?.id ?? runId,
+          sessionId,
+          runKind: parsed.data.persist === false ? "voice_action" : "chat_agent",
+          runtimeId: "ava:agent",
+          runtimeType: "ava",
+          hostRuntimeId: parentContext ? "ava:voice" : null,
+          ownerType: "ava",
+          ownerId: "agent-runtime",
+          ownerRole: mode === "action" ? "tool-agent" : "conversation-agent",
+          title: parsed.data.persist === false
+            ? "Voice delegated an action"
+            : "AVA chat request",
+          objective: parsed.data.text,
+          privacyLevel: "personal",
+          staleAfterMs: 90_000,
+          startedAt: runStartMs,
+        });
+        missionRecorder = new AgentObservabilityRecorder(
+          agentDeps.observability,
+          runId,
+          parentContext?.parentSpanId ?? null,
+          parentContext?.causationEventId ?? null,
+        );
+        const observedSessionId = sessionId;
+        unregisterMissionStop = agentDeps.observability.registerStopHandler(
+          runId,
+          async () => {
+            if (runs.get(observedSessionId) !== activeRun) return false;
+            abort.abort();
+            for (const pid of agentDeps.pidfiles.listForRun(runId)) {
+              try { await killTree(pid); } catch { /* already exited */ }
+            }
+            if (explorerTraceReady) {
+              try { cancelExplorerTaskIfRunning(db, runId); } catch { /* best effort */ }
+            }
+            missionRecorder?.record({
+              kind: "killed",
+              payload: { reason: "manual" },
+            });
+            return true;
+          },
+        );
+      } catch (err) {
+        // The observed work always wins over its telemetry.
+        console.warn("[mission-control] run start failed:", err instanceof Error ? err.message : err);
+      }
+    }
+
     void (async () => {
       const sid = sessionId!;
       // Collect the run's tool steps so a successful >=2-tool run can be
       // distilled into a reusable playbook (best-effort, fire-and-forget).
       const runSteps: RunStep[] = [];
-      const runStartMs = Date.now();
+      const toolStartedAt = new Map<string, number[]>();
       const emit = (e: AgentEvent) => {
         if (e.kind === "tool_call") {
           runSteps.push({ tool: e.payload.tool, args: e.payload.args, ok: true });
@@ -308,6 +413,41 @@ export function chatRoutes(
         // model just produced no closing text).
         if (e.kind === "final" && !e.payload.text.trim()) {
           e = { kind: "final", payload: { text: GRACEFUL_FINAL } };
+        }
+        // This is the one complete operational event seam shared by all tools.
+        // Explorer omits model thought/delta events and applies its own broader
+        // secret scrub before committing anything to the execution history.
+        const eventAt = Date.now();
+        let toolDurationMs: number | null = null;
+        if (e.kind === "tool_call") {
+          const starts = toolStartedAt.get(e.payload.tool) ?? [];
+          starts.push(eventAt);
+          toolStartedAt.set(e.payload.tool, starts);
+        } else if (e.kind === "tool_result") {
+          const starts = toolStartedAt.get(e.payload.tool);
+          const started = starts?.shift();
+          if (started !== undefined) toolDurationMs = Math.max(0, eventAt - started);
+          if (starts?.length === 0) toolStartedAt.delete(e.payload.tool);
+        }
+        if (explorerTraceReady) {
+          try {
+            recordExplorerAgentEvent(db, runId, e, {
+              at: eventAt,
+              durationMs: toolDurationMs,
+            });
+          } catch (err) {
+            console.warn("[explorer] event record failed:", err instanceof Error ? err.message : err);
+          }
+        }
+        if (missionRecorder) {
+          try {
+            missionRecorder.record(e, {
+              at: eventAt,
+              durationMs: toolDurationMs,
+            });
+          } catch (err) {
+            console.warn("[mission-control] event record failed:", err instanceof Error ? err.message : err);
+          }
         }
         if (e.kind === "final") {
           const prov = agentDeps.provider;
@@ -479,17 +619,55 @@ export function chatRoutes(
         try {
           buffer.append({ kind: "error", payload: { message: msg } });
           buffer.append({ kind: "done", payload: {} });
+          if (explorerTraceReady) {
+            recordExplorerAgentEvent(db, runId, {
+              kind: "error",
+              payload: { message: msg },
+            });
+          }
+          missionRecorder?.record({
+            kind: "error",
+            payload: { message: msg },
+          });
           if (parsed.data.persist !== false) {
             appendMessage(db, { sessionId: sid, role: "assistant", content: `That didn't work, Sir — ${msg}` });
           }
         } catch { /* even the error path failed; finally still unregisters */ }
         console.error("[chat] run crashed:", msg);
       } finally {
+        unregisterMissionStop();
+        if (agentDeps.observability) {
+          try {
+            const missionRun = agentDeps.observability.getRun(runId);
+            if (missionRun && !TERMINAL_RUN_STATUSES.has(missionRun.status)) {
+              agentDeps.observability.record(runId, {
+                producerId: "ava:agent",
+                type: "agent.runtime.orphan_closed",
+                status: "error",
+                title: "Agent runtime ended without a terminal event",
+                summary: "AVA closed the run conservatively because its worker exited without a final outcome.",
+                terminal: true,
+                runStatus: "failed",
+                outcome: "runtime_ended_without_terminal_event",
+                verificationStatus: "not_verified",
+              });
+            }
+          } catch (err) {
+            console.warn("[mission-control] run close failed:", err instanceof Error ? err.message : err);
+          }
+        }
+        if (explorerTraceReady) {
+          try {
+            failExplorerTaskIfRunning(db, runId);
+          } catch (err) {
+            console.warn("[explorer] task close failed:", err instanceof Error ? err.message : err);
+          }
+        }
         runs.unregister(sid, activeRun);
       }
     })();
 
-    res.json({ sessionId });
+    res.json({ sessionId, taskId: runId });
   });
 
   r.get("/:sessionId/stream", auth, (req, res) => {
@@ -565,6 +743,13 @@ export function chatRoutes(
     // 1. Abort the model read-loop and signal in-flight tools (computer_use's
     //    GUI loop, claude_code's child via its abort listener).
     const ok = runs.abort(sessionId);
+    if (runId) {
+      try {
+        cancelExplorerTaskIfRunning(db, runId);
+      } catch (err) {
+        console.warn("[explorer] cancellation record failed:", err instanceof Error ? err.message : err);
+      }
+    }
     // 2. Kill the run's spawned process subtree — claude_code's `claude -p`
     //    child and everything it spawned — so Stop actually halts running work,
     //    not just the next model turn. Best-effort: never let a dead/missing pid

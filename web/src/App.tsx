@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Plus, List, Brain, Settings2, Sparkles } from "lucide-react";
+import { Home, Plus, List, Brain, Settings2, Sparkles, Radar } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
 import { TubelightNav, type TubelightItem } from "./components/ava/TubelightNav.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
@@ -14,6 +14,8 @@ import { SelfScreen } from "./self/SelfScreen.js";
 import { OrbitScreen } from "./orbit/OrbitScreen.js";
 import { ChatListScreen } from "./orbit/ChatListScreen.js";
 import { VoiceScreen } from "./voice/VoiceScreen.js";
+import { ExplorerScreen } from "./explorer/ExplorerScreen.js";
+import { MissionControlScreen } from "./mission-control/MissionControlScreen.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 
@@ -25,6 +27,7 @@ type View =
   | { name: "memory" }
   | { name: "rules" }
   | { name: "self" }
+  | { name: "capabilities" }
   | { name: "list" };
 
 // Only these surfaces own the mercury Orb (with flipId="ava-orb"): splash → home
@@ -43,6 +46,7 @@ function navForView(v: View): string | undefined {
     case "memory": return "Memory";
     case "rules": return "Rules";
     case "self": return "Self";
+    case "capabilities": return "Explore";
     case "list": return "Chats";
     default: return undefined;
   }
@@ -112,6 +116,7 @@ export function App() {
     { name: "New", icon: Plus, onSelect: () => setView({ name: "chat", sessionId: null }) },
     { name: "Chats", icon: List, onSelect: () => setView({ name: "list" }) },
     { name: "Memory", icon: Brain, onSelect: () => setView({ name: "memory" }) },
+    { name: "Explore", icon: Radar, onSelect: () => setView({ name: "capabilities" }) },
     { name: "Rules", icon: Settings2, onSelect: () => setView({ name: "rules" }) },
     { name: "Self", icon: Sparkles, onSelect: () => setView({ name: "self" }) },
   ];
@@ -126,6 +131,9 @@ export function App() {
   const deckTransition = transitioning || undefined;
 
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
+  if (new URLSearchParams(window.location.search).get("mission-control") === "1") {
+    return <MissionControlScreen />;
+  }
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-black text-white">
@@ -160,6 +168,7 @@ export function App() {
             <OrbitScreen
               onCommand={(text) => setView({ name: "chat", sessionId: null, initialText: text })}
               onEnterVoice={() => setView({ name: "voice", from: "orbit", sessionId: null })}
+              onExplore={() => setView({ name: "capabilities" })}
             />
           </motion.div>
         )}
@@ -244,6 +253,22 @@ export function App() {
             transition={enterT}
           >
             <SelfScreen onClose={() => setView({ name: "orbit" })} />
+          </motion.div>
+        )}
+        {view.name === "capabilities" && (
+          <motion.div
+            key="capabilities"
+            data-view="capabilities"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
+          >
+            <ExplorerScreen
+              onLaunch={(text) => setView({ name: "chat", sessionId: null, initialText: text })}
+            />
           </motion.div>
         )}
         {view.name === "list" && (

@@ -243,6 +243,10 @@ export function ChatScreen({
       // 401 is centrally handled in api.ts (clearToken + ava:unauthorized).
       setPending(false);
       const is401 = e instanceof ApiError && e.status === 401;
+      const isMissingProvider =
+        e instanceof ApiError &&
+        e.status === 503 &&
+        e.message === "no_llm_provider";
       setHistory((prev) => [
         ...prev,
         {
@@ -250,7 +254,9 @@ export function ChatScreen({
           role: "assistant",
           text: is401
             ? "Session expired — re-pair this device to continue."
-            : "That didn't send, Sir. Tap retry to try again.",
+            : isMissingProvider
+              ? "AVA is running, but no AI provider is configured. Add OPENAI_API_KEY or ANTHROPIC_API_KEY to AVA's .env file, then restart AVA."
+              : "That didn't send, Sir. Tap retry to try again.",
         },
       ]);
     }

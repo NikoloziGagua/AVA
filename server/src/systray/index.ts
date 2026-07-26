@@ -48,8 +48,21 @@ export function startSystray(opts: {
     } else if (action.seq_id === 1) {
       exec(`start http://localhost:8787/_status`);
     } else if (action.seq_id === 3) {
-      void tray.kill();
+      void tray.kill().catch((error) => {
+        opts.log.warn(
+          { err: error instanceof Error ? error.message : String(error) },
+          "systray failed to stop cleanly",
+        );
+      });
       process.exit(0);
     }
+  }).catch((error) => {
+    // SysTray starts its helper process asynchronously. A surrounding try/catch
+    // in index.ts cannot see a rejected ready()/onClick() promise, so handle it
+    // here instead of leaking an unhandledRejection into the server process.
+    opts.log.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      "systray failed to start — server still running. Mint a pairing code with: npm.cmd -w server run pair",
+    );
   });
 }

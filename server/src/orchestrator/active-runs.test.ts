@@ -19,6 +19,17 @@ describe("ActiveRuns", () => {
     expect(runs.getRunId("s1")).toBe("run-abc");
   });
 
+  it("lists only runs that are active in this process", () => {
+    const runs = new ActiveRuns();
+    const first = fakeRun("s1");
+    const second = fakeRun("s2");
+    runs.register(first);
+    runs.register(second);
+    expect(runs.list()).toEqual([first, second]);
+    runs.unregister("s1");
+    expect(runs.list()).toEqual([second]);
+  });
+
   it("getRunId returns null for a session with no active run", () => {
     const runs = new ActiveRuns();
     expect(runs.getRunId("missing")).toBeNull();

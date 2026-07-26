@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMemoryTools } from "./memory-mcp.js";
+import { loadProjectIndex } from "../memory/project-index.js";
 
 let dir: string;
 beforeEach(() => {
@@ -93,6 +94,19 @@ describe("memory_remember", () => {
     const r = await t.run({ file: "project", project: "yov", text: "uses C:/ai/yov" }, ctx);
     expect(r.ok).toBe(true);
     expect(readFileSync(join(dir, "projects", "yov.md"), "utf8")).toBe("uses C:/ai/yov\n");
+    expect(readFileSync(join(dir, "MEMORY.md"), "utf8"))
+      .toBe("- [yov](projects/yov.md)\n");
+    expect(loadProjectIndex(dir)).toEqual([{ slug: "yov", roots: ["c:/ai/yov"] }]);
+  });
+
+  it("indexes a project only once across repeated writes", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    await t.run({ file: "project", project: "yov", text: "Root: C:/ai/yov" }, ctx);
+    await t.run({ file: "project", project: "yov", text: "uses TypeScript" }, ctx);
+
+    expect(readFileSync(join(dir, "MEMORY.md"), "utf8"))
+      .toBe("- [yov](projects/yov.md)\n");
   });
 
   it("refresh=<substring> bumps the matching observation's confidence and date", async () => {
@@ -198,11 +212,13 @@ describe("memory_forget", () => {
   it("mode=project removes the project file and references", async () => {
     writeFileSync(join(dir, "projects", "yov.md"), "# yov", "utf8");
     writeFileSync(join(dir, "preferences.md"), "yov layout\n", "utf8");
+    writeFileSync(join(dir, "MEMORY.md"), "- [yov](projects/yov.md)\n", "utf8");
     const tools = buildMemoryTools({ memoryDir: dir });
     const t = tools.find((x) => x.tool.name === "memory_forget")!;
     const r = await t.run({ mode: "project", target: "yov" }, ctx);
     expect(r.ok).toBe(true);
     expect(readFileSync(join(dir, "preferences.md"), "utf8")).toBe("");
+    expect(readFileSync(join(dir, "MEMORY.md"), "utf8")).toBe("");
   });
 
   it("mode=match returns not_found when the only matching line is superseded", async () => {

@@ -10,6 +10,8 @@ describe("TOOL_RUBRIC", () => {
     expect(TOOL_RUBRIC).toContain("memory_forget");
     expect(TOOL_RUBRIC).toContain("memory_read");
     expect(TOOL_RUBRIC).toContain("self_improve");
+    expect(TOOL_RUBRIC).toContain("focus-default-window.ps1");
+    expect(TOOL_RUBRIC).toContain("WinSta0\\Default");
   });
 
   it("biases toward acting immediately, not idling in chat", () => {

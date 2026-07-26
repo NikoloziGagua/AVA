@@ -91,7 +91,11 @@ export async function ensureReady(deps: WaDeps): Promise<WaResult> {
 const phoneDigits = (s: string) => s.replace(/\D/g, "");
 const looksLikePhone = (s: string) => /^[+\d][\d\s().-]*$/.test(s.trim()) && phoneDigits(s).length >= 7;
 
-function resolveWa(deps: WaDeps, personQuery: string): { person?: Person; result?: WaResult } {
+function resolveWa(deps: WaDeps, personQuery: string): {
+  person?: Person;
+  transient?: boolean;
+  result?: WaResult;
+} {
   const { person, candidates } = resolvePerson(deps.memoryDir, personQuery);
   if (person) {
     if (!person.whatsapp?.username && !person.whatsapp?.phone) {
@@ -108,7 +112,22 @@ function resolveWa(deps: WaDeps, personQuery: string): { person?: Person; result
     const p = upsertPerson(deps.memoryDir, { name: personQuery.trim(), whatsapp: { phone: personQuery.trim() } });
     return { person: p };
   }
-  return { result: { ok: false, needs: "person", detail: `I don't know "${personQuery}" yet. Ask Sir for their WhatsApp display name (as it appears in the chat list) or phone number, then person_remember it.` } };
+  const displayName = personQuery.trim();
+  if (!displayName) {
+    return { result: { ok: false, needs: "person", detail: "A WhatsApp display name or phone number is required." } };
+  }
+  // A first-time exact display name is safe to search because openChat verifies
+  // the conversation header before any send. Learn it only after that succeeds.
+  return {
+    transient: true,
+    person: {
+      id: "",
+      name: displayName,
+      aliases: [],
+      updated: "",
+      whatsapp: { username: displayName },
+    },
+  };
 }
 
 // ── chat-list search ─────────────────────────────────────────────────────────
@@ -117,6 +136,10 @@ function resolveWa(deps: WaDeps, personQuery: string): { person?: Person; result
 // + message composer) — the search box comes first in the DOM (left pane), so
 // the generic selectors resolve to it when both exist.
 const SEARCH_SELECTORS = [
+  '#side div[contenteditable="true"][aria-label*="Search"]',
+  'div[contenteditable="true"][aria-label="Search input textbox"]',
+  'div[contenteditable="true"][aria-placeholder*="Search"]',
+  'input[placeholder*="Search"]',
   'div[contenteditable="true"][data-tab]',
   'div[role="textbox"][aria-label*="Search"]',
   'div[role="textbox"]',
@@ -130,6 +153,37 @@ async function typeInSearch(chrome: Chrome, text: string): Promise<{ ok: boolean
     const t = await chrome.type(sel, text);
     if (t.ok) return { ok: true };
     lastReason = t.reason ?? lastReason;
+  }
+  // WhatsApp's current UI can hide the textbox behind a Search button and
+  // changes its generated attributes frequently. Accessibility refs are stable:
+  // open the control if needed, then locate the Search textbox by role/name.
+  let snap = await chrome.snapshot();
+  const refFor = (tree: string, role: "button" | "textbox"): string | null => {
+    const lines = tree.split("\n");
+    const line = lines.find((l) =>
+      new RegExp(`-\\s*${role}\\b`, "i").test(l) &&
+      /\bsearch\b/i.test(l) &&
+      !/message search result/i.test(l),
+    );
+    return line ? /\[ref=(e\d+)\]/.exec(line)?.[1] ?? null : null;
+  };
+  let textboxRef = snap.ok ? refFor(snap.text ?? "", "textbox") : null;
+  if (!textboxRef && snap.ok) {
+    const buttonRef = refFor(snap.text ?? "", "button");
+    if (buttonRef) {
+      const opened = await chrome.click(`aria-ref=${buttonRef}`);
+      if (opened.ok) {
+        snap = await chrome.snapshot();
+        textboxRef = snap.ok ? refFor(snap.text ?? "", "textbox") : null;
+      } else {
+        lastReason = opened.reason ?? lastReason;
+      }
+    }
+  }
+  if (textboxRef) {
+    const typed = await chrome.type(`aria-ref=${textboxRef}`, text);
+    if (typed.ok) return { ok: true };
+    lastReason = typed.reason ?? lastReason;
   }
   return { ok: false, reason: lastReason };
 }
@@ -159,7 +213,7 @@ export async function openChat(deps: WaDeps, personQuery: string): Promise<WaRes
   const w = waitsOf(deps);
   const ready = await ensureReady(deps);
   if (!ready.ok) return ready;
-  const { person, result } = resolveWa(deps, personQuery);
+  const { person, transient, result } = resolveWa(deps, personQuery);
   if (result) return result;
   const p = person!;
 
@@ -217,10 +271,20 @@ export async function openChat(deps: WaDeps, personQuery: string): Promise<WaRes
 
   // Learned the display name from a phone-only contact — save it (the fast,
   // unambiguous search key for next time).
-  if (resolvedByPhone && displayName) {
+  if (resolvedByPhone && displayName && !transient) {
     setAppField(deps.memoryDir, p.id, "whatsapp", "username", displayName);
   }
-  return { ok: true, detail: `chat with ${displayName ?? p.name} open, header verified`, person: p };
+  const saved = transient
+    ? upsertPerson(deps.memoryDir, {
+        name: p.name,
+        whatsapp: { username: displayName ?? searchTerm },
+      })
+    : p;
+  return {
+    ok: true,
+    detail: `chat with ${displayName ?? p.name} open, header verified${transient ? " and learned" : ""}`,
+    person: saved,
+  };
 }
 
 // ── messaging ────────────────────────────────────────────────────────────────

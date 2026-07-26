@@ -1,6 +1,6 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Chrome } from "../tools/chrome.js";
-import { ensureReady, login, submitCode, openThread, sendDm, readThread } from "./instagram.js";
+import { ensureReady, login, submitCode, openProfile, openThread, sendDm, readThread } from "./instagram.js";
 import { listPeople, upsertPerson } from "./people.js";
 
 // Instagram + people tools — the deterministic fast path for Sir's most-used
@@ -14,6 +14,25 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
   const deps = async () => ({ chrome: await o.getChrome(), memoryDir: o.memoryDir });
   const s = (v: unknown) => (typeof v === "string" ? v : "");
   return [
+    {
+      tool: {
+        name: "instagram_open_profile",
+        description:
+          "Open an Instagram profile without messaging. A known people-map name or " +
+          "explicit @username opens directly. An unknown plain name opens safe search " +
+          "results instead of guessing the account; ask for the @username only when an " +
+          "exact profile is required.",
+        inputSchema: {
+          type: "object",
+          properties: { person: { type: "string", description: "Known name, plain search name, or @username." } },
+          required: ["person"],
+        },
+      },
+      run: async (args) => {
+        const r = await openProfile(await deps(), s(args.person));
+        return { ok: r.ok, text: r.detail };
+      },
+    },
     {
       tool: {
         name: "instagram_send_dm",

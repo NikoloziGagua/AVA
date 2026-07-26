@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chrome } from "../tools/chrome.js";
-import { detectState, ensureReady, login, openThread, sendDm, type IgDeps } from "./instagram.js";
+import { detectState, ensureReady, login, openProfile, openThread, sendDm, type IgDeps } from "./instagram.js";
 import { listPeople, upsertPerson } from "./people.js";
 
 // Unit tests for the Instagram module, driven by a scripted fake Chrome.
@@ -26,6 +26,10 @@ function makeChrome(startUrl = `${BASE}/`) {
   let currentUrl = startUrl;
   const setUrl = (u: string) => { currentUrl = u; };
   const chrome = {
+    open: vi.fn(async (url?: string) => {
+      if (url) currentUrl = url;
+      return { ok: true } as { ok: boolean; reason?: string; title?: string };
+    }),
     navigate: vi.fn(async (url: string) => {
       currentUrl = url;
       return { ok: true } as { ok: boolean; reason?: string; title?: string };
@@ -205,6 +209,32 @@ describe("login", () => {
     });
     const res = await settle(() => login(depsWith(chrome), { username: "nika_gagua", password: "right-secret" }));
     expect(res).toEqual({ ok: true, detail: "Logged in to Instagram." });
+  });
+});
+
+describe("openProfile", () => {
+  it("opens an unknown plain name as safe search results without learning a guessed account", async () => {
+    const { chrome } = makeChrome();
+
+    const res = await settle(() => openProfile(depsWith(chrome), "Lasha"));
+
+    expect(res.ok).toBe(true);
+    expect(res.detail).toContain("search");
+    expect(chrome.navigate).toHaveBeenLastCalledWith(
+      `${BASE}/explore/search/keyword/?q=Lasha`,
+    );
+    expect(listPeople(dir)).toEqual([]);
+  });
+
+  it("opens a known username directly without entering a DM", async () => {
+    upsertPerson(dir, { name: "Lasha", instagram: { username: "lasha_b" } });
+    const { chrome } = makeChrome();
+
+    const res = await settle(() => openProfile(depsWith(chrome), "Lasha"));
+
+    expect(res.ok).toBe(true);
+    expect(res.detail).toContain("no message sent");
+    expect(chrome.navigate).toHaveBeenLastCalledWith(`${BASE}/lasha_b/`);
   });
 });
 

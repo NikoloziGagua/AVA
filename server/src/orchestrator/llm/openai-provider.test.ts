@@ -38,6 +38,12 @@ function fakeOpenAIStream(events: object[]) {
 }
 
 describe("OpenAIProvider.complete", () => {
+  it("defaults AVA actions to GPT-5.6 Sol and side work to GPT-5.6 Luna", () => {
+    const p = new OpenAIProvider({ client: fakeOpenAIComplete("ok") });
+    expect(p.defaultOrchestratorModel).toBe("gpt-5.6");
+    expect(p.defaultSideModel).toBe("gpt-5.6-luna");
+  });
+
   it("extracts output_text from the message item", async () => {
     const client = fakeOpenAIComplete("ok");
     const p = new OpenAIProvider({ client });
@@ -197,6 +203,22 @@ describe("OpenAIProvider.stream", () => {
       const args = ((client as any).responses.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
       expect(args.reasoning).toEqual({ effort: expected });
     }
+  });
+
+  it("uses the current `none` reasoning spelling for GPT-5.6", async () => {
+    const client = fakeOpenAIStream([
+      { type: "response.completed", response: { status: "completed" } },
+    ]);
+    const p = new OpenAIProvider({ client });
+    const ac = new AbortController();
+    for await (const _ of p.stream({
+      model: "gpt-5.6", system: "",
+      messages: [{ role: "user", content: "x" }],
+      tools: [], abort: ac.signal, reasoningEffort: "none",
+    })) { /* drain */ }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const args = ((client as any).responses.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(args.reasoning).toEqual({ effort: "none" });
   });
 
   it("forwards reasoning_summary_text.delta as thought events", async () => {

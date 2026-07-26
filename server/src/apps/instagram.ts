@@ -191,6 +191,53 @@ function resolveIg(deps: IgDeps, personQuery: string): { person?: Person; transi
 const threadIdFromUrl = (url: string): string | null =>
   /\/direct\/t\/(\d+)/.exec(url)?.[1] ?? null;
 
+/**
+ * Open a profile without entering or sending a DM. Known people and explicit
+ * @handles navigate directly. An unknown plain name opens Instagram's search
+ * results instead of blocking on an empty people map or guessing an identity.
+ */
+export async function openProfile(deps: IgDeps, personQuery: string): Promise<IgResult> {
+  const ready = await ensureReady(deps);
+  if (!ready.ok) return ready;
+
+  const query = personQuery.trim();
+  if (!query) return { ok: false, needs: "person", detail: "A name or Instagram username is required." };
+
+  const { person, candidates } = resolvePerson(deps.memoryDir, query);
+  if (candidates.length > 1) {
+    return {
+      ok: false,
+      needs: "person",
+      detail: `"${query}" is ambiguous — candidates: ${candidates.map((p) => p.name).join(", ")}. Ask Sir which one.`,
+    };
+  }
+
+  const knownUsername = person?.instagram?.username?.replace(/^@/, "");
+  const explicitUsername = query.startsWith("@") ? query.slice(1) : null;
+  const username = knownUsername || explicitUsername;
+  if (username) {
+    const nav = await deps.chrome.navigate(`${BASE}/${encodeURIComponent(username)}/`);
+    if (!nav.ok) return { ok: false, detail: `couldn't open @${username}'s profile: ${nav.reason}` };
+    await sleep(1000);
+    const read = await deps.chrome.readPage();
+    if (read.ok && /Sorry, this page isn't available/i.test(read.text ?? "")) {
+      return { ok: false, needs: "username", detail: `@${username} is unavailable. Ask Sir for the exact username.` };
+    }
+    return { ok: true, detail: `Instagram profile @${username} open; no message sent` };
+  }
+
+  const searchUrl = `${BASE}/explore/search/keyword/?q=${encodeURIComponent(query)}`;
+  const nav = await deps.chrome.navigate(searchUrl);
+  if (!nav.ok) return { ok: false, detail: `couldn't search Instagram for "${query}": ${nav.reason}` };
+  await sleep(1000);
+  return {
+    ok: true,
+    detail:
+      `Instagram profile search for "${query}" is open. I did not guess an account or send anything; ` +
+      "give me the @username to open an exact profile.",
+  };
+}
+
 /** IG's SPA navigates on its own schedule — poll for the thread URL instead
  *  of trusting one fixed sleep. */
 async function waitForThreadUrl(chrome: Chrome, ms = 6000): Promise<string | null> {

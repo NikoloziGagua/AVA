@@ -16,6 +16,10 @@ describe("classifyRisk", () => {
   it("low: chrome.navigate non-purchase URL", () => {
     expect(classifyRisk("chrome_navigate", { url: "https://news.ycombinator.com" }).tier).toBe("low");
   });
+  it("low: opening the dedicated AVA Chrome never asks for approval", () => {
+    expect(classifyRisk("chrome_open", {}).tier).toBe("low");
+    expect(classifyRisk("chrome_open", { url: "https://www.google.com" }).tier).toBe("low");
+  });
   it("low: fs_write under allowlist root (caller still allowlist-checks separately)", () => {
     expect(classifyRisk("fs_write", { path: "C:/ai/x.txt" }).tier).toBe("low");
   });
@@ -43,6 +47,9 @@ describe("classifyRisk", () => {
     expect(classifyRisk("shell", { command: 'start "" "C:\\x\\App.exe"' }).tier).toBe("low");
     expect(classifyRisk("shell", { command: "explorer ." }).tier).toBe("low");
     expect(classifyRisk("shell", { command: "code ." }).tier).toBe("low");
+  });
+  it("low: dedicated Instagram profile opening", () => {
+    expect(classifyRisk("instagram_open_profile", { person: "Lasha" }).tier).toBe("low");
   });
   it("low: ordinary shell (dir, git status, git push) — Sir wants no friction", () => {
     expect(classifyRisk("shell", { command: "dir" }).tier).toBe("low");

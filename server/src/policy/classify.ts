@@ -53,7 +53,12 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (tool === "fs_write") return { tier: "low", reason: "filesystem write within allowlist" };
 
-  if (tool === "chrome_navigate" || tool === "chrome_type" || tool === "chrome_press_key") {
+  if (
+    tool === "chrome_open" ||
+    tool === "chrome_navigate" ||
+    tool === "chrome_type" ||
+    tool === "chrome_press_key"
+  ) {
     return { tier: "low", reason: "low-risk chrome action" };
   }
 
@@ -129,7 +134,7 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   // autonomous sends), and speed is the point — low, no 15s stall. Login/code
   // fill forms in Ava's own browser with values Sir just provided; the people
   // map is local data.
-  if (/^(instagram|whatsapp)_(send_dm|send_message|open_chat|read_chat|status|login|submit_code)$/.test(tool)) {
+  if (/^(instagram|whatsapp)_(send_dm|send_message|open_profile|open_chat|read_chat|status|login|submit_code)$/.test(tool)) {
     return { tier: "low", reason: "app-module action Sir initiated" };
   }
   if (tool === "person_remember") return { tier: "low", reason: "local people-map update" };

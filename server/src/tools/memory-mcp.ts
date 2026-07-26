@@ -4,6 +4,7 @@ import { writeFile, appendLine, readFile as readMemFile } from "../memory/store.
 import { applyRefresh, applySupersede, serializeObservation, type Confidence } from "../memory/observations.js";
 import { forgetLast, forgetMatch, forgetProject } from "../memory/forget.js";
 import { rememberObservation } from "../memory/remember.js";
+import { ensureProjectIndexed } from "../memory/project-index.js";
 
 export type MemoryToolDeps = { memoryDir: string };
 
@@ -108,6 +109,7 @@ function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
         if (!text) return { ok: false, text: "missing text" };
         try {
           appendLine(p.projectFile(slug), text);
+          ensureProjectIndexed(deps.memoryDir, slug);
         } catch (e) {
           return { ok: false, text: e instanceof Error ? e.message : String(e) };
         }

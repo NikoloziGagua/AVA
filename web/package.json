@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:managed": "tsc -b && node -e \"require('node:fs').copyFileSync('src/theme.css','dist/theme.css')\" && ..\\node_modules\\@esbuild\\win32-x64\\esbuild.exe dist/main.js --bundle --format=esm --platform=browser --target=es2022 --minify --loader:.css=empty --outfile=dist/assets/index-managed.js && ..\\node_modules\\@esbuild\\win32-x64\\esbuild.exe src/sw.ts --bundle --format=iife --platform=browser --target=es2022 --minify --outfile=dist/sw-managed-source.js && node scripts/build-managed.mjs",
     "preview": "vite preview",
     "test": "vitest run"
   },

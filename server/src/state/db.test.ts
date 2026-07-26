@@ -22,6 +22,8 @@ describe("openDb", () => {
     expect(names).toContain("sessions");
     expect(names).toContain("messages");
     expect(names).toContain("tool_calls");
+    expect(names).toContain("explorer_tasks");
+    expect(names).toContain("explorer_events");
     expect(names).toContain("device_tokens");
     expect(names).toContain("pairing_codes");
     db.close();

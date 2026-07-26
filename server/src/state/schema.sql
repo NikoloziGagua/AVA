@@ -32,6 +32,166 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   created_at INTEGER NOT NULL
 );
 
+-- Explorer is append-only at the event layer. Task rows are current-state
+-- projections; the immutable event rows retain the original execution history.
+-- There is intentionally no legacy-session backfill: old conversations do not
+-- contain reliable run boundaries or complete tool evidence.
+CREATE TABLE IF NOT EXISTS explorer_tasks (
+  id TEXT PRIMARY KEY,
+  -- Execution history outlives optional chat-history cleanup. The original
+  -- session link becomes null instead of silently erasing the trace.
+  session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  original_request TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running',
+  outcome TEXT NOT NULL DEFAULT 'running',
+  verification_status TEXT NOT NULL DEFAULT 'not_recorded',
+  final_response TEXT,
+  error_message TEXT,
+  started_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_explorer_tasks_started
+  ON explorer_tasks(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_explorer_tasks_status
+  ON explorer_tasks(status, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_explorer_tasks_session
+  ON explorer_tasks(session_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS explorer_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL REFERENCES explorer_tasks(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,
+  tool_name TEXT,
+  capability_ids TEXT NOT NULL DEFAULT '[]',
+  sanitised_input TEXT,
+  sanitised_output TEXT,
+  error_message TEXT,
+  duration_ms INTEGER,
+  occurred_at INTEGER NOT NULL,
+  privacy_level TEXT NOT NULL DEFAULT 'personal',
+  data_source TEXT NOT NULL DEFAULT 'instrumented_runtime',
+  UNIQUE(task_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_explorer_events_task
+  ON explorer_events(task_id, sequence);
+
+-- Mission Control's shared observability model. Runs are mutable projections;
+-- events are the append-only source of truth. This is deliberately separate
+-- from the first Explorer tables: Explorer's v1 rows model chat-agent evidence,
+-- while this contract must also represent voice sessions/turns, Forge
+-- environments, nested Codex/Claude agents, watches and future adapters without
+-- manufacturing those concepts inside a chat task.
+CREATE TABLE IF NOT EXISTS observability_runs (
+  id TEXT PRIMARY KEY,
+  trace_id TEXT NOT NULL,
+  parent_run_id TEXT REFERENCES observability_runs(id) ON DELETE SET NULL,
+  root_task_id TEXT,
+  session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  run_kind TEXT NOT NULL,
+  runtime_id TEXT NOT NULL,
+  runtime_type TEXT NOT NULL,
+  host_runtime_id TEXT,
+  owner_type TEXT NOT NULL,
+  owner_id TEXT,
+  owner_role TEXT,
+  title TEXT NOT NULL,
+  objective TEXT,
+  status TEXT NOT NULL,
+  outcome TEXT,
+  verification_status TEXT NOT NULL DEFAULT 'not_recorded',
+  privacy_level TEXT NOT NULL DEFAULT 'personal',
+  retention_class TEXT NOT NULL DEFAULT 'detail_30d',
+  compact_summary TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  started_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_event_at INTEGER NOT NULL,
+  completed_at INTEGER,
+  stale_after_ms INTEGER NOT NULL DEFAULT 60000,
+  detailed_expires_at INTEGER NOT NULL,
+  compact_expires_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_observability_runs_started
+  ON observability_runs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_observability_runs_status
+  ON observability_runs(status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_observability_runs_trace
+  ON observability_runs(trace_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_observability_runs_parent
+  ON observability_runs(parent_run_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_observability_runs_session
+  ON observability_runs(session_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS observability_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL UNIQUE,
+  run_id TEXT NOT NULL REFERENCES observability_runs(id) ON DELETE CASCADE,
+  trace_id TEXT NOT NULL,
+  span_id TEXT NOT NULL,
+  parent_span_id TEXT,
+  causation_event_id TEXT,
+  producer_id TEXT NOT NULL,
+  producer_event_id TEXT,
+  producer_sequence INTEGER,
+  runtime_id TEXT NOT NULL,
+  runtime_type TEXT NOT NULL,
+  host_runtime_id TEXT,
+  actor_type TEXT NOT NULL,
+  actor_id TEXT,
+  actor_role TEXT,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT,
+  visibility TEXT NOT NULL DEFAULT 'summary',
+  privacy_level TEXT NOT NULL DEFAULT 'personal',
+  sanitised_payload TEXT,
+  error_message TEXT,
+  action_id TEXT,
+  action_owner TEXT,
+  action_counted INTEGER NOT NULL DEFAULT 0,
+  provider_request_id TEXT,
+  cost_kind TEXT,
+  cost_microusd INTEGER,
+  accounting_applied INTEGER NOT NULL DEFAULT 0,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cached_tokens INTEGER,
+  duration_ms INTEGER,
+  occurred_at INTEGER NOT NULL,
+  received_at INTEGER NOT NULL,
+  is_terminal INTEGER NOT NULL DEFAULT 0,
+  is_late INTEGER NOT NULL DEFAULT 0,
+  projection_applied INTEGER NOT NULL DEFAULT 1,
+  dedup_key TEXT NOT NULL UNIQUE,
+  UNIQUE(producer_id, producer_event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_observability_events_run
+  ON observability_events(run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_observability_events_trace
+  ON observability_events(trace_id, seq);
+CREATE INDEX IF NOT EXISTS idx_observability_events_type
+  ON observability_events(type, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_observability_events_action
+  ON observability_events(action_id)
+  WHERE action_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_observability_events_provider
+  ON observability_events(provider_request_id)
+  WHERE provider_request_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_observability_actual_provider_cost
+  ON observability_events(provider_request_id)
+  WHERE provider_request_id IS NOT NULL
+    AND cost_kind = 'actual_provider'
+    AND accounting_applied = 1;
+
 CREATE TABLE IF NOT EXISTS device_tokens (
   id TEXT PRIMARY KEY,
   token_hash TEXT UNIQUE NOT NULL,

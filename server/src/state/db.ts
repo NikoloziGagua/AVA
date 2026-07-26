@@ -21,6 +21,15 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "watches", "run_at", "INTEGER");
   tryAddColumn(db, "watches", "daily_at", "TEXT");
   tryAddColumn(db, "watches", "kind", "TEXT NOT NULL DEFAULT 'check'");
+  // Mission Control v1 initially shipped the 30-day detailed boundary first.
+  // Backfill the longer compact-outcome boundary for any database opened by an
+  // intermediate build so retention remains deterministic across upgrades.
+  tryAddColumn(db, "observability_runs", "compact_expires_at", "INTEGER");
+  db.prepare(`
+    UPDATE observability_runs
+    SET compact_expires_at = started_at + ?
+    WHERE compact_expires_at IS NULL
+  `).run(365 * 24 * 60 * 60 * 1_000);
   return db;
 }
 

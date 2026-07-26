@@ -19,23 +19,23 @@ OpenAI (default) or Anthropic.
 Events (`thought`, `tool_call`, `tool_result`, `final`, `approval_required`, …).
 Typed messages always run in **action mode** (full tools).
 
-**Voice** — fully hands-free, two architectures (switched by `REALTIME_HYBRID`):
-- **Transcribe-only (committed default):** the realtime model only does
-  voice-activity endpointing + transcription; the browser submits the transcript
-  to `/api/chat` and speaks the reply with TTS.
-- **Hybrid (live via the gitignored `.env`):** the realtime model **speaks
-  directly** for low latency and holds a single `do_on_computer` tool — for
-  chitchat it just talks; for any real action it calls `do_on_computer`, which
-  runs the **full `/api/chat` tool agent** over loopback and feeds the result back
-  to be spoken. Talking and doing are one loop.
-- **Responsiveness follows the Fast/Thorough toggle:** silence-wait is 300 ms on
-  Fast (snappy) vs 700 ms on Thorough (patient — won't talk over you).
+**Voice** — fully hands-free through one continuous OpenAI Realtime session.
+- The realtime model **speaks directly** for low latency and holds a single
+  `do_on_computer` tool. Chitchat stays in the realtime conversation; any real
+  action runs the full `/api/chat` tool agent over loopback, then its final result
+  returns to the **same** realtime session and `marin` voice. Tool steps are visual
+  only, so a task never changes speaker halfway through.
+- **Responsiveness follows the Fast/Thorough toggle:** OpenAI semantic VAD uses
+  eager endpointing in Fast mode and more patient endpointing in Thorough mode.
+- **True interruption:** speech onset immediately cancels the active response,
+  stops queued playback, truncates the assistant item at the amount actually
+  heard, and rejects late audio packets from the cancelled response.
 - **Transcript gating:** a pure-function chokepoint drops empty/too-brief/
   low-confidence transcripts and known whisper hallucinations ("you", "thank you",
   "thanks for watching", …) before they ever become a turn — no phantom replies.
 - **Speech smoothing:** the commas hugging a standalone "Sir" are stripped for
   spoken output only ("Yes, Sir," → "Yes Sir"), never for stored/displayed text.
-- STT `gpt-4o-transcribe`; TTS `gpt-4o-mini-tts`; realtime `gpt-realtime`.
+- STT `gpt-4o-transcribe`; TTS `gpt-4o-mini-tts`; realtime `gpt-realtime-2.1`.
 
 ## 2. Acting on the PC — Tools
 
@@ -53,7 +53,7 @@ approval row + a push notification, blocking up to 10 minutes). `.env` access an
 |---|---|---|
 | **shell** | Run a shell command (cmd.exe). Allowlisted first tokens only: `git, npm, node, python, pip, where, echo, ls, dir, cat`; shell metacharacters (`; & \| \` $ > <`) blocked. | Non-allowlisted = ask; `rm -rf`/`git push`/`curl\|sh`/`sudo` = high. `.env` blocked. |
 | **fs_read / fs_write / fs_list / fs_stat / fs_delete** | Read/write/list/stat/delete files within allowlisted roots (`C:/ai/**`, `C:/projects/**`, `Downloads/**`). Writes create parent dirs. | Reads read-only; write low; **delete always asks**. `.env` blocked. |
-| **chrome_navigate / _click / _type / _press_key / _read_page / _screenshot / _tabs** | Drive a single **persistent, non-headless Chromium** that keeps Sir's cookies/logins. Boots lazily on first use. | Mostly low; clicks that look like submit/checkout/buy/place-order/add-payment = high. |
+| **chrome_open / _navigate / _click / _type / _press_key / _read_page / _screenshot / _tabs** | Open/foreground and drive a single **persistent, non-headless Chrome/Edge** that keeps Sir's cookies/logins. On a fresh request Ava runs `scripts/start-ava-browser.cmd /quiet` herself, attaches to that dedicated CDP profile, and reuses it while alive. Direct Playwright launch remains the fallback. | Mostly low; clicks that look like submit/checkout/buy/place-order/add-payment = high. |
 | **computer_use** | Vision-driven control of the screen when no direct tool fits (screenshot → decide → click/scroll/type → loop). Prefers Anthropic computer-use, falls back to OpenAI. **The OpenAI path needs the gated `computer-use-preview` model** — accounts without it get a 404, so `look_at_screen` is the reliable everyday eyes. | Medium. |
 | **claude_code** | Spawn a headless `claude -p` worker for multi-file coding in an allowlisted project dir (`acceptEdits`; uses the Claude subscription login). | Medium; dangerous-skip blocked; output secret-scrubbed. |
 | **take_screenshot** | Capture a PNG of the Windows desktop under `Downloads/Ava/screenshots` and return **only the path** — the model has *not* seen the image. Its description and result say so plainly, so Ava never narrates a screenshot it can't actually see (fixes a live case of Ava confidently "describing" screenshots it never viewed). | Low. |
@@ -177,11 +177,20 @@ React 19, phone-first, reached over Tailscale. A shared liquid-mercury **Orb**
 animates between surfaces (GSAP Flip).
 
 - **Home / command-deck** — moving dotted + nebula backdrop, glass tubelight nav
-  (New / Chats / Memory / Rules / Self), the Orb hero, AVA wordmark, command bar.
+  (New / Chats / Memory / Explore / Rules / Self), the Orb hero, AVA wordmark,
+  command bar, and a visible "Explore what AVA can do" entry point.
 - **Chat** — streaming messages, ethereal-shadows background, word-by-word answer
   reveal, a 3-dot thinking indicator, and a live **Activity panel** that shows the
   running tool steps while Ava works.
 - **Voice mode** — orb-centric, captions, mute, push-to-talk, inline approvals.
+- **Capability Center / Explore** — a searchable map of AVA's capabilities,
+  examples, and live readiness for the brain, voice, persistent browser, memory,
+  account workflows, optional APIs, watches, and self-improvement. It polls every
+  15 seconds, explains the exact browser helper step when needed, and never exposes
+  secrets or account identifiers.
+- **Mission Deck** — one-tap, readiness-aware prompts for a memory mirror, account
+  check, automation scout, desktop pulse, recent-update briefing, and a rotating
+  useful/fun side quest. Unavailable missions cannot launch accidentally.
 - **Sessions / Chats list**, **Memory view** (editable persona/preferences/
   observations/projects), **Rules** (autonomy rules + Fast/Thorough), **Self**
   (self-improvement journal with a goal box to queue an improvement, a real
@@ -202,8 +211,9 @@ animates between surfaces (GSAP Flip).
 
 ## 8. Known nuances
 
-- The committed default voice mode is transcribe-only; **hybrid speaking is live
-  via the gitignored `.env`** (`REALTIME_HYBRID=1`).
+- GPT-Live is OpenAI's newest ChatGPT voice experience, but it is not currently a
+  public API model. Ava uses the newest public Realtime API model available to
+  developers, `gpt-realtime-2.1`, with the recommended `marin` voice.
 - `server/src/self/SELF.md` is the knowledge given to the **self-improvement
   worker** — it is NOT part of the live conversational prompt. The live prompt is
   assembled by `buildSystemPrompt()` from the persona, this capability map, memory,

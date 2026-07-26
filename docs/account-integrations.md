@@ -5,6 +5,21 @@ Whatever you log into in *her* browser window stays logged in — cookies and
 sessions survive across runs. That's the whole trick: one manual login each,
 then she can act on your behalf.
 
+Start the dedicated AVA browser once from a normal PowerShell window:
+
+```powershell
+.\scripts\start-ava-browser.cmd
+```
+
+AVA attaches to that browser over `http://127.0.0.1:9222`. This also works on
+Windows installations where managed Node processes are not allowed to spawn
+Chrome directly. The helper uses installed Chrome or Edge, so downloading a
+separate Playwright Chromium build is not required.
+
+The same persistent browser covers Instagram, WhatsApp Web, Gmail, Calendar,
+Outlook, and other websites. Instagram and WhatsApp have dedicated verified
+workflows; other sites use AVA's general browser tools.
+
 ## One-time setup per service
 
 ### WhatsApp

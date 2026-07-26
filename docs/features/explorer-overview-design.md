@@ -43,22 +43,33 @@ dark surface (`node scripts/validate_palette.js "<hex,…>" --mode dark`):
 
 ```
 --dv-1: #0d9dbe   cyan-teal
---dv-2: #8a6bc9   violet
---dv-3: #1f9e6b   green
---dv-4: #b07d1e   amber
---dv-5: #c85f7f   rose
---dv-6: #4a76c4   blue
+--dv-2: #b07d1e   amber
+--dv-3: #3b6bb5   blue
+--dv-4: #1f9e6b   green
+--dv-5: #9d5fd4   violet
+--dv-6: #c85f7f   rose
 ```
 
-Verdict: lightness band PASS (all inside L 0.48–0.67) · chroma floor PASS ·
-normal-vision ΔE 15.7 PASS · contrast ≥3:1 PASS · **CVD separation WARN
-(ΔE 6.4 deutan)**.
+Verdict: **ALL CHECKS PASS** — lightness band (all inside L 0.48–0.67) · chroma
+floor · CVD separation ΔE 14.4 protan / 10.0 tritan · normal-vision ΔE 15.4 ·
+contrast ≥3:1.
 
-That WARN carries a hard obligation: **the 6–8 CVD band is legal only with
-secondary encoding.** Therefore every categorical chart in Explorer MUST carry
-direct labels or a legend with the series name adjacent to its swatch — colour
-alone may never be the only way to tell two series apart. This is not optional
-styling; it is the condition under which this palette is permitted.
+The ORDER is part of the specification, not a list. It alternates cool/warm so
+that adjacent series — the pairs a reader must actually tell apart — are the
+furthest apart under colour-vision deficiency. Re-sorting these six values
+drops the worst adjacent pair from ΔE 14.4 to 6.4 and pushes the palette back
+into the warning band. Assign in this order, never cycled.
+
+Direct labels or an adjacent-swatch legend are still **mandatory** on every
+categorical chart. The palette no longer *depends* on that to be legal, but
+colour must never be the only channel carrying identity.
+
+**Do not invent a substitute palette.** The first build of this feature replaced
+these values with brighter ones drawn from AVA's chrome and shipped a comment
+claiming they were "distinguishable for protanopia, deuteranopia and
+tritanopia". They were not checked, and they fail: every value sits outside the
+legible lightness band and one reads as grey. If a palette change is genuinely
+needed, run the validator and paste the verdict here.
 
 Assign `--dv-1..6` in **fixed order**, never cycled. A 7th series folds into
 "Other" or becomes small multiples.

@@ -147,15 +147,10 @@ Playbooks live in a sibling directory, `playbooks/`, under the same memory dir
 (`C:/ai/chemiapebi/yovlisshemdzle/server/src/playbooks/store.ts:44`). They are
 procedural memory and are covered in [section 4](#4-the-learning-system-playbooks).
 
-> **Live-state finding.** As of writing, the production memory dir contains
-> `personality.md`, `observations.md`, `preferences.md`, an empty `projects/`, and a
-> well-populated `playbooks/` (~50 files). Notably there is **no `MEMORY.md` on
-> disk**, and `projects/` is empty. Both are created lazily on first write, so the
-> project-context layer of the system prompt is effectively **dormant in
-> production** until a project file is created and linked. This is by design (nothing
-> seeds them) but worth knowing: the project-routing machinery in
-> [§2.8](#28-projects-and-the-project-index) is wired and tested but currently has no
-> data to act on.
+> `MEMORY.md` and `projects/` are created lazily. A `memory_remember` call with
+> `file=project` now creates the project file and automatically adds its link to
+> `MEMORY.md`, activating project routing as soon as the saved project note contains
+> an absolute path.
 
 ### 2.2 The four memory files + projects + playbooks
 
@@ -384,20 +379,20 @@ This index drives two things:
 3. **A suggestion chip.** The chip generator uses the same index to offer an
    "Open <slug>" chip for recently-mentioned projects ([§5.2](#52-chip-generation)).
 
-> Because the index is keyed off `MEMORY.md` and there is currently no `MEMORY.md` on
-> disk, all three behaviors are presently no-ops in production — they activate the
-> moment a `MEMORY.md` links a project file containing a path. The logic is fully
-> implemented and unit-tested (`project-index.test.ts`); it simply has no data yet.
+> The index is keyed off `MEMORY.md`. `memory_remember file=project` maintains that
+> index automatically, and `memory_forget mode=project` removes the link again.
+> Routing activates once the project note contains an absolute path.
 
 ### 2.9 The runtime memory tools (how Ava writes)
 
 This is the heart of "how memory is written at runtime." Memory is **not** written by
 some background process scraping the conversation. It is written when the model,
 mid-turn, decides to call one of three tools defined in
-`C:/ai/chemiapebi/yovlisshemdzle/server/src/tools/memory-mcp.ts`. These tools are
-included in the agent's toolset in *both* conversation and action modes
-(`C:/ai/chemiapebi/yovlisshemdzle/server/src/routes/chat.ts:341`), so Ava can record
-or recall a fact even in a casual voice chat.
+`C:/ai/chemiapebi/yovlisshemdzle/server/src/tools/memory-mcp.ts`. The chat route
+constructs memory tools for both of its tool sets, but `runAgent` deliberately
+passes no tools to the model in conversation mode. Explicit remember/read/forget
+requests route through action mode; in realtime voice, the speaking model hands
+them to the action agent through `do_on_computer`.
 
 **`memory_read`** (`memory-mcp.ts:10`) — read durable memory. `file` ∈
 `all | preferences | observations | project` (project requires a `slug`). The tool's
@@ -407,7 +402,8 @@ stale prompt snapshot.
 
 **`memory_remember`** (`memory-mcp.ts:58`) — write durable memory. Behavior by argument:
 - `file=preferences` → append the trimmed `text` as a line.
-- `file=project` + `project=<slug>` → append `text` to that project's file.
+- `file=project` + `project=<slug>` → append `text` to that project's file and
+  ensure `MEMORY.md` links it.
 - `file=observations` (default) → build a formatted observation from `text`,
   `category` (default `context`), and `confidence` (default `low`), then run it
   through `rememberObservation` → `promoteOnRepeat` (so repeats bump instead of
@@ -561,10 +557,9 @@ an absolute path, a memory op, or an imperative verb paired with an object
 `conversation`.
 
 **How it's actually applied** (`chat.ts:224`):
-- **Typed text** is forced to **action** mode regardless of the classifier. A comment
-  explains why: the classifier was too conservative and casual "look up X" was wrongly
-  staying conversational, making Ava say "I can't access Google." So text always gets
-  the full tool stack. (`FORCE_INTENT=conversation` can override this for testing.)
+- **Typed text** uses the action-biased `classifyTypedIntent`: only unmistakable short
+  chitchat stays conversational; task-shaped or longer input gets the full action
+  stack. (`FORCE_INTENT=conversation` can override this for testing.)
 - **Voice** trusts the classifier: a spoken "hi Ava" stays conversational (fast
   side-model, no big tool prompt, no playbook recall), and only a genuine action
   request spins up the full agent. This keeps spoken replies snappy.
@@ -579,14 +574,13 @@ an absolute path, a memory op, or an imperative verb paired with an object
 | `fsRoots` layer | ❌ omitted | ✅ included |
 | Tools exposed to model | ❌ none (model can't call tools) | ✅ full registry |
 | Model used | `defaultSideModel` (fast/cheap) | `defaultOrchestratorModel` |
-| Memory + discuss + update-log + control_app tools | ✅ still wired | ✅ |
+| Thin tools constructed by chat route | ✅ constructed but withheld from model | ✅ |
 | Playbook recall | ❌ skipped | ✅ (text only) |
 
 The mode is threaded from `chat.ts` into `runAgent`, which selects the model and tool
-visibility (`agent.ts:129`). Crucially, even conversation mode keeps the **memory,
-discuss-with-Claude, update-log, and control_app** tools available
-(`chat.ts:394`), so Ava can record a fact, recall one, drive a native app, or tell you
-"what Claude is doing" by voice without escalating to the full action stack.
+visibility (`agent.ts:129`). Conversation mode receives memory in its prompt but no
+callable tools. Tool work, including memory mutation, must route through action mode;
+the realtime voice model does this with `do_on_computer`.
 
 ### 3.5 The secret-scrub firewall
 
@@ -992,22 +986,13 @@ and playbook capture.
 
 ## 9. Unresolved questions / findings
 
-1. **`MEMORY.md` and `projects/` are empty in production.** Bootstrap never seeds
-   `MEMORY.md`, and nothing has written one. Because the project index, mid-run project
-   switching, and the "Open <slug>" chip all key off `MEMORY.md`, those three features
-   are **wired and unit-tested but currently dormant** (no data). They activate the
-   moment a `MEMORY.md` links a `projects/<slug>.md` that contains an absolute path.
-   *Open question:* is the intent for Ava to create `MEMORY.md` autonomously (it can,
-   via `memory_remember file=project` + a manual index link), or is seeding it deferred
-   to a human? Today neither happens automatically.
-
-2. **Playbook `keywords` are captured but unused at recall.** `distill.ts` stores a
+1. **Playbook `keywords` are captured but unused at recall.** `distill.ts` stores a
    `keywords` array and `store.ts` parses it, but `match.ts` feeds the side model only
    `slug: trigger` lines (`match.ts:12`). Keywords currently contribute nothing to
    matching. Either wire them into the match prompt or drop them — right now they're
    dead weight in every file.
 
-3. **Auto-learned corrections accumulate as low-confidence noise.** The live
+2. **Auto-learned corrections accumulate as low-confidence noise.** The live
    `observations.md` shows many `(corrected)` preference lines (often capturing
    transient confusion like mis-heard voice input, not durable preferences). They're
    low-confidence by design and will eventually be pruned if they age past 60 days
@@ -1017,7 +1002,7 @@ and playbook capture.
    pass that promotes genuine corrections into clean preferences and drops the noise?
    Currently curation is entirely manual (phone UI) or passive (60-day stale-low prune).
 
-4. **Pruning at prompt-build is non-destructive; the file can exceed soft cap on
+3. **Pruning at prompt-build is non-destructive; the file can exceed soft cap on
    disk.** `buildSystemPrompt` prunes a *copy* for the prompt and never writes back
    (`system-prompt.ts:61`). The actual `observations.md` only shrinks when a human
    edits it or `memory_forget`/`forgetProject` runs. So a file can sit above the
@@ -1026,14 +1011,14 @@ and playbook capture.
    means "the prompt is bounded" and "the file is bounded" are different guarantees —
    worth confirming that's the desired contract.
 
-5. **`autoPruneObservations` stops after the first effective pass.** Each call drops
+4. **`autoPruneObservations` stops after the first effective pass.** Each call drops
    *either* superseded *or* stale-low lines, not both in one pass (it returns as soon
    as one pass changes content, `budgets.ts:55`/`:65`). Over repeated turns it
    converges, but a single over-budget turn is only partially trimmed. Likely fine
    (prompts are rebuilt every turn) but noting it in case a turn needs maximal trimming
    immediately.
 
-6. **No explicit hard-cap enforcement in code.** `HARD_CAPS` is defined
+5. **No explicit hard-cap enforcement in code.** `HARD_CAPS` is defined
    (`budgets.ts:11`) and referenced in docs/tests, but I did not find a runtime path
    that *enforces* the hard cap (the auto-pruner only uses `softCap`). Hard caps appear
    to be an advisory ceiling backed by the `needs_user` signal rather than an automatic

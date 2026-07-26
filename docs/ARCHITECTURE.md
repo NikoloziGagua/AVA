@@ -151,7 +151,7 @@ sequenceDiagram
 
 ### W2 — A voice task ("open WhatsApp and send Luka the link")
 
-1. Your mic audio streams to the **WS voice proxy** `/api/voice/realtime`. The chosen provider (OpenAI `gpt-realtime` by default, or Hume) handles speech. [06]
+1. Your mic audio streams to the **WS voice proxy** `/api/voice/realtime`. The chosen provider (OpenAI `gpt-realtime-2.1` by default, or Hume) handles speech. [06]
 2. Your finished sentence passes the **transcript gate** (silence/noise dropped) and becomes a turn. [06]
 3. For chit-chat the realtime model just talks. For an **action**, it calls `do_on_computer`, which runs the **full `/api/chat` agent** (exactly W1's loop, with all tools) over loopback via `runVoiceAction`. [06][02]
 4. The agent does the work; the **result is spoken** back. The conversation is stored once, in the same session as your typed chats (so voice ↔ chat share memory). [06]
@@ -300,7 +300,7 @@ flowchart TD
 
 **Two providers, picked by the `voice_engine_pref` toggle:**
 
-- **OpenAI** (`gpt-realtime`, default) — the proven path. Speaks chit-chat directly and, for an action, calls `do_on_computer`.
+- **OpenAI** (`gpt-realtime-2.1`, default) — the primary path. Speaks chit-chat directly and, for an action, calls `do_on_computer`.
 - **Hume** (Hume EVI, voice "Alice Bennett") — alternate upstream, **only when configured** (`AVA_VOICE_PROVIDER=hume` + `HUME_API_KEY`). If its socket can't open, the proxy falls back to OpenAI.
 
 **Hybrid action handoff** (the clever bit): the realtime model holds the conversation, but `do_on_computer` runs the **real `/api/chat` agent** with the full tool stack via `runVoiceAction` (`index.ts`). It POSTs to loopback, reads the run's `final` off the SSE stream, and feeds it back to be spoken. **Session continuity:** entering voice with no session resumes the most-recent conversation, so voice ↔ chat share one memory; recent turns are seeded into the model on connect.
@@ -313,7 +313,7 @@ flowchart TB
   proxy["/api/voice/realtime — WS proxy"]:::server
   mic --> proxy
   proxy --> branch{provider?}:::server
-  branch -->|openai default| oai[gpt-realtime WS]:::paid
+  branch -->|openai default| oai[gpt-realtime-2.1 WS]:::paid
   branch -->|hume + configured| hume[Hume EVI WS<br/>Alice Bennett]:::paid
   hume -. socket fails .-> oai
   oai --> gate[transcript gate<br/>drop silence/noise]:::server

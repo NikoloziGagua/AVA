@@ -25,3 +25,10 @@ forge-remodel-work/
 installer-test-target/
 installer-test-target-fail/
 Stuff/
+
+# Drivers for the scratch directories above. They copy files out of
+# forge-codex-patch-work/ and forge-remodel-work/, which are ignored, so a
+# clone would get scripts pointing at directories that do not exist.
+apply-forge-*.ps1
+apply-forge-*.cmd
+APPLY-FORGE-*.cmd

@@ -1,6 +1,23 @@
-import "dotenv/config";
-import { join, resolve } from "node:path";
+import { config as loadDotEnv } from "dotenv";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+// Resolve configuration from the repository layout, never from process.cwd().
+// npm workspaces and PM2 launch with cwd=server, while `node server/dist/index.js`
+// is commonly run from the repository root. The old cwd-relative behaviour made
+// those two commands use different .env files and different data/memory stores.
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const serverDir = resolve(moduleDir, "..");
+const repoDir = resolve(serverDir, "..");
+
+// A server-local file is the most specific configuration. The checked-in
+// .env.example lives at the repository root, so support a root .env as a
+// fallback too. dotenv preserves real process environment variables.
+loadDotEnv({
+  path: [join(serverDir, ".env"), join(repoDir, ".env")],
+  quiet: true,
+});
 
 export type Config = {
   port: number;
@@ -10,6 +27,8 @@ export type Config = {
   logLevel: "debug" | "info" | "warn" | "error";
   pairingTtlMs: number;
   chromeProfileDir: string;
+  chromeExecutablePath: string | null;
+  chromeCdpUrl: string | null;
   screenshotDir: string;
   pidfileDir: string;
   logsDir: string;
@@ -54,15 +73,31 @@ function parsePairingTtlMs(raw: string | undefined): number {
   return seconds * 1000;
 }
 
+function resolveFromServer(raw: string): string {
+  return isAbsolute(raw) ? resolve(raw) : resolve(serverDir, raw);
+}
+
 export function loadConfig(): Config {
-  const dataDir = resolve(process.env.DATA_DIR ?? "./data");
+  // Relative runtime paths are anchored to server/, matching the documented
+  // production location (server/data) regardless of the launch command's cwd.
+  const dataDir = resolveFromServer(process.env.DATA_DIR ?? "./data");
   mkdirSync(dataDir, { recursive: true });
-  const chromeProfileDir = resolve(process.env.CHROME_PROFILE_DIR ?? join(dataDir, "chrome-profile"));
-  const screenshotDir = resolve(process.env.SCREENSHOT_DIR ?? join(dataDir, "screenshots"));
-  const pidfileDir = resolve(process.env.PIDFILE_DIR ?? join(dataDir, "pidfiles"));
-  const logsDir = resolve(process.env.LOGS_DIR ?? join(dataDir, "logs"));
+  const chromeProfileDir = process.env.CHROME_PROFILE_DIR
+    ? resolveFromServer(process.env.CHROME_PROFILE_DIR)
+    : join(dataDir, "chrome-profile");
+  const screenshotDir = process.env.SCREENSHOT_DIR
+    ? resolveFromServer(process.env.SCREENSHOT_DIR)
+    : join(dataDir, "screenshots");
+  const pidfileDir = process.env.PIDFILE_DIR
+    ? resolveFromServer(process.env.PIDFILE_DIR)
+    : join(dataDir, "pidfiles");
+  const logsDir = process.env.LOGS_DIR
+    ? resolveFromServer(process.env.LOGS_DIR)
+    : join(dataDir, "logs");
   mkdirSync(logsDir, { recursive: true });
-  const memoryDir = resolve(process.env.MEMORY_DIR ?? join(dataDir, "memory"));
+  const memoryDir = process.env.MEMORY_DIR
+    ? resolveFromServer(process.env.MEMORY_DIR)
+    : join(dataDir, "memory");
   const fsRoots = (process.env.FS_ROOTS ?? "C:/ai/**,C:/projects/**,C:/Users/nikug/**")
     .split(",")
     .map((s) => s.trim())
@@ -77,12 +112,18 @@ export function loadConfig(): Config {
     logLevel: parseLogLevel(process.env.LOG_LEVEL),
     pairingTtlMs: parsePairingTtlMs(process.env.AUTH_PAIRING_TTL_SECONDS),
     chromeProfileDir,
+    chromeExecutablePath: process.env.CHROME_EXECUTABLE_PATH
+      ? resolveFromServer(process.env.CHROME_EXECUTABLE_PATH)
+      : null,
+    chromeCdpUrl: process.env.CHROME_CDP_URL?.trim() || null,
     screenshotDir,
     pidfileDir,
     logsDir,
     memoryDir,
     fsRoots,
-    repoRoot: resolve(process.env.AVA_REPO_ROOT ?? resolve(process.cwd(), "..")),
+    repoRoot: process.env.AVA_REPO_ROOT
+      ? resolveFromServer(process.env.AVA_REPO_ROOT)
+      : repoDir,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? null,
     openaiApiKey: process.env.OPENAI_API_KEY ?? null,
     llmProvider,

@@ -193,6 +193,19 @@ describe("PcmStreamPlayer.interrupt()", () => {
     expect(p.playing).toBe(true);
   });
 
+  it("reports how much of the current response actually reached the speakers", () => {
+    const ctx = new FakeAudioContext();
+    (globalThis as unknown as { AudioContext: unknown }).AudioContext = function () { return ctx; } as unknown;
+
+    const p = new PcmStreamPlayer(24000);
+    p.beginTurn();
+    p.enqueue(pcm16Chunk(24000)); // one second queued
+    ctx.currentTime = 0.375;
+    expect(p.playedMs).toBe(375);
+    p.interrupt();
+    expect(p.playedMs).toBe(0);
+  });
+
   it("is safe to call when nothing has ever played (no context yet)", () => {
     const p = new PcmStreamPlayer(24000);
     expect(p.playing).toBe(false);

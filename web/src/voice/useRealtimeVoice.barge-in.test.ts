@@ -227,142 +227,93 @@ describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
     expect(hook.result.current.state).toBe("listening");
   });
 
-  it("ava.step → captions the step, speaks it (fetch /api/speak), and holds the mic closed", async () => {
+  it("keeps ava.step and ava.result visual-only so hybrid uses exactly one voice", async () => {
     const { hook, ws } = await bootHybrid();
     const node = FakeAudioWorkletNode.last!;
 
-    // Positive control: while listening (vad, unmuted), a mic frame IS forwarded.
-    // This proves the echo-guard probe below isn't vacuously "never appends".
-    expect(hook.result.current.state).toBe("listening");
-    act(() => { node.port.onmessage?.({ data: new ArrayBuffer(256) }); });
-    expect(ws.appendCount).toBe(1);
+    fetchSpy.mockClear();
 
     await act(async () => {
+      ws.fireMessage({ type: "ava.action", task: "open the website" });
       ws.fireMessage({ type: "ava.step", tool: "chrome_navigate", args: { url: "https://bing.com" } });
+      ws.fireMessage({ type: "ava.result", text: "Opened it, Sir." });
     });
     await flush();
 
-    // Caption narrates the step (humanizeTool: chrome_navigate → "Opening bing.com").
-    expect(hook.result.current.caption).toEqual({ who: "ava", text: "Opening bing.com" });
-    // The step phrase was sent to TTS.
-    expect(fetchSpy.mock.calls.some(([u]) => String(u).includes("/api/speak"))).toBe(true);
-    // While a step is in flight the hook is NOT "listening" → mic is gated.
-    expect(hook.result.current.state).not.toBe("listening");
+    expect(hook.result.current.caption).toEqual({ who: "ava", text: "Finishing…" });
+    expect(hook.result.current.actionPending).toBe(true);
+    expect(fetchSpy.mock.calls.some(([u]) => String(u).includes("/api/speak"))).toBe(false);
+    expect(FakeAudio.created).toHaveLength(0);
 
-    // Echo guard: a mic frame arriving NOW must NOT be forwarded upstream
-    // (shouldForwardMic is false unless state === "listening") — so Ava's own
-    // narration can't be re-heard and transcribed into a phantom turn.
+    // The action remains busy until its same-model result response begins.
     const before = ws.appendCount;
     act(() => { node.port.onmessage?.({ data: new ArrayBuffer(256) }); });
-    expect(ws.appendCount).toBe(before); // stayed closed between steps
+    expect(ws.appendCount).toBe(before);
   });
 
-  it("ava.result → speaks the result so the turn can drain (queues a /api/speak clip)", async () => {
-    const { ws } = await bootHybrid();
-    fetchSpy.mockClear();
-
-    await act(async () => { ws.fireMessage({ type: "ava.result", text: "Opened it, Sir." }); });
-    await flush();
-
-    expect(fetchSpy.mock.calls.some(([u]) => String(u).includes("/api/speak"))).toBe(true);
-    // The clip that was created plays the result.
-    expect(FakeAudio.created.length).toBeGreaterThan(0);
-  });
-
-  it("an EMPTY result still enqueues a clip (else hands-free hangs after a task)", async () => {
-    const { ws } = await bootHybrid();
-    fetchSpy.mockClear();
-
-    await act(async () => { ws.fireMessage({ type: "ava.result", text: "   " }); });
-    await flush();
-
-    // Server may send a blank result; the hook substitutes "Done." so the mic
-    // still reopens when the queue drains.
-    expect(fetchSpy.mock.calls.some(([u]) => String(u).includes("/api/speak"))).toBe(true);
-  });
-
-  // Item 4: the speak-worker drain-end reopen must not race the realtime audio
-  // tail. If a narrated clip's queue drains while Ava's realtime audio is still
-  // playing, the worker must NOT reopen the mic (the scheduleListen settle path
-  // already waits for the audio to drain; the worker now does too).
-  it("the worker does NOT reopen the mic while realtime audio is still playing", async () => {
+  it("retains actionPending through status audio and clears it only for result audio", async () => {
     const { hook, ws } = await bootHybrid();
 
-    // Ava is speaking via realtime audio (a live source → player.playing = true).
-    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
+    // Arm a normal response, then start a computer action before a status/audio
+    // chunk arrives. That audio is not proof that the action completed.
+    await act(async () => {
+      ws.fireMessage({
+        type: "conversation.item.input_audio_transcription.completed",
+        transcript: "open the site",
+      });
+      ws.fireMessage({ type: "response.created" });
+      ws.fireMessage({ type: "ava.action", task: "open the website" });
+      ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") });
+    });
     await flush();
-    expect(hook.result.current.state).toBe("responding");
 
-    // A result clip is also queued (TTS). Its drain end is where the worker would
-    // wrongly reopen — but realtime audio is still playing, so it must stay closed.
-    await act(async () => { ws.fireMessage({ type: "ava.result", text: "Done, Sir." }); });
+    expect(hook.result.current.state).toBe("responding");
+    expect(hook.result.current.actionPending).toBe(true);
+
+    // ava.result explicitly arms a fresh same-model response. Its first audio
+    // chunk is legitimate completion evidence and releases the busy guard.
+    await act(async () => {
+      ws.fireMessage({ type: "ava.result", text: "Opened it, Sir." });
+      ws.fireMessage({ type: "response.created" });
+      ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") });
+    });
     await flush();
-    // End the TTS clip's playback so the worker's drain loop completes.
-    const clip = FakeAudio.created.at(-1)!;
-    await act(async () => { clip.onended?.(); });
+    expect(hook.result.current.actionPending).toBe(false);
+  });
+
+  it("uses a silent text fallback when the result response contains no voice audio", async () => {
+    const { hook, ws } = await bootHybrid();
+
+    await act(async () => {
+      ws.fireMessage({ type: "ava.action", task: "open the website" });
+      ws.fireMessage({ type: "ava.result", text: "Done, Sir." });
+      ws.fireMessage({ type: "response.created" });
+      ws.fireMessage({ type: "response.done" });
+    });
     await flush();
 
-    // The realtime audio source never ended, so player.playing is still true → the
-    // worker's reopen is suppressed. State stays "responding" (mic closed). Pre-fix
-    // it reopened to "listening" mid-reply, re-hearing Ava's own tail.
-    expect(hook.result.current.state).toBe("responding");
+    expect(hook.result.current.actionPending).toBe(false);
+    expect(hook.result.current.caption).toEqual({ who: "ava", text: "Done, Sir." });
+    expect(fetchSpy.mock.calls.some(([u]) => String(u).includes("/api/speak"))).toBe(false);
   });
 });
 
 describe("useRealtimeVoice — barge-in (effectful)", () => {
-  it("interrupt() stops TTS, clears the queue, kills the run, and reopens listening", async () => {
+  it("explicit interrupt() cancels a pending action, kills the run, and reopens listening", async () => {
     const { hook, ws } = await bootHybrid();
 
-    // Drive into a responding/TTS state by feeding a step (enqueues speak →
-    // worker sets state "responding", creates an Audio clip, starts playing).
     await act(async () => {
-      ws.fireMessage({ type: "ava.step", tool: "shell", args: { command: "ls" } });
+      ws.fireMessage({ type: "ava.action", task: "search the web" });
     });
     await flush();
-    expect(hook.result.current.state).toBe("responding");
-    const clip = FakeAudio.created.at(-1)!;
-    expect(clip.played).toBe(1);
-    const speakCallsBefore = fetchSpy.mock.calls.filter(([u]) => String(u).includes("/api/speak")).length;
+    expect(hook.result.current.actionPending).toBe(true);
+    expect(hook.result.current.state).toBe("thinking");
 
-    // Barge in.
     await act(async () => { hook.result.current.interrupt(); });
     await flush();
 
-    // (1) The server-side run is killed so tools stop executing.
     expect(killSpy).toHaveBeenCalledTimes(1);
-    // (2) The currently-playing clip is halted (tts.pause()).
-    expect(clip.paused).toBeGreaterThanOrEqual(1);
-    // (3) State reset to listening (actionPending-driven reset is observable here).
-    expect(hook.result.current.state).toBe("listening");
-
-    // (4) The speak queue was cleared: queue another step's-worth of work would
-    // have been pending, but nothing new is spoken after the barge-in. Feed a
-    // late /api/speak-triggering frame is unnecessary — assert no extra clip
-    // played and no extra speak fetch fired post-interrupt.
-    await flush();
-    const speakCallsAfter = fetchSpy.mock.calls.filter(([u]) => String(u).includes("/api/speak")).length;
-    expect(speakCallsAfter).toBe(speakCallsBefore); // nothing queued kept draining
-    expect(FakeAudio.created.length).toBe(1);       // no second clip was created
-  });
-
-  it("a clip queued behind the playing one does NOT continue after interrupt()", async () => {
-    const { hook, ws } = await bootHybrid();
-
-    // Two steps back-to-back: the first plays, the second is queued behind it
-    // (the worker plays them strictly in order, one Audio at a time).
-    await act(async () => {
-      ws.fireMessage({ type: "ava.step", tool: "shell", args: { command: "one" } });
-      ws.fireMessage({ type: "ava.step", tool: "shell", args: { command: "two" } });
-    });
-    await flush();
-    // Only the first clip is playing so far (sequential queue, not yet drained).
-    expect(FakeAudio.created.length).toBe(1);
-
-    await act(async () => { hook.result.current.interrupt(); });
-    await flush(8); // give the (now-aborted) worker loop every chance to drain
-
-    // The queued second clip must never start — the epoch bump aborted the drain.
-    expect(FakeAudio.created.length).toBe(1);
+    expect(hook.result.current.actionPending).toBe(false);
     expect(hook.result.current.state).toBe("listening");
   });
 
@@ -384,7 +335,14 @@ describe("useRealtimeVoice — barge-in on the realtime audio (play_audio) path"
   const AUDIO_B64 = btoa("ABCD");
 
   async function speakViaRealtime(ws: FakeWebSocket) {
-    // The realtime model's reply: response.created (thinking) then an audio delta.
+    // A gate-accepted user turn arms this response; response.created by itself is
+    // deliberately insufficient after a cancellation because it may be a late tail.
+    await act(async () => {
+      ws.fireMessage({
+        type: "conversation.item.input_audio_transcription.completed",
+        transcript: "test turn",
+      });
+    });
     await act(async () => { ws.fireMessage({ type: "response.created" }); });
     await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: AUDIO_B64 }); });
     await flush();
@@ -434,11 +392,7 @@ describe("useRealtimeVoice — barge-in on the realtime audio (play_audio) path"
     await flush();
     expect(hook.result.current.state).toBe("listening");
 
-    // A brand-new user turn → new transcript caption → new response → its audio is
-    // allowed (the snapshot refreshes to the current epoch).
-    await act(async () => {
-      ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "what's the time" });
-    });
+    // A brand-new accepted turn refreshes the epoch, so its audio is allowed.
     await speakViaRealtime(ws);
     expect(hook.result.current.state).toBe("responding");
   });
@@ -457,6 +411,7 @@ describe("useRealtimeVoice — caption_user must not reopen the mic mid-task (It
     await act(async () => { ws.fireMessage({ type: "ava.action", task: "search the web" }); });
     await flush();
     expect(hook.result.current.state).toBe("thinking");
+    expect(hook.result.current.actionPending).toBe(true);
 
     // Switch to fake timers now (after the async boot) so we can drive the 350ms
     // settle deterministically without a real wait.
@@ -475,6 +430,7 @@ describe("useRealtimeVoice — caption_user must not reopen the mic mid-task (It
     // The task is still running, so the mic must NOT have reopened — state stays
     // "thinking" (the action guard held). Pre-fix it would be "listening".
     expect(hook.result.current.state).toBe("thinking");
+    expect(hook.result.current.actionPending).toBe(true);
   });
 
   it("with NO task running, a transcript still opens a normal turn (control)", async () => {
@@ -555,6 +511,12 @@ describe("useRealtimeVoice — hold-to-talk turn-taking (effectful)", () => {
     const { hook, ws } = await bootPtt();
     // Latch hybrid so the realtime model's audio actually drives "responding".
     await act(async () => { ws.fireMessage({ type: "ava.session", sessionId: "s0", mode: "hybrid" }); });
+    await act(async () => {
+      ws.fireMessage({
+        type: "conversation.item.input_audio_transcription.completed",
+        transcript: "tell me something",
+      });
+    });
     await act(async () => { ws.fireMessage({ type: "response.created" }); });
     await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
     await flush();
@@ -625,10 +587,32 @@ describe("useRealtimeVoice — push-to-talk stuck-in-thinking recovery", () => {
 // the user's words don't vanish when Ava replies, and Ava's streaming rides ONE
 // stable interim line (no per-token remount / re-animation).
 describe("useRealtimeVoice — transcript scrollback + interim line", () => {
+  it("holds an incomplete VAD fragment visibly without committing or responding", async () => {
+    const { hook, ws } = await bootHybrid();
+
+    await act(async () => {
+      ws.fireMessage({ type: "ava.transcript_pending", text: "I want you to go" });
+    });
+    expect(hook.result.current.state).toBe("listening");
+    expect(hook.result.current.interim).toEqual({
+      who: "you",
+      text: "I want you to go …",
+    });
+    expect(hook.result.current.turns).toEqual([]);
+
+    await act(async () => {
+      ws.fireMessage({ type: "ava.recover", reason: "incomplete_fragment" });
+    });
+    expect(hook.result.current.state).toBe("listening");
+    expect(hook.result.current.interim).toBeNull();
+    expect(hook.result.current.hint).toContain("finish the thought");
+  });
+
   it("commits the user turn and Ava's turn as separate scrollback rows", async () => {
     const { hook, ws } = await bootHybrid();
 
     await act(async () => { ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "hey ava" }); });
+    await act(async () => { ws.fireMessage({ type: "response.created" }); });
     await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "hi " }); });
     await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "Sir" }); });
     await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.done", transcript: "hi Sir" }); });
@@ -643,9 +627,16 @@ describe("useRealtimeVoice — transcript scrollback + interim line", () => {
     expect(turns[0]).toMatchObject({ who: "you", text: "hey ava" });
   });
 
-  it("Ava's streaming updates the interim line in place (stable identity), then clears on done", async () => {
+  it("Ava's streaming updates one stable interim line and keeps the completed line visible", async () => {
     const { hook, ws } = await bootHybrid();
 
+    await act(async () => {
+      ws.fireMessage({
+        type: "conversation.item.input_audio_transcription.completed",
+        transcript: "say one two",
+      });
+      ws.fireMessage({ type: "response.created" });
+    });
     await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "one " }); });
     expect(hook.result.current.interim).toEqual({ who: "ava", text: "one " });
     await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "two" }); });
@@ -654,7 +645,7 @@ describe("useRealtimeVoice — transcript scrollback + interim line", () => {
 
     await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.done", transcript: "one two" }); });
     await flush();
-    expect(hook.result.current.interim).toBeNull();
+    expect(hook.result.current.interim).toEqual({ who: "ava", text: "one two" });
     expect(hook.result.current.turns.at(-1)).toMatchObject({ who: "ava", text: "one two" });
   });
 });
@@ -687,6 +678,12 @@ describe("useRealtimeVoice — amplitude from the forwarded PCM (no second mic)"
 describe("useRealtimeVoice — server-driven voice barge-in", () => {
   it("ava.barge_in stops the realtime audio, clears the interim, and drops the late tail", async () => {
     const { hook, ws } = await bootHybrid();
+    await act(async () => {
+      ws.fireMessage({
+        type: "conversation.item.input_audio_transcription.completed",
+        transcript: "tell me something",
+      });
+    });
     await act(async () => { ws.fireMessage({ type: "response.created" }); });
     await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
     await act(async () => { ws.fireMessage({ type: "response.output_audio_transcript.delta", delta: "let me tell you" }); });
@@ -702,5 +699,22 @@ describe("useRealtimeVoice — server-driven voice barge-in", () => {
     await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
     await flush();
     expect(hook.result.current.state).not.toBe("responding");
+  });
+
+  it("ava.barge_in never marks an in-flight computer action complete", async () => {
+    const { hook, ws } = await bootHybrid();
+
+    await act(async () => {
+      ws.fireMessage({ type: "ava.action", task: "open the website" });
+      ws.fireMessage({ type: "ava.step", tool: "chrome_navigate", args: { url: "https://example.com" } });
+    });
+    await flush();
+    expect(hook.result.current.actionPending).toBe(true);
+
+    await act(async () => { ws.fireMessage({ type: "ava.barge_in" }); });
+    await flush();
+
+    // Speech onset only stopped playback; it did not provide completion evidence.
+    expect(hook.result.current.actionPending).toBe(true);
   });
 });

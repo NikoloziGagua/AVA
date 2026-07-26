@@ -13,7 +13,7 @@ files, browser, memory, approvals) and speaks the result back.
 
 Two upstream providers are supported and chosen by a dashboard toggle:
 
-- **OpenAI** (`gpt-realtime`, GA) — the proven default. Fast, capable, recites
+- **OpenAI** (`gpt-realtime-2.1`, GA) — the default. Fast, capable, recites
   its system prompt faithfully.
 - **Hume** (EVI, the "Alice Bennett" voice) — selected with `voice_engine_pref =
   hume`. **Honest caveat: Hume needs paid credits, uses a weaker conversational
@@ -23,7 +23,7 @@ Two upstream providers are supported and chosen by a dashboard toggle:
   [§9](#9-the-hume-provider-honest-assessment).
 
 > Term note. **Realtime model** = the speech-in/speech-out model on the WS
-> upstream (OpenAI `gpt-realtime` or Hume EVI). **Agent** = the normal text agent
+> upstream (OpenAI `gpt-realtime-2.1` or Hume EVI). **Agent** = the normal text agent
 > behind `POST /api/chat` (`runAgent`), with the full tool stack. **VAD** = Voice
 > Activity Detection, the server-side endpointer that decides when a spoken turn
 > starts and stops. **PCM16** = signed 16-bit little-endian mono audio samples.
@@ -38,7 +38,7 @@ Two upstream providers are supported and chosen by a dashboard toggle:
 flowchart TD
   subgraph Browser["Browser / PWA (web/src/voice)"]
     MIC["Mic → AudioWorklet PCM16 @24kHz<br/>(useRealtimeVoice.ts)"]
-    SPK["Speaker: PcmStreamPlayer (realtime audio)<br/>+ /api/speak TTS clips (narration/results)"]
+    SPK["Speaker: PcmStreamPlayer<br/>one Realtime voice for conversation + results"]
     UI["VoiceScreen.tsx (orb, captions, toggles, approval)"]
   end
 
@@ -53,7 +53,7 @@ flowchart TD
 
   PROXY -->|"getVoiceEngine(db)"| SEL{{"provider select"}}
 
-  SEL -->|"= openai (default / fallback)"| OAI["OpenAI gpt-realtime WS<br/>wss://api.openai.com/v1/realtime"]
+  SEL -->|"= openai (default / fallback)"| OAI["OpenAI gpt-realtime-2.1 WS<br/>wss://api.openai.com/v1/realtime"]
   SEL -->|"= hume AND HUME_API_KEY set"| HUME["Hume EVI WS<br/>wss://api.hume.ai/v0/evi/chat<br/>(OAuth token or api_key)"]
 
   OAI -.->|"do_on_computer tool call"| ACT
@@ -87,9 +87,11 @@ provider-agnostic — it never knows which upstream is live.
 | STT (`/api/transcribe`) + TTS (`/api/speak`) HTTP primitives | `server/src/routes/voice.ts` (107) | `/speak` is always OpenAI TTS now. |
 | Voice-engine (provider) preference get/set route | `server/src/routes/voice-engine.ts` | Persists `openai` \| `hume`. |
 | Provider pref storage (SQLite) | `server/src/state/voice-engine-pref.ts` | Global scope; default `openai`. |
-| Shared default speaker id | `server/src/routes/voice-defaults.ts` | `DEFAULT_VOICE = "shimmer"`. |
+| Shared default speaker id | `server/src/routes/voice-defaults.ts` | `DEFAULT_VOICE = "marin"` (OpenAI's recommended high-quality voice). |
 | "Sir" comma-smoothing for speech only | `server/src/voice/speechText.ts` | `formatSpeechText`. |
-| TTS speech-rate default + clamp | `server/src/voice/voiceConfig.ts` | `DEFAULT_SPEECH_RATE = 1.15`. |
+| Incomplete-turn policy | `server/src/voice/turn-policy.ts` | Holds, joins, replaces, or expires structurally incomplete hands-free transcripts. |
+| Single-action coordinator | `server/src/voice/action-coordinator.ts` | Abort controller + epoch prevent overlapping actions and stale result publication. |
+| Realtime + legacy TTS speech-rate defaults | `server/src/voice/voiceConfig.ts` | Realtime stays natural at `1.0`; legacy HTTP TTS remains `1.15`. |
 | Chatterbox local-clone TTS client | `server/src/voice/chatterbox.ts` | **Retired** from the UI but still present (see [§11](#11-chatterbox-retired-but-present)). |
 | The action handoff (`do_on_computer` → agent) | `server/src/index.ts:381` | `runVoiceAction` (loopback to `/api/chat`). |
 | Proxy wiring at boot | `server/src/index.ts:463` | `buildRealtimeProxy({...}).attach(httpServer)`. |
@@ -113,25 +115,29 @@ stateDiagram-v2
   idle --> connecting: start()
   connecting --> listening: WS open + capture pipeline up
   connecting --> idle: failure
+  listening --> listening: incomplete transcript (pending caption only)
   listening --> thinking: turn finished (VAD endpoint OR Enter commit)
   thinking --> responding: reply audio starts
   thinking --> listening: empty reply / fallback reopen
   responding --> listening: Ava's audio drains (debounced settle)
   listening --> idle: stop()
-  responding --> idle: stop() / fatal close
+  thinking --> listening: explicit Stop
+  responding --> listening: explicit Stop / accepted barge-in
+  responding --> idle: fatal close
   note right of responding
-    interrupt() (barge-in) → listening
-    from any speaking state
+    actionPending is an orthogonal busy guard:
+    ordinary response.done cannot reopen the mic
   end note
 ```
 
 `capturing` is a sub-flag for an in-flight push-to-talk turn; `errorMsg` is the
-error surface. The single most important property the machine enforces: **the mic
-only forwards audio upstream while `state === "listening"`** (VAD) or **while a
-PTT turn is captured** — so Ava's own spoken reply, played on the speakers, can
-never be re-heard and transcribed into a phantom turn. That rule is one pure
-function, `shouldForwardMic` (`voiceInputMode.ts:59`), called per audio chunk in
-the worklet's `onmessage` (`useRealtimeVoice.ts:741`).
+error surface. In hands-free mode the mic forwards while `listening`, and while
+`responding` when no computer action is pending so the owner can talk over AVA.
+Browser echo cancellation plus the server transcript/completeness gates decide
+whether that audio is a real interruption. During `thinking` and an
+`actionPending` run the mic remains closed. Push-to-talk forwards only while a
+turn is explicitly captured. That rule is centralized in `shouldForwardMic`
+(`voiceInputMode.ts`) and called for each AudioWorklet chunk.
 
 ---
 
@@ -163,27 +169,32 @@ chunk *N* ends — **gapless** even under bursty network delivery. A single
 undecodable chunk is *skipped* (not fatal) so one bad delta can't cut Ava off
 mid-sentence; `onError` surfaces it as a soft console warning.
 
-**Playback (TTS clips).** Step narration and task results are *not* spoken by the
-realtime model — they are synthesized via `POST /api/speak` (OpenAI
-`gpt-4o-mini-tts`) and played as sequential `Audio` elements through a small
-queue (`speakWorker`, `useRealtimeVoice.ts:331`). This is the "one voice per
-task" design: chit-chat = realtime model's voice; task steps + result = TTS. See
+**Playback (one Realtime stream).** Chit-chat and completed task results are
+spoken by the same Realtime session and `marin` voice. Tool steps are visual
+only. The legacy `/api/speak` queue remains for the unreachable transcribe-only
+compatibility path; it is not inserted into a normal Realtime task. See
 [§7](#7-end-to-end-voice-task-workflow).
+
+**Natural Realtime cadence.** The session output explicitly uses
+`DEFAULT_REALTIME_SPEECH_RATE = 1.0`. The prior `1.15×` respeed made the native
+voice sound processed and unlike OpenAI's Realtime reference. The separate
+`DEFAULT_SPEECH_RATE = 1.15` remains only for legacy HTTP TTS clips.
 
 ---
 
-## 5. Server-VAD tuning, the reasoning toggle, and push-to-talk
+## 5. Semantic-VAD tuning, the reasoning toggle, and push-to-talk
 
 The realtime session's `turn_detection` is built by `turnDetectionFor`
 (`voice-realtime.ts:114`):
 
-- **VAD mode (default).** `server_vad` with a tuned energy `threshold` (0.6),
-  `prefix_padding_ms` (300), and `silence_duration_ms`. Crucially
-  `create_response: false` and `interrupt_response: false` — **the realtime model
-  never auto-replies to detected speech.** The proxy decides when a reply is
-  warranted (after the transcript passes the gate) and *then* sends
-  `response.create` itself (`voice-realtime.ts:1001`). This is what stops the
-  model hallucinating replies to silence.
+- **VAD mode (default).** `semantic_vad` with `eagerness: low` waits for a
+  semantically complete thought instead of treating every short pause as the
+  end of a command. `create_response: false` keeps the transcript gate in
+  control. `interrupt_response: false` is equally important: raw speech onset
+  may be echo or room noise, so it cannot destroy AVA's current reply. The proxy
+  cancels explicitly only after a completed transcript passes both gates.
+  `server_vad` remains available as an explicit compatibility fallback and also
+  uses `interrupt_response: false`.
 - **Push-to-talk mode.** `turn_detection: null` — automatic VAD/turn-detection is
   fully **off**. The client owns turn boundaries: it forwards mic audio only
   while a turn is held (Enter to start, Enter to finish) and sends an explicit
@@ -191,12 +202,24 @@ The realtime session's `turn_detection` is built by `turnDetectionFor`
   background/external audio (TV, a room conversation) between turns can never
   become a turn.
 
-**The Fast↔Thorough reasoning toggle also tunes voice snappiness.**
-`vadForReasoning` (`voice-realtime.ts:101`) maps the user's reasoning level onto
-VAD trailing silence: `fast` → `silence_duration_ms = 300` (jump in quickly),
-anything else → `700` (patient, so Ava never talks over you). It's read at
-upstream-open via `getReasoningLevel(db)` (`voice-realtime.ts:786`), so changing
-the toggle takes effect on the next connect. Other VAD fields are unchanged.
+**The Fast↔Thorough reasoning toggle cannot make semantic endpointing
+aggressive.** `vadForReasoning` keeps semantic eagerness at `low` in both modes.
+It tunes only the explicit server-VAD fallback: Fast waits 900 ms and Thorough
+waits 1200 ms. This prevents the Fast text-reasoning preference from recreating
+the observed one-sentence-as-three-turns failure. The setting is read at
+upstream-open, so changing it takes effect on the next connect.
+
+**A deterministic completeness policy backs up semantic VAD.**
+`VoiceTurnAccumulator` runs after the transcript confidence gate for automatic
+hands-free turns. A trailing fragment such as “I want you to go” produces
+`ava.transcript_pending`: the UI shows the words with an ellipsis but does not
+commit a user turn, change out of listening, create a response, or call a tool.
+A continuation such as “into WhatsApp” is joined and re-evaluated. A fresh,
+independently complete command replaces the stale fragment. If no continuation
+arrives within `VOICE_FRAGMENT_HOLD_MS` (2400 ms by default), the fragment and
+its upstream conversation items are discarded and the UI returns to a
+“finish the thought” hint. Push-to-talk bypasses this policy because releasing
+the control is an explicit owner-chosen boundary.
 
 **Push-to-talk commit guard.** OpenAI rejects a committed buffer under ~100 ms
 ("buffer too small … 0.00ms"). The client tracks bytes forwarded this turn
@@ -246,11 +269,15 @@ All thresholds are env-tunable without a redeploy (`loadTranscriptGateConfig`,
 `VOICE_MAX_NO_SPEECH_PROB`, `VOICE_MIN_AVG_LOGPROB`,
 `VOICE_HALLUCINATION_PHRASES` (comma-separated).
 
-**Second gate: don't interrupt Ava.** In hybrid, if a transcript lands *while
-Ava is mid-response* (`responseActive`, between `response.created` and
-`response.done`), it is dropped too (`voice-realtime.ts:977`) — it's almost
-always an echo, and starting a new response would cut her off. The Hume branch
-runs the *same* `decideTranscriptForward` chokepoint (`voice-realtime.ts:1122`).
+**Accepted transcript is the interruption boundary.** In the default OpenAI
+path, audio continues to reach VAD while AVA is speaking, but speech onset alone
+does nothing. If the completed text passes the confidence gate and the
+structural completeness policy, the proxy treats it as an intentional barge-in:
+cancel the active response, preserve only what AVA actually said, emit
+`ava.barge_in`, persist/forward the accepted user turn, and create exactly one
+new response. Rejected noise and incomplete fragments therefore cannot cut AVA
+off. The Hume branch shares the confidence gate; the structural accumulator and
+accepted-transcript cancellation described here are OpenAI-path guarantees.
 
 ---
 
@@ -264,7 +291,7 @@ sequenceDiagram
   participant You
   participant Hook as useRealtimeVoice (browser)
   participant Proxy as voice-realtime.ts
-  participant RT as gpt-realtime (OpenAI)
+  participant RT as gpt-realtime-2.1 (OpenAI)
   participant Agent as runVoiceAction → /api/chat
 
   You->>Hook: speak "open my downloads folder"
@@ -272,7 +299,7 @@ sequenceDiagram
   Proxy->>RT: forward audio (text-framed)
   RT-->>Proxy: speech_started / speech_stopped (VAD)
   RT-->>Proxy: input_audio_transcription.completed ("open my downloads folder")
-  Note over Proxy: gateTranscript → ACCEPT (real speech)
+  Note over Proxy: confidence gate + completeness policy → ACCEPT
   Proxy->>Proxy: store USER turn (single source of truth)
   Proxy->>RT: response.create  (create_response was false)
   RT-->>Proxy: response.output_item.done → function_call do_on_computer{task}
@@ -280,12 +307,12 @@ sequenceDiagram
   Proxy->>Agent: runVoiceAction(sessionId, task, onStep, abortSignal)
   Agent->>Agent: POST /api/chat (persist:false) → runAgent (full tools)
   Agent-->>Proxy: SSE tool_call (per step)
-  Proxy-->>Hook: ava.step(tool,args) → humanizeTool → TTS "Opening Downloads…"
+  Proxy-->>Hook: ava.step(tool,args) → visual progress only
   Agent-->>Proxy: SSE final {text}
-  Proxy->>Proxy: store ASSISTANT turn (the result)
-  Proxy-->>Hook: ava.result(text) → TTS speaks the result
-  Proxy->>RT: silentToolResultFrame (NO response.create → model stays silent)
-  Hook->>Hook: speak-queue drains → reopen mic → listening
+  Proxy-->>Hook: ava.result(text) → display/control only
+  Proxy->>RT: function_call_output + response.create
+  RT-->>Hook: the SAME marin realtime voice speaks the result
+  Hook->>Hook: PCM drains → reopen mic → listening
 ```
 
 Step by step, with code anchors:
@@ -297,46 +324,64 @@ Step by step, with code anchors:
    `speechMs`.
 3. **Transcription completes.** `gpt-4o-transcribe` returns the text (and maybe
    logprobs). `readTranscriptionCompleted` (`voice-realtime.ts:571`) extracts it.
-4. **Gate.** `decideTranscriptForward` → `gateTranscript`. Reject ⇒ dropped, no
-   turn (`voice-realtime.ts:971`). Accept ⇒ continue.
+4. **Gate and complete the turn.** `decideTranscriptForward` →
+   `gateTranscript`. Reject ⇒ dropped, no turn. For accepted hands-free text,
+   `VoiceTurnAccumulator` either emits one complete turn or sends
+   `ava.transcript_pending` and stops here until a continuation arrives. Only an
+   emitted complete turn continues.
 5. **Store the user turn once.** Hybrid persists the accepted transcript as the
    `user` message *here* and nowhere else (`voice-realtime.ts:993`) — the
    internal `/api/chat` run uses `persist:false`, so there's no double-store.
 6. **Ask the model to respond.** Because `create_response` is false, the proxy
    sends `response.create` (`voice-realtime.ts:1001`).
 7. **Model decides: chit-chat or action.** For a *do* request the persona
-   (`VOICE_PERSONA_INSTRUCTIONS`, `voice-realtime.ts:178`) instructs it to call
-   `do_on_computer` and **not** narrate steps/results itself.
+   instructs it to call `do_on_computer`, wait for the complete request, and
+   never invent a missing destination/person/action from a trailing fragment.
 8. **Tool call detected.** `readToolCall` (`voice-realtime.ts:255`) parses the
    GA `response.output_item.done` function-call shape. The proxy sends
    `ava.action` so the UI shows progress instead of dead air
    (`actionStartedFrame`).
-9. **The agent runs.** `runVoiceAction` (`index.ts:381`) POSTs to `/api/chat`
+9. **The agent runs.** `runVoiceAction` POSTs to `/api/chat`
    over loopback with a dedicated internal token, `persist:false`, and the
-   abort signal. It reads the SSE stream: each `tool_call` becomes an `ava.step`
-   the client speaks via TTS (`humanizeTool` → `/api/speak`); `final` becomes the
-   result.
-   - **`voice:true`** is set on the chat request, which makes the OpenAI agent use
-     `reasoningEffort: "none"` for a fast spoken reply (`chat.ts:271`) — the full
-     tool stack is unchanged, only the deliberation depth.
+   abort signal. It reads the SSE stream: each `tool_call` becomes a visual
+   `ava.step`; `final` becomes the result.
+   - **Single owner.** `VoiceActionCoordinator.begin()` aborts and retires any
+     prior run, then assigns the new action an AbortController and epoch. Step
+     callbacks and final results publish only while that epoch remains current.
+   - **Terminal-result requirement.** `runVoiceAction` accepts completion only
+     after the SSE stream emits `final` with non-empty text. A killed run throws
+     cancellation; an error event returns an explicit failure; a stream that
+     ends without a final becomes “action ended without a final, verifiable
+     result,” never an invented success.
    - **409 retry.** If a previous run still holds the session, `runVoiceAction`
      kills it and retries once so a new spoken command always wins
-     (`index.ts:407`) — the "first job done, second won't run" fix.
-10. **Store the result, speak it, keep the model silent.** The proxy stores the
-    result as the `assistant` turn (`voice-realtime.ts:937`), sends `ava.result`
-    (client speaks it via TTS), and returns the tool output with
-    `silentToolResultFrame` — which **omits** `response.create`, so the realtime
-    model stays silent. One voice per task.
-11. **Mic reopens.** When the TTS speak-queue drains AND no realtime audio is
-    playing AND (hybrid) `response.done` was seen, the hook returns to
-    `listening` (`reopenAfterSpeak` + the settle/fallback timers,
-    `useRealtimeVoice.ts:372`).
+      (`index.ts:407`) — the "first job done, second won't run" fix.
+10. **Return the result to the same voice.** The proxy sends `ava.result` only
+    for display/control, creates a `function_call_output`, and sends
+    `response.create`. The same Realtime session and `marin` voice speaks the
+    final result. Its output transcript is the assistant turn persisted to
+    history, so storage matches what the owner actually heard.
+11. **Mic reopens.** When Realtime generation is done and the PCM stream has
+    drained, the settle timer returns the hook to `listening`. If the upstream
+    returns neither audio nor transcript for a completed action, a silent text
+    fallback displays the terminal result and reopens the mic instead of
+    stranding the screen on “Finishing…”.
 
-**Abort safety.** `actionAbort` ties the agent run to the WS connection. If the
-client drops mid-task (a 1006), `runVoiceAction` aborts its fetches and **kills
-the loopback run** (`index.ts:418`), so a disconnect can't leave a zombie agent
-burning tokens or holding the shared browser. A reconnect then starts clean
-instead of double-executing.
+**Abort and stale-result safety.** Stop, replacement, client close, and client
+error call `VoiceActionCoordinator.cancel()`. That aborts `runVoiceAction`,
+whose abort listener also **kills the loopback `/api/chat` run**, so a
+disconnect cannot leave a zombie agent burning tokens or holding the shared
+browser. Even if a dependency resolves after cancellation, the epoch check
+drops its step/result before it reaches the browser or Realtime model. A retired
+action therefore cannot announce completion or restart AVA's voice.
+
+**Completion truth in the client.** `actionPending` is render-visible and
+synchronous. The tool-call response's ordinary `response.done` and unrelated
+audio do not clear it. Only the response armed by `ava.result` (or its silent
+text fallback after that terminal result) releases the busy state. This proves
+that the action run reached a terminal result; it does not claim independent
+verification of the external objective when the underlying tool evidence did
+not provide it.
 
 ---
 
@@ -381,7 +426,7 @@ flowchart LR
   SEED -->|OpenAI| ITEMS["conversation.item.create × N<br/>(seedContentType: input_text / output_text)"]
   SEED -->|Hume| BLOCK["buildHumeVoicePrompt (identity-first, budget 11k)<br/>+ context field"]
 
-  ITEMS --> RT[gpt-realtime session]
+  ITEMS --> RT[gpt-realtime-2.1 session]
   BLOCK --> HUME[Hume EVI session]
 ```
 
@@ -523,13 +568,11 @@ flowchart TD
 | **Barge-in** (you interrupt) | — | `user_interruption` → `turnEnd` (`:506`) | Ava *did* speak the buffered part; flush it so it isn't lost or silently merged into the **next** turn's buffer. |
 | **Upstream socket close** | close handler (`:1067`) | close handler (`:1276`) | Tail-safety: don't lose a turn the model spoke just before the socket dropped (e.g. a 1006). |
 
-**Why `do_on_computer` is unaffected.** During a task the realtime model is kept
-**silent** (`silentToolResultFrame` omits `response.create`, so no output
-transcript is produced — §7). The buffer therefore stays **empty**, the result is
-stored by the dedicated task path (`appendMessage` at `voice-realtime.ts:989`
-success / `:1004` failure for OpenAI; `:1229`/`:1238` for Hume), and a later flush
-of the empty buffer is a **no-op** (the `text` guard is falsy). So the
-coalescing buffer and the task-result store never double-write the same turn.
+**Why `do_on_computer` does not double-write.** The action agent runs with
+`persist:false`. Its raw tool result is returned to the realtime model, and only
+the realtime model's spoken output transcript is flushed as the assistant turn.
+The action path therefore cannot store a second copy of the same result, and
+history matches the wording the owner actually heard.
 
 **Why the flush clears the buffer.** `flushAssistantTurn()` resets
 `assistantTurnBuf = ""` *before* the write guard, so a **double-flush** (e.g.
@@ -572,7 +615,7 @@ verified against the code and its comments:
   shipped mid-session. The persona still *tells* Hume to call `do_on_computer`, but
   with no tool bound the call can't happen. Wiring the tool into the Hume branch is
   a separate, unshipped fix. (Hume EVI's LLM is also tuned for affective speech, so
-  its own chit-chat is less sharp than `gpt-realtime`.)
+  its own chit-chat is less sharp than the OpenAI realtime path.)
 - **Truncates the prompt — fixed by an identity-first, budgeted assembly.** Hume
   silently truncates `system_prompt` at **~12k chars**. The old seed put the full
   base prompt first, so the persona ("you are AVA / no training cutoff"), the real
@@ -657,23 +700,32 @@ name path is a best-effort fallback.
 
 ## 10. Barge-in, reconnect, and approvals (client correctness)
 
-**Barge-in / interrupt** (`interrupt`, `useRealtimeVoice.ts:888`). Cutting Ava
-off is harder than it looks because *three* things can be speaking:
+**Hands-free voice barge-in is accepted-transcript driven.** While AVA speaks,
+the hands-free client continues forwarding mic audio (except during a computer
+action). OpenAI VAD reports onset, but `interrupt_response:false` means that raw
+energy cannot cancel anything. Only after the completed transcript passes the
+confidence gate and the completeness accumulator does the proxy send
+`response.cancel` and `ava.barge_in`. This lets the owner talk over AVA without
+letting speaker echo, a cough, or a half-sentence shred the reply.
 
-1. the **realtime model** streaming audio deltas (hybrid chit-chat),
-2. **TTS clips** for task steps/results (`/api/speak`),
-3. an **in-flight agent run** still executing tools.
+On `ava.barge_in`, the browser first sends
+`conversation.item.truncate` using `PcmStreamPlayer.playedMs`, so OpenAI's
+conversation contains only the audio the owner actually heard. It then stops
+the local player and advances an **interrupt epoch**. Deltas already in flight
+may arrive after cancellation, so each speaking turn snapshots the epoch at
+start (`playTurnEpochRef`) and the audio branch drops every stale delta. Audio
+stays blocked until the accepted caption arms the fresh response; the cancelled
+tail cannot stop, resume, and talk over the new turn.
 
-`interrupt()` handles all three: it `api.kill(sessionId)`s the server run; bumps
-an **interrupt epoch** *first*, then sends `response.cancel` +
-`input_audio_buffer.clear` upstream so the model stops generating; stops the
-`PcmStreamPlayer`; bumps the speak-queue epoch and halts the current TTS clip.
-The epoch is the subtle part: deltas already in flight arrive *after*
-`response.cancel`, so each speaking turn snapshots the epoch at start
-(`playTurnEpochRef`) and the audio branch **drops** any delta whose snapshot is
-stale (`shouldDropAudioDelta`, `voiceInputMode.ts:167`; applied at
-`useRealtimeVoice.ts:618`). Without this, the cancelled tail resumes and Ava talks
-over you. This is covered by `useRealtimeVoice.barge-in.test.ts`.
+**The center square is an explicit Stop control.** `VoiceScreen` shows it while
+AVA is thinking, speaking, or `actionPending`. Tapping it calls `interrupt()`:
+kill the session's `/api/chat` run, send `response.cancel` and
+`input_audio_buffer.clear`, truncate what was heard, stop all local audio, clear
+the pending action UI, and return to listening. The proxy interprets the same
+cancel frame as a general Stop signal, aborts the active
+`VoiceActionCoordinator` run even when no model response is active, and ignores
+any late step or result. Stop is therefore an execution cancellation, not just
+a mute button.
 
 **In push-to-talk**, only an *explicit* new turn (pressing Enter while Ava
 speaks) interrupts her (`shouldInterruptForNewTurn`, `voiceInputMode.ts:77`) —
@@ -711,7 +763,7 @@ assume `/api/speak` can produce the cloned voice.
 > handoff is wired **unconditionally** (inert unless the model calls
 > `do_on_computer`), and the persisted engine value — read per connect via
 > `getVoiceEngine` — decides whether the realtime model speaks. `REALTIME_HYBRID`
-> survives only as a legacy default-seed.
+> survives only as a legacy no-op.
 
 ---
 
@@ -726,36 +778,49 @@ assume `/api/speak` can produce the cloned voice.
 | `HUME_CONFIG_ID` | env | Optional EVI config id. |
 | `HUME_VOICE_ID` | env | Exact Hume voice id (most reliable). |
 | `HUME_VOICE_NAME` | env | Voice by name; defaults to **Alice Bennett**. |
-| `REALTIME_MODEL` | env | Override the OpenAI realtime model (default `gpt-realtime`). |
+| `REALTIME_MODEL` | env | Override the OpenAI realtime model (default `gpt-realtime-2.1`). |
 | `REALTIME_TRANSCRIBE_MODEL` | env | STT model for the realtime path (default `gpt-4o-transcribe`). |
-| `REALTIME_VAD_THRESHOLD` / `_PREFIX_PADDING_MS` / `_SILENCE_MS` | env | Tune server-VAD energy/padding/trailing silence. |
+| `REALTIME_TRANSCRIBE_LANGUAGE` | env | Language hint (default `en`; `auto` removes the hint). |
+| `REALTIME_VAD_MODE` | env | `semantic_vad` (default) or explicit `server_vad` compatibility fallback. |
+| `REALTIME_VAD_EAGERNESS` | env | Semantic-VAD base setting; defaults to `low`, and `vadForReasoning` keeps the live session at `low`. |
+| `REALTIME_VAD_THRESHOLD` / `_PREFIX_PADDING_MS` / `_SILENCE_MS` | env | Tune only the server-VAD fallback's energy/padding/base trailing silence. |
+| `VOICE_FRAGMENT_HOLD_MS` | env | How long an incomplete hands-free fragment waits for a continuation (default 2400 ms; minimum 500 ms). |
 | `REALTIME_SEED_TURNS` | env | How many recent turns to seed on connect (default 12). |
-| `REALTIME_VOICE` | env | Realtime model's spoken voice (overrides `DEFAULT_VOICE = "shimmer"`). |
+| `REALTIME_VOICE` | env | Realtime model's spoken voice (overrides `DEFAULT_VOICE = "marin"`). |
 | `VOICE_MIN_CHARS` / `_MIN_SPEECH_MS` / `_MAX_NO_SPEECH_PROB` / `_MIN_AVG_LOGPROB` / `VOICE_HALLUCINATION_PHRASES` | env | Tune the transcript gate. |
 | `CHATTERBOX_TTS_URL` | env | Retired path only (see §11). |
 | Voice input mode (localStorage `ava.voiceInputMode`) | client | `vad` (default) \| `enter_push_to_talk`. |
-| `DEFAULT_SPEECH_RATE = 1.15` | `voiceConfig.ts` | Faster-than-neutral TTS delivery; clamped to [0.25, 4.0]. |
+| `DEFAULT_REALTIME_SPEECH_RATE = 1.0` | `voiceConfig.ts` | Natural model cadence for live Realtime output. |
+| `DEFAULT_SPEECH_RATE = 1.15` | `voiceConfig.ts` | Legacy HTTP-TTS delivery only; clamped to [0.25, 4.0]. |
 
 ---
 
 ## 13. Test coverage (where the invariants are pinned)
 
-- `server/src/routes/voice-realtime.test.ts` — gate-forward decisions, tool-call
-  parsing, Hume translation, resample/WAV handling, seed content-type, continuity
-  choice, frame builders, and the **assistant-turn `turnEnd`** signal (§8d): an
-  `assistant_message` segment must **not** set `turnEnd`, while `assistant_end` and
-  `user_interruption` both must — so segments buffer and only a turn boundary flushes
-  (`voice-realtime.test.ts:518`, `:526`, `:534`).
+- `server/src/routes/voice-realtime.test.ts` — patient semantic VAD
+  (`eagerness:low`, `interrupt_response:false`), natural Realtime output speed,
+  gate-forward decisions, pending/barge-in frame builders, tool-call parsing,
+  Hume translation, resample/WAV handling, seed content-type, continuity choice,
+  and the assistant-turn `turnEnd` signal (§8d).
+- `server/src/voice/turn-policy.test.ts` — real incomplete-fragment regressions,
+  continuation joining, fresh-command replacement, and expiry without execution.
+- `server/src/voice/action-coordinator.test.ts` — Stop/replacement abort the
+  current signal and make its late result stale.
 - `server/src/routes/voice-provider-config.test.ts` — provider resolution +
   fallback, redaction, URL building, token cache.
-- `server/src/voice/voiceConfig.test.ts` — speech-rate clamp/default.
+- `server/src/voice/voiceConfig.test.ts` — natural Realtime speed and legacy TTS
+  clamp/default.
 - `server/src/routes/voice.test.ts` — `/transcribe` + `/speak` (and that there is
   **no** toolless conversation endpoint).
 - `server/src/state/voice-engine-pref.test.ts` — provider pref storage.
 - `web/src/voice/voiceInputMode.test.ts`, `pushToTalk.test.ts`,
   `realtime-audio.test.ts`, `realtime-events.test.ts`,
   `useRealtimeVoice.intent.test.ts`, `useRealtimeVoice.barge-in.test.ts` — the
-  pure client helpers, event classification, intent mapping, and barge-in epoch.
+  pure client helpers, event classification, intent mapping, pending-caption
+  behavior, accepted barge-in, stale-audio epoch, and action-busy completion
+  guard.
+- `web/src/voice/VoiceScreen.test.tsx` — the explicit Stop control is visible
+  during thinking, speaking, and active computer work.
 
 ---
 
@@ -780,11 +845,6 @@ assume `/api/speak` can produce the cloned voice.
   unit tests. A stale inline comment at `voice-realtime.ts:310`–`:313` still claims
   `context` was verified; the surrounding function comments correctly call it
   unverified.
-- **`docs/voice-mode.md` is partially stale.** That older doc describes the
-  pipeline as *transcribe-only* (realtime model never speaks). That was true at
-  one point, but the current default is the **hybrid speak** path driven by the
-  engine pref. This file (`06-voice-pipeline.md`) reflects the current code;
-  `voice-mode.md` should be reconciled or marked superseded.
 - **Chatterbox is dead but compiled.** `chatterbox.ts` is unreferenced by any live
   path; a future cleanup could delete it and its tests/comments.
 - **OpenAI seed cost.** Every seeded turn is OpenAI cost per connect. The default

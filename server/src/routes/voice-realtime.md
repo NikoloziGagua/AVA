@@ -5,7 +5,7 @@ of two upstreams, selected at boot by `AVA_VOICE_PROVIDER`:
 
 | Provider | Value | Notes |
 | --- | --- | --- |
-| OpenAI | `openai` (default) | GA `gpt-realtime`. The proven path and the fallback. |
+| OpenAI | `openai` (default) | `gpt-realtime-2.1`. The primary path and fallback. |
 | Hume EVI | `hume` | Hume Empathic Voice Interface. Used only when fully configured. |
 
 Selection reads **only** `process.env` (it never opens or parses a `.env` file) and

@@ -1,7 +1,7 @@
 // Voice realtime PROVIDER selection.
 //
 // The realtime voice proxy (voice-realtime.ts) speaks one of two upstreams:
-//   - "openai"  — the GA gpt-realtime websocket (the existing, proven default).
+//   - "openai"  — the GA OpenAI realtime websocket (the default).
 //   - "hume"    — Hume EVI, selected only when fully configured.
 //
 // Selection is driven by `AVA_VOICE_PROVIDER` and reads ONLY `process.env`; it

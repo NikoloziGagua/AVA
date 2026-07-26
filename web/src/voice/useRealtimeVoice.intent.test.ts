@@ -76,6 +76,20 @@ describe("realtimeActionToHybridEffect", () => {
     expect(realtimeActionToHybridEffect({ kind: "response_done" })).toEqual({ kind: "gen_done" });
   });
 
+  it("shows an incomplete automatic-VAD fragment without creating an agent turn", () => {
+    expect(realtimeActionToHybridEffect({
+      kind: "user_transcript_pending",
+      text: "I want you to go",
+    })).toEqual({
+      kind: "caption_user_pending",
+      text: "I want you to go",
+    });
+    expect(realtimeActionToIntent({
+      kind: "user_transcript_pending",
+      text: "I want you to go",
+    })).toEqual({ kind: "ignore" });
+  });
+
   it("maps the action-started frame to a working effect", () => {
     expect(realtimeActionToHybridEffect({ kind: "action_started", task: "open downloads" }))
       .toEqual({ kind: "working", task: "open downloads" });

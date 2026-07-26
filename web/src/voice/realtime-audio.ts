@@ -36,6 +36,8 @@ export function pcm16Base64ToFloat32(b64: string): Float32Array {
 export class PcmStreamPlayer {
   private ctx: AudioContext | null = null;
   private playhead = 0;
+  private turnStartTime: number | null = null;
+  private turnScheduledEnd = 0;
   private readonly sources = new Set<AudioBufferSourceNode>();
   private readonly sampleRate: number;
   /** Called when all scheduled audio has finished playing (queue drained). */
@@ -49,6 +51,16 @@ export class PcmStreamPlayer {
 
   constructor(sampleRate = PLAYBACK_SAMPLE_RATE) {
     this.sampleRate = sampleRate;
+  }
+
+  /**
+   * Mark the beginning of a new realtime response. This lets the WebSocket
+   * client report exactly how much audio was actually heard when it sends
+   * conversation.item.truncate during a barge-in.
+   */
+  beginTurn(): void {
+    this.turnStartTime = null;
+    this.turnScheduledEnd = 0;
   }
 
   private ensureCtx(): AudioContext {
@@ -80,8 +92,10 @@ export class PcmStreamPlayer {
       src.connect(ctx.destination);
 
       const startAt = Math.max(ctx.currentTime, this.playhead);
+      if (this.turnStartTime == null) this.turnStartTime = startAt;
       src.start(startAt);
       this.playhead = startAt + buffer.duration;
+      this.turnScheduledEnd = this.playhead;
 
       this.sources.add(src);
       src.onended = () => {
@@ -100,6 +114,13 @@ export class PcmStreamPlayer {
     return this.sources.size > 0;
   }
 
+  /** Milliseconds from this response that have reached the speakers. */
+  get playedMs(): number {
+    if (!this.ctx || this.turnStartTime == null) return 0;
+    const heardUntil = Math.min(this.ctx.currentTime, this.turnScheduledEnd);
+    return Math.max(0, Math.round((heardUntil - this.turnStartTime) * 1000));
+  }
+
   /** Stop and discard everything currently scheduled (no onEnded fired). */
   interrupt(): void {
     for (const s of this.sources) {
@@ -109,6 +130,8 @@ export class PcmStreamPlayer {
     }
     this.sources.clear();
     if (this.ctx) this.playhead = this.ctx.currentTime;
+    this.turnStartTime = null;
+    this.turnScheduledEnd = 0;
   }
 
   /** Tear down the AudioContext entirely. */

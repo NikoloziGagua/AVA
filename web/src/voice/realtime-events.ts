@@ -13,11 +13,13 @@ export type RealtimeAction =
   | { kind: "speech_started" }
   | { kind: "speech_stopped" }
   | { kind: "user_transcript"; text: string }
+  | { kind: "user_transcript_pending"; text: string }
   | { kind: "action_started"; task: string }
   | { kind: "action_step"; tool: string; args: unknown }
   | { kind: "action_result"; text: string }
   | { kind: "audio"; b64: string }
   | { kind: "response_created" }
+  | { kind: "output_item"; itemId: string; contentIndex: number }
   | { kind: "ava_transcript_delta"; text: string }
   | { kind: "ava_transcript_done"; text: string }
   | { kind: "response_done" }
@@ -68,6 +70,17 @@ export function classifyRealtimeEvent(evt: { type?: string;[k: string]: unknown 
     }
     case "response.created":
       return { kind: "response_created" };
+    case "response.output_item.added": {
+      const item = evt.item as { id?: string; type?: string } | undefined;
+      const itemId = item?.id ?? "";
+      return itemId && item?.type === "message"
+        ? { kind: "output_item", itemId, contentIndex: 0 }
+        : { kind: "ignore" };
+    }
+    case "ava.transcript_pending": {
+      const text = (evt.text as string | undefined) ?? "";
+      return text ? { kind: "user_transcript_pending", text } : { kind: "ignore" };
+    }
     case "response.output_audio_transcript.delta":
     case "response.audio_transcript.delta":
       return { kind: "ava_transcript_delta", text: (evt.delta as string | undefined) ?? "" };

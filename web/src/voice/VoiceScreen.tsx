@@ -7,8 +7,8 @@ import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { gsap, useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
-import { useRealtimeVoice } from "./useRealtimeVoice.js";
-import { Mic, Keyboard, MicOff, Pause, X, MessageSquarePlus } from "lucide-react";
+import { useRealtimeVoice, type RealtimeState } from "./useRealtimeVoice.js";
+import { Mic, Keyboard, MicOff, Square, X, MessageSquarePlus, PanelsTopLeft } from "lucide-react";
 
 export interface VoiceScreenProps {
   initialSessionId: string | null;
@@ -22,14 +22,18 @@ export function formatTime(s: number): string {
   return `${m}:${r.toString().padStart(2, "0")}`;
 }
 
+export function shouldShowVoiceStop(state: RealtimeState, actionPending: boolean): boolean {
+  return actionPending || state === "thinking" || state === "responding";
+}
+
 export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: VoiceScreenProps) {
   const v = useRealtimeVoice({ initialSessionId });
   const [secs, setSecs] = useState(0);
   const chromeScope = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const ptt = v.inputMode === "enter_push_to_talk";
   const capturing = v.capturing;
+  const showStop = shouldShowVoiceStop(v.state, v.actionPending);
 
   // Slowly rotate the living-chrome conic angle on the RESTING CTA (idle mic disc /
   // inactive push-to-talk). One transform-free CSS-var tween over the whole control
@@ -60,14 +64,9 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
     return () => clearInterval(id);
   }, [timerActive]);
 
-  // Auto-scroll the transcript to the newest turn / interim line.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [v.turns, v.interim]);
-
   // Compact uppercase HUD (top-left) — honest about PTT idle (mic closed).
   const hudLabel =
+    v.actionPending         ? "AVA · WORKING" :
     v.state === "connecting" ? "CONNECTING" :
     v.state === "thinking"   ? "THINKING" :
     v.state === "responding" ? "AVA · SPEAKING" :
@@ -76,6 +75,7 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
 
   // Friendly status chip under the orb.
   const statusLabel =
+    v.actionPending         ? "Working on your task…" :
     v.state === "connecting" ? "Connecting…" :
     v.state === "thinking"   ? "Thinking…" :
     v.state === "responding" ? "Ava speaking" :
@@ -85,12 +85,14 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
   // Orb reacts only when audio is truly forwarding: PTT-idle shows the calm "idle"
   // orb (mic closed between turns), not the reactive "listening" one.
   const orbState =
+    v.actionPending         ? "thinking" :
     v.state === "responding" ? "responding" :
     v.state === "thinking"   ? "thinking" :
     v.state === "listening"  ? (ptt && !capturing ? "idle" : "listening") :
                                 "idle";
 
   const tint =
+    v.actionPending         ? "rgba(92,242,255,0.12)" :
     v.state === "responding" ? "rgba(34,150,255,0.20)" :
     v.state === "listening"  ? (ptt && !capturing ? "rgba(92,242,255,0.05)" : "rgba(124,92,255,0.18)") :
     v.state === "thinking"   ? "rgba(92,242,255,0.12)" :
@@ -110,6 +112,19 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
       />
 
       <div className="hud absolute left-5 top-5 z-20 text-[10px]" style={{ color: "var(--ac)" }}>{hudLabel}</div>
+      <button
+        onClick={() => window.open(
+          "/?mission-control=1",
+          "ava-mission-control",
+          "popup,width=1500,height=920,resizable=yes,scrollbars=no",
+        )}
+        aria-label="open Mission Control"
+        title="Open Mission Control beside voice"
+        className="absolute right-28 top-5 z-30 flex h-8 items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 text-[9px] uppercase tracking-wider text-white/60 transition-all hover:text-white active:scale-95"
+      >
+        <PanelsTopLeft size={13} />
+        Activity
+      </button>
       {/* New conversation: voice resumes your latest chat by default, so this is
           how you deliberately start fresh. */}
       <button
@@ -137,8 +152,9 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         </div>
       )}
 
-      {/* ── STAGE: the living orb + a single status/interim line ─────────────── */}
-      <div className="relative z-10 flex shrink-0 flex-col items-center justify-center px-6 pt-20 pb-2">
+      {/* One calm, full-height stage. Voice mode intentionally has no transcript
+          scroller; complete history remains in keyboard mode. */}
+      <div className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-4 pt-20">
         {/* MagicRings is a separate LIGHT GSAP+SVG layer BEHIND the orb on the SAME
             center, pointer-events-none. The orb Flips in from the home hero. */}
         <div className="relative">
@@ -153,7 +169,11 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         {/* ONE live interim line — STABLE key (per who, not per token), so the
             entrance runs once per new turn and streaming text updates in place
             instead of remounting + replaying the blur/fade on every delta. */}
-        <div className="mt-3 min-h-[2.75rem] w-full max-w-2xl text-center">
+        <div
+          className="mt-5 min-h-[6.5rem] w-full max-w-3xl text-center"
+          aria-live="polite"
+          aria-label="Current voice turn"
+        >
           {v.interim && (
             <motion.div
               key={`interim-${v.interim.who}`}
@@ -162,7 +182,16 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             >
               <div className="hud mb-1 text-[9px] text-white/40">{v.interim.who === "you" ? "you" : "ava"}</div>
-              <div className="mx-auto text-[19px] italic leading-snug text-white/70">{v.interim.text}</div>
+              <div
+                className="mx-auto overflow-hidden text-[clamp(18px,2.2vw,26px)] leading-snug text-white/80"
+                style={{
+                  display: "-webkit-box",
+                  WebkitLineClamp: 4,
+                  WebkitBoxOrient: "vertical",
+                }}
+              >
+                {v.interim.text}
+              </div>
             </motion.div>
           )}
           {!v.interim && v.hint && (
@@ -171,32 +200,6 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
           {!v.interim && !v.hint && !ptt && v.state === "responding" && (
             <div className="mx-auto text-[12px] leading-snug text-white/30">Talk any time to interrupt.</div>
           )}
-        </div>
-      </div>
-
-      {/* ── TRANSCRIPT RAIL: committed You/Ava turns, newest at the bottom ────── */}
-      <div className="relative z-10 flex min-h-0 flex-1 justify-center px-6">
-        <div
-          ref={scrollRef}
-          className="w-full max-w-2xl space-y-4 overflow-y-auto pb-4"
-          style={{ maskImage: "linear-gradient(to bottom, transparent, #000 8%)", WebkitMaskImage: "linear-gradient(to bottom, transparent, #000 8%)" }}
-        >
-          {/* Push a short conversation to the bottom (near the controls) instead of
-              leaving a void at the top on the 1440×900 desktop target. */}
-          <div className="flex min-h-full flex-col justify-end">
-            {v.turns.map((t) => (
-              <div key={t.id} className={`mt-4 ${t.who === "you" ? "text-right" : "text-left"}`}>
-                <div className="hud mb-1 text-[9px] text-white/35">{t.who === "you" ? "you" : "ava"}</div>
-                <div
-                  className={`inline-block max-w-[85%] text-[18px] leading-relaxed ${
-                    t.who === "you" ? "text-white/55" : "text-white/90"
-                  }`}
-                >
-                  {t.text}
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
 
@@ -223,29 +226,15 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         // bottom padding plus the home-indicator inset on phones (env() is 0 on desktop).
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.5rem)" }}
       >
-        {/* Toggles row: voice engine + input mode, side by side on desktop. */}
+        {/* Provider badge + input mode. AVA is pinned to OpenAI's newest public
+            Realtime model; removing the engine switch prevents accidental voice
+            changes between sessions. */}
         <div className="flex flex-wrap items-center justify-center gap-3">
-          {/* Voice-engine toggle: how Ava's voice is produced. Server-persisted;
-              changing it reconnects so the realtime speaks/transcribe mode applies. */}
-          <div className="glass flex items-center gap-1 rounded-full p-1 text-[10px]">
-            {([
-              ["openai", "OpenAI"],
-              ["hume", "Hume"],
-            ] as const).map(([value, label]) => {
-              const active = v.voiceEngine === value;
-              return (
-                <button
-                  key={value}
-                  aria-label={`${label} voice engine`}
-                  aria-pressed={active}
-                  onClick={() => v.setVoiceEngine(value)}
-                  className="rounded-full px-3 py-1 transition-all"
-                  style={active ? { background: "var(--ac)", color: "#04222a" } : { color: "rgba(255,255,255,0.6)" }}
-                >
-                  {label}
-                </button>
-              );
-            })}
+          <div
+            className="glass rounded-full px-3 py-1.5 text-[10px] text-white/55"
+            aria-label="OpenAI GPT Realtime 2.1 voice"
+          >
+            OPENAI · REALTIME 2.1
           </div>
 
           {/* Input-mode toggle: hands-free VAD ↔ hold-to-talk. Persisted. */}
@@ -280,14 +269,14 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
           >
             {v.muted ? <MicOff size={18} /> : <Mic size={18} />}
           </button>
-          {v.state === "responding" ? (
+          {showStop ? (
             <button
-              aria-label="interrupt"
+              aria-label={v.actionPending ? "stop current action" : "interrupt Ava"}
               onClick={v.interrupt}
               className="flex h-16 w-16 items-center justify-center rounded-full active:scale-95"
               style={{ background: "var(--ac)", color: "#04222a", boxShadow: "0 0 26px rgba(92,242,255,0.5)" }}
             >
-              <Pause size={20} />
+              <Square size={18} fill="currentColor" />
             </button>
           ) : ptt ? (
             // TRUE hold-to-talk: press-AND-hold to talk, release to send. Pointer

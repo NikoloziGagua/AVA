@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ensureProfileDir } from "./chrome.js";
+import { ensureProfileDir, findInstalledBrowser } from "./chrome.js";
 
 describe("ensureProfileDir", () => {
   let dir: string;
@@ -22,5 +22,11 @@ describe("ensureProfileDir", () => {
     writeFileSync(lock, "stale");
     ensureProfileDir(dir);
     expect(existsSync(lock)).toBe(false);
+  });
+
+  it("honors an explicit installed-browser path", () => {
+    const executable = join(dir, "chrome.exe");
+    writeFileSync(executable, "test");
+    expect(findInstalledBrowser(executable, {})).toBe(executable);
   });
 });

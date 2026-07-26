@@ -37,6 +37,28 @@ export function buildChromeTools(opts: {
   return [
     {
       tool: {
+        name: "chrome_open",
+        description:
+          "Open and foreground AVA's persistent logged-in Chrome window. AVA starts " +
+          "its dedicated browser launcher automatically when the window is not already " +
+          "alive. Use this for every request to 'open Chrome'; never launch a separate " +
+          "Chrome with shell. An optional URL opens in the active tab.",
+        inputSchema: {
+          type: "object",
+          properties: { url: { type: "string", description: "Optional URL to open." } },
+          required: [],
+        },
+      },
+      run: wrap("chrome_open", async (chrome, args) => {
+        const url = typeof args.url === "string" && args.url.trim() ? args.url.trim() : undefined;
+        const r = await chrome.open(url);
+        return r.ok
+          ? { ok: true, text: `AVA Chrome is visible${r.title ? `: ${r.title}` : ""}` }
+          : { ok: false, text: `error: ${r.reason}` };
+      }),
+    },
+    {
+      tool: {
         name: "chrome_navigate",
         description: "Navigate the active tab to a URL. Returns the page title.",
         inputSchema: {

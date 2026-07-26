@@ -1,8 +1,16 @@
 import { mkdirSync, existsSync, rmSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { join } from "node:path";
-import type { BrowserContext, Page } from "playwright";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { chromium } from "playwright";
+
+const execFileAsync = promisify(execFile);
+const focusScript = fileURLToPath(
+  new URL("../../../scripts/focus-ava-browser.ps1", import.meta.url),
+);
 
 export function ensureProfileDir(dir: string): void {
   mkdirSync(dir, { recursive: true });
@@ -13,6 +21,8 @@ export function ensureProfileDir(dir: string): void {
 }
 
 export type Chrome = {
+  /** Bring AVA's persistent logged-in browser window/tab to the foreground. */
+  open: (url?: string) => Promise<{ ok: boolean; reason?: string; title?: string }>;
   navigate: (url: string) => Promise<{ ok: boolean; reason?: string; title?: string }>;
   click: (selector: string) => Promise<{ ok: boolean; reason?: string }>;
   type: (selector: string, text: string) => Promise<{ ok: boolean; reason?: string }>;
@@ -41,15 +51,158 @@ export type Chrome = {
 export type ChromeConfig = {
   profileDir: string;
   screenshotDir: string;
+  /** Optional installed Chrome/Edge executable. Auto-detected on Windows. */
+  executablePath?: string | null;
+  /** Optional already-running Chrome DevTools endpoint, e.g. http://127.0.0.1:9222. */
+  cdpUrl?: string | null;
 };
 
+type WindowFocusResult = {
+  ok: boolean;
+  visible?: boolean;
+  foreground?: boolean;
+  reason?: string;
+  title?: string;
+};
+
+function cdpPort(cdpUrl: string | null): number {
+  if (!cdpUrl) return 9222;
+  try {
+    const parsed = new URL(cdpUrl);
+    return Number(parsed.port) || 9222;
+  } catch {
+    return 9222;
+  }
+}
+
+async function focusAvaBrowserWindow(
+  profileDir: string,
+  executablePath: string | null | undefined,
+  port: number,
+): Promise<WindowFocusResult> {
+  if (process.platform !== "win32") {
+    return { ok: true, visible: true, foreground: true };
+  }
+
+  try {
+    const args = [
+      "-NoLogo",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      focusScript,
+      "-Port",
+      String(port),
+      "-ProfileDir",
+      profileDir,
+    ];
+    if (executablePath) args.push("-ExecutablePath", executablePath);
+
+    const { stdout } = await execFileAsync("powershell.exe", args, {
+      timeout: 12_000,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+    const line = stdout
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .at(-1);
+    if (!line) return { ok: false, reason: "Windows returned no AVA Chrome window status." };
+    return JSON.parse(line) as WindowFocusResult;
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function restoreCdpWindow(page: Page): Promise<void> {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const current = await session.send("Browser.getWindowForTarget");
+    if (current.bounds.windowState === "minimized") {
+      await session.send("Browser.setWindowBounds", {
+        windowId: current.windowId,
+        bounds: { windowState: "normal" },
+      });
+    }
+  } finally {
+    await session.detach();
+  }
+}
+
+/** Locate an installed browser so AVA does not depend on Playwright's downloaded Chromium. */
+export function findInstalledBrowser(
+  explicitPath: string | null | undefined = null,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const candidates = [
+    explicitPath,
+    env.PROGRAMFILES ? join(env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe") : null,
+    env["PROGRAMFILES(X86)"] ? join(env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe") : null,
+    env.LOCALAPPDATA ? join(env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe") : null,
+    env.PROGRAMFILES ? join(env.PROGRAMFILES, "Microsoft", "Edge", "Application", "msedge.exe") : null,
+    env["PROGRAMFILES(X86)"] ? join(env["PROGRAMFILES(X86)"], "Microsoft", "Edge", "Application", "msedge.exe") : null,
+    env.LOCALAPPDATA ? join(env.LOCALAPPDATA, "Microsoft", "Edge", "Application", "msedge.exe") : null,
+  ].filter((p): p is string => !!p);
+  return candidates.find((p) => existsSync(p)) ?? null;
+}
+
+function launchFailure(error: unknown, executablePath: string | null, cdpUrl: string | null): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/spawn EPERM|access is denied/i.test(message)) {
+    return new Error(
+      "Windows blocked AVA from launching Chrome. Run scripts/start-ava-browser.ps1 once " +
+      "outside the managed runner, then retry; AVA will attach through " +
+      `${cdpUrl ?? "http://127.0.0.1:9222"}.`,
+    );
+  }
+  if (/Executable doesn't exist/i.test(message)) {
+    return new Error(
+      "No usable browser executable was found. Install Google Chrome or set " +
+      "CHROME_EXECUTABLE_PATH; downloading Playwright Chromium is not required.",
+    );
+  }
+  return new Error(
+    `AVA browser failed (${executablePath ?? "Playwright default"}): ${message}`,
+  );
+}
+
 export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
-  ensureProfileDir(cfg.profileDir);
+  mkdirSync(cfg.profileDir, { recursive: true });
   mkdirSync(cfg.screenshotDir, { recursive: true });
 
-  const ctx: BrowserContext = await chromium.launchPersistentContext(cfg.profileDir, {
-    headless: false,
-  });
+  let attachedBrowser: Browser | null = null;
+  let attachedOverCdp = false;
+  let ctx: BrowserContext | null = null;
+  const cdpUrl = cfg.cdpUrl?.trim() || null;
+  const executablePath = findInstalledBrowser(cfg.executablePath);
+  if (cdpUrl) {
+    try {
+      attachedBrowser = await chromium.connectOverCDP(cdpUrl, { timeout: 2_500 });
+      ctx = attachedBrowser.contexts()[0] ?? null;
+      attachedOverCdp = ctx !== null;
+    } catch {
+      attachedBrowser = null;
+      ctx = null;
+    }
+  }
+
+  if (!ctx) {
+    ensureProfileDir(cfg.profileDir);
+    try {
+      ctx = await chromium.launchPersistentContext(cfg.profileDir, {
+        headless: false,
+        ...(executablePath ? { executablePath } : {}),
+      });
+    } catch (error) {
+      throw launchFailure(error, executablePath, cdpUrl);
+    }
+  }
+
   let page: Page = ctx.pages()[0] ?? (await ctx.newPage());
   let alive = true;
 
@@ -66,6 +219,31 @@ export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
   ctx.browser()?.on("disconnected", () => { alive = false; });
 
   return {
+    async open(url) {
+      try {
+        if (url) {
+          await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
+        }
+        if (attachedOverCdp) await restoreCdpWindow(page);
+        await page.bringToFront();
+        const focused = await focusAvaBrowserWindow(
+          cfg.profileDir,
+          executablePath,
+          cdpPort(cdpUrl),
+        );
+        if (!focused.ok || !focused.visible) {
+          return {
+            ok: false,
+            reason:
+              focused.reason ??
+              "Windows did not confirm a visible AVA-profile Chrome window.",
+          };
+        }
+        return { ok: true, title: await page.title().catch(() => "") };
+      } catch (e) {
+        return { ok: false, reason: String(e instanceof Error ? e.message : e) };
+      }
+    },
     async navigate(url) {
       try {
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 });
@@ -224,7 +402,9 @@ export async function buildChrome(cfg: ChromeConfig): Promise<Chrome> {
     },
     async close() {
       alive = false;
-      await ctx.close();
+      // A CDP browser is owned by the Windows launcher, not this server. Closing
+      // its default context would shut the user's persistent AVA Chrome window.
+      if (!attachedOverCdp) await ctx.close();
     },
   };
 }

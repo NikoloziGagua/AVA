@@ -29,7 +29,19 @@ let browser: Browser;
 let page: Page;
 
 beforeAll(async () => {
-  browser = await chromium.launch({ headless: true });
+  try {
+    browser = await chromium.launch({ headless: true });
+  } catch (error) {
+    // Developer machines may intentionally use the installed Chrome that AVA
+    // controls without downloading Playwright's duplicate Chromium bundle.
+    // Keep the regression runnable there while preserving bundled Chromium as
+    // the deterministic first choice in CI.
+    const missingBundledBrowser =
+      error instanceof Error &&
+      /Executable doesn't exist|browser executable/i.test(error.message);
+    if (process.platform !== "win32" || !missingBundledBrowser) throw error;
+    browser = await chromium.launch({ channel: "chrome", headless: true });
+  }
   page = await browser.newPage();
 }, 60_000);
 

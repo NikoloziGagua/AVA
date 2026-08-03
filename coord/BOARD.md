@@ -218,6 +218,54 @@ NEEDS: codex
 
 ---
 
+### 2026-08-04 - codex - task receipt reliability fixes complete
+
+I fixed and committed the defects from the live receipt investigation in
+`9642bbb` (`fix(observability): make task receipts reliable`) without entering
+Claude-owned Explorer or Forge.
+
+The Stop path now publishes one immediate cancelled receipt/event, aborts the
+active tool and child process tree, and suppresses the cooperative runtime's
+late tool failure/final/done. A real 30-second PowerShell live test was stopped
+after dispatch and produced exactly `tool_call -> receipt -> killed`, with no
+false result afterward. Terse retry/continue turns now retain the nearest real
+user objective in receipts, Mission Control, and playbook capture while the
+literal message remains immutable. Pressing New remounts a genuinely blank chat
+even when the current `chat-new` screen acquired an internal session.
+
+Known local failures (ENOENT, allowlist, access/permission errors) are now
+classified as known causes, ANSI CSI/OSC debris is removed before diagnostic
+text is stored, and an action-routed no-tool answer is labelled Response
+delivered rather than implying that an external outcome was verified. Sanitized
+terminal receipts are persisted in SQLite for 30 days and replay by exact task
+ID across the five-minute cache boundary and server restarts.
+
+Mission Control now leaves the response event nonterminal and closes the run at
+`agent.runtime.finished`, preventing the old late-event artifact. OpenAI and
+Anthropic provider usage is recorded once per provider response; tokens and
+cache hits are visible, while monetary cost remains honestly Not reported until
+actual provider cost exists. Accounting failures are isolated from the task.
+
+Verification completed: 71 focused server cases and 7 focused UI cases pass;
+the complete server and web suites pass sequentially; server and web production
+builds pass. Live tests proved known missing-file attribution with clean text,
+retry objective inheritance, exact receipt replay after a real restart, active
+tool cancellation, and real OpenAI usage (9,025 input / 26 output / 8,903
+cached) with zero late events. Temporary sessions, devices, codes, and test
+runs were removed afterward. The committed build was restarted and is healthy
+on OpenAI; AVA Chrome is visible and ready.
+
+The separate Explorer reality audit still fails on its pre-existing registry
+drift: 20 unsupported/stale claims (11 missing symbols, 6 unserved routes, and
+3 real tools absent from the map). I did not modify that Claude-owned area or
+commit the audit's generated timestamp. The existing ES2024 and large-bundle
+warnings also remain.
+
+NEEDS: niko (manual confirmation of the New button and receipt presentation;
+route the Explorer registry drift to Claude)
+
+---
+
 ### 2026-08-03 - codex - Strategy Room claim
 
 Niko explicitly asked me to build the Strategy Room discussed in this session.
@@ -359,3 +407,15 @@ behavior, plus the directly related tests. I will not modify Claude-owned
 Explorer or Forge.
 
 NEEDS: codex
+
+---
+
+### 2026-08-04 - codex - completion handoff placement note
+
+The full `task receipt reliability fixes complete` entry was accidentally
+inserted earlier in this append-only thread because `NEEDS: codex` was not a
+unique patch anchor. I have left every existing word intact. That completion
+entry, commit `9642bbb`, its verification evidence, and its Explorer-drift
+qualification are the current final handoff.
+
+NEEDS: niko

@@ -346,3 +346,16 @@ unique. I have left the append-only history intact and am adding this handoff at
 the actual end. Its findings and recommended fix order remain current.
 
 NEEDS: niko
+
+---
+
+### 2026-08-04 - codex - task receipt reliability fix claim
+
+Niko approved fixing the defects found in the live investigation. I am
+continuing in the Codex-owned task-receipt and Mission Control execution path.
+The scoped work is active-tool cancellation correctness, retry objective
+lineage, New-chat reset behavior, cause/ANSI semantics, verification and replay
+behavior, plus the directly related tests. I will not modify Claude-owned
+Explorer or Forge.
+
+NEEDS: codex

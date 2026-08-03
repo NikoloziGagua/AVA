@@ -306,6 +306,60 @@ CREATE TABLE IF NOT EXISTS discussions (
   session_id TEXT
 );
 
+-- Strategy Room: a persistent, attributed discussion shared by Niko, AVA and
+-- real external agent sessions. Approval records a decision only; it never
+-- executes development work.
+CREATE TABLE IF NOT EXISTS strategy_rooms (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'discussing',
+  phase TEXT NOT NULL DEFAULT 'framing',
+  active_actor TEXT,
+  round INTEGER NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1,
+  living_brief TEXT,
+  conclusion TEXT,
+  codex_thread_id TEXT,
+  error TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  approved_at INTEGER,
+  stopped_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_rooms_updated
+  ON strategy_rooms(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS strategy_messages (
+  id TEXT PRIMARY KEY,
+  room_id TEXT NOT NULL REFERENCES strategy_rooms(id) ON DELETE CASCADE,
+  sequence INTEGER NOT NULL,
+  author TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  correlation_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE(room_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_messages_room
+  ON strategy_messages(room_id, sequence);
+
+-- Append-only transport journal. SQLite is authoritative; the in-process
+-- subscriber only removes latency, and clients can replay from `seq`.
+CREATE TABLE IF NOT EXISTS strategy_events (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL UNIQUE,
+  room_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_events_room
+  ON strategy_events(room_id, seq);
+
 
 CREATE TABLE IF NOT EXISTS watches (
   id TEXT PRIMARY KEY,

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Plus, List, Brain, Settings2, Sparkles, Radar } from "lucide-react";
+import { Home, Plus, List, Brain, Settings2, Sparkles, Radar, MessagesSquare } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
 import { TubelightNav, type TubelightItem } from "./components/ava/TubelightNav.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
@@ -16,6 +16,7 @@ import { ChatListScreen } from "./orbit/ChatListScreen.js";
 import { VoiceScreen } from "./voice/VoiceScreen.js";
 import { ExplorerScreen } from "./explorer/ExplorerScreen.js";
 import { MissionControlScreen } from "./mission-control/MissionControlScreen.js";
+import { StrategyRoomScreen } from "./strategy/StrategyRoomScreen.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 
@@ -27,6 +28,7 @@ type View =
   | { name: "memory" }
   | { name: "rules" }
   | { name: "self" }
+  | { name: "strategy" }
   | { name: "capabilities" }
   | { name: "list" };
 
@@ -46,6 +48,7 @@ function navForView(v: View): string | undefined {
     case "memory": return "Memory";
     case "rules": return "Rules";
     case "self": return "Self";
+    case "strategy": return "Room";
     case "capabilities": return "Explore";
     case "list": return "Chats";
     default: return undefined;
@@ -117,6 +120,7 @@ export function App() {
     { name: "Chats", icon: List, onSelect: () => setView({ name: "list" }) },
     { name: "Memory", icon: Brain, onSelect: () => setView({ name: "memory" }) },
     { name: "Explore", icon: Radar, onSelect: () => setView({ name: "capabilities" }) },
+    { name: "Room", icon: MessagesSquare, onSelect: () => setView({ name: "strategy" }) },
     { name: "Rules", icon: Settings2, onSelect: () => setView({ name: "rules" }) },
     { name: "Self", icon: Sparkles, onSelect: () => setView({ name: "self" }) },
   ];
@@ -253,6 +257,20 @@ export function App() {
             transition={enterT}
           >
             <SelfScreen onClose={() => setView({ name: "orbit" })} />
+          </motion.div>
+        )}
+        {view.name === "strategy" && (
+          <motion.div
+            key="strategy"
+            data-view="strategy"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
+          >
+            <StrategyRoomScreen />
           </motion.div>
         )}
         {view.name === "capabilities" && (

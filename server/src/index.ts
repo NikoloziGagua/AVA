@@ -37,6 +37,7 @@ import {
 } from "./routes/capabilities.js";
 import { explorerRoutes } from "./routes/explorer.js";
 import { missionControlRoutes } from "./routes/mission-control.js";
+import { strategyRoutes } from "./routes/strategy.js";
 import { apiNotFound } from "./routes/api-fallback.js";
 import { markStaleExplorerTasksInterrupted } from "./explorer/store.js";
 import { ObservabilityService } from "./observability/store.js";
@@ -74,12 +75,20 @@ import { createDiscussion, getDiscussion, listDiscussions, failStaleDiscussions 
 import { runDiscussion } from "./self/discuss.js";
 import { appendMessage } from "./state/messages.js";
 import { selfRoutes } from "./routes/self.js";
+import { StrategyRoomStore } from "./strategy/store.js";
+import { StrategyRoomCoordinator } from "./strategy/coordinator.js";
+import { buildCodexConsultant } from "./strategy/codex-consultant.js";
 
 const startedAt = Date.now();
 const cfg = loadConfig();
 const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
 const observability = new ObservabilityService(db);
+const strategyStore = new StrategyRoomStore(db);
+const interruptedStrategyRooms = strategyStore.failInterruptedRooms();
+if (interruptedStrategyRooms > 0) {
+  log.info({ interruptedStrategyRooms }, "strategy: paused rooms orphaned by restart");
+}
 const orphanedMissionRuns = observability.store.markOrphanedRuns();
 const purgedMissionDetails = observability.store.purgeExpiredDetails();
 if (
@@ -350,6 +359,13 @@ const provider = buildProvider({
   anthropicApiKey: cfg.anthropicApiKey,
   log,
 });
+const strategyCoordinator = new StrategyRoomCoordinator({
+  store: strategyStore,
+  provider,
+  codex: buildCodexConsultant({ pidfiles }),
+  repoRoot: cfg.repoRoot,
+  log,
+});
 
 // ─── Self-improvement wiring ─────────────────────────────────────────────
 // claude_code for self-edits runs in a git worktree under the OS temp dir, so
@@ -582,6 +598,7 @@ app.use("/api/explorer", explorerRoutes(requireToken(db), {
   capabilitySnapshot: () => buildCapabilitySnapshot(capabilityRouteDeps),
 }));
 app.use("/api/mission-control", missionControlRoutes(requireToken(db), observability));
+app.use("/api/strategy", strategyRoutes(requireToken(db), strategyCoordinator));
 app.use("/api/playbooks", playbooksRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
 app.use("/api/watches", watchesRoutes(db, requireToken(db)));
 app.use("/api/people", peopleRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
@@ -626,6 +643,7 @@ async function shutdown(reason: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info({ reason }, "shutting down");
+  strategyCoordinator.shutdown();
   // Stop accepting new connections first so the port frees promptly for the
   // next process (tsx watch / self-dev restart) instead of racing EADDRINUSE.
   try { httpServer.close(); } catch { /* may not be listening yet */ }

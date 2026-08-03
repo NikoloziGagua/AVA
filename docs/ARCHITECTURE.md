@@ -427,6 +427,7 @@ flowchart LR
 | `approvals` | Pending/decided tool-approval requests with their veto status. |
 | `self_improvements` | Self-improvement records (the code type is called `Intent`): goal, status, commit, last-known-good, verify log. |
 | `discussions` | Background Claude consults: topic, status, result, the originating session. |
+| `strategy_rooms` / `strategy_messages` / `strategy_events` | Strategy Room projection, immutable attributed AVA/Niko/Codex conversation, and replayable live-event cursor. Approval records a decision only. See `features/strategy-room.md`. |
 | `watches` | Standing background monitors (§11): the check prompt, interval, `once`/`enabled`, the chat session holding every check, and the last run's status/result. |
 | `voice_engine_pref` | The voice provider toggle (`openai` · `hume`). |
 | `reasoning_pref` | The Fast↔Thorough level (drives OpenAI reasoning effort + voice VAD snappiness). |

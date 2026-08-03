@@ -152,6 +152,58 @@ another large visual expansion.
 
 NEEDS: niko
 
+---
+
+### 2026-08-04 - codex - deep live task-receipt investigation
+
+I investigated Niko's duplicate-looking receipt and ran a larger live and
+automated matrix without changing product code. The exact pasted task
+`vjEli7W1-LsZ` has one stored user message, one stored assistant message, one
+failed `fs_read`, and one Mission Control response event. Fresh runs, forced
+SSE reconnects, immediate replay, and repeated reopen cycles each rendered one
+receipt with no duplicate event IDs. The duplicate block in the pasted text was
+therefore most likely introduced while copying; if it appeared twice visually,
+a screenshot or recording is still needed because no server, storage, stream,
+or DOM duplication was reproduced.
+
+The tests exposed real defects that should be fixed next:
+
+1. Stop works during model streaming, but Stop during an active tool is
+   incorrectly converted into a failed tool result followed by `final` and
+   `done`; the receipt says `Failed / Attempt finished` instead of stopped.
+2. Retry messages such as `try again` become the receipt objective instead of
+   inheriting the original task objective. Niko's real research retry confirms
+   this in Mission Control as well as the controlled test.
+3. Clicking New while the UI is already on `chat-new` but has internally gained
+   a session does not reset the chat, so the next prompt remains in that session.
+4. Explicit errors such as ENOENT and allowlist rejection are labelled root
+   cause `likely` rather than `known`, and ANSI suffix debris can survive
+   sanitization.
+5. Receipt replay is intentionally only five minutes in memory; after expiry or
+   restart, persisted messages reopen without their receipts.
+6. Typed intent routing is action-biased, so substantive no-tool answers may be
+   marked unverified even when response delivery itself is observable.
+7. Mission Control treats `agent.response.completed` as terminal, making the
+   following runtime-finished event late, and current runs record zero model
+   token/cost data.
+
+Controlled live cases covered a verified stream stop, failed missing-file read,
+partial one-success/one-failure read, retry, active-tool stop, reconnect stress,
+and session reopen. Receipt-focused server and web tests passed ten repeated
+iterations. The complete server suite and all 323 web tests passed when run
+sequentially; launching both complete suites concurrently caused resource/timing
+failures, so sequential execution is the reliable repository check. Server and
+web production builds also pass. The temporary diagnostic browser device was
+revoked and its AVA tab closed.
+
+Correction to my earlier handoff: `/api/health` reports uptime in milliseconds,
+not seconds. The runtime was roughly 43 minutes old, not 30 days old. That prior
+restart rationale was incorrect, although the live process did contain the new
+receipt build.
+
+NEEDS: niko (approve fixes, recommended order: tool-stop lifecycle, objective
+lineage/New-chat reset, then receipt semantics and persistence)
+
 ### 2026-08-03 - codex - task result receipt claim
 
 Niko approved the Strategy Room's bounded Option A implementation brief and
@@ -281,5 +333,16 @@ text contains the first receipt twice with the same task ID, but the source
 renders only the newest receipt once; whether this duplicated visually or only
 during copy/paste is not yet established. No product code was changed in this
 review turn.
+
+NEEDS: niko
+
+---
+
+### 2026-08-04 - codex - investigation handoff placement note
+
+The full deep-investigation entry above was accidentally inserted after the
+coordination reply rather than at the end because the patch anchor was not
+unique. I have left the append-only history intact and am adding this handoff at
+the actual end. Its findings and recommended fix order remain current.
 
 NEEDS: niko

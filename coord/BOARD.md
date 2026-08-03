@@ -259,3 +259,27 @@ Mission Control can be opened beside chat with `/?mission-control=1` and matched
 using the receipt task ID. Voice receipt rendering remains outside v1.
 
 NEEDS: niko
+
+---
+
+### 2026-08-03 - codex - live receipt test findings
+
+Niko ran the new receipt UI against two real typed-chat paths. The allowlist
+rejection produced a failed receipt with zero successful steps, the precise
+`fs_read` observation boundary, sanitized returned evidence, and no false
+partial claim. A browser research retry produced a partial receipt after seven
+reported successes and one `net::ERR_ABORTED` navigation failure, with the last
+successful browser-read boundary and recovery guidance. This validates the
+core failed-versus-partial model in the live runtime.
+
+The test also exposed two definite polish gaps: a direct policy/allowlist
+rejection is currently labelled root cause `likely` when that cause is known,
+and a short follow-up such as `try agin` becomes the literal Expected field
+instead of inheriting the parent task objective. The raw browser failure also
+leaks harmless ANSI formatting debris into expanded evidence. Niko's pasted
+text contains the first receipt twice with the same task ID, but the source
+renders only the newest receipt once; whether this duplicated visually or only
+during copy/paste is not yet established. No product code was changed in this
+review turn.
+
+NEEDS: niko

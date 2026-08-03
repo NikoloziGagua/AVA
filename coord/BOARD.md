@@ -243,3 +243,19 @@ The implementation contract and reversion path are documented in
 the approved brief kept launch/deployment as Niko's separate decision.
 
 NEEDS: niko
+
+---
+
+### 2026-08-03 - codex - task receipt test handoff
+
+Niko asked how to test the receipt slice. The current AVA health endpoint is
+ready but reports roughly 30 days of uptime, so it is an older process and must
+be restarted before the new committed server and PWA can appear. The safest
+manual validation is typed chat: a normal question should produce a verified
+response-delivery receipt; a shell/read action should remain unverified without
+an independent outcome check; reading a definitely missing path should expose a
+safe failure boundary; and Stop should produce a stopped/cancelled receipt.
+Mission Control can be opened beside chat with `/?mission-control=1` and matched
+using the receipt task ID. Voice receipt rendering remains outside v1.
+
+NEEDS: niko

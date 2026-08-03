@@ -7,6 +7,12 @@ export type ActiveRun = {
   runId: string;
   abort: AbortController;
   buffer: SseBuffer;
+  /**
+   * Publishes the user-visible cancellation boundary synchronously when Stop is
+   * pressed. The agent still owns cleanup, but the stream must not close before
+   * the receipt and `killed` event enter the replay buffer.
+   */
+  cancel?: () => void;
 };
 
 export class ActiveRuns {

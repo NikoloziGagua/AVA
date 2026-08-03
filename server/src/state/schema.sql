@@ -20,6 +20,22 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
 
+-- Sanitized task-result snapshots shown in conversation. Mission Control owns
+-- the full event history; this table stores only the bounded receipt JSON so
+-- the latest diagnostic card survives a server restart or later reopen.
+CREATE TABLE IF NOT EXISTS task_receipts (
+  task_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  receipt_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_receipts_session
+  ON task_receipts(session_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_task_receipts_expiry
+  ON task_receipts(expires_at);
+
 CREATE TABLE IF NOT EXISTS tool_calls (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

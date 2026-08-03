@@ -58,7 +58,16 @@ function navForView(v: View): string | undefined {
 export function App() {
   const [paired, setPaired] = useState<boolean>(!!getToken());
   const [view, setView] = useState<View>({ name: "splash" });
+  // A fresh-chat view can remain `sessionId:null` after ChatScreen internally
+  // receives a server session. Incrementing this key makes a second press of
+  // New genuinely discard that draft and mount a clean conversation.
+  const [newChatRevision, setNewChatRevision] = useState(0);
   const reduced = useReducedMotion();
+
+  const openNewChat = (initialText?: string) => {
+    setNewChatRevision((revision) => revision + 1);
+    setView({ name: "chat", sessionId: null, ...(initialText ? { initialText } : {}) });
+  };
 
   // Expired/invalid token → back to pairing. api.ts dispatches `ava:unauthorized`
   // (+ clearToken) on a 401; we just listen and drop back to the pairing screen.
@@ -116,7 +125,7 @@ export function App() {
   // view, and lets you jump straight between Home / Chats / Memory / Rules / Self.
   const navItems: TubelightItem[] = [
     { name: "Home", icon: Home, onSelect: () => setView({ name: "orbit" }) },
-    { name: "New", icon: Plus, onSelect: () => setView({ name: "chat", sessionId: null }) },
+    { name: "New", icon: Plus, onSelect: () => openNewChat() },
     { name: "Chats", icon: List, onSelect: () => setView({ name: "list" }) },
     { name: "Memory", icon: Brain, onSelect: () => setView({ name: "memory" }) },
     { name: "Explore", icon: Radar, onSelect: () => setView({ name: "capabilities" }) },
@@ -170,7 +179,7 @@ export function App() {
             transition={enterT}
           >
             <OrbitScreen
-              onCommand={(text) => setView({ name: "chat", sessionId: null, initialText: text })}
+              onCommand={(text) => openNewChat(text)}
               onEnterVoice={() => setView({ name: "voice", from: "orbit", sessionId: null })}
               onExplore={() => setView({ name: "capabilities" })}
             />
@@ -178,7 +187,7 @@ export function App() {
         )}
         {view.name === "chat" && (
           <motion.div
-            key={`chat-${view.sessionId ?? "new"}`}
+            key={view.sessionId ? `chat-${view.sessionId}` : `chat-new-${newChatRevision}`}
             data-view="chat"
             className="absolute inset-0"
             initial={SCREEN.from}
@@ -285,7 +294,7 @@ export function App() {
             transition={enterT}
           >
             <ExplorerScreen
-              onLaunch={(text) => setView({ name: "chat", sessionId: null, initialText: text })}
+              onLaunch={(text) => openNewChat(text)}
             />
           </motion.div>
         )}

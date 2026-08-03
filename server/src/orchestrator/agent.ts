@@ -1,6 +1,6 @@
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildToolRegistry } from "./tool-registry.js";
-import type { LLMProvider, Message, ToolCall } from "./llm/types.js";
+import type { LLMProvider, Message, ProviderUsage, ToolCall } from "./llm/types.js";
 import type { ReasoningEffort } from "./reasoning.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import type { Chrome } from "../tools/chrome.js";
@@ -75,6 +75,8 @@ export type RunOpts = {
    * default (conversation=minimal, action=low) when undefined.
    */
   reasoningEffort?: ReasoningEffort;
+  /** Provider-reported usage is accounting data, not conversational output. */
+  recordUsage?: (usage: ProviderUsage) => void;
 };
 
 export async function runAgent(opts: RunOpts): Promise<void> {
@@ -153,9 +155,18 @@ export async function runAgent(opts: RunOpts): Promise<void> {
   // exhaustion we still emit a graceful final below rather than ending silently.
   const MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS) || 1000;
   let concluded = false;
+  const concludeCancelled = () => {
+    if (killed) return;
+    emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : { reason: "manual" } });
+    concluded = true;
+    killed = true;
+  };
 
   for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
-    if (abort.signal.aborted) break;
+    if (abort.signal.aborted) {
+      concludeCancelled();
+      break;
+    }
     let assistantText = "";
     const pendingCalls: ToolCall[] = [];
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error" = "end_turn";
@@ -198,6 +209,11 @@ export async function runAgent(opts: RunOpts): Promise<void> {
           // a tool event.
           flushDelta();
           pendingCalls.push(ev.call);
+        } else if (ev.kind === "usage") {
+          // Keep accounting out of the user-facing event grammar while still
+          // making real provider usage visible in Mission Control. Telemetry
+          // can never fail the response it observes.
+          try { opts.recordUsage?.(ev.usage); } catch { /* observation only */ }
         } else if (ev.kind === "done") {
           stopReason = ev.stop_reason;
           if (ev.stop_reason === "error") {
@@ -209,6 +225,10 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       }
     } catch (err) {
       flushDelta();
+      if (abort.signal.aborted) {
+        concludeCancelled();
+        break;
+      }
       emit({ kind: "error", payload: { message: err instanceof Error ? err.message : String(err) } });
       return;
     }
@@ -219,9 +239,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     flushDelta();
 
     if (stopReason === "abort" || abort.signal.aborted) {
-      emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : { reason: "manual" } });
-      concluded = true;
-      killed = true;
+      concludeCancelled();
       break;
     }
 
@@ -293,11 +311,16 @@ export async function runAgent(opts: RunOpts): Promise<void> {
         // narrow gap between the policy decision and the tool actually running.
         if (abort.signal.aborted) break;
         const r = await withTimeout(registry.dispatch(call, callAbort.signal), budget, call.name);
+        // A cooperative tool may resolve with an "aborted" result after Stop.
+        // Cancellation is a lifecycle event, not a failed tool outcome: do not
+        // poison the receipt or ask the model for another turn.
+        if (abort.signal.aborted) break;
         emit({ kind: "tool_result", payload: { tool: call.name, ok: !r.is_error, result: r.output } });
         messages.push({ role: "tool", content: r });
         turnResultClasses.push(classifyActionResult(r));
       } catch (err) {
         callAbort.abort();
+        if (abort.signal.aborted) break;
         const msg = err instanceof Error ? err.message : String(err);
         emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: msg } });
         messages.push({ role: "tool", content: { call_id: call.id, output: msg, is_error: true } });
@@ -305,6 +328,11 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       } finally {
         abort.signal.removeEventListener("abort", onRunAbort);
       }
+    }
+
+    if (abort.signal.aborted) {
+      concludeCancelled();
+      break;
     }
 
     // Before the next turn generates the model's wording, if any action-tool

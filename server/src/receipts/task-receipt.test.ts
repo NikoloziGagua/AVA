@@ -135,6 +135,36 @@ describe("TaskReceiptBuilder", () => {
     });
   });
 
+  it("marks an explicit local file failure known and removes ANSI escapes", () => {
+    const receipt = observe(
+      build(),
+      { kind: "tool_call", payload: { tool: "fs_read", args: {} } },
+      { kind: "tool_result", payload: {
+        tool: "fs_read",
+        ok: false,
+        result: "\u001b[2mENOENT: no such file or directory\u001b[0m",
+      } },
+      { kind: "final", payload: { text: "The file does not exist." } },
+      { kind: "done", payload: {} },
+    );
+    expect(receipt.rootCause).toBe("known");
+    expect(JSON.stringify(receipt)).not.toMatch(/\[(?:2|0)m/);
+  });
+
+  it("separates verified response delivery from an unverified action outcome", () => {
+    const receipt = observe(
+      build("action"),
+      { kind: "final", payload: { text: "Here is the explanation." } },
+      { kind: "done", payload: {} },
+    );
+    expect(receipt).toMatchObject({
+      lifecycle: "finished",
+      outcome: "unverified",
+      verificationScope: "response_delivery",
+      lastVerifiedStage: "The final response reached this conversation.",
+    });
+  });
+
   it("keeps the request and newest evidence when a long run exceeds the receipt limit", () => {
     const builder = build();
     for (let index = 0; index < 10; index += 1) {

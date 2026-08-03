@@ -37,17 +37,29 @@ describe("runAgent (v2 loop)", () => {
         [
           { kind: "delta", text: "Good morning, " },
           { kind: "delta", text: "Sir." },
+          {
+            kind: "usage",
+            usage: {
+              providerRequestId: "resp-conversation-1",
+              model: "gpt-5.6",
+              inputTokens: 80,
+              outputTokens: 12,
+              cachedTokens: 30,
+            },
+          },
           { kind: "done", stop_reason: "end_turn" },
         ],
       ],
     });
     const events: AgentEvent[] = [];
+    const usage = vi.fn(() => { throw new Error("isolated accounting failure"); });
     const db = openInMemoryDb();
     seedAllowAllRule(db);
     await runAgent({
       prompt: "hi",
       abort: new AbortController(),
       emit: (e: AgentEvent) => events.push(e),
+      recordUsage: usage,
       runId: "r1",
       sessionId: "s1",
       db,
@@ -59,6 +71,11 @@ describe("runAgent (v2 loop)", () => {
     expect(events.find((e) => e.kind === "final")?.payload).toEqual({ text: "Good morning, Sir." });
     expect(events.find((e) => e.kind === "tool_call")).toBeUndefined();
     expect(events.find((e) => e.kind === "done")).toBeDefined();
+    expect(usage).toHaveBeenCalledWith(expect.objectContaining({
+      providerRequestId: "resp-conversation-1",
+      inputTokens: 80,
+      outputTokens: 12,
+    }));
   });
 
   it("tool path: dispatches a tool_call, packages the result, finalizes", async () => {
@@ -350,6 +367,52 @@ describe("runAgent (v2 loop)", () => {
     ac.abort();
     await promise;
     expect(events.find((e) => e.kind === "killed")).toBeDefined();
+  });
+
+  it("treats Stop during an active tool as cancellation, not a failed result", async () => {
+    const ac = new AbortController();
+    let toolStarted!: () => void;
+    const started = new Promise<void>((resolve) => { toolStarted = resolve; });
+    const tool: ToolDef = {
+      tool: { name: "shell", description: "shell",
+        inputSchema: { type: "object", properties: { command: { type: "string" } } } as const },
+      run: vi.fn(async (_args, ctx) => {
+        toolStarted();
+        await new Promise<void>((resolve) => {
+          if (ctx.signal.aborted) return resolve();
+          ctx.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return { text: "ERROR: aborted", ok: false };
+      }),
+    };
+    const provider = new MockLLMProvider({
+      scripts: [[
+        { kind: "tool_call", call: { id: "c-stop", name: "shell", args: { command: "wait" } } },
+        { kind: "done", stop_reason: "tool_use" },
+      ]],
+    });
+    const events: AgentEvent[] = [];
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    const running = runAgent({
+      prompt: "wait until I stop this",
+      abort: ac,
+      emit: (event) => events.push(event),
+      runId: "r-stop-tool", sessionId: "s-stop-tool", db,
+      mode: "action",
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [tool] } as never,
+    });
+
+    await started;
+    ac.abort();
+    await running;
+
+    expect(events.filter((event) => event.kind === "tool_call")).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "tool_result")).toHaveLength(0);
+    expect(events.filter((event) => event.kind === "killed")).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "final")).toHaveLength(0);
+    expect(events.at(-1)?.kind).toBe("done");
   });
 });
 

@@ -359,7 +359,13 @@ export function MissionControlScreen() {
                   { icon: Clock3, label: "Elapsed", value: formatDuration(elapsed(selectedRun)) },
                   { icon: Activity, label: "Events", value: String(selectedRun.eventCount) },
                   { icon: Coins, label: "Direct cost", value: selectedRun.directCostMicrousd ? `$${(selectedRun.directCostMicrousd / 1_000_000).toFixed(4)}` : "Not reported" },
-                  { icon: Bot, label: "Tokens", value: (selectedRun.inputTokens + selectedRun.outputTokens).toLocaleString() },
+                  {
+                    icon: Bot,
+                    label: "Tokens",
+                    value: selectedRun.inputTokens + selectedRun.outputTokens > 0
+                      ? (selectedRun.inputTokens + selectedRun.outputTokens).toLocaleString()
+                      : "Not reported",
+                  },
                   { icon: Eye, label: "Verification", value: selectedRun.verificationStatus.replaceAll("_", " ") },
                 ].map(({ icon: Icon, label, value }) => (
                   <div key={label} className="rounded-xl border border-white/8 bg-white/[0.025] p-3">

@@ -21,6 +21,7 @@ describe("openDb", () => {
     const names = tables.map((t) => t.name).sort();
     expect(names).toContain("sessions");
     expect(names).toContain("messages");
+    expect(names).toContain("task_receipts");
     expect(names).toContain("tool_calls");
     expect(names).toContain("explorer_tasks");
     expect(names).toContain("explorer_events");

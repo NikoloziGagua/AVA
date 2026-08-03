@@ -37,6 +37,9 @@ export function TaskReceiptCard({ receipt }: { receipt: TaskReceipt }) {
   const style = OUTCOME_STYLE[receipt.outcome];
   const Icon = style.Icon;
   const concerning = receipt.outcome !== "verified" || receipt.lifecycle !== "finished";
+  const outcomeLabel = receipt.outcome === "unverified" && receipt.verificationScope === "response_delivery"
+    ? "Response delivered"
+    : RECEIPT_OUTCOME_LABEL[receipt.outcome];
 
   return (
     <div className="flex justify-start" data-testid="task-receipt">
@@ -63,7 +66,7 @@ export function TaskReceiptCard({ receipt }: { receipt: TaskReceipt }) {
                   className="rounded-full px-2 py-0.5 text-[10px] font-medium"
                   style={{ color: style.color, background: style.surface }}
                 >
-                  {RECEIPT_OUTCOME_LABEL[receipt.outcome]}
+                  {outcomeLabel}
                 </span>
                 <span className="text-[10px] text-white/35">{RECEIPT_LIFECYCLE_LABEL[receipt.lifecycle]}</span>
               </div>

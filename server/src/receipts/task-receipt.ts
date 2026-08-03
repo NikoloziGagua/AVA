@@ -55,6 +55,7 @@ type ToolObservation = {
   tool: string;
   classification: ActionResultClass;
   detail: string | null;
+  knownCause: boolean;
 };
 
 const MAX_EXPECTED_CHARS = 240;
@@ -62,7 +63,7 @@ const MAX_DETAIL_CHARS = 180;
 const MAX_EVIDENCE = 8;
 
 /**
- * Builds a small, transient result receipt from the same authoritative event
+ * Builds a small, sanitized result receipt from the same authoritative event
  * seam that feeds the chat stream. It deliberately records no thoughts, raw
  * tool arguments, or full tool outputs. A successful tool return is observed
  * operational evidence, not automatic proof that the user's external goal was
@@ -112,7 +113,12 @@ export class TaskReceiptBuilder {
         const detail = classification === "ok"
           ? null
           : safeText(event.payload.result, MAX_DETAIL_CHARS) || "The tool returned no diagnostic detail.";
-        this.tools.push({ tool: event.payload.tool, classification, detail });
+        this.tools.push({
+          tool: event.payload.tool,
+          classification,
+          detail,
+          knownCause: classification === "error" && isKnownToolFailure(detail),
+        });
         if (classification === "ok") {
           this.lastSuccessfulTool = event.payload.tool;
           this.addEvidence({
@@ -265,6 +271,12 @@ export class TaskReceiptBuilder {
     if (this.input.mode === "conversation" && this.toolCalls === 0) {
       return { lifecycle: "finished", outcome: "verified", verificationScope: "response_delivery" };
     }
+    if (this.toolCalls === 0) {
+      // Typed routing deliberately exposes the full tool agent for ambiguous
+      // requests. When it answers directly, delivery is proven even though the
+      // requested task outcome remains unverified.
+      return { lifecycle: "finished", outcome: "unverified", verificationScope: "response_delivery" };
+    }
     return {
       lifecycle: "finished",
       outcome: "unverified",
@@ -286,7 +298,7 @@ export class TaskReceiptBuilder {
       return "AVA delivered the requested conversational response; no external action was claimed.";
     }
     if (this.toolCalls === 0) {
-      return "AVA returned a response, but no independently verifiable action evidence was recorded.";
+      return "AVA delivered a response, but no external action or independently verified task outcome was observed.";
     }
     if (outcome === "partial" || outcome === "failed") {
       return `AVA returned a response after ${counts.successes} successful, ${counts.uncertain} uncertain, and ${counts.failures} failed tool result${this.tools.length === 1 ? "" : "s"}.`;
@@ -295,7 +307,7 @@ export class TaskReceiptBuilder {
   }
 
   private lastVerifiedStage(outcome: TaskReceiptOutcome): string {
-    if (outcome === "verified" && this.input.mode === "conversation") return "The final response reached this conversation.";
+    if (this.finalSeen && this.toolCalls === 0) return "The final response reached this conversation.";
     if (this.lastSuccessfulTool) return `${displayTool(this.lastSuccessfulTool)} returned a successful operational result.`;
     return "AVA accepted the request and created the task run.";
   }
@@ -312,6 +324,8 @@ export class TaskReceiptBuilder {
 
   private rootCause(lifecycle: TaskReceiptLifecycle, outcome: TaskReceiptOutcome): TaskReceiptRootCause {
     if (this.deniedApproval || this.pendingApproval || this.killedReason === "manual") return "known";
+    const failedTools = this.tools.filter((tool) => tool.classification === "error");
+    if (failedTools.length > 0 && failedTools.every((tool) => tool.knownCause)) return "known";
     if (this.errorMessage || this.tools.some((t) => t.classification !== "ok") || this.killedReason === "stuck") return "likely";
     if (outcome === "unverified") return "unknown";
     if (lifecycle === "running") return "unknown";
@@ -345,8 +359,16 @@ function displayTool(tool: string): string {
 
 function safeText(value: unknown, max: number): string {
   const cleaned = scrubSecrets(String(value ?? ""))
+    // Strip whole ANSI CSI/OSC escapes before removing control characters;
+    // deleting ESC first used to leave visible fragments such as `[2m`.
+    .replace(/\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g, "")
     .replace(/[\u0000-\u001f\u007f]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return cleaned.length > max ? `${cleaned.slice(0, Math.max(0, max - 1))}…` : cleaned;
+}
+
+function isKnownToolFailure(detail: string | null): boolean {
+  if (!detail) return false;
+  return /(?:\bENOENT\b|no such file or directory|path not in allowlist|\bEACCES\b|access is denied|permission denied)/i.test(detail);
 }

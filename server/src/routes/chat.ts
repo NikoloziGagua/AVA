@@ -11,7 +11,7 @@ import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
 import { classifyIntent, classifyTypedIntent } from "../orchestrator/intent-classifier.js";
 import { decideGreeting } from "../orchestrator/greeting.js";
-import { ActiveRuns } from "../orchestrator/active-runs.js";
+import { ActiveRuns, type ActiveRun } from "../orchestrator/active-runs.js";
 import { autoTitle } from "../orchestrator/auto-title.js";
 import { maybeSummarize } from "../orchestrator/auto-summary.js";
 import type { Chrome } from "../tools/chrome.js";
@@ -62,6 +62,8 @@ import { AgentObservabilityRecorder } from "../observability/agent-adapter.js";
 import type { ObservabilityService } from "../observability/store.js";
 import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
 import { TaskReceiptBuilder, type TaskReceipt } from "../receipts/task-receipt.js";
+import { resolveRunObjective } from "../orchestrator/objective-lineage.js";
+import { getTaskReceipt, pruneTaskReceipts, saveTaskReceipt } from "../state/task-receipts.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -128,10 +130,9 @@ export function chatRoutes(
 ): Router {
   const r = Router();
   // A just-finished fast run can unregister before the browser opens its SSE
-  // stream. Keep only the latest sanitized receipt per session, in memory, for
-  // five minutes so that race still gets a receipt. This is deliberately not a
-  // new diagnostic-retention system: restart clears it and no raw payloads live
-  // here. Mission Control remains the durable technical record.
+  // stream. Keep the latest sanitized receipt per session in memory for five
+  // minutes as the fast path; SQLite provides restart-safe replay for 30 days.
+  // Mission Control remains the richer technical record.
   const recentReceipts = new Map<string, { receipt: TaskReceipt; expiresAt: number }>();
   const RECEIPT_REPLAY_TTL_MS = 5 * 60_000;
   const pruneRecentReceipts = (now = Date.now()) => {
@@ -238,7 +239,7 @@ export function chatRoutes(
     // The same id keys the agent run, the tool ctx, and the pidfiles — letting
     // the kill endpoint find this run's child PIDs and kill the whole subtree.
     const runId = nanoid(12);
-    const activeRun = { sessionId, runId, abort, buffer };
+    const activeRun: ActiveRun = { sessionId, runId, abort, buffer };
     runs.register(activeRun);
     pruneRecentReceipts();
     recentReceipts.delete(sessionId);
@@ -259,6 +260,7 @@ export function chatRoutes(
     // prefix and is sent as the final user message.
     const priorRows = recent.slice(0, -1);
     const latestRow = recent.at(-1);
+    const objectiveForRun = resolveRunObjective(parsed.data.text, priorRows);
     const priorMessages: LLMMessage[] = priorRows
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({
@@ -337,7 +339,7 @@ export function chatRoutes(
     const runStartMs = Date.now();
     const receiptBuilder = new TaskReceiptBuilder({
       taskId: runId,
-      objective: parsed.data.text,
+      objective: objectiveForRun,
       mode,
       startedAt: runStartMs,
     });
@@ -380,7 +382,7 @@ export function chatRoutes(
           title: parsed.data.persist === false
             ? "Voice delegated an action"
             : "AVA chat request",
-          objective: parsed.data.text,
+          objective: objectiveForRun,
           privacyLevel: "personal",
           staleAfterMs: 90_000,
           startedAt: runStartMs,
@@ -397,16 +399,13 @@ export function chatRoutes(
           async () => {
             if (runs.get(observedSessionId) !== activeRun) return false;
             abort.abort();
+            activeRun.cancel?.();
             for (const pid of agentDeps.pidfiles.listForRun(runId)) {
               try { await killTree(pid); } catch { /* already exited */ }
             }
             if (explorerTraceReady) {
               try { cancelExplorerTaskIfRunning(db, runId); } catch { /* best effort */ }
             }
-            missionRecorder?.record({
-              kind: "killed",
-              payload: { reason: "manual" },
-            });
             return true;
           },
         );
@@ -431,10 +430,23 @@ export function chatRoutes(
             receipt,
             expiresAt: at + RECEIPT_REPLAY_TTL_MS,
           });
+          try {
+            saveTaskReceipt(db, sid, receipt, at);
+            pruneTaskReceipts(db, at);
+          } catch (err) {
+            console.warn("[receipt] durable snapshot failed:", err instanceof Error ? err.message : err);
+          }
         }
         return receipt;
       };
       const emit = (e: AgentEvent) => {
+        // Stop publishes `killed` immediately through activeRun.cancel below.
+        // Ignore the agent's later cooperative cancellation/done so one run has
+        // exactly one terminal receipt and one terminal stream event.
+        if (receiptBuilder.terminal &&
+            (e.kind === "error" || e.kind === "killed" || e.kind === "done")) {
+          return 0;
+        }
         if (e.kind === "tool_call") {
           runSteps.push({ tool: e.payload.tool, args: e.payload.args, ok: true });
         } else if (e.kind === "tool_result") {
@@ -490,7 +502,7 @@ export function chatRoutes(
             void maybeCapture({
               memoryDir: agentDeps.memoryDir,
               provider: prov,
-              goal: parsed.data.text,
+              goal: objectiveForRun,
               steps: runSteps,
               outcome: e.payload.text,
               // "succeeded" = the run delivered a final reply. Mid-run tool
@@ -548,6 +560,9 @@ export function chatRoutes(
           }
         }
         return id;
+      };
+      activeRun.cancel = () => {
+        if (!receiptBuilder.terminal) emit({ kind: "killed", payload: { reason: "manual" } });
       };
       try {
         const impl = agentDeps.runAgentImpl ?? runAgent;
@@ -645,6 +660,14 @@ export function chatRoutes(
           sessionId: sid,
           mode,
           reasoningEffort,
+          recordUsage: (usage) => {
+            if (!missionRecorder) return;
+            try { missionRecorder.recordUsage(usage); }
+            catch (err) {
+              // Accounting must never become a failure in the work it observes.
+              console.warn("[mission-control] usage record failed:", err instanceof Error ? err.message : err);
+            }
+          },
           deps: {
             // The orchestrator never reads chrome directly; tools carry their own
             // lazy accessor. Kept null so the browser stays unbooted until used.
@@ -677,6 +700,8 @@ export function chatRoutes(
               receipt,
               expiresAt: eventAt + RECEIPT_REPLAY_TTL_MS,
             });
+            try { saveTaskReceipt(db, sid, receipt, eventAt); }
+            catch { /* the run-ending error must still reach the stream */ }
             terminalReceiptPublished = true;
           }
           buffer.append({ kind: "error", payload: { message: msg } });
@@ -756,8 +781,11 @@ export function chatRoutes(
       }
       pruneRecentReceipts();
       const requestedTaskId = typeof req.query.taskId === "string" ? req.query.taskId : null;
-      const recent = recentReceipts.get(sessionId)?.receipt;
-      if (recent && (!requestedTaskId || requestedTaskId === recent.taskId)) {
+      const memoryReceipt = recentReceipts.get(sessionId)?.receipt;
+      const recent = memoryReceipt && (!requestedTaskId || requestedTaskId === memoryReceipt.taskId)
+        ? memoryReceipt
+        : getTaskReceipt(db, { sessionId, taskId: requestedTaskId });
+      if (recent) {
         sink.write({ id: ++id, kind: "receipt", payload: recent, bytes: 0, ts: Date.now() });
       }
       // Always emit `done` so the EventSource finishes (sets finished, clears
@@ -807,10 +835,12 @@ export function chatRoutes(
       return;
     }
     // Look up the run's id BEFORE unregistering so we can find its child PIDs.
-    const runId = runs.getRunId(sessionId);
+    const activeRun = runs.get(sessionId);
+    const runId = activeRun?.runId ?? null;
     // 1. Abort the model read-loop and signal in-flight tools (computer_use's
     //    GUI loop, claude_code's child via its abort listener).
     const ok = runs.abort(sessionId);
+    if (ok) activeRun?.cancel?.();
     if (runId) {
       try {
         cancelExplorerTaskIfRunning(db, runId);

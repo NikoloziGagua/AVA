@@ -75,10 +75,12 @@ verifiers for browser, file, Instagram, WhatsApp, or desktop actions.
   browser opens the stream.
 - Fast-finish race: the latest sanitized terminal receipt is kept in process
   memory for at most five minutes per session so an agent that finishes before
-  EventSource connects can still replay it.
-- The short replay cache is not durable. A restart clears it.
-- No new database table, retention policy, authentication rule, or permission
-  is introduced.
+  EventSource connects can still replay it without a database read.
+- Restart-safe replay: sanitized terminal receipts are also stored in SQLite
+  for 30 days, keyed by task and session. Exact task correlation prevents a
+  newer receipt from replacing the requested historical result.
+- The receipt store contains only the already-sanitized bounded receipt model;
+  it does not persist raw tool arguments, hidden reasoning, or raw tool output.
 - Mission Control remains the existing durable technical trace. The receipt's
   task ID is the Mission Control run ID.
 
@@ -112,9 +114,9 @@ Covered cases:
 
 ## Known limitations
 
-- The first slice is visible for current/recent typed chat runs. Receipts are
-  not reconstructed as cards after the five-minute replay window or a server
-  restart; Mission Control still holds the technical trace.
+- Typed-chat receipts survive the five-minute in-memory window and server
+  restarts for 30 days. They are replayed when the conversation reconnects;
+  Mission Control still holds the richer technical trace.
 - Voice uses the same underlying agent for delegated computer actions, but the
   voice UI does not render this card yet.
 - Tool success is deliberately conservative. Workflow-specific independent
@@ -124,7 +126,8 @@ Covered cases:
 
 ## Disablement and reversion
 
-The feature can be reverted as one scoped commit. At runtime there is no new
-stored state to migrate or delete. Removing the `receipt` SSE emission and the
-`TaskReceiptCard` render restores the prior conversation behavior; Mission
-Control and Explorer remain unchanged.
+The feature can be reverted as one scoped commit. Removing the `receipt` SSE
+emission and the `TaskReceiptCard` render restores the prior conversation
+behavior. The additive `task_receipts` table can be left unused safely or
+dropped separately after its 30-day retention boundary; Mission Control and
+Explorer remain unchanged.

@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import type { AgentEvent } from "../orchestrator/agent.js";
+import type { ProviderUsage } from "../orchestrator/llm/types.js";
 import type { ObservabilityService } from "./store.js";
 
 type ToolOperation = {
@@ -17,6 +18,8 @@ type ToolOperation = {
 export class AgentObservabilityRecorder {
   private toolSequence = 0;
   private activeTools = new Map<string, ToolOperation[]>();
+  private finalResponseRecorded = false;
+  private terminalRecorded = false;
 
   constructor(
     private readonly observability: ObservabilityService,
@@ -24,6 +27,28 @@ export class AgentObservabilityRecorder {
     private readonly parentSpanId: string | null = null,
     private readonly causationEventId: string | null = null,
   ) {}
+
+  recordUsage(usage: ProviderUsage, options: { at?: number } = {}): void {
+    const at = options.at ?? Date.now();
+    this.observability.record(this.runId, {
+      parentSpanId: this.parentSpanId,
+      causationEventId: this.causationEventId,
+      type: "provider.usage.recorded",
+      status: "success",
+      title: `Usage reported by ${usage.model}`,
+      summary: `${usage.inputTokens} input and ${usage.outputTokens} output tokens were reported by the provider.`,
+      visibility: "detail",
+      payload: { model: usage.model },
+      providerRequestId: usage.providerRequestId,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cachedTokens: usage.cachedTokens,
+      occurredAt: at,
+      dedupKey: usage.providerRequestId
+        ? `${this.runId}:provider-usage:${usage.providerRequestId}`
+        : `${this.runId}:provider-usage:${at}`,
+    });
+  }
 
   record(event: AgentEvent, options: { at?: number; durationMs?: number | null } = {}): void {
     const at = options.at ?? Date.now();
@@ -117,6 +142,8 @@ export class AgentObservabilityRecorder {
         });
         return;
       case "final":
+        if (this.terminalRecorded || this.finalResponseRecorded) return;
+        this.finalResponseRecorded = true;
         this.observability.record(this.runId, {
           parentSpanId: this.parentSpanId,
           causationEventId: this.causationEventId,
@@ -127,14 +154,11 @@ export class AgentObservabilityRecorder {
           visibility: "sensitive_collapsed",
           payload: { response: event.payload.text },
           occurredAt: at,
-          terminal: true,
-          runStatus: "completed",
-          outcome: "result_returned_unverified",
-          verificationStatus: "not_recorded",
-          compactSummary: "AVA returned a final response. External effects require separate verification evidence.",
         });
         return;
       case "error":
+        if (this.terminalRecorded) return;
+        this.terminalRecorded = true;
         this.observability.record(this.runId, {
           parentSpanId: this.parentSpanId,
           causationEventId: this.causationEventId,
@@ -151,6 +175,8 @@ export class AgentObservabilityRecorder {
         });
         return;
       case "killed": {
+        if (this.terminalRecorded) return;
+        this.terminalRecorded = true;
         const reason = event.payload.reason ?? "manual";
         this.observability.record(this.runId, {
           parentSpanId: this.parentSpanId,
@@ -167,16 +193,30 @@ export class AgentObservabilityRecorder {
         });
         return;
       }
-      case "done":
+      case "done": {
+        if (this.terminalRecorded) return;
+        this.terminalRecorded = true;
+        const completed = this.finalResponseRecorded;
         this.observability.record(this.runId, {
           parentSpanId: this.parentSpanId,
           causationEventId: this.causationEventId,
           type: "agent.runtime.finished",
-          status: "success",
-          title: "Agent runtime finished",
+          status: completed ? "success" : "error",
+          title: completed ? "Agent runtime finished" : "Agent runtime ended without a final response",
+          summary: completed
+            ? "AVA returned a final response. External effects require separate verification evidence."
+            : "The runtime stopped without recording a user-facing final response.",
           occurredAt: at,
+          terminal: true,
+          runStatus: completed ? "completed" : "failed",
+          outcome: completed ? "result_returned_unverified" : "runtime_ended_without_final",
+          verificationStatus: completed ? "not_recorded" : "not_verified",
+          compactSummary: completed
+            ? "AVA returned a final response. External effects require separate verification evidence."
+            : "The agent runtime ended without a final response.",
         });
         return;
+      }
     }
   }
 }

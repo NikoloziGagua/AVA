@@ -65,4 +65,15 @@ describe("TaskReceiptCard", () => {
     expect(screen.getByText("Blocked")).toBeTruthy();
     expect(screen.getByText("Failed")).toBeTruthy();
   });
+
+  it("labels response delivery without claiming the task outcome was verified", () => {
+    render(<TaskReceiptCard receipt={{
+      ...base,
+      outcome: "unverified",
+      verificationScope: "response_delivery",
+      observationPoint: "No independently verifiable action boundary was observed.",
+    }} />);
+    expect(screen.getByText("Response delivered")).toBeTruthy();
+    expect(screen.queryByText("Verified")).toBeNull();
+  });
 });

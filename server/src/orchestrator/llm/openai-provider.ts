@@ -220,6 +220,19 @@ export class OpenAIProvider implements LLMProvider {
 
         if (type === "response.completed") {
           const status = event.response?.status;
+          const usage = event.response?.usage;
+          if (usage) {
+            yield {
+              kind: "usage",
+              usage: {
+                providerRequestId: event.response?.id ?? null,
+                model: event.response?.model ?? input.model,
+                inputTokens: usage.input_tokens ?? 0,
+                outputTokens: usage.output_tokens ?? 0,
+                cachedTokens: usage.input_tokens_details?.cached_tokens ?? 0,
+              },
+            };
+          }
           if (status === "incomplete") {
             stopReason = "max_tokens";
           } else {
@@ -260,7 +273,16 @@ type ResponsesStreamEvent = {
     name?: string;
     arguments?: string;
   };
-  response?: { status?: string };
+  response?: {
+    id?: string;
+    model?: string;
+    status?: string;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      input_tokens_details?: { cached_tokens?: number };
+    };
+  };
   error?: { message?: string };
   message?: string;
 };

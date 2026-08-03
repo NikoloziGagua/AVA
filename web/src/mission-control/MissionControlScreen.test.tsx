@@ -133,4 +133,24 @@ describe("MissionControlScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop voice session" }));
     await waitFor(() => expect(api.stopMissionRun).toHaveBeenCalledWith("voice-root", 7));
   });
+
+  it("does not present missing token accounting as a measured zero", async () => {
+    const noUsageRun = { ...run, inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 2 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([noUsageRun]);
+    api.fetchMissionRun.mockResolvedValue({ run: noUsageRun, events: [event] });
+
+    render(<MissionControlScreen />);
+
+    expect(await screen.findByText("Transcript accepted")).toBeTruthy();
+    expect(screen.getAllByText("Not reported")).toHaveLength(2);
+  });
 });

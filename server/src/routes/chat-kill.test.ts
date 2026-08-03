@@ -59,7 +59,7 @@ function setup() {
 describe("chat kill endpoint", () => {
   it("killTrees the run's child PIDs (not just abort) when Stop is pressed", async () => {
     killed.length = 0;
-    const { app, FAKE_PIDS } = setup();
+    const { app, FAKE_PIDS, runs } = setup();
 
     // Start a run; the fake agent registers child PIDs and blocks on abort.
     const started = await request(app).post("/api/chat").send({ text: "do a long thing" }).expect(200);
@@ -68,11 +68,20 @@ describe("chat kill endpoint", () => {
     // Give the fire-and-forget run a tick to register its child PIDs.
     await new Promise((r) => setTimeout(r, 30));
 
+    const active = runs.get(sessionId);
+    expect(active).toBeDefined();
+
     const res = await request(app).post(`/api/chat/${sessionId}/kill`).send().expect(200);
     expect(res.body.aborted).toBe(true);
 
     // The kill endpoint must have killed every child pid the run registered.
     for (const pid of FAKE_PIDS) expect(killed).toContain(pid);
+    // Cancellation evidence is buffered before the route frees the run slot,
+    // so an already-open stream sees Stop rather than a synthetic tool failure.
+    expect(active!.buffer.since(0).events.map((event) => event.kind)).toEqual([
+      "receipt",
+      "killed",
+    ]);
   });
 
   it("kill on a session with no active run is a no-op (no PIDs killed)", async () => {

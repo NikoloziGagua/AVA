@@ -18,32 +18,34 @@ function setup(script: AgentEvent[]) {
   db.prepare(
     "INSERT INTO device_tokens (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)",
   ).run("receipt-test", "hash-receipt-test", "receipt test", Date.now());
-  const runs = new ActiveRuns();
-  const app = express();
-  app.use(express.json());
-  app.use((req: express.Request & { deviceId?: string }, _res, next) => {
-    req.deviceId = "receipt-test";
-    next();
-  });
   const runAgentImpl = vi.fn(async (opts: { emit: (event: AgentEvent) => void }) => {
     for (const event of script) opts.emit(event);
   });
-  app.use("/api/chat", chatRoutes(
-    db,
-    runs,
-    (_req, _res, next) => next(),
-    {
-      pidfiles: { register: () => {}, unregister: () => {}, listForRun: () => [] } as never,
-      fsRoots: [],
-      memoryDir,
-      dataDir: dir,
-      getChrome: async () => ({} as never),
-      provider: new MockLLMProvider({ scripts: [] }),
-      runAgentImpl: runAgentImpl as never,
-    },
-    { anthropic: null, openai: null },
-  ));
-  return { app };
+  const buildApp = () => {
+    const app = express();
+    app.use(express.json());
+    app.use((req: express.Request & { deviceId?: string }, _res, next) => {
+      req.deviceId = "receipt-test";
+      next();
+    });
+    app.use("/api/chat", chatRoutes(
+      db,
+      new ActiveRuns(),
+      (_req, _res, next) => next(),
+      {
+        pidfiles: { register: () => {}, unregister: () => {}, listForRun: () => [] } as never,
+        fsRoots: [],
+        memoryDir,
+        dataDir: dir,
+        getChrome: async () => ({} as never),
+        provider: new MockLLMProvider({ scripts: [] }),
+        runAgentImpl: runAgentImpl as never,
+      },
+      { anthropic: null, openai: null },
+    ));
+    return app;
+  };
+  return { app: buildApp(), restart: buildApp };
 }
 
 function parseSse(body: string): Array<{ event: string; data: unknown }> {
@@ -127,5 +129,69 @@ describe("chat task receipt SSE", () => {
       .get(`/api/chat/${started.body.sessionId}/stream?taskId=another-task`)
       .expect(200);
     expect(parseSse(stream.text).some((event) => event.event === "receipt")).toBe(false);
+  });
+
+  it("replays the sanitized receipt after the route is recreated", async () => {
+    const { app, restart } = setup([
+      { kind: "final", payload: { text: "Durable reply." } },
+      { kind: "done", payload: {} },
+    ]);
+    const started = await request(app).post("/api/chat").send({ text: "hello" }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // A new chatRoutes instance has an empty five-minute memory cache, exactly
+    // like a process restart, but shares the authoritative SQLite state.
+    const stream = await request(restart())
+      .get(`/api/chat/${started.body.sessionId}/stream?taskId=${started.body.taskId}`)
+      .expect(200);
+    const receipt = parseSse(stream.text).find((event) => event.event === "receipt")?.data as TaskReceipt;
+    expect(receipt).toMatchObject({ taskId: started.body.taskId, lifecycle: "finished" });
+  });
+
+  it("replays an exact older task even when the memory cache holds a newer receipt", async () => {
+    const { app } = setup([
+      { kind: "final", payload: { text: "Done." } },
+      { kind: "done", payload: {} },
+    ]);
+    const first = await request(app).post("/api/chat").send({ text: "first task" }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await request(app).post("/api/chat").send({
+      sessionId: first.body.sessionId,
+      text: "second task",
+    }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const stream = await request(app)
+      .get(`/api/chat/${first.body.sessionId}/stream?taskId=${first.body.taskId}`)
+      .expect(200);
+    const receipt = parseSse(stream.text)
+      .find((event) => event.event === "receipt")?.data as TaskReceipt;
+    expect(receipt).toMatchObject({ taskId: first.body.taskId, expected: "first task" });
+  });
+
+  it("shows the parent objective when a terse retry continues an earlier task", async () => {
+    const { app } = setup([
+      { kind: "final", payload: { text: "Attempt complete." } },
+      { kind: "done", payload: {} },
+    ]);
+    const first = await request(app).post("/api/chat").send({
+      text: "Read and compare the five research articles.",
+    }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const retried = await request(app).post("/api/chat").send({
+      sessionId: first.body.sessionId,
+      text: "try agin",
+    }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const stream = await request(app)
+      .get(`/api/chat/${retried.body.sessionId}/stream?taskId=${retried.body.taskId}`)
+      .expect(200);
+    const receipt = parseSse(stream.text)
+      .find((event) => event.event === "receipt")?.data as TaskReceipt;
+
+    expect(receipt.expected).toBe(
+      "Continue previous objective: Read and compare the five research articles.",
+    );
   });
 });

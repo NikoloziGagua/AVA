@@ -149,6 +149,15 @@ sequenceDiagram
   S-->>U: live events → rendered answer
 ```
 
+After the final operational boundary, the chat stream also emits a sanitized
+`receipt` snapshot. The conversation renders it as a compact expected-versus-
+actual result with an expandable evidence trail, last proven-good stage,
+failure/uncertainty observation point, recovery action, and the same run ID used
+by Mission Control. Lifecycle and outcome quality remain separate, and a tool
+return is not promoted to independent external verification. The fast-finish
+replay is held in memory for five minutes; this feature adds no durable store or
+retention policy. See [`features/task-result-receipts.md`](features/task-result-receipts.md).
+
 ### W2 — A voice task ("open WhatsApp and send Luka the link")
 
 1. Your mic audio streams to the **WS voice proxy** `/api/voice/realtime`. The chosen provider (OpenAI `gpt-realtime-2.1` by default, or Hume) handles speech. [06]

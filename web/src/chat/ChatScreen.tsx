@@ -54,12 +54,16 @@ export function ChatScreen({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [runEpoch, setRunEpoch] = useState(0);
+  // The server's run id is also the diagnostic id carried by the receipt. Pass
+  // it back on the SSE connection so a fast-finish replay cannot accidentally
+  // surface an older receipt from the same conversation.
+  const [taskId, setTaskId] = useState<string | null>(null);
   // Reopen fetch failure (401 / network / deleted id). Non-null → render a
   // retry/error panel instead of a silent blank screen with a live composer.
   const [loadError, setLoadError] = useState<unknown>(null);
   // Bumped by the error panel's Retry to re-run the reopen fetch.
   const [reloadNonce, setReloadNonce] = useState(0);
-  const { events } = useChatStream(sessionId, runEpoch);
+  const { events } = useChatStream(sessionId, runEpoch, taskId);
   const [seed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
   // Synchronous optimistic-send flag: flips true the same frame send() fires,
   // BEFORE the awaited POST resolves — `busy` lags by the full round-trip, so
@@ -85,6 +89,7 @@ export function ChatScreen({
       setSessionId(null);
       setHistory([]);
       setRunEpoch(0);
+      setTaskId(null);
       seededLastAssistantRef.current = null;
       return;
     }
@@ -105,6 +110,7 @@ export function ChatScreen({
         setHistory(loaded);
         setSessionId(requestedSessionId);
         setRunEpoch(0);
+        setTaskId(null);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -234,6 +240,7 @@ export function ChatScreen({
     try {
       const r = await api.sendMessage(sessionId, text);
       setSessionId(r.sessionId);
+      setTaskId(r.taskId ?? null);
       setRunEpoch((n) => n + 1);
     } catch (e) {
       // A failed POST (401 / offline / 5xx / 409) must NOT strand the chat: drop

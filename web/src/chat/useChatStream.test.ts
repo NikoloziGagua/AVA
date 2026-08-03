@@ -46,6 +46,11 @@ afterEach(() => {
 });
 
 describe("useChatStream reconnect", () => {
+  it("correlates a local stream with the exact task id for fast receipt replay", () => {
+    renderHook(() => useChatStream("s1", 1, "task/one"));
+    expect(FakeES.instances.at(-1)?.url).toContain("taskId=task%2Fone");
+  });
+
   it("stops reconnecting when the server rejects the stream (readyState CLOSED)", () => {
     renderHook(() => useChatStream("s1", 0));
     const es = FakeES.instances.at(-1)!;

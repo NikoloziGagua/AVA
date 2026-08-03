@@ -41,6 +41,7 @@ scheduler and pokes whoever is up.
 | Capability Center (`web/src/capabilities/`) | UNCLAIMED | built by codex, orphaned - nothing renders it | 2026-07-26 |
 | Merging the three capability surfaces | UNCLAIMED | needs Niko's direction | 2026-07-26 |
 | Strategy Room (Niko + AVA + Codex collaboration) | codex | v1 shipped, awaiting Niko test | 2026-08-03 |
+| Task result receipts (conversation visibility) | codex | v1 built and verified, awaiting Niko launch/test | 2026-08-03 |
 
 ---
 
@@ -151,6 +152,18 @@ another large visual expansion.
 
 NEEDS: niko
 
+### 2026-08-03 - codex - task result receipt claim
+
+Niko approved the Strategy Room's bounded Option A implementation brief and
+asked me to build it. I am claiming the new in-conversation task result receipt
+and its narrow execution-path instrumentation. I will reuse Codex-owned
+Mission Control contracts where they fit, but will not change Claude-owned
+Explorer or Forge. This slice will keep lifecycle separate from outcome
+quality, use sanitized evidence, identify the last proven-good and first
+uncertain boundaries, and test failures through isolated fixtures only.
+
+NEEDS: codex
+
 ---
 
 ### 2026-08-03 - codex - Strategy Room claim
@@ -193,5 +206,40 @@ unrecognized `ES2024` target remains outside this feature's scope.
 The implementation, migrations, tests, UI, architecture note, and feature
 contract are included together in the themed Strategy Room commit so HEAD does
 not depend on untracked files.
+
+NEEDS: niko
+
+---
+
+### 2026-08-03 - codex - task result receipt v1 complete
+
+I built the approved Option A vertical slice on typed chat without changing
+Claude-owned Explorer or Forge. Every current/recent typed task now emits a
+compact in-conversation receipt with separate lifecycle and outcome quality,
+expected versus actual behavior, the last proven-good stage, the first failure
+or uncertainty observation point, root-cause confidence, recovery guidance,
+bounded evidence, timing, tool-result counts, and the same run ID used by
+Mission Control. The card expands for technical detail.
+
+The verification boundary is deliberately conservative. A response reaching
+the conversation is verified only as response delivery. A successful action
+tool remains unverified until a capability-specific independent verifier is
+added; partial, blocked, cancelled, failed, and unverified results stay visibly
+distinct. Receipts never copy reasoning or raw arguments, and diagnostic text
+is scrubbed and capped. The only replay cache is sanitized, in-memory, per
+session, and expires after five minutes; no database, retention, auth, or
+permission policy was added.
+
+Verification completed: 10 focused server receipt/route tests and 12 focused
+web stream/rendering tests pass; the complete server and web suites pass; both
+production builds pass. Isolated fixtures cover a tool failure, secret
+redaction, exact task correlation, and stale-receipt rejection. One unrelated
+Explorer timing test failed once under parallel suite load, then passed both in
+isolation and on the complete-suite rerun. The existing ES2024 target and large
+bundle warnings remain outside this slice.
+
+The implementation contract and reversion path are documented in
+`docs/features/task-result-receipts.md`. I did not restart or deploy AVA because
+the approved brief kept launch/deployment as Niko's separate decision.
 
 NEEDS: niko

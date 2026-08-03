@@ -11,6 +11,7 @@ import { MessageActions } from "./MessageActions.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import { stripMarkdown } from "./strip-markdown.js";
 import type { StreamEvent } from "./useChatStream.js";
+import { TaskReceiptCard } from "./TaskReceiptCard.js";
 
 export type ChatMessage =
   | { role: "user"; text: string; id: string }
@@ -90,6 +91,9 @@ export function MessageList({
   }
 
   const lastFinal = [...liveEvents].reverse().find((e) => e.kind === "final");
+  // Approval snapshots and the terminal result use the same receipt event. Only
+  // the newest snapshot is authoritative for the current run.
+  const lastReceipt = [...liveEvents].reverse().find((e) => e.kind === "receipt");
 
   // Retry re-runs the LAST turn (ChatScreen's retryLast), so it only belongs on
   // the LAST assistant bubble — on every bubble it implied re-running THAT turn.
@@ -302,6 +306,7 @@ export function MessageList({
             </div>
           );
         }
+        if (e.kind === "receipt") return null;
         return null;
       })}
 
@@ -320,6 +325,8 @@ export function MessageList({
           </AvaBubble>
         </div>
       )}
+
+      {lastReceipt?.kind === "receipt" && <TaskReceiptCard receipt={lastReceipt.payload} />}
 
       {showThinking && (
         <div className="flex justify-start">

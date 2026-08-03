@@ -61,6 +61,7 @@ import {
 import { AgentObservabilityRecorder } from "../observability/agent-adapter.js";
 import type { ObservabilityService } from "../observability/store.js";
 import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
+import { TaskReceiptBuilder, type TaskReceipt } from "../receipts/task-receipt.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -126,6 +127,18 @@ export function chatRoutes(
   metered: Metered,
 ): Router {
   const r = Router();
+  // A just-finished fast run can unregister before the browser opens its SSE
+  // stream. Keep only the latest sanitized receipt per session, in memory, for
+  // five minutes so that race still gets a receipt. This is deliberately not a
+  // new diagnostic-retention system: restart clears it and no raw payloads live
+  // here. Mission Control remains the durable technical record.
+  const recentReceipts = new Map<string, { receipt: TaskReceipt; expiresAt: number }>();
+  const RECEIPT_REPLAY_TTL_MS = 5 * 60_000;
+  const pruneRecentReceipts = (now = Date.now()) => {
+    for (const [sid, value] of recentReceipts) {
+      if (value.expiresAt <= now) recentReceipts.delete(sid);
+    }
+  };
 
   r.post("/", auth, async (req, res) => {
     const parsed = Body.safeParse(req.body);
@@ -227,6 +240,8 @@ export function chatRoutes(
     const runId = nanoid(12);
     const activeRun = { sessionId, runId, abort, buffer };
     runs.register(activeRun);
+    pruneRecentReceipts();
+    recentReceipts.delete(sessionId);
 
     const full = getSessionFull(db, sessionId);
     const recent = full?.summary_through_message_id
@@ -320,6 +335,12 @@ export function chatRoutes(
       : undefined;
 
     const runStartMs = Date.now();
+    const receiptBuilder = new TaskReceiptBuilder({
+      taskId: runId,
+      objective: parsed.data.text,
+      mode,
+      startedAt: runStartMs,
+    });
     let explorerTraceReady = false;
     try {
       createExplorerTask(db, {
@@ -401,6 +422,18 @@ export function chatRoutes(
       // distilled into a reusable playbook (best-effort, fire-and-forget).
       const runSteps: RunStep[] = [];
       const toolStartedAt = new Map<string, number[]>();
+      let terminalReceiptPublished = false;
+      const publishReceipt = (at: number, remember: boolean): TaskReceipt => {
+        const receipt = receiptBuilder.snapshot(at);
+        buffer.append({ kind: "receipt", payload: receipt });
+        if (remember) {
+          recentReceipts.set(sid, {
+            receipt,
+            expiresAt: at + RECEIPT_REPLAY_TTL_MS,
+          });
+        }
+        return receipt;
+      };
       const emit = (e: AgentEvent) => {
         if (e.kind === "tool_call") {
           runSteps.push({ tool: e.payload.tool, args: e.payload.args, ok: true });
@@ -418,6 +451,7 @@ export function chatRoutes(
         // Explorer omits model thought/delta events and applies its own broader
         // secret scrub before committing anything to the execution history.
         const eventAt = Date.now();
+        receiptBuilder.observe(e);
         let toolDurationMs: number | null = null;
         if (e.kind === "tool_call") {
           const starts = toolStartedAt.get(e.payload.tool) ?? [];
@@ -483,7 +517,20 @@ export function chatRoutes(
           catch (err) { console.warn("[playbooks] outcome record failed:", err instanceof Error ? err.message : err); }
           recalledSlug = null; // a killed run can also emit error — count once
         }
+        // A terminal receipt must precede error/killed/done: the browser closes
+        // its EventSource as soon as it sees one of those terminal events.
+        if ((e.kind === "error" || e.kind === "killed" || e.kind === "done") &&
+            !terminalReceiptPublished) {
+          publishReceipt(eventAt, true);
+          terminalReceiptPublished = true;
+        }
         const id = buffer.append({ kind: e.kind, payload: e.payload });
+        // Approval is a live lifecycle boundary, not a terminal outcome. Emit a
+        // replaceable snapshot after the approval event so the card and receipt
+        // describe the same current state. A later snapshot supersedes it.
+        if (e.kind === "approval_required" || e.kind === "approval_resolved") {
+          publishReceipt(eventAt, false);
+        }
         // persist:false (HYBRID voice handoff) still streams final/error over SSE
         // so the proxy can speak the result — but it stores NO assistant message
         // here; the realtime proxy persists the spoken turn instead (no double-store).
@@ -611,12 +658,27 @@ export function chatRoutes(
             tools,
           },
         });
+        // Test adapters and future runtimes are allowed to return after a final
+        // without emitting the bookkeeping `done` event. Close that seam here
+        // so the stream always receives one terminal receipt and one terminator.
+        if (!receiptBuilder.terminal) emit({ kind: "done", payload: {} });
       } catch (err) {
         // Last-resort guard: an exception escaping the agent loop (e.g. a SQLite
         // write failing inside emit) must end THIS run — not become an unhandled
         // rejection that crashes the whole server mid-task.
         const msg = err instanceof Error ? err.message : String(err);
         try {
+          const eventAt = Date.now();
+          receiptBuilder.observe({ kind: "error", payload: { message: msg } });
+          if (!terminalReceiptPublished) {
+            const receipt = receiptBuilder.snapshot(eventAt);
+            buffer.append({ kind: "receipt", payload: receipt });
+            recentReceipts.set(sid, {
+              receipt,
+              expiresAt: eventAt + RECEIPT_REPLAY_TTL_MS,
+            });
+            terminalReceiptPublished = true;
+          }
           buffer.append({ kind: "error", payload: { message: msg } });
           buffer.append({ kind: "done", payload: {} });
           if (explorerTraceReady) {
@@ -691,6 +753,12 @@ export function chatRoutes(
       const latest = latestAssistantAfterLastUser(db, sessionId);
       if (latest) {
         sink.write({ id: ++id, kind: "final", payload: { text: latest }, bytes: 0, ts: Date.now() });
+      }
+      pruneRecentReceipts();
+      const requestedTaskId = typeof req.query.taskId === "string" ? req.query.taskId : null;
+      const recent = recentReceipts.get(sessionId)?.receipt;
+      if (recent && (!requestedTaskId || requestedTaskId === recent.taskId)) {
+        sink.write({ id: ++id, kind: "receipt", payload: recent, bytes: 0, ts: Date.now() });
       }
       // Always emit `done` so the EventSource finishes (sets finished, clears
       // busy) even when there is no assistant message yet.

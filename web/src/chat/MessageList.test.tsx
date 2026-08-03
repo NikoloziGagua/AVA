@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { MessageList, type ChatMessage } from "./MessageList.js";
+import type { TaskReceipt } from "./task-receipt.js";
 import type { StreamEvent } from "./useChatStream.js";
 
 beforeEach(() => {
@@ -53,5 +54,37 @@ describe("MessageList", () => {
     render(<MessageList history={[]} liveEvents={liveEvents} />);
     expect(screen.getByText(/missed 3 live events — reopen this chat to refresh/)).toBeTruthy();
     expect(screen.queryByText(/Sessions/)).toBeNull();
+  });
+
+  it("renders the newest task receipt once inside the conversation", () => {
+    const receipt: TaskReceipt = {
+      schemaVersion: 1,
+      taskId: "task-chat-1",
+      expected: "Answer the question",
+      actual: "AVA delivered the requested conversational response; no external action was claimed.",
+      lifecycle: "finished",
+      outcome: "verified",
+      verificationScope: "response_delivery",
+      lastVerifiedStage: "The final response reached this conversation.",
+      observationPoint: null,
+      rootCause: "not_applicable",
+      recoveryAction: null,
+      evidence: [],
+      toolCalls: 0,
+      successfulToolResults: 0,
+      uncertainToolResults: 0,
+      failedToolResults: 0,
+      startedAt: 1_000,
+      updatedAt: 2_000,
+      durationMs: 1_000,
+    };
+    const liveEvents: StreamEvent[] = [
+      { id: 8, runEpoch: 1, kind: "receipt", payload: receipt },
+      { id: 9, runEpoch: 1, kind: "receipt", payload: { ...receipt, updatedAt: 2_100 } },
+    ];
+
+    render(<MessageList history={history} liveEvents={liveEvents} />);
+    expect(screen.getAllByTestId("task-receipt")).toHaveLength(1);
+    expect(screen.getByText("Verified")).toBeTruthy();
   });
 });

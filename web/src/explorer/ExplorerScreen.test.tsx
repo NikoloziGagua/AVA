@@ -145,7 +145,7 @@ afterEach(() => {
 });
 
 describe("Explorer learned workflow integration", () => {
-  it("loads learned playbooks, refreshes them with Explorer, and resets Atlas from its top tab", async () => {
+  it("starts at Discover, keeps learned evidence under Activity, and resets the Map from its top tab", async () => {
     apiMocks.fetchExplorerRuntimeCapabilities.mockResolvedValue({
       domains: [],
       capabilities: [],
@@ -174,12 +174,15 @@ describe("Explorer learned workflow integration", () => {
       expect(apiMocks.fetchExplorerLearnedWorkflows).toHaveBeenCalledTimes(1);
     });
 
+    expect(screen.getByText(/One conversation\. Your computer, accounts, memory and projects/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Map" }));
     fireEvent.click(screen.getByRole("button", { name: "Drill into browser" }));
     expect(screen.getByTestId("atlas-selection").textContent).toContain(
       "browser / browser.persistent-control",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Learned Workflows" }));
+    fireEvent.click(screen.getByRole("button", { name: "Activity" }));
+    fireEvent.click(screen.getByRole("button", { name: /Learned workflows/i }));
     // The playbook title legitimately appears more than once (the card heading
     // and its trigger line), so assert presence rather than uniqueness.
     expect((await screen.findAllByText("Run my learned routine")).length).toBeGreaterThan(0);
@@ -189,7 +192,7 @@ describe("Explorer learned workflow integration", () => {
       expect(apiMocks.fetchExplorerLearnedWorkflows).toHaveBeenCalledTimes(2);
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Atlas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Map" }));
     expect(screen.getByTestId("atlas-selection").textContent).toContain("map / none");
   });
 });

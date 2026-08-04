@@ -700,7 +700,7 @@ const capabilities: ExplorerCapability[] = [
     definition: {
       implementation: "implemented",
       sourceReferences: [
-        source("server/src/routes/voice-realtime.ts", "voiceRealtimeRoutes", "route"),
+        source("server/src/routes/voice-realtime.ts", "buildRealtimeProxy", "route"),
         source("web/src/voice/useRealtimeVoice.ts", "useRealtimeVoice"),
         source("web/src/voice/useRealtimeVoice.barge-in.test.ts", "barge-in", "test"),
         source("docs/architecture/06-voice-pipeline.md", "Voice pipeline", "documentation"),
@@ -732,12 +732,12 @@ const capabilities: ExplorerCapability[] = [
       stopConditions: ["Cancel response and playback on a valid user interruption.", "Stop action handoff when the user cancels the task."],
     }),
     runtime: runtime(
-      [],
+      ["do_on_computer"],
       [
         { path: "core.voice.ready", dimension: "configured", interpretation: "boolean" },
         { path: "core.voice.model", dimension: "available", interpretation: "non-null" },
       ],
-      ["/api/voice/realtime", "/api/voice/transcribe", "/api/voice/speak"],
+      ["/api/transcribe", "/api/speak"],
     ),
   },
   {
@@ -862,7 +862,7 @@ const capabilities: ExplorerCapability[] = [
       stopConditions: ["Stop before a consequential submit when approval is required.", "Stop when the browser target cannot be identified unambiguously."],
     }),
     runtime: runtime(
-      ["chrome_open", "chrome_navigate", "chrome_click", "chrome_type", "chrome_press_key", "chrome_snapshot", "chrome_read_page", "chrome_screenshot", "chrome_tabs"],
+      ["chrome_open", "chrome_navigate", "chrome_click", "chrome_type", "chrome_press_key", "chrome_snapshot", "chrome_read_page", "chrome_screenshot", "chrome_tabs", "computer_use"],
       [
         { path: "core.browser.ready", dimension: "available", interpretation: "boolean" },
         { path: "core.browser.mode", dimension: "healthy", interpretation: "attached" },
@@ -996,7 +996,7 @@ const capabilities: ExplorerCapability[] = [
       implementation: "implemented",
       sourceReferences: [
         source("server/src/tools/claude-code-mcp.ts", "buildClaudeCodeTool"),
-        source("server/src/tools/claude-code.ts", "runClaudeCode"),
+        source("server/src/tools/claude-code.ts", "buildClaudeCode"),
         source("server/src/tools/claude-code.test.ts", "claude-code", "test"),
       ],
     },
@@ -1319,8 +1319,8 @@ const capabilities: ExplorerCapability[] = [
       sourceReferences: [
         source("server/src/tools/memory-mcp.ts", "buildMemoryTools"),
         source("server/src/memory/store.ts", "memory store"),
-        source("server/src/memory/remember.ts", "remember"),
-        source("server/src/memory/forget.ts", "forget"),
+        source("server/src/memory/remember.ts", "rememberObservation"),
+        source("server/src/memory/forget.ts", "forgetLast/forgetMatch/forgetProject"),
         source("server/src/tools/memory-mcp.test.ts", "memory tools", "test"),
       ],
     },
@@ -1464,7 +1464,7 @@ const capabilities: ExplorerCapability[] = [
       implementation: "implemented",
       sourceReferences: [
         source("server/src/policy/enforce.ts", "enforce"),
-        source("server/src/routes/approvals.ts", "approvalRoutes", "route"),
+        source("server/src/routes/approvals.ts", "approvalsRoutes", "route"),
         source("server/src/push/deliver.ts", "buildDeliverer"),
         source("web/src/approvals/ApprovalCard.tsx", "ApprovalCard"),
       ],
@@ -1495,7 +1495,7 @@ const capabilities: ExplorerCapability[] = [
     runtime: runtime(
       [],
       [{ path: "integrations.push", dimension: "configured", interpretation: "boolean" }],
-      ["/api/approvals", "/api/push/subscribe"],
+      ["/api/approvals/pending", "/api/push/subscribe"],
     ),
   },
   {
@@ -1633,10 +1633,10 @@ const capabilities: ExplorerCapability[] = [
     definition: {
       implementation: "implemented",
       sourceReferences: [
-        source("server/src/self/improver.ts", "SelfImprover"),
+        source("server/src/self/improver.ts", "runImprovement"),
         source("server/src/self/verify.ts", "verify"),
-        source("server/src/self/swap.ts", "swap"),
-        source("server/src/self/watchdog.ts", "watchdog"),
+        source("server/src/self/swap.ts", "swapTo"),
+        source("server/src/self/watchdog.ts", "decideRollback"),
         source("server/src/self/improver.integration.test.ts", "self improvement", "test"),
       ],
     },
@@ -1743,7 +1743,7 @@ const capabilities: ExplorerCapability[] = [
       sensitiveData: ["Sanitised tool arguments", "Autonomy rules"],
       stopConditions: ["Hard-block secret access and permission-bypass patterns.", "Treat missing approval as denial."],
     }),
-    runtime: runtime([], [], ["/api/rules", "/api/approvals"]),
+    runtime: runtime([], [], ["/api/rules", "/api/approvals/pending"]),
   },
   {
     id: "security.secret-redaction",
@@ -1757,9 +1757,9 @@ const capabilities: ExplorerCapability[] = [
       implementation: "implemented",
       sourceReferences: [
         source("server/src/security/scrub.ts", "scrubSecrets"),
-        source("server/src/orchestrator/redact.ts", "redactToolArgs"),
+        source("server/src/orchestrator/redact.ts", "redactSensitiveArgs"),
         source("server/src/security/scrub.test.ts", "scrubSecrets", "test"),
-        source("server/src/orchestrator/redact.test.ts", "redactToolArgs", "test"),
+        source("server/src/orchestrator/redact.test.ts", "redactSensitiveArgs", "test"),
       ],
     },
     examples: ["Store this memory without exposing its token.", "Show a sanitised tool call."],
@@ -1790,7 +1790,8 @@ const capabilities: ExplorerCapability[] = [
     definition: {
       implementation: "partial",
       sourceReferences: [
-        source("server/src/orchestrator/tool-result-consistency.ts", "checkToolResultConsistency"),
+        source("server/src/orchestrator/tool-result-consistency.ts", "classifyActionResult"),
+        source("server/src/tools/activity-log-mcp.ts", "buildReadLogsTool"),
         source("server/src/apps/instagram.ts", "sendDm"),
         source("server/src/apps/whatsapp.ts", "sendMessage"),
         source("server/src/tools/screenshot/look-mcp.ts", "buildLookAtScreenTool"),
@@ -1816,7 +1817,7 @@ const capabilities: ExplorerCapability[] = [
       sensitiveData: ["Evidence may reference private resources and communications"],
       stopConditions: ["Do not downgrade a failed verification into success because the attempted action returned without throwing."],
     }),
-    runtime: runtime([]),
+    runtime: runtime(["read_logs"]),
   },
   {
     id: "interface.pwa",
@@ -1858,7 +1859,7 @@ const capabilities: ExplorerCapability[] = [
       sensitiveData: ["Device token", "Conversation content", "Memory and task state"],
       stopConditions: ["Clear invalid tokens and return to pairing after authentication failure.", "Never expose raw server secrets to the client."],
     }),
-    runtime: runtime([], [], ["/api/auth/pair", "/api/health", "/api/status"]),
+    runtime: runtime([], [], ["/api/auth/pair", "/api/health", "/_status"]),
   },
 ];
 
@@ -1952,16 +1953,13 @@ const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
       { key: "locate-control", parent: "launch-focus", name: "Locate control", description: "Find the target through Windows UI Automation or a bounded keyboard route.", kind: "operation", toolName: "control_app" },
       { key: "act", parent: "locate-control", name: "Perform app action", description: "Click, set a value or send keys to the verified target window.", kind: "external-action", toolName: "control_app" },
       { key: "verify", parent: "launch-focus", capabilityId: "vision.screen-inspection", name: "Verify visible state", description: "Use a return value or look_at_screen when the UI result matters.", kind: "verification", toolName: "look_at_screen", producesEvidence: ["visual-confirmation", "tool-result"] },
-      { key: "fallback", parent: "locate-control", name: "Use visual fallback", description: "Use computer_use only when deterministic UI Automation cannot reach the control and a provider is available.", kind: "operation", toolName: "computer_use" },
       { key: "stop", parent: "identify", name: "Stop on wrong or unknown target", description: "Do not type or click when the active application cannot be verified.", kind: "stop" },
     ],
     [
       { from: "identify", to: "launch-focus" },
       { from: "launch-focus", to: "locate-control" },
       { from: "locate-control", to: "act", kind: "branch", label: "control found" },
-      { from: "locate-control", to: "fallback", kind: "fallback", label: "no deterministic control" },
       { from: "act", to: "verify", kind: "verification" },
-      { from: "fallback", to: "verify", kind: "verification" },
       { from: "identify", to: "stop", kind: "stop", label: "target ambiguous" },
     ],
   ),

@@ -226,8 +226,10 @@ export function capabilityIdsForTool(tool: string): string[] {
   if (/^watch_/.test(tool)) return ["automation.watches"];
   if (/^shopify_/.test(tool)) return ["services.shopify-products"];
   if (tool === "find_places") return ["services.google-places"];
-  if (/^chrome_/.test(tool)) return ["browser.persistent-control"];
-  if (tool === "computer_use" || tool === "control_app") return ["desktop.native-control"];
+  if (/^chrome_/.test(tool) || tool === "computer_use") return ["browser.persistent-control"];
+  if (tool === "control_app") return ["desktop.native-control"];
+  if (tool === "do_on_computer") return ["voice.realtime"];
+  if (tool === "read_logs") return ["verification.outcome-evidence"];
   if (tool === "take_screenshot" || tool === "look_at_screen") {
     return ["vision.screen-inspection"];
   }

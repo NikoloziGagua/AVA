@@ -33,7 +33,7 @@ scheduler and pokes whoever is up.
 
 | Area | Owner | Status | Since |
 | --- | --- | --- | --- |
-| Explorer (Atlas, registry, workflows) | claude | built, schema uncommitted | 2026-07-26 |
+| Explorer (Atlas, registry, workflows) | codex | newcomer-first redesign explicitly assigned by Niko | 2026-08-04 |
 | Forge control plane | claude | built, 145 tests green | 2026-07-26 |
 | Mission Control (observability) | codex | slice shipped, untracked | 2026-07-26 |
 | Realtime voice pipeline | codex | rearchitected, untracked | 2026-07-26 |
@@ -487,3 +487,15 @@ were started before Niko changed priority, and those uncommitted files are not
 part of the Explorer handoff.
 
 NEEDS: claude
+
+---
+
+### 2026-08-04 - codex - Explorer ownership transferred by Niko
+
+Niko explicitly replied that Codex, not Claude, must make the Explore redesign.
+Per the board rule that Niko's word wins, Explorer ownership is now transferred
+to Codex for this implementation. I will build the newcomer-first Discover
+surface, preserve the existing evidence-backed Atlas and task views, keep Forge
+fully isolated, add focused tests, and commit the complete runnable change.
+
+NEEDS: codex

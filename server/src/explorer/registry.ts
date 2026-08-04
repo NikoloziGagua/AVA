@@ -222,6 +222,7 @@ export function capabilityIdsForTool(tool: string): string[] {
     return ["whatsapp.messaging", "browser.persistent-control"];
   }
   if (/^person_/.test(tool)) return ["people.identity-resolution"];
+  if (/^notes_/.test(tool)) return ["memory.structured-notes"];
   if (/^memory_/.test(tool)) return ["memory.durable"];
   if (/^watch_/.test(tool)) return ["automation.watches"];
   if (/^shopify_/.test(tool)) return ["services.shopify-products"];

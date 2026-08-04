@@ -59,6 +59,7 @@ approval row + a push notification, blocking up to 10 minutes). `.env` access an
 | **take_screenshot** | Capture a PNG of the Windows desktop under `Downloads/Ava/screenshots` and return **only the path** — the model has *not* seen the image. Its description and result say so plainly, so Ava never narrates a screenshot it can't actually see (fixes a live case of Ava confidently "describing" screenshots it never viewed). | Low. |
 | **look_at_screen** | Ava's honest eyes: capture the desktop **and** run ONE vision call on a standard multimodal model, returning a factual 2–4 sentence description (or an answer to a specific `question`). This is what Ava uses to describe the screen or verify a visual result. Registered **only when an OpenAI key is set**; 60 s tool budget. | Medium (a paid vision call). |
 | **memory_read / memory_remember / memory_forget** | Durable cross-session memory (see §3). | Low; secrets scrubbed on write. |
+| **notes_capture / notes_search / notes_update / notes_promote** | Capture, find and organise general or project Notes; move cards through Ideas/Doing/Review/Done; promote a note to a task or explicit self-improvement request. | Note changes are low-risk local persistence. Self-improvement promotion enters the existing approval gate. |
 | **self_improve / self_improve_status** | Queue an autonomous change to Ava's own code / report task states (see §4). | Gated pipeline. |
 | **read_claude_updates** | Read the notes Claude — Sir's developer/coding agent — leaves about changes to Ava's own code (a started/shipped/note JSON-lines log at `<dataDir>/claude-updates.jsonl`). Used when Sir asks what's happening / what changed / what Claude did; surfaces any in-flight update. Available in **both** action and conversation/voice mode. Attribution stays honest — Claude's work is Claude's. | Read-only. |
 | **shopify_list_products / shopify_get_product / shopify_update_product** | Edit a product's name + description over the **Shopify Admin API** — one `PUT`, no browser. Never sends the `images` array (a name/description edit can't disturb the pictures), and instructs the model to keep any `<img>` tags inside the description. Registered only when `SHOPIFY_STORE` + `SHOPIFY_ADMIN_TOKEN` are set. | No LLM cost (uses Shopify billing). |
@@ -96,7 +97,22 @@ subscriptions, rules, and self-improvement intents.
   duplicating; one that keeps failing on recall is **demoted** out of matching and
   eventually pruned. `GET /api/playbooks` lists them with metrics; `DELETE
   /api/playbooks/:slug` removes one. Routine playbooks are followed directly;
-  consequential ones are followed but verified.
+consequential ones are followed but verified.
+
+### Structured Notes workspace
+
+The **Notes** navigation section is a shared workspace for Sir and AVA. It has a
+General space plus explicit project spaces that remain visible even before their
+first note. Each project uses the same lightweight template: Quick capture,
+Pinned priorities, Decisions, and Documentation. A four-column board moves work
+through Ideas, Doing, Review, and Done.
+
+Notes retain structured content, tags, safe links, pinned state, edit history,
+source and an optimistic version number. AVA can capture and reorganise Notes
+from ordinary text or voice requests. A note may be promoted into a prefilled AVA
+task or an approval-gated self-improvement request without deleting or rewriting
+the source note. Saving or promoting a note never implies that the downstream
+task is complete. See `docs/features/notes.md` for the data and safety contract.
 
 ## 4. Self-Improvement
 

@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1785803907441,
+  "generatedAt": 1785810421016,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -262,6 +262,30 @@
       "kind": "implementation"
     },
     {
+      "capability": "memory.structured-notes",
+      "path": "server/src/state/notes.ts",
+      "symbol": "createNote",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.structured-notes",
+      "path": "server/src/routes/notes.ts",
+      "symbol": "notesRoutes",
+      "kind": "route"
+    },
+    {
+      "capability": "memory.structured-notes",
+      "path": "server/src/tools/notes-mcp.ts",
+      "symbol": "buildNotesTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.structured-notes",
+      "path": "web/src/notes/NotesScreen.tsx",
+      "symbol": "NotesScreen",
+      "kind": "implementation"
+    },
+    {
       "capability": "playbooks.procedural-memory",
       "path": "server/src/playbooks/capture.ts",
       "symbol": "maybeCapture",
@@ -508,6 +532,10 @@
       "route": "/api/memory"
     },
     {
+      "capability": "memory.structured-notes",
+      "route": "/api/notes"
+    },
+    {
       "capability": "playbooks.procedural-memory",
       "route": "/api/playbooks"
     },
@@ -696,6 +724,22 @@
     {
       "name": "memory_forget",
       "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "notes_capture",
+      "file": "server/src/tools/notes-mcp.ts"
+    },
+    {
+      "name": "notes_search",
+      "file": "server/src/tools/notes-mcp.ts"
+    },
+    {
+      "name": "notes_update",
+      "file": "server/src/tools/notes-mcp.ts"
+    },
+    {
+      "name": "notes_promote",
+      "file": "server/src/tools/notes-mcp.ts"
     },
     {
       "name": "find_places",

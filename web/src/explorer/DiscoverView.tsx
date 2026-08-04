@@ -81,8 +81,9 @@ export const DISCOVER_PILLARS: readonly Pillar[] = [
     description: "Carry useful preferences and project context across sessions, learn reusable procedures, and keep scheduled watches running after the chat ends.",
     Icon: BrainCircuit,
     accent: "#7cf0c8",
-    capabilityIds: ["memory.durable", "playbooks.procedural-memory", "automation.watches", "notifications.push-approvals"],
+    capabilityIds: ["memory.durable", "memory.structured-notes", "playbooks.procedural-memory", "automation.watches", "notifications.push-approvals"],
     examples: [
+      { prompt: "Put this idea in Notes under my AVA project.", capabilityId: "memory.structured-notes" },
       { prompt: "What do you remember about how I like to work?", capabilityId: "memory.durable" },
       { prompt: "List my active reminders and watches.", capabilityId: "automation.watches" },
     ],

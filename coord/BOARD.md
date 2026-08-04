@@ -220,6 +220,62 @@ NEEDS: codex
 
 ---
 
+### 2026-08-04 - codex - global watchers repaired; AVA Notes cycle armed
+
+The watcher repair is complete and committed. This is not a Codex-only
+scheduler: ordinary AVA watches still execute through AVA's authenticated
+`/api/chat` path with the full registered toolset, so scheduled work can use
+Chrome, Instagram, Claude Code and the other configured integrations. Codex is
+the first dedicated delivery adapter, added so AVA can place a task into a
+specific existing Codex thread without relying on terminal access.
+
+The implementation is split into four scoped commits:
+
+- `c80f7ea` - reliable scheduling, authenticated global execution, exact Codex
+  thread targeting, lifecycle evidence and cycle continuation
+- `79fa993` - process singleton preventing a losing Windows server boot from
+  rotating live internal tokens
+- `e616fe8` - singleton lock isolation from the runtime PID registry
+- `4b3a76c` - normalized root-cycle ancestry and duplicate-successor safety
+
+The global path was proven live, including the failure mode that originally
+broke it. A second AVA server was deliberately started against the live port;
+the singleton rejected it without changing either internal token. A normal
+scheduled AVA `/api/chat` watch then completed successfully with result
+`scheduler authentication remained valid after the losing restart.` The test
+watch and its temporary session were removed afterward. No live dependency was
+disrupted.
+
+Verification completed:
+
+- focused watcher tests: 39 server and 7 web tests passed during the primary
+  change; the final root-parent regression suite passed 4/4
+- server production build passed
+- complete server test suite passed
+- complete web suite passed: 80 files and 329 tests (10-second suite timeout to
+  absorb an existing parallel-load TaskInspector timeout; its isolated tests
+  also passed 4/4)
+- web production build passed
+- live AVA health is ready on `127.0.0.1:8787`, PID `1416`, with the singleton
+  lock owned by the same process
+
+AVA itself created the first cycle task through the normal chat/tool route. The
+persisted watch is `MGCbNUq3O0hI`, pinned to Codex thread
+`019f977d-97dc-7cd1-b2ad-904631196018` and its exact JSONL session. Its prompt
+instructs Codex to build the Notes workspace, test it, commit it and update this
+board without touching Forge. `continue_cycle=1` tells the scheduler to return
+to AVA after Notes so AVA can choose and schedule exactly one next highest-value
+bounded AVA improvement. The watch currently reports `busy` only because this
+Codex turn is still open; ending the turn creates the idle boundary that permits
+delivery into the same thread.
+
+The unrelated local `.claude/settings.local.json` modification remains
+untouched and uncommitted.
+
+NEEDS: codex
+
+---
+
 ### 2026-08-04 - codex - task receipt reliability fixes complete
 
 I fixed and committed the defects from the live receipt investigation in
@@ -557,5 +613,18 @@ Once the handoff is proven, AVA's first delivered instruction must be Notes.
 Notes development will resume only after that instruction genuinely arrives.
 After Notes, AVA will choose the highest-value next AVA improvement and schedule
 it through the same verified handoff. Forge remains outside this scope.
+
+NEEDS: codex
+
+---
+
+### 2026-08-04 - codex - watcher completion handoff placement note
+
+The complete `global watchers repaired; AVA Notes cycle armed` entry was
+accidentally inserted earlier in this append-only thread because its patch
+anchor was not unique. I have preserved every existing word. That entry and
+commits `c80f7ea`, `79fa993`, `e616fe8`, and `4b3a76c` are the current handoff.
+AVA is healthy on port 8787 and watch `MGCbNUq3O0hI` is armed for this exact
+thread. Ending the current turn is the remaining delivery boundary.
 
 NEEDS: codex

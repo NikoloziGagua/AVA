@@ -46,4 +46,19 @@ describe("watch_create tool", () => {
     expect(result).toMatchObject({ ok: false });
     expect(result.text).toContain("no active Codex TUI thread");
   });
+
+  it("normalizes an empty root-cycle parent to NULL", async () => {
+    const db = openInMemoryDb();
+    const target = { threadId: "thread-root", sessionFile: "C:/sessions/root.jsonl", cwd: "C:/repo/AVA" };
+    const create = buildWatchTools({ db, resolveCodexTarget: () => target })
+      .find((entry) => entry.tool.name === "watch_create")!;
+    await create.run({
+      prompt: "first cycle task",
+      kind: "codex",
+      interval_minutes: 1,
+      parent_watch_id: "   ",
+    });
+    const watch = db.prepare("SELECT parent_watch_id FROM watches").get() as { parent_watch_id: string | null };
+    expect(watch.parent_watch_id).toBeNull();
+  });
 });

@@ -73,7 +73,9 @@ export function buildWatchTools(o: { db: Db; resolveCodexTarget?: () => CodexWat
             once: args.once !== false,
             target: target ?? undefined,
             continueCycle: kind === "codex" && args.continue_cycle === true,
-            parentWatchId: kind === "codex" && typeof args.parent_watch_id === "string" ? args.parent_watch_id : undefined,
+            parentWatchId: kind === "codex" && typeof args.parent_watch_id === "string" && args.parent_watch_id.trim()
+              ? args.parent_watch_id.trim()
+              : undefined,
           });
           const when = runAt
             ? `once at ${new Date(runAt).toLocaleString()}`

@@ -33,7 +33,7 @@ scheduler and pokes whoever is up.
 
 | Area | Owner | Status | Since |
 | --- | --- | --- | --- |
-| Explorer (Atlas, registry, workflows) | codex | newcomer-first redesign explicitly assigned by Niko | 2026-08-04 |
+| Explorer (Atlas, registry, workflows) | codex | newcomer-first redesign shipped in `888e8c7`; awaiting Niko test | 2026-08-04 |
 | Forge control plane | claude | built, 145 tests green | 2026-07-26 |
 | Mission Control (observability) | codex | slice shipped, untracked | 2026-07-26 |
 | Realtime voice pipeline | codex | rearchitected, untracked | 2026-07-26 |
@@ -499,3 +499,45 @@ surface, preserve the existing evidence-backed Atlas and task views, keep Forge
 fully isolated, add focused tests, and commit the complete runnable change.
 
 NEEDS: codex
+
+---
+
+### 2026-08-04 - codex - newcomer-first Explore redesign shipped
+
+The redesign requested and explicitly assigned to Codex is complete in commit
+`888e8c7` (`feat(explorer): showcase AVA's real capabilities`). Forge was not
+inspected, modified, imported, or exposed by the new surface.
+
+Explore now opens on a newcomer-first Discover experience rather than the
+technical Atlas. It explains AVA in plain language, shows a concise ask-route-
+act-check model, offers runnable examples, and groups real capability data into
+five outcomes: talk naturally, control the computer, use web/accounts, remember
+and organise, and build/automate. Each outcome is connected to the canonical
+registry, runtime readiness, examples and the existing deep capability/workflow
+inspector. The original technical Atlas remains under Map. Task history, live
+work and learned workflows are grouped under Activity; Reviews and Evolution
+remain reachable as advanced foundations rather than newcomer-level tabs.
+
+During verification I found pre-existing registry drift and corrected it rather
+than shipping a polished front over stale claims. The machine check now proves
+29 capabilities, all 50 server tools, all 17 declared API routes, 79 verified
+source references and zero broken references. It also now classifies
+`computer_use` as browser control instead of incorrectly presenting it as
+native Windows control.
+
+Verification completed:
+
+- Explorer contract and machine-reality check: passed
+- Focused Explore tests: 25 passed
+- Explorer server route tests: 6 passed
+- Full web test suite: passed
+- Production web build: passed
+- Desktop 1440x900 and mobile 390x844 browser render checks: passed with no
+  page errors
+- `git diff --check`: clean for the shipped change
+
+The only build warnings are the repository's existing ES2024/esbuild target
+warning and the existing large-chunk advisory. The unrelated local
+`.claude/settings.local.json` modification remains untouched and uncommitted.
+
+NEEDS: niko

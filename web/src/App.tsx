@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Plus, List, Brain, Settings2, Sparkles, Radar, MessagesSquare } from "lucide-react";
+import { Home, Plus, List, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
 import { TubelightNav, type TubelightItem } from "./components/ava/TubelightNav.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
@@ -10,6 +10,7 @@ import { PairingScreen } from "./auth/PairingScreen.js";
 import { ChatScreen } from "./chat/ChatScreen.js";
 import { RulesScreen } from "./rules/RulesScreen.js";
 import { MemoryScreen } from "./memory/MemoryScreen.js";
+import { NotesScreen } from "./notes/NotesScreen.js";
 import { SelfScreen } from "./self/SelfScreen.js";
 import { OrbitScreen } from "./orbit/OrbitScreen.js";
 import { ChatListScreen } from "./orbit/ChatListScreen.js";
@@ -26,6 +27,7 @@ type View =
   | { name: "chat"; sessionId: string | null; initialText?: string }
   | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
   | { name: "memory" }
+  | { name: "notes" }
   | { name: "rules" }
   | { name: "self" }
   | { name: "strategy" }
@@ -46,6 +48,7 @@ function navForView(v: View): string | undefined {
     // (sessionId === null) composition lights "New".
     case "chat": return v.sessionId === null ? "New" : "Chats";
     case "memory": return "Memory";
+    case "notes": return "Notes";
     case "rules": return "Rules";
     case "self": return "Self";
     case "strategy": return "Room";
@@ -128,6 +131,7 @@ export function App() {
     { name: "New", icon: Plus, onSelect: () => openNewChat() },
     { name: "Chats", icon: List, onSelect: () => setView({ name: "list" }) },
     { name: "Memory", icon: Brain, onSelect: () => setView({ name: "memory" }) },
+    { name: "Notes", icon: NotebookPen, onSelect: () => setView({ name: "notes" }) },
     { name: "Explore", icon: Radar, onSelect: () => setView({ name: "capabilities" }) },
     { name: "Room", icon: MessagesSquare, onSelect: () => setView({ name: "strategy" }) },
     { name: "Rules", icon: Settings2, onSelect: () => setView({ name: "rules" }) },
@@ -266,6 +270,20 @@ export function App() {
             transition={enterT}
           >
             <SelfScreen onClose={() => setView({ name: "orbit" })} />
+          </motion.div>
+        )}
+        {view.name === "notes" && (
+          <motion.div
+            key="notes"
+            data-view="notes"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
+          >
+            <NotesScreen onStartTask={(text) => openNewChat(text)} />
           </motion.div>
         )}
         {view.name === "strategy" && (

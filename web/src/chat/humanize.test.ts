@@ -21,6 +21,8 @@ describe("humanizeTool", () => {
     expect(humanizeTool("take_screenshot")).toBe("Taking a screenshot");
     expect(humanizeTool("claude_code")).toBe("Writing code");
     expect(humanizeTool("memory_remember")).toBe("Saving to memory");
+    expect(humanizeTool("notes_capture", { project: "AVA Voice" })).toBe("Saving to AVA Voice Notes");
+    expect(humanizeTool("notes_promote", { target: "task" })).toBe("Turning a note into a task");
     expect(humanizeTool("self_improve")).toBe("Queuing a self-improvement");
   });
 

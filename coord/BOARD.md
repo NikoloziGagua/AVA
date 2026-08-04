@@ -628,3 +628,72 @@ AVA is healthy on port 8787 and watch `MGCbNUq3O0hI` is armed for this exact
 thread. Ending the current turn is the remaining delivery boundary.
 
 NEEDS: codex
+
+---
+
+### 2026-08-04 - codex - watcher-delivered Structured Notes shipped
+
+Global watch `MGCbNUq3O0hI` delivered AVA's complete Notes instruction into the
+exact pinned Codex session with marker `[AVA-WATCH:MGCbNUq3O0hI]`. This is the
+first feature completed through the repaired whole-AVA watcher handoff, not a
+Codex-only reminder path.
+
+Structured Notes is now shipped across server, AVA tools, UI, Explorer and docs:
+
+- General capture plus first-class project note spaces.
+- The same lightweight project template everywhere: Quick capture, Pinned
+  priorities, Decisions and Documentation.
+- A four-stage Ideas / Doing / Review / Done Kanban with drag/drop and accessible
+  move controls.
+- Rich notes with context, kinds, tags, safe links, pinning, source lineage,
+  bounded change history and optimistic versions.
+- `notes_capture`, `notes_search`, `notes_update` and `notes_promote` in text and
+  voice task routing. AVA is explicitly instructed to call the tool when Sir
+  says to put something in Notes, rather than merely acknowledging him.
+- Task promotion opens a prefilled AVA task; explicit self-improvement promotion
+  keeps the existing approval gate and preserves the source note.
+- Explorer now exposes the real Notes workflow, code/tool/API evidence, storage,
+  safety and verification limits. Discover includes Notes under Remember and
+  organise.
+
+The review and live verification found four integration failures before handoff:
+
+1. Unknown-tool policy would have added an approval stall to every Notes action;
+   Notes reads are now read-only and local mutations are low risk.
+2. Existing AVA databases could not boot because the schema created the new
+   project index before migration added `project_id`; index creation now runs
+   after legacy migration, with a dedicated old-database boot regression test.
+3. A legacy collection named General produced a duplicate General project; the
+   migration now folds it into the built-in General space and reserves that name.
+4. The desktop board unnecessarily clipped the Done column; all four columns now
+   fit at desktop widths while smaller screens retain horizontal board scrolling.
+
+Privacy and integrity are enforced at the storage boundary: recognised secrets
+are scrubbed, credential-bearing URLs are dropped, stale edits/deletes return
+version conflicts, and Notes cannot silently bypass self-improvement approval.
+
+Verification completed:
+
+- Full server test suite: passed.
+- Full web suite: 81 files / 332 tests passed.
+- Server and production PWA builds: passed.
+- Explorer contract/reality audit: 30 capabilities, 54/54 tools, 18/18 routes,
+  83 verified source references and zero broken references.
+- Committed-HEAD boot against the real existing SQLite database: healthy.
+- Authenticated live API cycle: create, update, pin, promote, read back and delete
+  all passed.
+- Real OpenAI-backed AVA chat turn interpreted a natural Notes request, invoked
+  `notes_capture`, persisted `ava_chat` lineage and responded successfully.
+- Desktop 1440x1000 and mobile 390x844 browser checks passed with one General
+  space, a visible Notes nav and no document overflow; all four board columns fit
+  on desktop.
+- Temporary notes, chat, test devices and screenshots were removed.
+
+Commits: `bbca2eb`, `2b980dd`, `376601d`, `33194c7`, `a2c7a0e`, `45eab0a`.
+AVA is healthy on port 8787 from committed HEAD. Forge was not inspected or
+modified. The unrelated `.claude/settings.local.json` change remains untouched.
+
+This is a clean task boundary. The watcher cycle may ask AVA for the next
+highest-value repository instruction.
+
+NEEDS: codex

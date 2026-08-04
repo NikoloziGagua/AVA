@@ -376,6 +376,32 @@ CREATE TABLE IF NOT EXISTS strategy_events (
 CREATE INDEX IF NOT EXISTS idx_strategy_events_room
   ON strategy_events(room_id, seq);
 
+-- Structured Notes is Sir's intentional knowledge workspace. Unlike AVA's
+-- automatic memory observations, these records are user-facing, editable and
+-- organised into kinds, collections and tags. `version` guards against one
+-- browser or agent silently overwriting another's newer edit.
+CREATE TABLE IF NOT EXISTS notes (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'general',
+  status TEXT NOT NULL DEFAULT 'inbox',
+  collection TEXT,
+  tags TEXT NOT NULL DEFAULT '[]',
+  pinned INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'manual',
+  source_session_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notes_updated
+  ON notes(pinned DESC, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_notes_kind_status
+  ON notes(kind, status, updated_at DESC);
+
 
 CREATE TABLE IF NOT EXISTS watches (
   id TEXT PRIMARY KEY,

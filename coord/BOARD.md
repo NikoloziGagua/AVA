@@ -42,7 +42,7 @@ scheduler and pokes whoever is up.
 | Merging the three capability surfaces | UNCLAIMED | needs Niko's direction | 2026-07-26 |
 | Strategy Room (Niko + AVA + Codex collaboration) | codex | v1 shipped, awaiting Niko test | 2026-08-03 |
 | Task result receipts (conversation visibility) | codex | v1 built and verified, awaiting Niko launch/test | 2026-08-03 |
-| Notes workspace (structured capture) | codex | design and v1 implementation active | 2026-08-04 |
+| Notes workspace (structured capture) | codex | persistence foundation started; paused for Explorer handoff | 2026-08-04 |
 
 ---
 
@@ -434,3 +434,56 @@ reuse existing execution patterns but will not modify Claude-owned Explorer or
 Forge surfaces.
 
 NEEDS: codex
+
+---
+
+### 2026-08-04 - codex - newcomer-first Explore redesign request
+
+Niko redirected me to redesign Explore so a person who knows nothing about AVA
+immediately understands its real capabilities. Explorer is already claimed by
+Claude, so I inspected the current surface and its tests but did not edit any
+Claude-owned Explorer or Forge file.
+
+The existing implementation has a strong truth layer worth preserving: runtime
+readiness, explicit evidence caveats, searchable registry data, persistent
+breadcrumbs, real task links, and workflow trees. Its first screen is currently
+at the wrong altitude for a newcomer. It leads with system counts, evidence
+coverage, seven operational tabs, and a large 22-domain architecture graph. The
+best examples and one-tap launches are buried inside capability detail pages,
+while unfinished Reviews and Evolution foundations occupy primary navigation.
+
+Recommended redesign contract:
+
+1. Add a novice-first **Discover** landing view before the technical Atlas with
+   one plain headline: “What can AVA do for me?”
+2. Organise the front door into five outcome pillars rather than internal
+   subsystems: **Talk naturally**, **Control my computer**, **Use my web and
+   accounts**, **Remember and organise**, and **Build and automate**.
+3. Each pillar should show a one-sentence value statement, 2-3 real example
+   requests, live readiness, and one honest proof signal. Every runnable example
+   should launch a new AVA request directly.
+4. Add a high-impact “Try AVA” strip for the most compelling configured actions
+   and a “How AVA handles it” visual that opens the existing workflow tree in
+   plain-language mode. Preserve technical depth behind an Overview / Detailed /
+   Technical control.
+5. Reduce the top-level newcomer navigation to **Discover, Map, Activity, Health**.
+   Keep Tasks/Live under Activity; hide or clearly label unfinished Reviews and
+   Evolution as future foundations rather than equal product destinations.
+6. Derive showcase content from the capability registry plus runtime/task
+   evidence. Do not create static marketing claims, and never make configuration
+   or a tool return look like verified end-user success.
+7. Keep AVA completely isolated from Forge: no Forge agents, runs, terminology,
+   APIs, or developer control-plane state on this public capability showcase.
+
+Acceptance should include a first-time-user test: within ten seconds they can
+name at least three useful things AVA does, tell what is ready now, launch an
+example, and reach the deeper workflow/evidence view without losing the return
+path. Existing Explorer baseline remains green: 3 focused test files, 10 tests
+passed. The only warning was the repository's existing ES2024/esbuild target
+warning.
+
+The Notes workspace remains Codex-owned; only its schema and state foundation
+were started before Niko changed priority, and those uncommitted files are not
+part of the Explorer handoff.
+
+NEEDS: claude

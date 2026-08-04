@@ -412,9 +412,20 @@ CREATE TABLE IF NOT EXISTS watches (
   session_id TEXT,                    -- chat session holding every check run (visibility)
   created_at INTEGER NOT NULL,
   last_run_at INTEGER,
-  last_status TEXT,                   -- ok | triggered | unclear | error
+  last_status TEXT,                   -- check/reminder outcomes or targeted-delivery lifecycle state
   last_result TEXT,                   -- one-line latest status/reason
   run_at INTEGER,                     -- one-shot: fire once at/after this epoch-ms
   daily_at TEXT,                      -- recurring: fire once per day at HH:MM local
-  kind TEXT NOT NULL DEFAULT 'check'  -- check = agent run | reminder = direct push
+  kind TEXT NOT NULL DEFAULT 'check', -- check = agent run | reminder = direct push | codex = pinned Codex task
+  target_thread_id TEXT,
+  target_session_file TEXT,
+  target_cwd TEXT,
+  continue_cycle INTEGER NOT NULL DEFAULT 0,
+  parent_watch_id TEXT,
+  delivery_marker TEXT,
+  dispatch_offset INTEGER,
+  dispatch_turn_id TEXT,
+  dispatch_pid INTEGER,
+  delivered_at INTEGER,
+  completed_at INTEGER
 );

@@ -727,14 +727,18 @@ export type WatchRow = {
   session_id: string | null;
   created_at: number;
   last_run_at: number | null;
-  last_status: "ok" | "triggered" | "unclear" | "error" | string | null;
+  last_status: "ok" | "triggered" | "unclear" | "error" | "busy" | "dispatching" | "delivered" | "running" | "completed" | string | null;
   last_result: string | null;
   /** One-shot: fire once at this epoch-ms (newer column — may be absent). */
   run_at?: number | null;
   /** Recurring daily at "HH:MM" local (newer column — may be absent). */
   daily_at?: string | null;
-  /** "check" | "reminder" (newer column — may be absent). */
+  /** "check" | "reminder" | "codex" (newer column — may be absent). */
   kind?: string | null;
+  target_thread_id?: string | null;
+  continue_cycle?: number | boolean;
+  delivered_at?: number | null;
+  completed_at?: number | null;
 };
 
 export async function fetchWatches(): Promise<WatchRow[]> {

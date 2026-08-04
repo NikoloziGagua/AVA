@@ -21,6 +21,21 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "watches", "run_at", "INTEGER");
   tryAddColumn(db, "watches", "daily_at", "TEXT");
   tryAddColumn(db, "watches", "kind", "TEXT NOT NULL DEFAULT 'check'");
+  // Watches v3: a watcher can pin one concrete Codex TUI thread, verify that
+  // its instruction arrived, and optionally ask AVA to schedule a successor.
+  tryAddColumn(db, "watches", "target_thread_id", "TEXT");
+  tryAddColumn(db, "watches", "target_session_file", "TEXT");
+  tryAddColumn(db, "watches", "target_cwd", "TEXT");
+  tryAddColumn(db, "watches", "continue_cycle", "INTEGER NOT NULL DEFAULT 0");
+  tryAddColumn(db, "watches", "parent_watch_id", "TEXT");
+  tryAddColumn(db, "watches", "delivery_marker", "TEXT");
+  tryAddColumn(db, "watches", "dispatch_offset", "INTEGER");
+  tryAddColumn(db, "watches", "dispatch_turn_id", "TEXT");
+  tryAddColumn(db, "watches", "dispatch_pid", "INTEGER");
+  tryAddColumn(db, "watches", "delivered_at", "INTEGER");
+  tryAddColumn(db, "watches", "completed_at", "INTEGER");
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_watches_one_child
+    ON watches(parent_watch_id) WHERE parent_watch_id IS NOT NULL`);
   // Mission Control v1 initially shipped the 30-day detailed boundary first.
   // Backfill the longer compact-outcome boundary for any database opened by an
   // intermediate build so retention remains deterministic across upgrades.

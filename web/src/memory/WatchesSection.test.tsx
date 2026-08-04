@@ -111,6 +111,22 @@ describe("WatchesSection", () => {
     expect(await screen.findByText(/No standing watches/)).toBeTruthy();
   });
 
+  it("makes pinned Codex delivery and cycle state visible", async () => {
+    fetchWatches.mockResolvedValue([watch({
+      id: "codex-1",
+      prompt: "build the Notes system",
+      kind: "codex",
+      continue_cycle: 1,
+      last_status: "running",
+      last_result: "Codex accepted the watcher instruction and is still working",
+    })]);
+    render(<WatchesSection />);
+
+    expect(await screen.findByText("Codex task")).toBeTruthy();
+    expect(screen.getByText("continuous cycle")).toBeTruthy();
+    expect(screen.getByLabelText("last check: running")).toBeTruthy();
+  });
+
   it("renders defensively: missing new columns + unknown status do not crash", async () => {
     fetchWatches.mockResolvedValue([
       // Base-schema row: no run_at / daily_at / kind at all, bogus status.

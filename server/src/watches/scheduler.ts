@@ -1,5 +1,14 @@
 import type { Db } from "../state/db.js";
-import { dueWatches, recordWatchRun, setWatchEnabled, type Watch } from "../state/watches.js";
+import {
+  dueWatches,
+  getChildWatch,
+  recordCodexCompleted,
+  recordCodexDispatch,
+  recordWatchRun,
+  setWatchEnabled,
+  type Watch,
+} from "../state/watches.js";
+import type { CodexDispatchRequest, CodexDispatchResult, CodexThreadSnapshot, CodexWatchTarget } from "./codex-dispatch.js";
 
 // The watch scheduler. Every tick it finds due watches and runs each check as
 // a REAL agent turn through the server's own /api/chat — so a check gets the
@@ -22,6 +31,10 @@ export type SchedulerDeps = {
   log: { info: (o: unknown, m: string) => void; warn: (o: unknown, m: string) => void };
   /** Injectable check runner (tests fake this; production uses runCheckViaHttp). */
   runCheck?: (w: Watch, deps: SchedulerDeps) => Promise<WatchCheckResult>;
+  dispatchCodex?: (request: CodexDispatchRequest) => Promise<CodexDispatchResult>;
+  inspectCodex?: (target: CodexWatchTarget, marker?: string | null, dispatchOffset?: number | null) => CodexThreadSnapshot;
+  /** Injectable cycle planner. Production asks AVA through its normal tool loop. */
+  planNextCodexTask?: (w: Watch, deps: SchedulerDeps) => Promise<WatchCheckResult>;
   tickMs?: number;
   /** Cap on a single check's wall clock. */
   checkTimeoutMs?: number;
@@ -37,6 +50,18 @@ export function buildCheckPrompt(w: Watch): string {
   );
 }
 
+export function buildCodexCyclePrompt(w: Watch): string {
+  return (
+    `[CODEX CYCLE PLANNING — Niko explicitly authorized this recurring AVA improvement loop]\n` +
+    `Codex completed watcher ${w.id}. Original task:\n${w.prompt}\n\n` +
+    `Inspect AVA's current board, recent commits, tests, Mission Control evidence and known failures. ` +
+    `Choose exactly one highest-value bounded improvement for AVA. Do not implement it in this planning run. ` +
+    `Call watch_create exactly once with kind='codex', interval_minutes=1, once=true, ` +
+    `continue_cycle=true, parent_watch_id='${w.id}', and a complete implementation-and-test prompt. ` +
+    `Do not choose Forge work. Do not repeat completed work. End by reporting the new watcher ID.`
+  );
+}
+
 export function parseWatchMarker(finalText: string): { status: "triggered" | "ok" | "unclear"; detail: string } {
   const m = /^WATCH:\s*(TRIGGERED|OK)\s*(?:[—–-]+\s*(.*))?$/im.exec(finalText);
   if (!m) return { status: "unclear", detail: finalText.replace(/\s+/g, " ").slice(0, 200) };
@@ -46,16 +71,14 @@ export function parseWatchMarker(finalText: string): { status: "triggered" | "ok
   };
 }
 
-/** Production check runner: POST the prompt, then follow the SSE stream to the final. */
-export async function runCheckViaHttp(w: Watch, deps: SchedulerDeps): Promise<WatchCheckResult> {
+/** Production background runner: POST a prompt, then follow SSE to the final. */
+export async function runPromptViaHttp(prompt: string, requestedSessionId: string | null, deps: SchedulerDeps): Promise<WatchCheckResult> {
   const timeoutMs = deps.checkTimeoutMs ?? 240_000;
   const auth = { authorization: `Bearer ${deps.token()}` };
   const res = await fetch(`${deps.baseUrl}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json", ...auth },
-    body: JSON.stringify(w.session_id
-      ? { text: buildCheckPrompt(w), sessionId: w.session_id }
-      : { text: buildCheckPrompt(w) }),
+    body: JSON.stringify(requestedSessionId ? { text: prompt, sessionId: requestedSessionId } : { text: prompt }),
   });
   if (!res.ok) return { kind: "error", message: `POST /api/chat ${res.status}` };
   const { sessionId } = await res.json() as { sessionId: string };
@@ -102,12 +125,107 @@ export async function runCheckViaHttp(w: Watch, deps: SchedulerDeps): Promise<Wa
   return { kind: "error", message: `check timed out after ${Math.round(timeoutMs / 1000)}s` };
 }
 
+/** Production check runner retained as the watch-specific adapter. */
+export function runCheckViaHttp(w: Watch, deps: SchedulerDeps): Promise<WatchCheckResult> {
+  return runPromptViaHttp(buildCheckPrompt(w), w.session_id, deps);
+}
+
+export function planNextCodexTaskViaHttp(w: Watch, deps: SchedulerDeps): Promise<WatchCheckResult> {
+  return runPromptViaHttp(buildCodexCyclePrompt(w), null, deps);
+}
+
+async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
+  if (!deps.dispatchCodex || !deps.inspectCodex) {
+    recordWatchRun(deps.db, w.id, { status: "error", result: "Codex watcher dispatcher is unavailable" });
+    return;
+  }
+  if (!w.target_thread_id || !w.target_session_file || !w.target_cwd) {
+    recordWatchRun(deps.db, w.id, { status: "error", result: "Codex watcher has no pinned target" });
+    setWatchEnabled(deps.db, w.id, false);
+    return;
+  }
+  const target = { threadId: w.target_thread_id, sessionFile: w.target_session_file, cwd: w.target_cwd };
+
+  if (!w.delivered_at) {
+    const result = await deps.dispatchCodex({
+      watchId: w.id,
+      prompt: w.prompt,
+      target,
+      marker: w.delivery_marker,
+      dispatchOffset: w.dispatch_offset,
+      dispatchPid: w.dispatch_pid,
+    });
+    if (result.status === "busy") {
+      recordWatchRun(deps.db, w.id, { status: "busy", result: result.detail });
+      return;
+    }
+    if (result.status === "error") {
+      recordWatchRun(deps.db, w.id, { status: "error", result: result.detail });
+      return;
+    }
+    recordCodexDispatch(deps.db, w.id, {
+      marker: result.marker,
+      offset: result.dispatchOffset,
+      turnId: "turnId" in result ? result.turnId : null,
+      pid: "pid" in result ? result.pid : null,
+      delivered: result.status === "delivered" || result.status === "already_delivered",
+    });
+    if (result.status === "delivered" || result.status === "already_delivered") {
+      deps.notify(`Codex received AVA watcher task: ${w.prompt.slice(0, 140)}`);
+    }
+    return;
+  }
+
+  const snapshot = deps.inspectCodex(target, w.delivery_marker, w.dispatch_offset);
+  if (!snapshot.markerSeen) {
+    // Never redispatch blindly. The stored marker/offset allows a later pass to
+    // distinguish delayed session persistence from a genuinely lost process.
+    recordWatchRun(deps.db, w.id, { status: "error", result: "delivery evidence disappeared from the pinned Codex thread" });
+    return;
+  }
+  if (!snapshot.markerTurnCompleted) {
+    recordWatchRun(deps.db, w.id, { status: "running", result: "Codex accepted the watcher instruction and is still working" });
+    return;
+  }
+
+  recordCodexCompleted(deps.db, w.id);
+  if (!w.continue_cycle) {
+    setWatchEnabled(deps.db, w.id, false);
+    deps.notify(`Codex completed AVA watcher task: ${w.prompt.slice(0, 140)}`);
+    return;
+  }
+
+  const existingChild = getChildWatch(deps.db, w.id);
+  if (existingChild) {
+    setWatchEnabled(deps.db, w.id, false);
+    deps.notify(`AVA scheduled Codex's next task (${existingChild.id}).`);
+    return;
+  }
+  const plan = deps.planNextCodexTask ?? planNextCodexTaskViaHttp;
+  const planned = await plan(w, deps);
+  if (planned.kind === "error") {
+    recordWatchRun(deps.db, w.id, { status: "error", result: `AVA could not select the next Codex task: ${planned.message}` });
+    return;
+  }
+  const child = getChildWatch(deps.db, w.id);
+  if (!child) {
+    recordWatchRun(deps.db, w.id, { status: "error", result: "AVA planning finished without creating the required successor watch" });
+    return;
+  }
+  setWatchEnabled(deps.db, w.id, false);
+  deps.notify(`AVA selected and scheduled Codex's next task (${child.id}).`);
+}
+
 /** One scheduler pass — exported for tests; the interval driver just calls it. */
 export async function tickOnce(deps: SchedulerDeps): Promise<void> {
   const due = dueWatches(deps.db);
   const run = deps.runCheck ?? runCheckViaHttp;
   for (const w of due) {
     try {
+      if (w.kind === "codex") {
+        await runCodexWatch(w, deps);
+        continue;
+      }
       // Pure reminders skip the agent entirely: the prompt IS the message.
       // Direct push at the due moment — instant and free.
       if (w.kind === "reminder") {

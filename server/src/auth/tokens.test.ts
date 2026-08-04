@@ -48,9 +48,10 @@ describe("device tokens", () => {
     expect(validateToken(db, keep.secret)).toBe(keep.id);
   });
 
-  it("hides internal (voice-internal) tokens from the user-facing device list", () => {
+  it("hides all loopback tokens from the user-facing device list", () => {
     const phone = issueToken(db, { label: "iPhone" });
     issueToken(db, { label: "voice-internal" });
+    issueToken(db, { label: "watch-internal" });
     const list = listTokens(db);
     expect(list.map((t) => t.label)).toEqual(["iPhone"]);
     expect(list.map((t) => t.id)).toEqual([phone.id]);

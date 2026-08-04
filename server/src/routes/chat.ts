@@ -43,6 +43,7 @@ import { buildMemoryTools } from "../tools/memory-mcp.js";
 import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
 import { buildShopifyTools } from "../tools/shopify-mcp.js";
 import { buildPlacesTools } from "../tools/places-mcp.js";
+import type { CodexWatchTarget } from "../watches/codex-dispatch.js";
 import { getReasoningLevel } from "../state/reasoning-pref.js";
 import { mapReasoning } from "../orchestrator/reasoning.js";
 import { detectCorrection, formatCorrection } from "../orchestrator/correction-detector.js";
@@ -113,6 +114,8 @@ export type AgentDeps = {
   shopify?: { store: string; token: string } | null;
   /** Google Places API key — when present, the find_places tool is offered. */
   googlePlacesApiKey?: string | null;
+  /** Pins watcher delivery to one concrete Codex TUI thread for this repo. */
+  resolveCodexWatchTarget?: () => CodexWatchTarget | null;
   /** Optional override; lets tests substitute a fake agent loop. Defaults to runAgent. */
   runAgentImpl?: typeof runAgent;
   /** Shared Mission Control stream. Optional keeps isolated route tests simple. */
@@ -631,7 +634,7 @@ export function chatRoutes(
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
             // Standing background checks ("notify me if/when …") — the
             // scheduler re-runs them; Ava just registers/lists/deletes here.
-            ...(buildWatchTools({ db }) as ToolDef[]),
+            ...(buildWatchTools({ db, resolveCodexTarget: agentDeps.resolveCodexWatchTarget }) as ToolDef[]),
             // App modules: deterministic Instagram workflows + the people map
             // (identity resolution + learned DM threads = the fast path).
             ...(buildInstagramTools({ getChrome: agentDeps.getChrome, memoryDir: agentDeps.memoryDir }) as ToolDef[]),

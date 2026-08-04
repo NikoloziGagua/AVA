@@ -15,7 +15,7 @@ import { buildRealtimeProxy } from "./routes/voice-realtime.js";
 import { resolveVoiceProvider } from "./routes/voice-provider-config.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
-import { issueToken, revokeTokensByLabel } from "./auth/tokens.js";
+import { rotateInternalTokens } from "./auth/internal-tokens.js";
 import { authRoutes } from "./routes/auth.js";
 import { chatRoutes } from "./routes/chat.js";
 import { healthRoutes } from "./routes/health.js";
@@ -46,6 +46,7 @@ import { playbooksRoutes } from "./routes/playbooks.js";
 import { watchesRoutes } from "./routes/watches.js";
 import { peopleRoutes } from "./routes/people.js";
 import { startWatchScheduler } from "./watches/scheduler.js";
+import { buildCodexDispatcher } from "./watches/codex-dispatch.js";
 import { ActiveRuns } from "./orchestrator/active-runs.js";
 import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
@@ -83,6 +84,9 @@ const startedAt = Date.now();
 const cfg = loadConfig();
 const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
+let voiceInternalToken = "";
+let watchInternalToken = "";
+const codexDispatcher = buildCodexDispatcher({ repoRoot: cfg.repoRoot, logsDir: cfg.logsDir });
 const observability = new ObservabilityService(db);
 const strategyStore = new StrategyRoomStore(db);
 const interruptedStrategyRooms = strategyStore.failInterruptedRooms();
@@ -536,6 +540,7 @@ const agentDeps = {
   shopify: cfg.shopifyStore && cfg.shopifyAdminToken
     ? { store: cfg.shopifyStore, token: cfg.shopifyAdminToken } : null,
   googlePlacesApiKey: cfg.googlePlacesApiKey,
+  resolveCodexWatchTarget: codexDispatcher.resolveTarget,
   queueSelfImprove,
   // Discuss-with-Claude: queue a background consult, and read past ones back.
   queueDiscussion,
@@ -676,6 +681,17 @@ process.on("uncaughtException", (err) => {
 });
 
 const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
+  // Rotate only after this process successfully owns the port. A losing hot-
+  // reload process must not revoke the live server's loopback credentials.
+  const internalTokens = rotateInternalTokens(db);
+  voiceInternalToken = internalTokens.voice;
+  watchInternalToken = internalTokens.watch;
+  if (internalTokens.retiredVoice > 0) {
+    log.info({ retired: internalTokens.retiredVoice }, "auth: revoked stale voice-internal tokens at boot");
+  }
+  if (internalTokens.retiredWatch > 0) {
+    log.info({ retired: internalTokens.retiredWatch }, "auth: revoked stale watch-internal tokens at boot");
+  }
   log.info({ port: cfg.port, bind: cfg.bindAddr }, "ava server listening");
   // Long-term monitoring: re-checks standing watches through this server's own
   // /api/chat (full toolset + audit trail in each watch's session). Started
@@ -687,6 +703,8 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
       token: () => watchInternalToken,
       notify: (text) => notifyDone?.(text),
       log,
+      dispatchCodex: codexDispatcher.dispatch,
+      inspectCodex: codexDispatcher.inspect,
     });
   } else {
     log.warn({}, "watch scheduler disabled — no LLM provider");
@@ -718,20 +736,6 @@ httpServer.on("error", (err: NodeJS.ErrnoException) => {
 // realtime model always speaks for the OpenAI engine. The internal token must
 // therefore always exist.
 const hybridVoice = !!process.env.REALTIME_HYBRID;
-// Retire any prior run's internal token(s) before minting this run's, so the
-// device_tokens table holds exactly one live voice-internal credential instead of
-// accumulating an unbounded set of standing god-tokens (one per restart/reload).
-{
-  const retired = revokeTokensByLabel(db, "voice-internal");
-  if (retired > 0) log.info({ retired }, "auth: revoked stale voice-internal tokens at boot");
-}
-const voiceInternalToken = issueToken(db, { label: "voice-internal" }).secret;
-// Same hygiene for the watch scheduler's internal credential.
-{
-  const retired = revokeTokensByLabel(db, "watch-internal");
-  if (retired > 0) log.info({ retired }, "auth: revoked stale watch-internal tokens at boot");
-}
-const watchInternalToken = issueToken(db, { label: "watch-internal" }).secret;
 async function runVoiceAction(
   sessionId: string | null,
   task: string,
@@ -739,6 +743,7 @@ async function runVoiceAction(
   signal?: AbortSignal,
   observabilityContext?: ObservabilityParentContext,
 ): Promise<{ text: string; sessionId: string | null }> {
+  if (!voiceInternalToken) throw new Error("voice loopback authentication is not ready");
   const base = `http://127.0.0.1:${cfg.port}`;
   const auth = { authorization: `Bearer ${voiceInternalToken}` };
   const cancelled = () => {

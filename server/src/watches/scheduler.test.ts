@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { openInMemoryDb } from "../state/db.js";
-import { createWatch, listWatches, dueWatches, recordWatchRun, getWatch } from "../state/watches.js";
+import { createWatch, listWatches, dueWatches, recordWatchRun, getWatch, getChildWatch } from "../state/watches.js";
 import { parseWatchMarker, buildCheckPrompt, tickOnce, type SchedulerDeps } from "./scheduler.js";
 
 const quiet = { info: () => {}, warn: () => {} };
@@ -146,5 +146,104 @@ describe("reminders and schedules (watches v2)", () => {
   it("rejects malformed daily_at", () => {
     const db = openInMemoryDb();
     expect(() => createWatch(db, { prompt: "x", dailyAt: "25:99" })).toThrow(/invalid dailyAt/);
+  });
+});
+
+describe("pinned Codex delivery (watches v3)", () => {
+  const target = { threadId: "thread-1", sessionFile: "C:/sessions/thread-1.jsonl", cwd: "C:/repo/AVA" };
+
+  it("waits at a busy boundary without dispatching a second task", async () => {
+    const db = openInMemoryDb();
+    const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 1, target });
+    const dispatchCodex = vi.fn(async () => ({ status: "busy" as const, detail: "thread is busy" }));
+
+    await tickOnce(deps(db, { dispatchCodex, inspectCodex: vi.fn() }));
+
+    expect(dispatchCodex).toHaveBeenCalledOnce();
+    expect(getWatch(db, w.id)).toMatchObject({ enabled: 1, last_status: "busy", delivered_at: null });
+  });
+
+  it("keeps a scheduled Codex one-shot due through its multi-phase delivery", async () => {
+    const db = openInMemoryDb();
+    const at = Date.now() - 1_000;
+    const w = createWatch(db, { prompt: "build notes", kind: "codex", runAt: at, target });
+    recordWatchRun(db, w.id, { status: "busy", result: "target is busy" });
+    expect(dueWatches(db).map((item) => item.id)).toContain(w.id);
+  });
+
+  it("persists verified delivery and later observes completion", async () => {
+    const db = openInMemoryDb();
+    const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 1, target });
+    const notify = vi.fn();
+    const dispatchCodex = vi.fn(async () => ({
+      status: "delivered" as const,
+      detail: "seen",
+      marker: `[AVA-WATCH:${w.id}]`,
+      turnId: "turn-1",
+      dispatchOffset: 120,
+      pid: 32148,
+    }));
+    const inspectCodex = vi.fn(() => ({
+      state: "idle" as const,
+      markerSeen: true,
+      markerTurnCompleted: true,
+      turnId: "turn-1",
+      fileSize: 500,
+      reason: "complete",
+    }));
+
+    vi.useFakeTimers({ now: new Date("2026-08-04T01:00:00Z") });
+    try {
+      await tickOnce(deps(db, { dispatchCodex, inspectCodex, notify }));
+      expect(getWatch(db, w.id)).toMatchObject({ last_status: "delivered", dispatch_pid: 32148 });
+      vi.advanceTimersByTime(61_000);
+      await tickOnce(deps(db, { dispatchCodex, inspectCodex, notify }));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(dispatchCodex).toHaveBeenCalledOnce();
+    expect(inspectCodex).toHaveBeenCalledOnce();
+    expect(getWatch(db, w.id)).toMatchObject({ enabled: 0, last_status: "completed" });
+    expect(notify).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks AVA for exactly one successor after a completed cycle task", async () => {
+    const db = openInMemoryDb();
+    const parent = createWatch(db, {
+      prompt: "first task",
+      kind: "codex",
+      intervalMinutes: 1,
+      target,
+      continueCycle: true,
+    });
+    db.prepare(`UPDATE watches SET delivery_marker = ?, dispatch_offset = 10, delivered_at = ?, last_run_at = ? WHERE id = ?`)
+      .run(`[AVA-WATCH:${parent.id}]`, Date.now() - 120_000, Date.now() - 120_000, parent.id);
+    const planNextCodexTask = vi.fn(async () => {
+      createWatch(db, {
+        prompt: "next task",
+        kind: "codex",
+        intervalMinutes: 1,
+        target,
+        continueCycle: true,
+        parentWatchId: parent.id,
+      });
+      return { kind: "final" as const, text: "scheduled", sessionId: "ava-planner" };
+    });
+    const inspectCodex = vi.fn(() => ({
+      state: "idle" as const,
+      markerSeen: true,
+      markerTurnCompleted: true,
+      turnId: "turn-parent",
+      fileSize: 200,
+      reason: "complete",
+    }));
+
+    await tickOnce(deps(db, { dispatchCodex: vi.fn(), inspectCodex, planNextCodexTask }));
+    await tickOnce(deps(db, { dispatchCodex: vi.fn(), inspectCodex, planNextCodexTask }));
+
+    expect(planNextCodexTask).toHaveBeenCalledOnce();
+    expect(getChildWatch(db, parent.id)).toMatchObject({ prompt: "next task", parent_watch_id: parent.id });
+    expect(getWatch(db, parent.id)!.enabled).toBe(0);
   });
 });

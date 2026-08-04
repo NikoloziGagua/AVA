@@ -50,3 +50,27 @@ describe("db migrations: sessions.deleted_at", () => {
     expect(idx.some((i) => i.name === "idx_sessions_deleted")).toBe(true);
   });
 });
+
+describe("db migrations: targeted watches", () => {
+  it("adds pinned-target, delivery evidence, and cycle columns", () => {
+    const db = openDb(":memory:");
+    const cols = db.prepare("PRAGMA table_info(watches)").all() as Array<{ name: string }>;
+    const names = cols.map((column) => column.name);
+    expect(names).toEqual(expect.arrayContaining([
+      "target_thread_id",
+      "target_session_file",
+      "target_cwd",
+      "continue_cycle",
+      "parent_watch_id",
+      "delivery_marker",
+      "dispatch_offset",
+      "dispatch_turn_id",
+      "dispatch_pid",
+      "delivered_at",
+      "completed_at",
+    ]));
+    const indexes = db.prepare("PRAGMA index_list(watches)").all() as Array<{ name: string }>;
+    expect(indexes.some((index) => index.name === "idx_watches_one_child")).toBe(true);
+    db.close();
+  });
+});

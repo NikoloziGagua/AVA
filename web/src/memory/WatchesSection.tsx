@@ -46,6 +46,11 @@ const STATUS_GLYPH = {
   triggered: { glyph: "●", cls: "text-[var(--ac)]", label: "triggered" },
   error: { glyph: "✗", cls: "text-[var(--ac-stop)]", label: "error" },
   unclear: { glyph: "?", cls: "text-white/45", label: "unclear" },
+  busy: { glyph: "◌", cls: "text-[var(--ac-warn)]", label: "waiting for target" },
+  dispatching: { glyph: "↗", cls: "text-[var(--ac-exec)]", label: "dispatching" },
+  delivered: { glyph: "●", cls: "text-[var(--ac-exec)]", label: "delivered" },
+  running: { glyph: "◌", cls: "text-[var(--ac-exec)]", label: "running" },
+  completed: { glyph: "✓", cls: "text-[var(--ac)]", label: "completed" },
 } as const;
 
 function statusGlyph(status: WatchRow["last_status"]) {
@@ -181,6 +186,8 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 hud text-[9px] tracking-[0.16em] text-white/40">
           <span>{scheduleLabel(w)}</span>
           {w.kind === "reminder" && <span className="text-[var(--ac-exec)]/85">reminder</span>}
+          {w.kind === "codex" && <span className="text-[var(--ac)]/85">Codex task</span>}
+          {w.kind === "codex" && w.continue_cycle ? <span>continuous cycle</span> : null}
         </div>
 
         {w.last_run_at != null ? (

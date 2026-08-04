@@ -1,8 +1,14 @@
-# Watches — standing background monitoring ("notify me if/when X")
+# Watches — reminders, monitoring, and scheduled task delivery
 
 ## What it does
 
-A **watch** is a standing instruction that Ava re-checks on a schedule and
+A **watch** is a durable instruction that Ava handles on a schedule. An ordinary
+watch is re-checked by AVA with her full toolset, so it can use Instagram,
+WhatsApp, Chrome, web research, files, Claude tools, or any other available AVA
+capability. A reminder is pushed directly. A targeted-agent watch uses a delivery
+adapter that pins a concrete session and records delivery/completion evidence.
+
+For standing monitoring, AVA re-checks a condition and
 push-notifies Sir about when its condition is met — *"tell me if the RTX 5090
 drops below $1800"*, *"let me know when the visa page changes"*, *"ping me if it's
 going to rain in Tbilisi tomorrow"*. Sir asks once; Ava turns it into a durable
@@ -35,16 +41,29 @@ interval, and confirms it created the watch. From then on it is hands-off:
   each watch, its interval, and its latest status.
 - **Sir can cancel one** — *"stop watching the GPU price"* → `watch_delete`.
 
-There is **no dedicated Watches screen** today — the surface is conversational
-plus the push notification. A JSON management API exists (`/api/watches`) for a
-future UI. Each watch also owns a chat session (linked on its first run), so its
-check history shows up in the normal Chats list once it has run at least once.
+The Memory surface includes a **Standing watches** section for schedule, status,
+latest result, pause/resume, and deletion. Each ordinary check also owns a chat
+session (linked on its first run), so its history appears in the Chats list.
+Pinned task watches additionally show whether delivery is waiting, dispatching,
+delivered, running, completed, or failed.
 
 ## How it works
 
 Two halves: **tools** (Ava registers/lists/deletes watches during a turn) and a
 **scheduler** (a background timer that actually runs the checks). They share the
 `watches` SQLite table.
+
+### Execution modes
+
+- **check** — AVA runs the prompt through `/api/chat` with the complete toolset.
+  This is the general path for scheduled Instagram, browser, web, Claude, file,
+  and other AVA work.
+- **reminder** — the prompt is the notification; no model call is made.
+- **codex** — the adapter pins the exact repository TUI thread, waits for a clean
+  task boundary, resumes that thread, and verifies a unique instruction marker
+  in its immutable JSONL session record. The adapter contract is deliberately
+  isolated so another session target, such as Claude Code, can implement the
+  same resolve/dispatch/inspect boundary without changing ordinary watches.
 
 ### The marker protocol
 
@@ -101,12 +120,14 @@ audit. It is the same trick the voice pipeline uses for `do_on_computer`.
 
 | Concern | File | Notes |
 |---|---|---|
-| Table | `server/src/state/schema.sql` (`watches`) | `prompt`, `interval_minutes`, `once`, `enabled`, `session_id`, `last_run_at`, `last_status`, `last_result`. |
+| Table | `server/src/state/schema.sql` (`watches`) | Schedule/result fields plus pinned target, delivery marker, process, completion, and cycle ancestry evidence. |
 | State module | `server/src/state/watches.ts` | `createWatch`, `dueWatches` (`:49`), `recordWatchRun` (`:54`), `setWatchEnabled`, `deleteWatch`. |
 | Scheduler | `server/src/watches/scheduler.ts` | `startWatchScheduler` (`:130`, 60s tick), `tickOnce` (`:106`), `runCheckViaHttp` (`:50`), marker helpers (`:30`, `:40`). |
 | Tools (Ava) | `server/src/tools/watches-mcp.ts` | `watch_create` / `watch_list` / `watch_delete` — action mode only. |
 | HTTP API | `server/src/routes/watches.ts` | `GET /` · `POST /` · `POST /:id/enabled` · `DELETE /:id` (token-auth'd). |
-| Boot wiring | `server/src/index.ts` | scheduler started **after** the port is live and **only if an LLM provider exists**; `watch-internal` token minted, stale ones revoked. |
+| Target adapter | `server/src/watches/codex-dispatch.ts` | Exact Codex target resolution, lifecycle inspection, idempotent dispatch, and delivery evidence. |
+| UI | `web/src/memory/WatchesSection.tsx` | Read/manage surface with ordinary and targeted lifecycle visibility. |
+| Boot wiring | `server/src/index.ts` | Scheduler and internal credentials start **only after this process owns the port** and only when an LLM provider exists. |
 
 ### Frugality guidance (baked into the tool)
 
@@ -176,11 +197,17 @@ any watch is deletable, so a given row won't necessarily still be present later.
   single notification, and recurring watches with no de-dup can spam. Defaulting
   `once:true` matches intent and caps noise; Sir can ask for a repeating watch
   explicitly.
-- **An internal bearer token, minted fresh at boot.** The scheduler authenticates
+- **An internal bearer token, rotated only after port ownership.** The scheduler authenticates
   to Ava's own API exactly like a paired device (single-tenant, so any valid token
-  effectively has Sir's shell). Stale `watch-internal` tokens are revoked at every
-  boot — the same hygiene already used for the `voice-internal` loopback token — so
-  a crashed process doesn't leave a long-lived credential lying around.
+  effectively has Sir's shell). Stale `watch-internal` tokens are revoked only in
+  the successful HTTP listen callback. This is critical: a losing hot-reload
+  process that receives `EADDRINUSE` must not revoke the healthy server's token.
+  `voice-internal` follows the same rule, and neither appears in the user-facing
+  paired-device list.
+- **Target delivery is idempotent.** The scheduler persists a unique marker,
+  session offset, and process ID before advancing. It never blindly launches a
+  second agent into the same thread after a slow or lost dispatch; it reports the
+  existing process as pending or the stopped process as a visible error.
 - **In-process scheduler, not an external cron.** Keeping it inside the Node
   process means zero extra infrastructure and it shares the DB/browser directly;
   the accepted trade-off is that watches only run while Ava is running (documented

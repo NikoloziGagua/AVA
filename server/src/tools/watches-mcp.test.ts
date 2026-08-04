@@ -1,0 +1,49 @@
+import { describe, expect, it } from "vitest";
+import { openInMemoryDb } from "../state/db.js";
+import { getWatch } from "../state/watches.js";
+import { buildWatchTools } from "./watches-mcp.js";
+
+describe("watch_create tool", () => {
+  it("keeps ordinary AVA monitors on the shared scheduler path", async () => {
+    const db = openInMemoryDb();
+    const create = buildWatchTools({ db }).find((entry) => entry.tool.name === "watch_create")!;
+    const result = await create.run({ prompt: "check Instagram inbox", interval_minutes: 15, once: false });
+
+    expect(result.ok).toBe(true);
+    const watch = db.prepare("SELECT * FROM watches").get() as { kind: string; target_thread_id: string | null };
+    expect(watch).toMatchObject({ kind: "check", target_thread_id: null });
+  });
+
+  it("pins Codex target identity and cycle ancestry", async () => {
+    const db = openInMemoryDb();
+    const target = { threadId: "thread-exact", sessionFile: "C:/sessions/exact.jsonl", cwd: "C:/repo/AVA" };
+    const create = buildWatchTools({ db, resolveCodexTarget: () => target })
+      .find((entry) => entry.tool.name === "watch_create")!;
+    const result = await create.run({
+      prompt: "build notes",
+      kind: "codex",
+      interval_minutes: 1,
+      continue_cycle: true,
+      parent_watch_id: "previous-watch",
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    const id = /\(([A-Za-z0-9_-]+)\)/.exec(result.text)?.[1];
+    expect(getWatch(db, id!)).toMatchObject({
+      kind: "codex",
+      target_thread_id: "thread-exact",
+      target_session_file: "C:/sessions/exact.jsonl",
+      target_cwd: "C:/repo/AVA",
+      continue_cycle: 1,
+      parent_watch_id: "previous-watch",
+    });
+  });
+
+  it("refuses an unpinned Codex watch", async () => {
+    const db = openInMemoryDb();
+    const create = buildWatchTools({ db }).find((entry) => entry.tool.name === "watch_create")!;
+    const result = await create.run({ prompt: "build notes", kind: "codex", interval_minutes: 1 });
+    expect(result).toMatchObject({ ok: false });
+    expect(result.text).toContain("no active Codex TUI thread");
+  });
+});

@@ -50,6 +50,12 @@ describe("classifyIntent", () => {
     expect(classifyIntent("remember you should always confirm before pushing")).toBe("action");
   });
 
+  it("keeps Notes capture available to conservative voice routing", () => {
+    expect(classifyIntent("put this idea in my notes")).toBe("action");
+    expect(classifyIntent("save that to the AVA project notes")).toBe("action");
+    expect(classifyIntent("make a note about the browser issue")).toBe("action");
+  });
+
   it("treats file ops imperatives as action", () => {
     expect(classifyIntent("read the package.json file")).toBe("action");
     expect(classifyIntent("write a hello world to scratch.txt")).toBe("action");

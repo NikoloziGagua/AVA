@@ -17,6 +17,7 @@ const ACTION_PATTERNS: RegExp[] = [
   /\bcomputer[\s_-]?use\b/i,
   /\bfs_(read|write|list|stat|delete)\b/i,
   /\bmemory_(remember|forget|read)\b/i,
+  /\bnotes?_(capture|search|update|promote)\b/i,
   /\bchrome_(navigate|click|type|read_page|screenshot|tabs|press_key)\b/i,
 
   // URLs.
@@ -48,9 +49,14 @@ const ACTION_PATTERNS: RegExp[] = [
   /\b(remember|forget)\s+(that|what|everything|this|my|i|i'm|me|you|you're|your)\b/i,
   /\bwhat\s+do\s+you\s+remember\b/i,
 
+  // Visible Notes workspace. This matters most for voice, whose conservative
+  // classifier would otherwise strip tools from "put this in notes".
+  /\b(put|save|add|capture|write)\b.{0,50}\b(?:in|to)\s+(?:my\s+|the\s+)?notes?\b/i,
+  /\bmake\s+(?:a\s+)?note\s+(?:of|about)\b/i,
+
   // Direct "use X" phrasing — pulls bare "chrome"/"shell" into action mode
   // when the user explicitly invokes them.
-  /\buse\s+(?:the\s+)?(claude[\s_-]?code|chrome|computer[\s_-]?use|shell|fs_|memory_)/i,
+  /\buse\s+(?:the\s+)?(claude[\s_-]?code|chrome|computer[\s_-]?use|shell|fs_|memory_|notes?_)/i,
 ];
 
 export function classifyIntent(message: string): Intent {

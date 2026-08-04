@@ -29,6 +29,7 @@ import { voiceEngineRoutes } from "./routes/voice-engine.js";
 import { chipsRoutes } from "./routes/chips.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
+import { notesRoutes } from "./routes/notes.js";
 import {
   buildCapabilitySnapshot,
   capabilityRoutes,
@@ -599,6 +600,7 @@ app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
   supported: provider?.name === "openai",
 }));
 app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
+app.use("/api/notes", notesRoutes(db, requireToken(db), { queueSelfImprove }));
 app.use("/api/capabilities", capabilityRoutes(requireToken(db), capabilityRouteDeps));
 app.use("/api/explorer", explorerRoutes(requireToken(db), {
   db,

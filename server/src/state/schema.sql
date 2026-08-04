@@ -376,21 +376,40 @@ CREATE TABLE IF NOT EXISTS strategy_events (
 CREATE INDEX IF NOT EXISTS idx_strategy_events_room
   ON strategy_events(room_id, seq);
 
--- Structured Notes is Sir's intentional knowledge workspace. Unlike AVA's
--- automatic memory observations, these records are user-facing, editable and
--- organised into kinds, collections and tags. `version` guards against one
--- browser or agent silently overwriting another's newer edit.
+-- Structured Notes is Sir's intentional knowledge workspace. Project spaces
+-- are first-class so an empty project still exists and can expose the standard
+-- capture / priorities / decisions / documentation template.
+CREATE TABLE IF NOT EXISTS note_projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- Notes are user-facing, editable and organised into kinds, projects, template
+-- sections and Kanban stages. JSON fields contain bounded safe links and a
+-- concise immutable change history. `version` guards against one browser or
+-- agent silently overwriting another's newer edit.
 CREATE TABLE IF NOT EXISTS notes (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   content TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'general',
-  status TEXT NOT NULL DEFAULT 'inbox',
+  status TEXT NOT NULL DEFAULT 'ideas',
   collection TEXT,
   tags TEXT NOT NULL DEFAULT '[]',
   pinned INTEGER NOT NULL DEFAULT 0,
   source TEXT NOT NULL DEFAULT 'manual',
   source_session_id TEXT,
+  project_id TEXT,
+  section TEXT NOT NULL DEFAULT 'capture',
+  links TEXT NOT NULL DEFAULT '[]',
+  change_log TEXT NOT NULL DEFAULT '[]',
+  promoted_type TEXT,
+  promoted_id TEXT,
+  promoted_at INTEGER,
   version INTEGER NOT NULL DEFAULT 1,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -401,6 +420,9 @@ CREATE INDEX IF NOT EXISTS idx_notes_updated
 
 CREATE INDEX IF NOT EXISTS idx_notes_kind_status
   ON notes(kind, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_notes_project_section
+  ON notes(project_id, section, status, updated_at DESC);
 
 
 CREATE TABLE IF NOT EXISTS watches (

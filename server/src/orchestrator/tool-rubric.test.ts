@@ -7,6 +7,7 @@ describe("TOOL_RUBRIC", () => {
     expect(TOOL_RUBRIC).toContain("fs_read");
     expect(TOOL_RUBRIC).toContain("chrome_navigate");
     expect(TOOL_RUBRIC).toContain("memory_remember");
+    expect(TOOL_RUBRIC).toContain("notes_capture");
     expect(TOOL_RUBRIC).toContain("memory_forget");
     expect(TOOL_RUBRIC).toContain("memory_read");
     expect(TOOL_RUBRIC).toContain("self_improve");

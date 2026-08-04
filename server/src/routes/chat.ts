@@ -40,6 +40,7 @@ import type { Discussion } from "../state/discussions.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
+import { buildNotesTools } from "../tools/notes-mcp.js";
 import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
 import { buildShopifyTools } from "../tools/shopify-mcp.js";
 import { buildPlacesTools } from "../tools/places-mcp.js";
@@ -578,6 +579,15 @@ export function chatRoutes(
         // builders, but memory tools stay available so the agent can still
         // record observations or recall facts mid-conversation.
         const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
+        // Notes stay available in both routing modes: "put this in Notes" is a
+        // lightweight conversational instruction, but it must still persist a
+        // structured visible record. Voice records the same source lineage.
+        const notesTools = buildNotesTools({
+          db,
+          sessionId: sid,
+          source: parsed.data.voice ? "ava_voice" : "ava_chat",
+          queueSelfImprove: agentDeps.queueSelfImprove,
+        });
         // Discuss-with-Claude is available in BOTH modes (Sir may ask by voice):
         // it queues a background, read-only consult bound to THIS session (sid),
         // returns immediately, and can recount past discussions. Only wired when
@@ -631,6 +641,7 @@ export function chatRoutes(
             ...(agentDeps.googlePlacesApiKey ? buildPlacesTools({ apiKey: agentDeps.googlePlacesApiKey }) : []),
             ...discussTools,
             ...memoryTools,
+            ...notesTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
             // Standing background checks ("notify me if/when …") — the
             // scheduler re-runs them; Ava just registers/lists/deletes here.
@@ -650,6 +661,7 @@ export function chatRoutes(
             buildControlAppTool({ signal: abort.signal, pidfiles: agentDeps.pidfiles }),
             ...discussTools,
             ...memoryTools,
+            ...notesTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
           ];
         }

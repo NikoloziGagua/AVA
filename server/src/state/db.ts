@@ -45,6 +45,37 @@ export function openDb(path: string): Db {
     SET compact_expires_at = started_at + ?
     WHERE compact_expires_at IS NULL
   `).run(365 * 24 * 60 * 60 * 1_000);
+  // Notes v2: project spaces, template sections, rich links/change evidence and
+  // promotion lineage. Older flat `collection` rows become explicit projects;
+  // legacy inbox/active stages become the user-facing Ideas/Doing board.
+  tryAddColumn(db, "notes", "project_id", "TEXT");
+  tryAddColumn(db, "notes", "section", "TEXT NOT NULL DEFAULT 'capture'");
+  tryAddColumn(db, "notes", "links", "TEXT NOT NULL DEFAULT '[]'");
+  tryAddColumn(db, "notes", "change_log", "TEXT NOT NULL DEFAULT '[]'");
+  tryAddColumn(db, "notes", "promoted_type", "TEXT");
+  tryAddColumn(db, "notes", "promoted_id", "TEXT");
+  tryAddColumn(db, "notes", "promoted_at", "INTEGER");
+  db.exec(`
+    INSERT OR IGNORE INTO note_projects (id, name, description, version, created_at, updated_at)
+    SELECT 'project_' || lower(hex(randomblob(6))), collection, '', 1,
+           MIN(created_at), MAX(updated_at)
+    FROM notes
+    WHERE collection IS NOT NULL AND trim(collection) != ''
+    GROUP BY collection COLLATE NOCASE;
+    UPDATE notes
+    SET project_id = (
+      SELECT id FROM note_projects WHERE name = notes.collection COLLATE NOCASE LIMIT 1
+    )
+    WHERE project_id IS NULL AND collection IS NOT NULL AND trim(collection) != '';
+    UPDATE notes SET status = 'ideas' WHERE status = 'inbox';
+    UPDATE notes SET status = 'doing' WHERE status = 'active';
+    UPDATE notes SET section = 'priorities' WHERE pinned = 1 AND section = 'capture';
+    UPDATE notes SET section = 'decisions' WHERE kind = 'decision' AND section = 'capture';
+    UPDATE notes SET section = 'documentation'
+      WHERE kind IN ('reference', 'documentation') AND section = 'capture';
+    CREATE INDEX IF NOT EXISTS idx_notes_project_section
+      ON notes(project_id, section, status, updated_at DESC);
+  `);
   return db;
 }
 

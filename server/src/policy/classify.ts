@@ -14,6 +14,7 @@ const READ_ONLY_TOOLS = new Set([
   "read_logs", "read_claude_updates", "read_discussion", "self_improve_status",
   "find_places", "shopify_list_products", "shopify_get_product",
   "watch_list", "person_list",
+  "notes_search",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -141,6 +142,10 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (tool === "memory_remember" || tool === "memory_forget") {
     return { tier: "low", reason: "memory mutation stays inside the local memory dir" };
+  }
+
+  if (tool === "notes_capture" || tool === "notes_update" || tool === "notes_promote") {
+    return { tier: "low", reason: "Notes mutation stays in local AVA state; downstream improvements retain their own approval gate" };
   }
 
   return { tier: "medium", reason: "unknown tool defaults to ask" };

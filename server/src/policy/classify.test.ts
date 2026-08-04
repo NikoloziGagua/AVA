@@ -93,6 +93,12 @@ describe("classifyRisk", () => {
     expect(classifyRisk("memory_remember", { category: "preferences", text: "user prefers pwsh" }).tier).toBe("low");
     expect(classifyRisk("memory_forget", { category: "preferences", line: "old pref" }).tier).toBe("low");
   });
+  it("routes Notes reads and local mutations without a redundant approval stall", () => {
+    expect(classifyRisk("notes_search", { query: "voice" }).tier).toBe("read-only");
+    expect(classifyRisk("notes_capture", { content: "idea" }).tier).toBe("low");
+    expect(classifyRisk("notes_update", { id: "note_1", expected_version: 1 }).tier).toBe("low");
+    expect(classifyRisk("notes_promote", { id: "note_1", target: "self_improvement" }).tier).toBe("low");
+  });
 });
 
 describe("screen-sight and watch tools (2026-07-03 stall fix)", () => {

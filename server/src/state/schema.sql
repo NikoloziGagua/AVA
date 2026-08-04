@@ -421,10 +421,6 @@ CREATE INDEX IF NOT EXISTS idx_notes_updated
 CREATE INDEX IF NOT EXISTS idx_notes_kind_status
   ON notes(kind, status, updated_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_notes_project_section
-  ON notes(project_id, section, status, updated_at DESC);
-
-
 CREATE TABLE IF NOT EXISTS watches (
   id TEXT PRIMARY KEY,
   prompt TEXT NOT NULL,               -- what to check + what counts as triggered

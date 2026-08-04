@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { openInMemoryDb, type Db } from "./db.js";
+import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { openDb, openInMemoryDb, type Db } from "./db.js";
 import {
   createNote,
   deleteNote,
@@ -15,12 +19,45 @@ import {
 } from "./notes.js";
 
 let db: Db;
+const tempDirs: string[] = [];
 
 beforeEach(() => {
   db = openInMemoryDb();
 });
 
+afterEach(() => {
+  db.close();
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
 describe("structured notes store", () => {
+  it("boots and migrates a legacy Notes table before creating project indexes", () => {
+    db.close();
+    const dir = mkdtempSync(join(tmpdir(), "ava-notes-migration-"));
+    tempDirs.push(dir);
+    const path = join(dir, "state.db");
+    const legacy = new Database(path);
+    legacy.exec(`
+      CREATE TABLE notes (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'general', status TEXT NOT NULL DEFAULT 'inbox',
+        collection TEXT, tags TEXT NOT NULL DEFAULT '[]', pinned INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'manual', source_session_id TEXT,
+        version INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      INSERT INTO notes (id, title, content, kind, status, collection, tags, pinned, source, version, created_at, updated_at)
+      VALUES ('legacy-1', 'Old idea', 'Migrate me', 'idea', 'inbox', 'AVA', '[]', 0, 'manual', 1, 1000, 1000);
+    `);
+    legacy.close();
+
+    db = openDb(path);
+    const migrated = getNote(db, "legacy-1");
+    expect(migrated).toMatchObject({ status: "ideas", collection: "AVA", section: "capture" });
+    expect(migrated?.projectId).toMatch(/^project_/);
+    const indexes = db.prepare("PRAGMA index_list(notes)").all() as Array<{ name: string }>;
+    expect(indexes.some((entry) => entry.name === "idx_notes_project_section")).toBe(true);
+  });
+
   it("creates a structured note and derives a useful title", () => {
     const note = createNote(db, {
       content: "# Build a daily briefing\nInclude weather and AVA health.",

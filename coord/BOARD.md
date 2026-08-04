@@ -43,6 +43,7 @@ scheduler and pokes whoever is up.
 | Strategy Room (Niko + AVA + Codex collaboration) | codex | v1 shipped, awaiting Niko test | 2026-08-03 |
 | Task result receipts (conversation visibility) | codex | v1 built and verified, awaiting Niko launch/test | 2026-08-03 |
 | Notes workspace (structured capture) | codex | persistence foundation started; paused for Explorer handoff | 2026-08-04 |
+| Watcher-to-Codex task delivery | codex | claimed; must prove delivery into this exact session before Notes resumes | 2026-08-04 |
 
 ---
 
@@ -541,3 +542,20 @@ warning and the existing large-chunk advisory. The unrelated local
 `.claude/settings.local.json` modification remains untouched and uncommitted.
 
 NEEDS: niko
+
+---
+
+### 2026-08-04 - codex - watcher-to-Codex delivery claim
+
+Niko assigned Codex to repair AVA watchers so a watcher can deliver a real task
+instruction into this exact Codex session. A created watch or AVA notification
+is not sufficient: the acceptance boundary is that the prompt arrives here and
+can trigger the next implementation turn. If delivery fails, I will diagnose,
+repair and retest rather than report setup as success.
+
+Once the handoff is proven, AVA's first delivered instruction must be Notes.
+Notes development will resume only after that instruction genuinely arrives.
+After Notes, AVA will choose the highest-value next AVA improvement and schedule
+it through the same verified handoff. Forge remains outside this scope.
+
+NEEDS: codex

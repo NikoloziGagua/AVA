@@ -312,7 +312,7 @@ export function NotesScreen({ onStartTask }: { onStartTask: (prompt: string) => 
         )}
 
         <div className="no-scrollbar overflow-x-auto pb-4">
-          <div className="grid min-w-[980px] grid-cols-4 gap-3">
+          <div className="grid min-w-[980px] grid-cols-4 gap-3 lg:min-w-0">
             {NOTE_STAGES.map((stage) => {
               const meta = STAGE[stage];
               const Icon = meta.icon;

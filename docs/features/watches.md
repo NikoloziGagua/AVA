@@ -126,6 +126,7 @@ audit. It is the same trick the voice pipeline uses for `do_on_computer`.
 | Tools (Ava) | `server/src/tools/watches-mcp.ts` | `watch_create` / `watch_list` / `watch_delete` — action mode only. |
 | HTTP API | `server/src/routes/watches.ts` | `GET /` · `POST /` · `POST /:id/enabled` · `DELETE /:id` (token-auth'd). |
 | Target adapter | `server/src/watches/codex-dispatch.ts` | Exact Codex target resolution, lifecycle inspection, idempotent dispatch, and delivery evidence. |
+| Boot singleton | `server/src/process/server-lock.ts` | Atomic process ownership claim acquired before shared boot state can change. |
 | UI | `web/src/memory/WatchesSection.tsx` | Read/manage surface with ordinary and targeted lifecycle visibility. |
 | Boot wiring | `server/src/index.ts` | Scheduler and internal credentials start **only after this process owns the port** and only when an LLM provider exists. |
 
@@ -204,6 +205,11 @@ any watch is deletable, so a given row won't necessarily still be present later.
   process that receives `EADDRINUSE` must not revoke the healthy server's token.
   `voice-internal` follows the same rule, and neither appears in the user-facing
   paired-device list.
+- **A process singleton guards that boundary.** Windows can briefly let a losing
+  Node listener reach its callback before the later `EADDRINUSE` exit. AVA now
+  claims an atomic PID/instance lock before opening shared runtime state. A
+  duplicate boot exits before it can touch either internal credential; a stale
+  lock is recovered only after its recorded PID is no longer alive.
 - **Target delivery is idempotent.** The scheduler persists a unique marker,
   session offset, and process ID before advancing. It never blindly launches a
   second agent into the same thread after a slow or lost dispatch; it reports the

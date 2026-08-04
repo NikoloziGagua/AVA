@@ -50,6 +50,7 @@ import { buildCodexDispatcher } from "./watches/codex-dispatch.js";
 import { ActiveRuns } from "./orchestrator/active-runs.js";
 import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
+import { acquireServerLock } from "./process/server-lock.js";
 import { killTree } from "./process/kill-tree.js";
 import { runRecovery } from "./state/recovery.js";
 import { buildChrome } from "./tools/chrome.js";
@@ -82,6 +83,10 @@ import { buildCodexConsultant } from "./strategy/codex-consultant.js";
 
 const startedAt = Date.now();
 const cfg = loadConfig();
+// Claim the singleton before opening shared runtime state. On Windows a second
+// listener can briefly reach its callback before EADDRINUSE; the file lock is
+// the authoritative boundary that keeps a losing boot away from live tokens.
+const serverLock = acquireServerLock(join(cfg.pidfileDir, "ava-server.lock"));
 const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
 let voiceInternalToken = "";
@@ -663,6 +668,7 @@ async function shutdown(reason: string) {
   // Pino buffers asynchronously — flush so the shutdown reason actually lands
   // in the log file instead of dying with the process.
   try { (log as unknown as { flush?: () => void }).flush?.(); } catch { /* best-effort */ }
+  serverLock.release();
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));
@@ -720,6 +726,7 @@ httpServer.on("error", (err: NodeJS.ErrnoException) => {
     log.error({ err: err.stack ?? err.message }, "http server error — exiting");
   }
   try { (log as unknown as { flush?: () => void }).flush?.(); } catch { /* best-effort */ }
+  serverLock.release();
   process.exit(1);
 });
 

@@ -17,6 +17,12 @@ function app(queueSelfImprove?: (goal: string) => string) {
 beforeEach(() => { db = openInMemoryDb(); });
 
 describe("Notes API", () => {
+  it("reserves General as the built-in space instead of creating a duplicate project", async () => {
+    const response = await request(app()).post("/api/notes/projects").send({ name: "General" });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("invalid_project");
+  });
+
   it("creates project spaces and structured notes", async () => {
     const project = await request(app()).post("/api/notes/projects").send({
       name: "AVA Voice",

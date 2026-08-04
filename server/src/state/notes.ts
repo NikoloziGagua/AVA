@@ -184,6 +184,10 @@ function cleanProjectName(value: string | null | undefined): string | null {
   return clean || null;
 }
 
+function isGeneralSpace(value: string | null | undefined): boolean {
+  return /^general$/i.test(value?.trim() ?? "");
+}
+
 function parseJsonArray<T>(value: string, guard: (entry: unknown) => entry is T): T[] {
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -305,6 +309,7 @@ export function ensureNoteProject(
 ): { project: NoteProject; created: boolean } {
   const clean = cleanProjectName(name);
   if (!clean) throw new Error("project name is required");
+  if (isGeneralSpace(clean)) throw new Error("General is AVA's built-in note space and cannot be created as a project");
   const existing = findNoteProject(db, clean);
   if (existing) return { project: existing, created: false };
   const now = Date.now();
@@ -347,6 +352,7 @@ function resolveProject(
     if (!project) throw new Error(`project not found: ${projectId}`);
     return project;
   }
+  if (isGeneralSpace(collection)) return null;
   const name = cleanProjectName(collection);
   return name ? ensureNoteProject(db, name).project : null;
 }

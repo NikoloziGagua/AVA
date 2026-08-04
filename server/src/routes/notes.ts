@@ -100,8 +100,12 @@ export function notesRoutes(
   r.post("/projects", auth, (req, res) => {
     const parsed = ProjectBody.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: "bad_request", details: parsed.error.flatten() }); return; }
-    const result = ensureNoteProject(db, parsed.data.name, parsed.data.description);
-    res.status(result.created ? 201 : 200).json(result);
+    try {
+      const result = ensureNoteProject(db, parsed.data.name, parsed.data.description);
+      res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+      res.status(400).json({ error: "invalid_project", message: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   r.patch("/projects/:id", auth, (req, res) => {
@@ -122,7 +126,7 @@ export function notesRoutes(
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: "bad_request", details: parsed.error.flatten() }); return; }
     try {
-      const project = parsed.data.project?.trim()
+      const project = parsed.data.project?.trim() && !/^general$/i.test(parsed.data.project.trim())
         ? ensureNoteProject(db, parsed.data.project).project
         : null;
       const note = createNote(db, {

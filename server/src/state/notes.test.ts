@@ -47,6 +47,8 @@ describe("structured notes store", () => {
       );
       INSERT INTO notes (id, title, content, kind, status, collection, tags, pinned, source, version, created_at, updated_at)
       VALUES ('legacy-1', 'Old idea', 'Migrate me', 'idea', 'inbox', 'AVA', '[]', 0, 'manual', 1, 1000, 1000);
+      INSERT INTO notes (id, title, content, kind, status, collection, tags, pinned, source, version, created_at, updated_at)
+      VALUES ('legacy-general', 'Loose idea', 'Keep me general', 'idea', 'inbox', 'General', '[]', 0, 'manual', 1, 1000, 1000);
     `);
     legacy.close();
 
@@ -54,6 +56,8 @@ describe("structured notes store", () => {
     const migrated = getNote(db, "legacy-1");
     expect(migrated).toMatchObject({ status: "ideas", collection: "AVA", section: "capture" });
     expect(migrated?.projectId).toMatch(/^project_/);
+    expect(getNote(db, "legacy-general")).toMatchObject({ projectId: null, collection: null, status: "ideas" });
+    expect(listNoteProjects(db).map((project) => project.name)).not.toContain("General");
     const indexes = db.prepare("PRAGMA index_list(notes)").all() as Array<{ name: string }>;
     expect(indexes.some((entry) => entry.name === "idx_notes_project_section")).toBe(true);
   });
@@ -172,6 +176,13 @@ describe("structured notes store", () => {
     expect(listNoteProjects(db)[0]).toMatchObject({ id: project.id, noteCount: 2 });
     expect(listNotes(db, { projectId: project.id })).toHaveLength(2);
     expect(listNotes(db, { projectId: null })).toHaveLength(0);
+  });
+
+  it("keeps General reserved as the built-in unscoped note space", () => {
+    expect(() => ensureNoteProject(db, "General")).toThrow(/built-in note space/i);
+    const note = createNote(db, { content: "Loose thought", collection: "general" });
+    expect(note).toMatchObject({ projectId: null, collection: null });
+    expect(listNoteProjects(db)).toEqual([]);
   });
 
   it("records moves, rich-link edits and promotion lineage", () => {

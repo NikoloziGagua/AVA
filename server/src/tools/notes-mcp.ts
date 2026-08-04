@@ -92,7 +92,7 @@ export function buildNotesTools(options: {
         if (!content) return { ok: false, text: "note content is required" };
         try {
           const projectName = typeof args.project === "string" ? args.project.trim() : "";
-          const project = projectName ? ensureNoteProject(db, projectName).project : null;
+          const project = projectName && !/^general$/i.test(projectName) ? ensureNoteProject(db, projectName).project : null;
           const note = createNote(db, {
             content,
             title: typeof args.title === "string" ? args.title : undefined,

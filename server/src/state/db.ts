@@ -61,12 +61,16 @@ export function openDb(path: string): Db {
            MIN(created_at), MAX(updated_at)
     FROM notes
     WHERE collection IS NOT NULL AND trim(collection) != ''
+      AND lower(trim(collection)) != 'general'
     GROUP BY collection COLLATE NOCASE;
+    UPDATE notes SET project_id = NULL, collection = NULL
+      WHERE lower(trim(collection)) = 'general';
     UPDATE notes
     SET project_id = (
       SELECT id FROM note_projects WHERE name = notes.collection COLLATE NOCASE LIMIT 1
     )
     WHERE project_id IS NULL AND collection IS NOT NULL AND trim(collection) != '';
+    DELETE FROM note_projects WHERE lower(trim(name)) = 'general';
     UPDATE notes SET status = 'ideas' WHERE status = 'inbox';
     UPDATE notes SET status = 'doing' WHERE status = 'active';
     UPDATE notes SET section = 'priorities' WHERE pinned = 1 AND section = 'capture';

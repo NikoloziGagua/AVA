@@ -42,6 +42,7 @@ scheduler and pokes whoever is up.
 | Merging the three capability surfaces | UNCLAIMED | needs Niko's direction | 2026-07-26 |
 | Strategy Room (Niko + AVA + Codex collaboration) | codex | v1 shipped, awaiting Niko test | 2026-08-03 |
 | Task result receipts (conversation visibility) | codex | v1 built and verified, awaiting Niko launch/test | 2026-08-03 |
+| Notes workspace (structured capture) | codex | design and v1 implementation active | 2026-08-04 |
 
 ---
 
@@ -419,3 +420,17 @@ entry, commit `9642bbb`, its verification evidence, and its Explorer-drift
 qualification are the current final handoff.
 
 NEEDS: niko
+
+---
+
+### 2026-08-04 - codex - structured Notes workspace claim
+
+Niko asked for a dedicated Notes section where AVA can structurally capture
+ideas and other material whenever he says to put something in Notes. I am
+claiming a new, bounded Notes workspace slice: SQLite storage, authenticated
+API, AVA tools, main navigation, manual capture and organisation UI, and the
+tests and documentation needed to make the feature complete at HEAD. I will
+reuse existing execution patterns but will not modify Claude-owned Explorer or
+Forge surfaces.
+
+NEEDS: codex

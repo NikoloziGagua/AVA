@@ -86,7 +86,7 @@ const cfg = loadConfig();
 // Claim the singleton before opening shared runtime state. On Windows a second
 // listener can briefly reach its callback before EADDRINUSE; the file lock is
 // the authoritative boundary that keeps a losing boot away from live tokens.
-const serverLock = acquireServerLock(join(cfg.pidfileDir, "ava-server.lock"));
+const serverLock = acquireServerLock(join(cfg.dataDir, "ava-server.lock"));
 const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
 let voiceInternalToken = "";

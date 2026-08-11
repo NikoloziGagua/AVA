@@ -223,6 +223,7 @@ export function capabilityIdsForTool(tool: string): string[] {
   }
   if (/^person_/.test(tool)) return ["people.identity-resolution"];
   if (/^notes_/.test(tool)) return ["memory.structured-notes"];
+  if (tool === "strategy_room_open") return ["conversation.strategy-room"];
   if (/^memory_/.test(tool)) return ["memory.durable"];
   if (/^watch_/.test(tool)) return ["automation.watches"];
   if (/^shopify_/.test(tool)) return ["services.shopify-products"];

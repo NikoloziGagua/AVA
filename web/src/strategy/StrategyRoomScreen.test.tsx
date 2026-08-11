@@ -8,8 +8,10 @@ const api = vi.hoisted(() => ({
   fetchStrategyRooms: vi.fn(),
   fetchStrategyRoom: vi.fn(),
   createStrategyRoom: vi.fn(),
+  createStrategyRoomFromChat: vi.fn(),
   sendStrategyMessage: vi.fn(),
   approveStrategyRoom: vi.fn(),
+  returnStrategyConclusionToChat: vi.fn(),
   pauseStrategyRoom: vi.fn(),
   resumeStrategyRoom: vi.fn(),
   subscribeStrategyEvents: vi.fn(() => () => {}),
@@ -39,6 +41,10 @@ const room: StrategyRoom = {
   livingBrief: "# Objective\nMake AVA dependable\n# Recommended decision\nBuild verification first",
   conclusion: "Build verification first",
   codexThreadId: "thr_real_codex_session",
+  sourceSessionId: null,
+  sourceThroughMessageId: null,
+  returnedMessageId: null,
+  returnedAt: null,
   error: null,
   createdAt: Date.now() - 1000,
   updatedAt: Date.now(),
@@ -65,6 +71,7 @@ const meta: StrategyMeta = {
     codex: { available: true, role: "critical collaborator", version: "codex 1", error: null },
   },
   approvalEffect: "records_decision_only",
+  chatHandoff: "server_snapshot_and_explicit_approved_return",
   codexBoundary: "dedicated_read_only_resumable_cli_thread",
   eventBounds: { min: 1, max: 8 },
 };
@@ -97,5 +104,32 @@ describe("StrategyRoomScreen", () => {
     fireEvent.change(box, { target: { value: "Consider this constraint" } });
     fireEvent.click(screen.getByRole("button", { name: "Interrupt & add" }));
     await waitFor(() => expect(api.sendStrategyMessage).toHaveBeenCalledWith("room_1", "Consider this constraint"));
+  });
+
+  it("imports a linked chat and returns only its approved conclusion", async () => {
+    const linked = {
+      ...room,
+      status: "approved" as const,
+      phase: "approved",
+      sourceSessionId: "chat-17",
+      sourceThroughMessageId: 42,
+    };
+    const openChat = vi.fn();
+    api.fetchStrategyMeta.mockResolvedValue(meta);
+    api.fetchStrategyRooms.mockResolvedValue([]);
+    api.createStrategyRoomFromChat.mockResolvedValue({ ...detail, room: linked });
+    api.returnStrategyConclusionToChat.mockResolvedValue({
+      room: { ...linked, returnedMessageId: 43, returnedAt: Date.now(), version: 13 },
+      sessionId: "chat-17",
+      messageId: 43,
+      idempotent: false,
+    });
+
+    render(<StrategyRoomScreen sourceSessionId="chat-17" onOpenChat={openChat} />);
+
+    expect(await screen.findByText(/linked to ava chat through message 42/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Return conclusion to AVA chat" }));
+    await waitFor(() => expect(api.returnStrategyConclusionToChat).toHaveBeenCalledWith("room_1", 12));
+    expect(openChat).toHaveBeenCalledWith("chat-17");
   });
 });

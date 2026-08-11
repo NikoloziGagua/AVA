@@ -39,6 +39,10 @@ export type StrategyRoom = {
   livingBrief: string | null;
   conclusion: string | null;
   codexThreadId: string | null;
+  sourceSessionId: string | null;
+  sourceThroughMessageId: number | null;
+  returnedMessageId: number | null;
+  returnedAt: number | null;
   error: string | null;
   createdAt: number;
   updatedAt: number;

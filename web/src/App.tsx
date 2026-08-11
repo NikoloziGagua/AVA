@@ -30,7 +30,7 @@ type View =
   | { name: "notes" }
   | { name: "rules" }
   | { name: "self" }
-  | { name: "strategy" }
+  | { name: "strategy"; sourceSessionId?: string }
   | { name: "capabilities" }
   | { name: "list" };
 
@@ -207,6 +207,7 @@ export function App() {
               onOpenMemory={() => setView({ name: "memory" })}
               onOpenList={() => setView({ name: "list" })}
               onEnterVoice={() => setView({ name: "voice", from: "chat", sessionId: view.sessionId })}
+              onOpenStrategy={(sessionId) => setView({ name: "strategy", sourceSessionId: sessionId })}
             />
           </motion.div>
         )}
@@ -288,7 +289,7 @@ export function App() {
         )}
         {view.name === "strategy" && (
           <motion.div
-            key="strategy"
+            key={view.sourceSessionId ? `strategy-${view.sourceSessionId}` : "strategy"}
             data-view="strategy"
             data-deck-transition={deckTransition}
             className="absolute inset-0"
@@ -297,7 +298,10 @@ export function App() {
             exit={exitTo}
             transition={enterT}
           >
-            <StrategyRoomScreen />
+            <StrategyRoomScreen
+              sourceSessionId={view.sourceSessionId ?? null}
+              onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
+            />
           </motion.div>
         )}
         {view.name === "capabilities" && (

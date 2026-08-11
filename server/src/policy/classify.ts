@@ -74,6 +74,7 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   // Background read-only repo consult (spawns a local `claude -p` with no write
   // permissions). Instant — queueing a consult is not a risky act.
   if (tool === "discuss_with_claude") return { tier: "low", reason: "read-only background consult" };
+  if (tool === "strategy_room_open") return { tier: "low", reason: "bounded read-only Strategy Room discussion" };
 
   // Mutates live store products — keep Sir's veto window.
   if (tool === "shopify_update_product") return { tier: "medium", reason: "mutates live Shopify products" };

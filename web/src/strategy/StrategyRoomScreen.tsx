@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
   Bot,
   Check,
   CirclePause,
   CirclePlay,
   Code2,
   MessageSquarePlus,
+  MessagesSquare,
   Send,
   ShieldCheck,
   UserRound,
@@ -15,11 +17,13 @@ import { PanelSection, PanelShell } from "../components/ava/PanelShell.js";
 import {
   approveStrategyRoom,
   createStrategyRoom,
+  createStrategyRoomFromChat,
   fetchStrategyMeta,
   fetchStrategyRoom,
   fetchStrategyRooms,
   pauseStrategyRoom,
   resumeStrategyRoom,
+  returnStrategyConclusionToChat,
   sendStrategyMessage,
   subscribeStrategyEvents,
   type StrategyActor,
@@ -87,7 +91,12 @@ function MessageCard({ message }: { message: StrategyMessage }) {
   );
 }
 
-export function StrategyRoomScreen() {
+export type StrategyRoomScreenProps = {
+  sourceSessionId?: string | null;
+  onOpenChat?: (sessionId: string) => void;
+};
+
+export function StrategyRoomScreen({ sourceSessionId = null, onOpenChat }: StrategyRoomScreenProps = {}) {
   const [rooms, setRooms] = useState<StrategyRoom[]>([]);
   const [detail, setDetail] = useState<StrategyDetail | null>(null);
   const [meta, setMeta] = useState<StrategyMeta | null>(null);
@@ -99,6 +108,7 @@ export function StrategyRoomScreen() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
   const reloadTimer = useRef<number | null>(null);
+  const importedSourceRef = useRef<string | null>(null);
 
   const selectRoom = async (id: string) => {
     selectedIdRef.current = id;
@@ -119,7 +129,14 @@ export function StrategyRoomScreen() {
       if (!alive) return;
       setMeta(nextMeta);
       setRooms(nextRooms);
-      if (nextRooms[0]) await selectRoom(nextRooms[0].id);
+      if (sourceSessionId && importedSourceRef.current !== sourceSessionId) {
+        importedSourceRef.current = sourceSessionId;
+        const linked = await createStrategyRoomFromChat(sourceSessionId);
+        if (!alive) return;
+        selectedIdRef.current = linked.room.id;
+        setDetail(linked);
+        setRooms((current) => [linked.room, ...current.filter((room) => room.id !== linked.room.id)]);
+      } else if (nextRooms[0]) await selectRoom(nextRooms[0].id);
     }).catch((cause) => setError(cause instanceof Error ? cause.message : "Strategy Room is unavailable."));
     const unsubscribe = subscribeStrategyEvents({
       onState: (state) => { if (alive) setStream(state); },
@@ -138,7 +155,7 @@ export function StrategyRoomScreen() {
       unsubscribe();
       if (reloadTimer.current !== null) window.clearTimeout(reloadTimer.current);
     };
-  }, []);
+  }, [sourceSessionId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
@@ -189,6 +206,27 @@ export function StrategyRoomScreen() {
     });
   };
 
+  const returnToChat = async () => {
+    const room = activeRoom;
+    if (!room || !room.sourceSessionId || busy) return;
+    if (room.returnedMessageId !== null) {
+      onOpenChat?.(room.sourceSessionId);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const returned = await returnStrategyConclusionToChat(room.id, room.version);
+      setDetail((current) => current ? { ...current, room: returned.room } : current);
+      onOpenChat?.(returned.sessionId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The conclusion could not be returned to chat.");
+      void selectRoom(room.id);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <PanelShell title="Strategy Room" grid>
       <PanelSection
@@ -233,9 +271,30 @@ export function StrategyRoomScreen() {
         right={activeRoom ? <span className="chip chip-ac">{activeRoom.phase.replaceAll("_", " ")}</span> : undefined}
       >
         {!detail ? (
-          <div className="flex min-h-80 items-center justify-center text-xs text-white/35">Create or open a room.</div>
+          <div className="flex min-h-80 flex-col items-center justify-center gap-3 text-xs text-white/35">
+            <span>{sourceSessionId ? "Bringing this AVA conversation into the room..." : "Create or open a room."}</span>
+            {error && <div role="alert" className="rounded-lg border border-red-400/20 bg-red-400/8 px-3 py-2 text-xs text-red-200">{error}</div>}
+          </div>
         ) : (
           <>
+            {activeRoom?.sourceSessionId && (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[rgba(92,242,255,.16)] bg-[rgba(92,242,255,.05)] px-3 py-2.5">
+                <span className="flex items-center gap-2 text-[10px] leading-4 text-white/55">
+                  <MessagesSquare size={13} className="text-[var(--ac)]" />
+                  Linked to AVA chat through message {activeRoom.sourceThroughMessageId}
+                  {activeRoom.returnedAt ? " - conclusion returned" : ""}
+                </span>
+                {onOpenChat && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenChat(activeRoom.sourceSessionId!)}
+                    className="btn-deck btn-ghost flex items-center gap-2"
+                  >
+                    <ArrowLeft size={12} /> Back to chat
+                  </button>
+                )}
+              </div>
+            )}
             <div className="no-scrollbar max-h-[54vh] min-h-80 space-y-3 overflow-y-auto pr-1">
               {detail.messages.map((message) => <MessageCard key={message.id} message={message} />)}
               <div ref={bottomRef} />
@@ -292,6 +351,23 @@ export function StrategyRoomScreen() {
                 <Check size={13} /> Approve conclusion
               </button>
               <p className="mt-2 text-[9px] leading-4 text-white/35">Records the decision only. It does not begin development.</p>
+            </div>
+          )}
+          {activeRoom?.status === "approved" && activeRoom.sourceSessionId && (
+            <div className="mt-4 border-t border-white/[0.07] pt-4">
+              <button
+                disabled={busy}
+                onClick={() => void returnToChat()}
+                className="btn-deck btn-primary flex w-full items-center justify-center gap-2 disabled:opacity-40"
+              >
+                <MessagesSquare size={13} />
+                {activeRoom.returnedMessageId === null ? "Return conclusion to AVA chat" : "Open AVA chat"}
+              </button>
+              <p className="mt-2 text-[9px] leading-4 text-white/35">
+                {activeRoom.returnedMessageId === null
+                  ? "Adds the approved conclusion to the linked chat. It does not execute it."
+                  : "The conclusion is in the linked chat, ready for your instruction."}
+              </p>
             </div>
           )}
           {activeRoom?.status === "discussing" && (

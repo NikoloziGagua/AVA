@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
 import { scrubSecrets } from "../security/scrub.js";
 import type { Db } from "../state/db.js";
+import { buildReturnedConclusion } from "./chat-handoff.js";
 import type {
   StrategyActor,
   StrategyEvent,
@@ -24,6 +25,10 @@ type RoomRow = {
   living_brief: string | null;
   conclusion: string | null;
   codex_thread_id: string | null;
+  source_session_id: string | null;
+  source_through_message_id: number | null;
+  returned_message_id: number | null;
+  returned_at: number | null;
   error: string | null;
   created_at: number;
   updated_at: number;
@@ -60,6 +65,8 @@ export type StrategyRoomPatch = Partial<Pick<
   | "livingBrief"
   | "conclusion"
   | "codexThreadId"
+  | "returnedMessageId"
+  | "returnedAt"
   | "error"
   | "approvedAt"
   | "stoppedAt"
@@ -68,6 +75,16 @@ export type StrategyRoomPatch = Partial<Pick<
 export type DecisionResult =
   | { ok: true; room: StrategyRoom }
   | { ok: false; reason: "not_found" | "stale_version" | "invalid_status"; room: StrategyRoom | null };
+
+export type LinkedRoomResult = { detail: StrategyRoomDetail; reused: boolean };
+
+export type ReturnToChatResult =
+  | { ok: true; room: StrategyRoom; sessionId: string; messageId: number; idempotent: boolean }
+  | {
+    ok: false;
+    reason: "not_found" | "stale_version" | "invalid_status" | "source_unavailable";
+    room: StrategyRoom | null;
+  };
 
 function roomFromRow(row: RoomRow): StrategyRoom {
   return {
@@ -82,6 +99,10 @@ function roomFromRow(row: RoomRow): StrategyRoom {
     livingBrief: row.living_brief,
     conclusion: row.conclusion,
     codexThreadId: row.codex_thread_id,
+    sourceSessionId: row.source_session_id,
+    sourceThroughMessageId: row.source_through_message_id === null ? null : Number(row.source_through_message_id),
+    returnedMessageId: row.returned_message_id === null ? null : Number(row.returned_message_id),
+    returnedAt: row.returned_at === null ? null : Number(row.returned_at),
     error: row.error,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
@@ -131,6 +152,43 @@ export class StrategyRoomStore {
   constructor(readonly db: Db) {}
 
   createRoom(topic: string): StrategyRoomDetail {
+    return this.insertRoom(topic, {
+      author: "niko",
+      content: topic,
+      sourceSessionId: null,
+      sourceThroughMessageId: null,
+    });
+  }
+
+  createRoomFromChat(input: {
+    topic: string;
+    context: string;
+    sourceSessionId: string;
+    sourceThroughMessageId: number;
+  }): LinkedRoomResult {
+    const existing = this.db.prepare(`
+      SELECT id FROM strategy_rooms
+      WHERE source_session_id = ? AND source_through_message_id = ?
+    `).get(input.sourceSessionId, input.sourceThroughMessageId) as { id: string } | undefined;
+    if (existing) return { detail: this.getDetail(existing.id)!, reused: true };
+
+    return {
+      detail: this.insertRoom(input.topic, {
+        author: "system",
+        content: input.context,
+        sourceSessionId: input.sourceSessionId,
+        sourceThroughMessageId: input.sourceThroughMessageId,
+      }),
+      reused: false,
+    };
+  }
+
+  private insertRoom(topic: string, initial: {
+    author: StrategyActor;
+    content: string;
+    sourceSessionId: string | null;
+    sourceThroughMessageId: number | null;
+  }): StrategyRoomDetail {
     const id = `room_${nanoid(12)}`;
     const correlationId = `strategy_${nanoid(14)}`;
     const now = Date.now();
@@ -138,17 +196,30 @@ export class StrategyRoomStore {
     this.db.prepare(`
       INSERT INTO strategy_rooms (
         id, title, topic, status, phase, active_actor, round, version,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, 'discussing', 'framing', 'ava', 1, 1, ?, ?)
-    `).run(id, titleFor(safeTopic), safeTopic, now, now);
+        source_session_id, source_through_message_id, created_at, updated_at
+      ) VALUES (?, ?, ?, 'discussing', 'framing', 'ava', 1, 1, ?, ?, ?, ?)
+    `).run(
+      id,
+      titleFor(safeTopic),
+      safeTopic,
+      initial.sourceSessionId,
+      initial.sourceThroughMessageId,
+      now,
+      now,
+    );
     const message = this.appendMessage(id, {
-      author: "niko",
+      author: initial.author,
       kind: "message",
-      content: safeTopic,
+      content: initial.content,
       correlationId,
     });
     const room = this.getRoom(id)!;
-    this.emit(id, "strategy.room.created", { roomId: id, version: room.version });
+    this.emit(id, "strategy.room.created", {
+      roomId: id,
+      version: room.version,
+      sourceSessionId: room.sourceSessionId,
+      sourceThroughMessageId: room.sourceThroughMessageId,
+    });
     return { room, messages: [message] };
   }
 
@@ -228,6 +299,8 @@ export class StrategyRoomStore {
       livingBrief: "living_brief",
       conclusion: "conclusion",
       codexThreadId: "codex_thread_id",
+      returnedMessageId: "returned_message_id",
+      returnedAt: "returned_at",
       error: "error",
       approvedAt: "approved_at",
       stoppedAt: "stopped_at",
@@ -280,6 +353,65 @@ export class StrategyRoomStore {
     return { ok: true, room };
   }
 
+  returnConclusionToChat(id: string, expectedVersion: number): ReturnToChatResult {
+    const commit = this.db.transaction((): ReturnToChatResult => {
+      const current = this.getRoom(id);
+      if (!current) return { ok: false, reason: "not_found", room: null };
+      if (current.returnedMessageId !== null && current.sourceSessionId) {
+        return {
+          ok: true,
+          room: current,
+          sessionId: current.sourceSessionId,
+          messageId: current.returnedMessageId,
+          idempotent: true,
+        };
+      }
+      if (current.version !== expectedVersion) {
+        return { ok: false, reason: "stale_version", room: current };
+      }
+      if (current.status !== "approved" || !current.conclusion || !current.sourceSessionId) {
+        return { ok: false, reason: "invalid_status", room: current };
+      }
+      const source = this.db.prepare(
+        "SELECT id FROM sessions WHERE id = ? AND deleted_at IS NULL",
+      ).get(current.sourceSessionId) as { id: string } | undefined;
+      if (!source) return { ok: false, reason: "source_unavailable", room: current };
+
+      const now = Date.now();
+      const content = buildReturnedConclusion(current.title, current.conclusion);
+      const inserted = this.db.prepare(`
+        INSERT INTO messages (session_id, role, content, created_at)
+        VALUES (?, 'assistant', ?, ?)
+      `).run(current.sourceSessionId, content, now);
+      const messageId = Number(inserted.lastInsertRowid);
+      this.db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?")
+        .run(now, current.sourceSessionId);
+      const changed = this.db.prepare(`
+        UPDATE strategy_rooms
+        SET returned_message_id = ?, returned_at = ?, updated_at = ?, version = version + 1
+        WHERE id = ? AND version = ? AND returned_message_id IS NULL
+      `).run(messageId, now, now, id, expectedVersion).changes;
+      if (changed !== 1) throw new Error("strategy return lost its version guard");
+      return {
+        ok: true,
+        room: this.getRoom(id)!,
+        sessionId: current.sourceSessionId,
+        messageId,
+        idempotent: false,
+      };
+    });
+
+    const result = commit();
+    if (result.ok && !result.idempotent) {
+      this.emit(id, "strategy.conclusion.returned_to_chat", {
+        sourceSessionId: result.sessionId,
+        messageId: result.messageId,
+        version: result.room.version,
+      });
+    }
+    return result;
+  }
+
   pause(id: string, expectedVersion: number): DecisionResult {
     const current = this.getRoom(id);
     if (!current) return { ok: false, reason: "not_found", room: null };
@@ -309,6 +441,8 @@ export class StrategyRoomStore {
       activeActor: "ava",
       round: current.round + 1,
       approvedAt: null,
+      returnedMessageId: null,
+      returnedAt: null,
       stoppedAt: null,
       error: null,
     });

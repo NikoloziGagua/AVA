@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { MessagesSquare } from "lucide-react";
 import { api, fetchSession, ApiError } from "../api.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
@@ -21,6 +22,7 @@ export interface ChatScreenProps {
   onOpenMemory: () => void;
   onOpenList?: () => void;
   onEnterVoice?: () => void;
+  onOpenStrategy?: (sessionId: string) => void;
 }
 
 /**
@@ -50,6 +52,7 @@ export function ChatScreen({
   sessionId: requestedSessionId,
   initialText,
   onEnterVoice,
+  onOpenStrategy,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
@@ -81,6 +84,7 @@ export function ChatScreen({
   // would duplicate the final bubble. Captured once per fetch (the `s-` rows
   // never change), so the dedupe stays stable across later re-renders.
   const seededLastAssistantRef = useRef<string | null>(null);
+  const openedRoomEventRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -154,6 +158,23 @@ export function ChatScreen({
       return next;
     });
   }, [events]);
+
+  // A natural-language "take this to the Room" request calls the same
+  // server-authoritative tool as the manual shortcut. Move only after its
+  // successful tool result is observed, and only once for that event.
+  useEffect(() => {
+    if (!sessionId || !onOpenStrategy) return;
+    const opened = [...events].reverse().find((event) =>
+      event.kind === "tool_result" &&
+      event.payload.tool === "strategy_room_open" &&
+      event.payload.ok,
+    );
+    if (!opened) return;
+    const key = `${opened.runEpoch}-${opened.id}`;
+    if (openedRoomEventRef.current === key) return;
+    openedRoomEventRef.current = key;
+    onOpenStrategy(sessionId);
+  }, [events, onOpenStrategy, sessionId]);
 
   const currentRunFinished = events.some(
     (e) => e.runEpoch === runEpoch && (e.kind === "done" || e.kind === "killed" || e.kind === "error"),
@@ -357,6 +378,19 @@ export function ChatScreen({
                 </div>
               ) : (
                 <>
+                  {sessionId && history.length > 0 && onOpenStrategy && (
+                    <div className="flex justify-end px-4 pb-1 lg:px-6">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => onOpenStrategy(sessionId)}
+                        title="Bring this conversation into the Strategy Room with AVA and Codex"
+                        className="btn-deck btn-ghost flex items-center gap-2 disabled:opacity-40"
+                      >
+                        <MessagesSquare size={13} /> Take to Room
+                      </button>
+                    </div>
+                  )}
                   <MessageList
                     history={history}
                     liveEvents={liveEvents}

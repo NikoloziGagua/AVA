@@ -111,7 +111,7 @@ describe("Explorer capability registry", () => {
   });
 
   it("gives every capability a substantive operational workflow", () => {
-    expect(EXPLORER_CAPABILITIES).toHaveLength(30);
+    expect(EXPLORER_CAPABILITIES).toHaveLength(31);
     for (const capability of EXPLORER_CAPABILITIES) {
       const workflow = capability.workflow;
       expect(workflow, capability.id).toBeDefined();

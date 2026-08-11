@@ -4,6 +4,7 @@ import type { StrategyEvent } from "../strategy/types.js";
 import { StrategyRoomCoordinator } from "../strategy/coordinator.js";
 
 const CreateBody = z.object({ topic: z.string().trim().min(1).max(8_000) });
+const FromChatBody = z.object({ sessionId: z.string().trim().min(1).max(128) });
 const MessageBody = z.object({ content: z.string().trim().min(1).max(8_000) });
 const VersionBody = z.object({ expectedVersion: z.number().int().positive() });
 
@@ -41,8 +42,9 @@ export function strategyRoutes(auth: RequestHandler, coordinator: StrategyRoomCo
         ava: { available: coordinator.deps.provider !== null, role: "facilitator" },
         codex: { available: codex.available, role: "critical collaborator", version: codex.version, error: codex.error },
       },
-      controls: ["message", "pause", "resume", "approve_conclusion"],
+      controls: ["message", "pause", "resume", "approve_conclusion", "return_conclusion_to_chat"],
       approvalEffect: "records_decision_only",
+      chatHandoff: "server_snapshot_and_explicit_approved_return",
       codexBoundary: "dedicated_read_only_resumable_cli_thread",
       eventBounds: store.eventBounds(),
     });
@@ -61,6 +63,27 @@ export function strategyRoutes(auth: RequestHandler, coordinator: StrategyRoomCo
     }
     const created = coordinator.create(parsed.data.topic);
     res.status(202).json(store.getDetail(created.room.id));
+  });
+
+  router.post("/rooms/from-chat", auth, (req, res) => {
+    const parsed = FromChatBody.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "bad_request", details: parsed.error.flatten() });
+      return;
+    }
+    const result = coordinator.createFromSession(parsed.data.sessionId);
+    if (!result.ok) {
+      res.status(result.reason === "source_session_not_found" ? 404 : 409).json({ error: result.reason });
+      return;
+    }
+    res.status(result.linked.reused ? 200 : 202).json({
+      ...result.linked.detail,
+      handoff: {
+        reused: result.linked.reused,
+        sourceThroughMessageId: result.sourceThroughMessageId,
+        omittedMessageCount: result.omittedMessageCount,
+      },
+    });
   });
 
   router.get("/rooms/:id", auth, (req, res) => {
@@ -96,6 +119,24 @@ export function strategyRoutes(auth: RequestHandler, coordinator: StrategyRoomCo
     const result = coordinator.approve(String(req.params.id ?? ""), parsed.data.expectedVersion);
     if (!result.ok) { decisionError(res, result); return; }
     res.json({ approved: true, room: result.room });
+  });
+
+  router.post("/rooms/:id/return-to-chat", auth, (req, res) => {
+    const parsed = VersionBody.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: "bad_request" }); return; }
+    const result = store.returnConclusionToChat(String(req.params.id ?? ""), parsed.data.expectedVersion);
+    if (!result.ok) {
+      const status = result.reason === "not_found" || result.reason === "source_unavailable" ? 404 : 409;
+      res.status(status).json({ error: result.reason, room: result.room });
+      return;
+    }
+    res.json({
+      returned: true,
+      idempotent: result.idempotent,
+      room: result.room,
+      sessionId: result.sessionId,
+      messageId: result.messageId,
+    });
   });
 
   router.post("/rooms/:id/pause", auth, (req, res) => {

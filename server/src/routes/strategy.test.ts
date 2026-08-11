@@ -2,6 +2,8 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { openInMemoryDb } from "../state/db.js";
+import { appendMessage, listMessages } from "../state/messages.js";
+import { createSession } from "../state/sessions.js";
 import type { LLMProvider, StreamEvent, StreamInput } from "../orchestrator/llm/types.js";
 import type { CodexConsultant } from "../strategy/codex-consultant.js";
 import { StrategyRoomCoordinator } from "../strategy/coordinator.js";
@@ -88,6 +90,66 @@ describe("Strategy Room API", () => {
     const approved = await request(app).post(`/api/strategy/rooms/${id}/approve`).send({ expectedVersion: current.version }).expect(200);
     expect(approved.body.room.status).toBe("approved");
     expect(coordinator.deps.store.listMessages(id).at(-1)?.content).toContain("no implementation was started");
+    db.close();
+  });
+
+  it("moves an authoritative chat snapshot into one room and returns the approved conclusion", async () => {
+    const { app, db, coordinator } = setup();
+    const session = createSession(db, { title: "Linked AVA chat" });
+    appendMessage(db, { sessionId: session.id, role: "user", content: "Should we improve visibility?" });
+    const through = appendMessage(db, { sessionId: session.id, role: "assistant", content: "Let's compare options." });
+
+    const created = await request(app)
+      .post("/api/strategy/rooms/from-chat")
+      .send({ sessionId: session.id, context: "browser supplied text must be ignored" })
+      .expect(202);
+    expect(created.body.room).toMatchObject({
+      sourceSessionId: session.id,
+      sourceThroughMessageId: through.id,
+      returnedMessageId: null,
+    });
+    expect(JSON.stringify(created.body)).not.toContain("browser supplied text");
+    const roomId = created.body.room.id as string;
+
+    const replay = await request(app)
+      .post("/api/strategy/rooms/from-chat")
+      .send({ sessionId: session.id })
+      .expect(200);
+    expect(replay.body.room.id).toBe(roomId);
+    expect(coordinator.deps.store.listRooms()).toHaveLength(1);
+
+    await vi.waitFor(() => expect(coordinator.deps.store.getRoom(roomId)?.status).toBe("awaiting_niko"));
+    const proposed = coordinator.deps.store.getRoom(roomId)!;
+    const approved = await request(app)
+      .post(`/api/strategy/rooms/${roomId}/approve`)
+      .send({ expectedVersion: proposed.version })
+      .expect(200);
+    const returned = await request(app)
+      .post(`/api/strategy/rooms/${roomId}/return-to-chat`)
+      .send({ expectedVersion: approved.body.room.version })
+      .expect(200);
+    expect(returned.body).toMatchObject({ returned: true, idempotent: false, sessionId: session.id });
+
+    const repeated = await request(app)
+      .post(`/api/strategy/rooms/${roomId}/return-to-chat`)
+      .send({ expectedVersion: approved.body.room.version })
+      .expect(200);
+    expect(repeated.body).toMatchObject({
+      returned: true,
+      idempotent: true,
+      messageId: returned.body.messageId,
+    });
+    const chat = listMessages(db, session.id);
+    expect(chat).toHaveLength(3);
+    expect(chat.at(-1)?.content).toContain("Nothing was started");
+    db.close();
+  });
+
+  it("rejects missing and empty source chats without creating a room", async () => {
+    const { app, db } = setup();
+    await request(app).post("/api/strategy/rooms/from-chat").send({ sessionId: "missing" }).expect(404);
+    const empty = createSession(db, { title: "Empty" });
+    await request(app).post("/api/strategy/rooms/from-chat").send({ sessionId: empty.id }).expect(409);
     db.close();
   });
 });

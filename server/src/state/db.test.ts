@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, rmSync } from "node:fs";
+import Database from "better-sqlite3";
 import { openDb } from "./db.js";
 
 const TEST_DB = "./test-state.db";
@@ -35,6 +36,33 @@ describe("openDb", () => {
     db1.close();
     const db2 = openDb(TEST_DB);
     db2.close();
+  });
+
+  it("migrates a pre-handoff Strategy Room table before creating its snapshot index", () => {
+    const legacy = new Database(TEST_DB);
+    legacy.exec(`
+      CREATE TABLE strategy_rooms (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, topic TEXT NOT NULL,
+        status TEXT NOT NULL, phase TEXT NOT NULL, active_actor TEXT,
+        round INTEGER NOT NULL, version INTEGER NOT NULL, living_brief TEXT,
+        conclusion TEXT, codex_thread_id TEXT, error TEXT,
+        created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        approved_at INTEGER, stopped_at INTEGER
+      );
+    `);
+    legacy.close();
+
+    const migrated = openDb(TEST_DB);
+    const columns = migrated.prepare("PRAGMA table_info(strategy_rooms)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "source_session_id",
+      "source_through_message_id",
+      "returned_message_id",
+      "returned_at",
+    ]));
+    const indexes = migrated.prepare("PRAGMA index_list(strategy_rooms)").all() as Array<{ name: string }>;
+    expect(indexes.some((index) => index.name === "idx_strategy_rooms_source_snapshot")).toBe(true);
+    migrated.close();
   });
 });
 

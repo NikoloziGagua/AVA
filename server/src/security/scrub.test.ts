@@ -132,6 +132,14 @@ describe("scrubSecrets", () => {
     );
   });
 
+  it("redacts complete cookie and non-Bearer authorization headers", () => {
+    const out = scrubSecrets("Cookie: sid=private-cookie\nAuthorization: Basic private-basic");
+    expect(out).not.toContain("private-cookie");
+    expect(out).not.toContain("private-basic");
+    expect(out).toContain("Cookie: ***");
+    expect(out).toContain("Authorization: ***");
+  });
+
   it("redacts generic key:/password: yaml lines", () => {
     expect(scrubSecrets("password: hunter2")).toBe("password: ***");
     expect(scrubSecrets("api_key: abc123def")).toBe("api_key: ***");

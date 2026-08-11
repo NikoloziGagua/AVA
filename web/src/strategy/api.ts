@@ -16,6 +16,10 @@ export type StrategyRoom = {
   livingBrief: string | null;
   conclusion: string | null;
   codexThreadId: string | null;
+  sourceSessionId: string | null;
+  sourceThroughMessageId: number | null;
+  returnedMessageId: number | null;
+  returnedAt: number | null;
   error: string | null;
   createdAt: number;
   updatedAt: number;
@@ -46,6 +50,7 @@ export type StrategyMeta = {
     codex: { available: boolean; role: string; version: string | null; error: string | null };
   };
   approvalEffect: "records_decision_only";
+  chatHandoff: "server_snapshot_and_explicit_approved_return";
   codexBoundary: "dedicated_read_only_resumable_cli_thread";
   eventBounds: { min: number | null; max: number | null };
 };
@@ -109,6 +114,13 @@ export async function createStrategyRoom(topic: string): Promise<StrategyDetail>
   });
 }
 
+export async function createStrategyRoomFromChat(sessionId: string): Promise<StrategyDetail> {
+  return strategyRequest("/api/strategy/rooms/from-chat", {
+    method: "POST",
+    body: JSON.stringify({ sessionId }),
+  });
+}
+
 export async function sendStrategyMessage(id: string, content: string): Promise<StrategyDetail> {
   return strategyRequest(`/api/strategy/rooms/${encodeURIComponent(id)}/messages`, {
     method: "POST",
@@ -122,6 +134,24 @@ export async function approveStrategyRoom(id: string, expectedVersion: number): 
     { method: "POST", body: JSON.stringify({ expectedVersion }) },
   );
   return result.room;
+}
+
+export type ReturnedStrategyConclusion = {
+  room: StrategyRoom;
+  sessionId: string;
+  messageId: number;
+  idempotent: boolean;
+};
+
+export async function returnStrategyConclusionToChat(
+  id: string,
+  expectedVersion: number,
+): Promise<ReturnedStrategyConclusion> {
+  const result = await strategyRequest<ReturnedStrategyConclusion & { returned: true }>(
+    `/api/strategy/rooms/${encodeURIComponent(id)}/return-to-chat`,
+    { method: "POST", body: JSON.stringify({ expectedVersion }) },
+  );
+  return result;
 }
 
 export async function pauseStrategyRoom(id: string, expectedVersion: number): Promise<StrategyRoom> {

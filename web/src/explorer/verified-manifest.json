@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1785810421016,
+  "generatedAt": 1786472516680,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -14,6 +14,42 @@
       "path": "web/src/chat/useChatStream.ts",
       "symbol": "useChatStream",
       "kind": "implementation"
+    },
+    {
+      "capability": "conversation.strategy-room",
+      "path": "server/src/strategy/coordinator.ts",
+      "symbol": "StrategyRoomCoordinator",
+      "kind": "implementation"
+    },
+    {
+      "capability": "conversation.strategy-room",
+      "path": "server/src/strategy/store.ts",
+      "symbol": "StrategyRoomStore",
+      "kind": "implementation"
+    },
+    {
+      "capability": "conversation.strategy-room",
+      "path": "server/src/routes/strategy.ts",
+      "symbol": "strategyRoutes",
+      "kind": "route"
+    },
+    {
+      "capability": "conversation.strategy-room",
+      "path": "server/src/tools/strategy-room-mcp.ts",
+      "symbol": "buildStrategyRoomTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "conversation.strategy-room",
+      "path": "web/src/strategy/StrategyRoomScreen.tsx",
+      "symbol": "StrategyRoomScreen",
+      "kind": "implementation"
+    },
+    {
+      "capability": "conversation.strategy-room",
+      "path": "docs/features/strategy-room.md",
+      "symbol": "Strategy Room",
+      "kind": "documentation"
     },
     {
       "capability": "voice.realtime",
@@ -512,6 +548,10 @@
       "route": "/api/sessions"
     },
     {
+      "capability": "conversation.strategy-room",
+      "route": "/api/strategy/rooms/from-chat"
+    },
+    {
       "capability": "voice.realtime",
       "route": "/api/transcribe"
     },
@@ -776,6 +816,10 @@
     {
       "name": "shopify_update_product",
       "file": "server/src/tools/shopify-mcp.ts"
+    },
+    {
+      "name": "strategy_room_open",
+      "file": "server/src/tools/strategy-room-mcp.ts"
     },
     {
       "name": "read_claude_updates",

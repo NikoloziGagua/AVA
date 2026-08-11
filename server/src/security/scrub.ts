@@ -48,6 +48,11 @@ const PATTERNS: Array<{ re: RegExp; replace: string }> = [
   // Bearer tokens in Authorization headers.
   { re: /(Bearer\s+)[A-Za-z0-9_\-.~+/]+=*/gi, replace: "$1***" },
 
+  // Whole authentication/cookie header values. These often contain several
+  // opaque fields, so retaining a fragment is riskier than losing diagnostics.
+  { re: /\b(authorization|proxy-authorization)\s*:(?!\s*Bearer\b)\s*[^\r\n]+/gi, replace: "$1: ***" },
+  { re: /\b(cookie|set-cookie)\s*:\s*[^\r\n]+/gi, replace: "$1: ***" },
+
   // generic yaml-ish lines — skip already-redacted values (those containing ***)
   {
     re: /\b(api[_-]?key|password|secret|token)\s*[:=]\s*(?![^\s,;]*\*\*\*)[^\s,;]+/gi,

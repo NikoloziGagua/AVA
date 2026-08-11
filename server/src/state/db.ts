@@ -45,6 +45,17 @@ export function openDb(path: string): Db {
     SET compact_expires_at = started_at + ?
     WHERE compact_expires_at IS NULL
   `).run(365 * 24 * 60 * 60 * 1_000);
+  // Strategy Room v2: link an immutable chat snapshot to one room and record
+  // the single chat message that receives an approved conclusion. The partial
+  // unique index makes repeated handoff requests for the same snapshot
+  // idempotent without preventing a later turn from starting a new room.
+  tryAddColumn(db, "strategy_rooms", "source_session_id", "TEXT");
+  tryAddColumn(db, "strategy_rooms", "source_through_message_id", "INTEGER");
+  tryAddColumn(db, "strategy_rooms", "returned_message_id", "INTEGER");
+  tryAddColumn(db, "strategy_rooms", "returned_at", "INTEGER");
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_strategy_rooms_source_snapshot
+    ON strategy_rooms(source_session_id, source_through_message_id)
+    WHERE source_session_id IS NOT NULL AND source_through_message_id IS NOT NULL`);
   // Notes v2: project spaces, template sections, rich links/change evidence and
   // promotion lineage. Older flat `collection` rows become explicit projects;
   // legacy inbox/active stages become the user-facing Ideas/Doing board.

@@ -1,7 +1,10 @@
 import { nanoid } from "nanoid";
 import type { LLMProvider } from "../orchestrator/llm/types.js";
+import { listMessages } from "../state/messages.js";
+import { getSession, getSessionFull } from "../state/sessions.js";
+import { prepareChatHandoff } from "./chat-handoff.js";
 import type { CodexConsultant, CodexConsultResult } from "./codex-consultant.js";
-import { StrategyRoomStore, type DecisionResult } from "./store.js";
+import { StrategyRoomStore, type DecisionResult, type LinkedRoomResult } from "./store.js";
 import type { StrategyMessage, StrategyPhase, StrategyRoom, StrategyRoomDetail } from "./types.js";
 
 type ActiveRoom = { generation: number; controller: AbortController };
@@ -16,6 +19,10 @@ export type StrategyCoordinatorDeps = {
     warn: (obj: unknown, message: string) => void;
   };
 };
+
+export type StrategyChatHandoffResult =
+  | { ok: true; linked: LinkedRoomResult; sourceThroughMessageId: number; omittedMessageCount: number }
+  | { ok: false; reason: "source_session_not_found" | "source_session_empty" };
 
 const AVA_SYSTEM = `You are AVA, the top-level facilitator in a persistent Strategy Room with Niko and Codex.
 This is discussion and planning only. Never execute tools, modify files, or claim implementation started.
@@ -118,6 +125,36 @@ export class StrategyRoomCoordinator {
     const detail = this.deps.store.createRoom(topic);
     this.start(detail.room.id);
     return this.deps.store.getDetail(detail.room.id)!;
+  }
+
+  createFromChat(input: {
+    topic: string;
+    context: string;
+    sourceSessionId: string;
+    sourceThroughMessageId: number;
+  }): LinkedRoomResult {
+    const result = this.deps.store.createRoomFromChat(input);
+    if (!result.reused) this.start(result.detail.room.id);
+    return { ...result, detail: this.deps.store.getDetail(result.detail.room.id)! };
+  }
+
+  createFromSession(sessionId: string): StrategyChatHandoffResult {
+    const session = getSession(this.deps.store.db, sessionId);
+    const full = session ? getSessionFull(this.deps.store.db, session.id) : null;
+    if (!session || !full) return { ok: false, reason: "source_session_not_found" };
+    const prepared = prepareChatHandoff(full, listMessages(this.deps.store.db, session.id));
+    if (!prepared) return { ok: false, reason: "source_session_empty" };
+    return {
+      ok: true,
+      linked: this.createFromChat({
+        topic: prepared.topic,
+        context: prepared.context,
+        sourceSessionId: session.id,
+        sourceThroughMessageId: prepared.sourceThroughMessageId,
+      }),
+      sourceThroughMessageId: prepared.sourceThroughMessageId,
+      omittedMessageCount: prepared.omittedMessageCount,
+    };
   }
 
   addNikoMessage(roomId: string, content: string): StrategyRoomDetail | null {

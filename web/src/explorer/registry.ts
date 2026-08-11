@@ -690,6 +690,57 @@ const capabilities: ExplorerCapability[] = [
     workflow: conversationWorkflow,
   },
   {
+    id: "conversation.strategy-room",
+    domainId: "conversation",
+    name: "Shared Strategy Room",
+    shortName: "Strategy Room",
+    description: "Moves an AVA conversation into an attributed Niko, AVA and real Codex deliberation, then returns an approved proposal to the same chat.",
+    purpose: "Let Niko compare AVA and Codex recommendations without losing the original conversation or accidentally starting implementation.",
+    stability: "beta",
+    definition: {
+      implementation: "implemented",
+      sourceReferences: [
+        source("server/src/strategy/coordinator.ts", "StrategyRoomCoordinator"),
+        source("server/src/strategy/store.ts", "StrategyRoomStore"),
+        source("server/src/routes/strategy.ts", "strategyRoutes", "route"),
+        source("server/src/tools/strategy-room-mcp.ts", "buildStrategyRoomTools"),
+        source("web/src/strategy/StrategyRoomScreen.tsx", "StrategyRoomScreen"),
+        source("server/src/routes/strategy.test.ts", "moves an authoritative chat snapshot", "test"),
+        source("web/src/strategy/StrategyRoomScreen.test.tsx", "returns only its approved conclusion", "test"),
+        source("docs/features/strategy-room.md", "Strategy Room", "documentation"),
+      ],
+    },
+    examples: ["Take this conversation to the Room.", "Bring Codex into this discussion.", "Let all three of us compare the options."],
+    inputs: [
+      { name: "source chat", description: "The authenticated current AVA session, snapshotted on the server through its latest persisted message.", required: true, sensitive: true },
+      { name: "Niko interruptions", description: "Corrections or constraints added during a bounded room round.", required: false, sensitive: true },
+    ],
+    outputs: [
+      { name: "attributed room", description: "A durable AVA-facilitated conversation with Niko, AVA and a real resumable Codex thread.", persistent: true },
+      { name: "approved proposal", description: "One idempotent, labelled conclusion returned to the originating AVA chat.", persistent: true },
+    ],
+    dependencies: [
+      { targetType: "capability", targetId: "conversation.text-turn", relationship: "reads-from", required: true, description: "The source snapshot and returned proposal preserve exact chat lineage." },
+      { targetType: "application", targetId: "codex.cli", relationship: "depends-on", required: true, description: "Codex contributes through a dedicated read-only resumable CLI thread." },
+      { targetType: "data-store", targetId: "sqlite.strategy-room", relationship: "writes-to", required: true, description: "Rooms, messages, source anchors, decisions and replay events persist in SQLite." },
+    ],
+    readiness: readiness(["defined", "configured", "available", "healthy", "tested"], { recentSuccess: true }),
+    verification: verification(
+      ["The room records the exact source session and message anchor.", "AVA and Codex messages remain attributed.", "Only an approved conclusion can return, and repeated return does not duplicate it."],
+      ["api-response", "unit-test", "task-event"],
+      ["The room conclusion is a proposal. It does not verify or execute any recommended external action."],
+    ),
+    safety: safety("low", "never", ["Copies a bounded sanitized chat snapshot into Strategy Room storage.", "May invoke AVA and Codex for a read-only planning round.", "May append an approved proposal to the source chat."], {
+      sensitiveData: ["Conversation content", "Project context", "Room conclusions"],
+      stopConditions: ["Do not start when the source chat is missing or empty.", "Never return an unapproved conclusion.", "Never treat chat return as authorization to execute."],
+    }),
+    runtime: runtime(
+      ["strategy_room_open"],
+      [{ path: "core.brain.ready", dimension: "configured", interpretation: "boolean" }],
+      ["/api/strategy/rooms/from-chat"],
+    ),
+  },
+  {
     id: "voice.realtime",
     domainId: "voice",
     name: "Realtime voice conversation",
@@ -1917,6 +1968,18 @@ const capabilities: ExplorerCapability[] = [
 
 const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
   "conversation.text-turn": conversationWorkflow,
+  "conversation.strategy-room": defineWorkflow(
+    "conversation.strategy-room",
+    "Take an AVA chat into a shared decision room",
+    "Preserve chat lineage, run one bounded attributed AVA/Codex round, and return only Niko's approved proposal.",
+    [
+      { key: "request", name: "Request shared discussion", description: "Niko uses Take to Room or asks AVA to bring Codex into the current conversation.", kind: "request" },
+      { key: "snapshot", parent: "request", name: "Snapshot authoritative chat", description: "AVA derives an attributed, sanitized snapshot through the latest persisted message and deduplicates the same anchor.", kind: "operation", toolName: "strategy_room_open", producesEvidence: ["api-response"] },
+      { key: "round", parent: "snapshot", name: "AVA and Codex deliberate", description: "AVA frames and cross-reviews; a real read-only Codex thread reviews and gives its final recommendation.", kind: "operation", producesEvidence: ["task-event"] },
+      { key: "review", parent: "round", name: "Niko reviews the conclusion", description: "The living brief waits for Niko to interrupt, revise, pause or approve it.", kind: "decision" },
+      { key: "return", parent: "review", name: "Return approved proposal", description: "One labelled non-executing conclusion is appended to the exact source chat for Niko's next instruction.", kind: "result", producesEvidence: ["api-response", "task-event"] },
+    ],
+  ),
   "voice.realtime": defineWorkflow(
     "voice.realtime",
     "Hold an interruptible realtime voice turn",

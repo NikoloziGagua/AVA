@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const state = vi.hoisted(() => ({ nextChatMount: 0 }));
 
@@ -35,9 +35,14 @@ vi.mock("./splash/Splash.js", () => ({ Splash: () => <div>Splash</div> }));
 vi.mock("./chat/ChatScreen.js", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatScreen: () => {
+    ChatScreen: ({ onOpenStrategy }: { onOpenStrategy?: (sessionId: string) => void }) => {
       const mount = React.useRef(++state.nextChatMount);
-      return <div data-testid="mock-chat">chat-{mount.current}</div>;
+      return (
+        <div data-testid="mock-chat">
+          chat-{mount.current}
+          <button onClick={() => onOpenStrategy?.("internal-chat-17")}>mock take to room</button>
+        </div>
+      );
     },
   };
 });
@@ -50,19 +55,39 @@ vi.mock("./orbit/ChatListScreen.js", () => ({ ChatListScreen: () => null }));
 vi.mock("./voice/VoiceScreen.js", () => ({ VoiceScreen: () => null }));
 vi.mock("./explorer/ExplorerScreen.js", () => ({ ExplorerScreen: () => null }));
 vi.mock("./mission-control/MissionControlScreen.js", () => ({ MissionControlScreen: () => null }));
-vi.mock("./strategy/StrategyRoomScreen.js", () => ({ StrategyRoomScreen: () => null }));
+vi.mock("./strategy/StrategyRoomScreen.js", () => ({
+  StrategyRoomScreen: ({ sourceSessionId, onOpenChat }: {
+    sourceSessionId?: string | null;
+    onOpenChat?: (sessionId: string) => void;
+  }) => (
+    <div>
+      room-source-{sourceSessionId ?? "none"}
+      <button onClick={() => sourceSessionId && onOpenChat?.(sourceSessionId)}>mock return to chat</button>
+    </div>
+  ),
+}));
 
 import { App } from "./App.js";
 
 describe("App New-chat navigation", () => {
   beforeEach(() => { state.nextChatMount = 0; });
+  afterEach(cleanup);
 
   it("mounts a clean ChatScreen every time New is pressed", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "New" }));
-    expect(screen.getByTestId("mock-chat").textContent).toBe("chat-1");
+    expect(screen.getByTestId("mock-chat").textContent).toContain("chat-1");
 
     fireEvent.click(screen.getByRole("button", { name: "New" }));
-    expect(screen.getByTestId("mock-chat").textContent).toBe("chat-2");
+    expect(screen.getByTestId("mock-chat").textContent).toContain("chat-2");
+  });
+
+  it("carries the internal chat session into the Room and back", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock take to room" }));
+    expect(screen.getByText("room-source-internal-chat-17")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "mock return to chat" }));
+    expect(screen.getByTestId("mock-chat")).toBeTruthy();
   });
 });

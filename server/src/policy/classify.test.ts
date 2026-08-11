@@ -48,6 +48,9 @@ describe("classifyRisk", () => {
     expect(classifyRisk("shell", { command: "explorer ." }).tier).toBe("low");
     expect(classifyRisk("shell", { command: "code ." }).tier).toBe("low");
   });
+  it("low: Strategy Room handoff starts discussion but cannot execute", () => {
+    expect(classifyRisk("strategy_room_open", {}).tier).toBe("low");
+  });
   it("low: dedicated Instagram profile opening", () => {
     expect(classifyRisk("instagram_open_profile", { person: "Lasha" }).tier).toBe("low");
   });

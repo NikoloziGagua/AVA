@@ -552,6 +552,7 @@ const agentDeps = {
   queueDiscussion,
   listDiscussions: () => listDiscussions(db),
   getDiscussion: (id: string) => getDiscussion(db, id),
+  openStrategyRoomFromSession: (sessionId: string) => strategyCoordinator.createFromSession(sessionId),
   // Lets Ava report the live state of each self-improvement task (queued →
   // reflecting → implementing → verifying → swapped/failed/rolled_back).
   listSelfImprovements: () =>

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { openInMemoryDb } from "../state/db.js";
+import { appendMessage, listMessages } from "../state/messages.js";
+import { createSession } from "../state/sessions.js";
 import { StrategyRoomStore } from "./store.js";
 
 describe("StrategyRoomStore", () => {
@@ -53,6 +55,57 @@ describe("StrategyRoomStore", () => {
       activeActor: null,
       error: "interrupted by a server restart",
     });
+    db.close();
+  });
+
+  it("links one room per chat snapshot and returns an approved conclusion exactly once", () => {
+    const db = openInMemoryDb();
+    const store = new StrategyRoomStore(db);
+    const session = createSession(db, { title: "A linked decision" });
+    const source = appendMessage(db, { sessionId: session.id, role: "user", content: "Choose a direction" });
+    const input = {
+      topic: "Choose a direction",
+      context: "Niko: Choose a direction\nAuthorization: Bearer secret-room-token",
+      sourceSessionId: session.id,
+      sourceThroughMessageId: source.id,
+    };
+    const first = store.createRoomFromChat(input);
+    const replay = store.createRoomFromChat(input);
+
+    expect(replay.reused).toBe(true);
+    expect(replay.detail.room.id).toBe(first.detail.room.id);
+    expect(store.listRooms()).toHaveLength(1);
+    expect(JSON.stringify(first.detail)).not.toContain("secret-room-token");
+
+    const proposed = store.updateRoom(first.detail.room.id, {
+      status: "awaiting_niko",
+      phase: "waiting_for_niko",
+      activeActor: null,
+      conclusion: "Use the bounded bridge.",
+      livingBrief: "Use the bounded bridge.",
+    });
+    expect(store.returnConclusionToChat(first.detail.room.id, proposed.version)).toMatchObject({
+      ok: false,
+      reason: "invalid_status",
+    });
+    const approved = store.approve(first.detail.room.id, proposed.version);
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) throw new Error("approval failed");
+
+    const returned = store.returnConclusionToChat(first.detail.room.id, approved.room.version);
+    expect(returned).toMatchObject({ ok: true, sessionId: session.id, idempotent: false });
+    if (!returned.ok) throw new Error("return failed");
+    const replayedReturn = store.returnConclusionToChat(first.detail.room.id, approved.room.version);
+    expect(replayedReturn).toMatchObject({
+      ok: true,
+      messageId: returned.messageId,
+      idempotent: true,
+    });
+    const chat = listMessages(db, session.id);
+    expect(chat).toHaveLength(2);
+    expect(chat.at(-1)).toMatchObject({ role: "assistant" });
+    expect(chat.at(-1)?.content).toContain("proposed course of action (not executed)");
+    expect(chat.at(-1)?.content).toContain("Tell me what course of action");
     db.close();
   });
 });

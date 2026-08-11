@@ -878,6 +878,72 @@ export type MissionMeta = {
     min: number | null;
     max: number | null;
   };
+  evidenceExport?: {
+    enabled: boolean;
+    scopes: Array<"run" | "trace">;
+    formats: ["json"];
+    schemaVersion: number;
+    maxRows: number;
+    maxBytes: number;
+    maxTimeRangeMs: number;
+    content: string;
+    redactionReapplied: boolean;
+  };
+};
+
+export type MissionExportScope = "run" | "trace";
+
+export type MissionEvidenceExport = {
+  service: "ava-mission-control";
+  format: "json";
+  apiVersion: number;
+  exportSchemaVersion: number;
+  observabilitySchemaVersion: number;
+  generatedAt: number;
+  scope: {
+    type: MissionExportScope;
+    anchorRunId: string;
+    traceId: string;
+  };
+  snapshot: {
+    highWaterEventSeq: number;
+    oldestRetainedEventSeq: number | null;
+    newestRetainedEventSeq: number | null;
+    rule: "events_at_or_before_high_water";
+  };
+  appliedFilters: {
+    format: "json";
+    content: string;
+    throughEventSeq: number;
+  };
+  bounds: {
+    maxRows: number;
+    maxBytes: number;
+    maxTimeRangeMs: number;
+    rows: { runs: number; events: number; total: number };
+    timeRangeMs: number;
+  };
+  completeness: {
+    evidence: "complete_at_snapshot" | "partial_due_to_retention";
+    partial: boolean;
+    truncated: false;
+    reasons: string[];
+    activeRunIdsAtSnapshot: string[];
+  };
+  retention: {
+    detailedDays: number;
+    compactDays: number;
+    detailedCutoffAt: number;
+    compactCutoffAt: number;
+  };
+  redaction: {
+    reappliedAtExport: true;
+    policy: string;
+    notice: string;
+    collapsedContent: string;
+  };
+  runs: Array<Record<string, unknown>>;
+  events: Array<Record<string, unknown>>;
 };
 
 export async function fetchMissionMeta(): Promise<MissionMeta> {
@@ -896,6 +962,38 @@ export async function fetchMissionRun(id: string): Promise<{
   events: MissionEvent[];
 }> {
   return request(`/api/mission-control/runs/${encodeURIComponent(id)}`);
+}
+
+export async function fetchMissionExport(
+  id: string,
+  scope: MissionExportScope,
+): Promise<MissionEvidenceExport> {
+  return request<MissionEvidenceExport>(
+    `/api/mission-control/runs/${encodeURIComponent(id)}/export?scope=${scope}&format=json`,
+  );
+}
+
+/** Create the user-requested download locally; AVA never persists a duplicate export file. */
+export function saveMissionExport(document: MissionEvidenceExport): void {
+  if (
+    typeof globalThis.document === "undefined" ||
+    typeof globalThis.URL?.createObjectURL !== "function"
+  ) {
+    throw new Error("This browser cannot create a local evidence download.");
+  }
+  const body = JSON.stringify(document, null, 2);
+  const blob = new Blob([body], { type: "application/json;charset=utf-8" });
+  const url = globalThis.URL.createObjectURL(blob);
+  const link = globalThis.document.createElement("a");
+  const safeId = document.scope.anchorRunId.replace(/[^A-Za-z0-9._-]/g, "_");
+  const stamp = new Date(document.generatedAt).toISOString().replace(/[:.]/g, "-");
+  link.href = url;
+  link.download = `ava-mission-${document.scope.type}-${safeId}-${stamp}.json`;
+  link.style.display = "none";
+  globalThis.document.body.appendChild(link);
+  link.click();
+  link.remove();
+  globalThis.URL.revokeObjectURL(url);
 }
 
 export async function stopMissionRun(id: string, expectedVersion: number): Promise<MissionRun> {

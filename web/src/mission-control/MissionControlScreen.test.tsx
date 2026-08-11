@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { MissionEvent, MissionRun } from "../api.js";
+import type { MissionEvent, MissionEvidenceExport, MissionRun } from "../api.js";
 
 const api = vi.hoisted(() => ({
   fetchMissionMeta: vi.fn(),
+  fetchMissionExport: vi.fn(),
   fetchMissionRuns: vi.fn(),
   fetchMissionRun: vi.fn(),
+  saveMissionExport: vi.fn(),
   stopMissionRun: vi.fn(),
   subscribeMissionEvents: vi.fn(() => () => {}),
 }));
@@ -104,6 +106,55 @@ const event: MissionEvent = {
   projectionApplied: true,
 };
 
+const evidenceExport: MissionEvidenceExport = {
+  service: "ava-mission-control",
+  format: "json",
+  apiVersion: 1,
+  exportSchemaVersion: 1,
+  observabilitySchemaVersion: 1,
+  generatedAt: Date.now(),
+  scope: { type: "trace", anchorRunId: run.id, traceId: run.traceId },
+  snapshot: {
+    highWaterEventSeq: 2,
+    oldestRetainedEventSeq: 1,
+    newestRetainedEventSeq: 2,
+    rule: "events_at_or_before_high_water",
+  },
+  appliedFilters: {
+    format: "json",
+    content: "operational_summaries_and_bounded_detail",
+    throughEventSeq: 2,
+  },
+  bounds: {
+    maxRows: 1_000,
+    maxBytes: 1_000_000,
+    maxTimeRangeMs: 2_592_000_000,
+    rows: { runs: 1, events: 1, total: 2 },
+    timeRangeMs: 2_000,
+  },
+  completeness: {
+    evidence: "partial_due_to_retention",
+    partial: true,
+    truncated: false,
+    reasons: ["Detailed events were already compacted for 1 run(s)."],
+    activeRunIdsAtSnapshot: [],
+  },
+  retention: {
+    detailedDays: 30,
+    compactDays: 365,
+    detailedCutoffAt: Date.now() - 1_000,
+    compactCutoffAt: Date.now() - 2_000,
+  },
+  redaction: {
+    reappliedAtExport: true,
+    policy: "ava_operational_sanitizer_v1",
+    notice: "Secrets excluded.",
+    collapsedContent: "Sensitive details omitted.",
+  },
+  runs: [],
+  events: [],
+};
+
 describe("MissionControlScreen", () => {
   it("shows the correlated live timeline and sends version-guarded Stop", async () => {
     api.fetchMissionMeta.mockResolvedValue({
@@ -152,5 +203,79 @@ describe("MissionControlScreen", () => {
 
     expect(await screen.findByText("Transcript accepted")).toBeTruthy();
     expect(screen.getAllByText("Not reported")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Export evidence" })).toBeNull();
+  });
+
+  it("downloads the selected trace scope and shows redaction and partial notices", async () => {
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 2 },
+      evidenceExport: {
+        enabled: true,
+        scopes: ["run", "trace"],
+        formats: ["json"],
+        schemaVersion: 1,
+        maxRows: 1_000,
+        maxBytes: 1_000_000,
+        maxTimeRangeMs: 2_592_000_000,
+        content: "operational_summaries_and_bounded_detail",
+        redactionReapplied: true,
+      },
+    });
+    api.fetchMissionRuns.mockResolvedValue([run]);
+    api.fetchMissionRun.mockResolvedValue({ run, events: [event] });
+    api.fetchMissionExport.mockResolvedValue(evidenceExport);
+
+    render(<MissionControlScreen />);
+    expect(await screen.findByText("Transcript accepted")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Export evidence" }));
+    expect(screen.getByText("Privacy-safe JSON evidence")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "trace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download JSON" }));
+
+    await waitFor(() => expect(api.fetchMissionExport).toHaveBeenCalledWith(run.id, "trace"));
+    expect(api.saveMissionExport).toHaveBeenCalledWith(evidenceExport);
+    expect(screen.getByText("Export schema v1")).toBeTruthy();
+    expect(screen.getByText("Sanitizer reapplied")).toBeTruthy();
+    expect(screen.getByText("Evidence partial")).toBeTruthy();
+    expect(screen.getByText(/Detailed events were already compacted/)).toBeTruthy();
+  });
+
+  it("reports export errors without presenting a completed download", async () => {
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 2 },
+      evidenceExport: {
+        enabled: true,
+        scopes: ["run", "trace"],
+        formats: ["json"],
+        schemaVersion: 1,
+        maxRows: 1_000,
+        maxBytes: 1_000_000,
+        maxTimeRangeMs: 2_592_000_000,
+        content: "operational_summaries_and_bounded_detail",
+        redactionReapplied: true,
+      },
+    });
+    api.fetchMissionRuns.mockResolvedValue([run]);
+    api.fetchMissionRun.mockResolvedValue({ run, events: [event] });
+    api.fetchMissionExport.mockRejectedValue(new Error("Evidence scope exceeds the byte limit."));
+
+    render(<MissionControlScreen />);
+    expect(await screen.findByText("Transcript accepted")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Export evidence" }));
+    fireEvent.click(screen.getByRole("button", { name: "Download JSON" }));
+    expect(await screen.findByText("Evidence scope exceeds the byte limit.")).toBeTruthy();
+    expect(api.saveMissionExport).not.toHaveBeenCalled();
   });
 });

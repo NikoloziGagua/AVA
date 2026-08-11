@@ -3,12 +3,29 @@ import { z } from "zod";
 import type { ObservabilityEvent } from "../observability/types.js";
 import type { ObservabilityService } from "../observability/store.js";
 import { FORGE_AGENT_ROLES } from "../observability/forge-adapter.js";
+import {
+  buildMissionControlExport,
+  MISSION_CONTROL_EXPORT_MAX_BYTES,
+  MISSION_CONTROL_EXPORT_MAX_ROWS,
+  MISSION_CONTROL_EXPORT_MAX_TIME_RANGE_MS,
+  MISSION_CONTROL_EXPORT_SCHEMA_VERSION,
+} from "../observability/export.js";
 
 export const MISSION_CONTROL_API_VERSION = 1;
 
 const StopBody = z.object({
   expectedVersion: z.number().int().positive(),
 });
+
+const ExportQuery = z.object({
+  scope: z.enum(["run", "trace"]),
+  format: z.literal("json").optional().default("json"),
+  // Query-token authentication is supported by the shared auth middleware.
+  // It is accepted as transport metadata, never copied into export filters.
+  t: z.string().optional(),
+}).strict();
+
+const ExportRunId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/);
 
 function numberParam(value: unknown, fallback: number): number {
   if (typeof value !== "string") return fallback;
@@ -61,6 +78,17 @@ export function missionControlRoutes(
         canonicalRoles: FORGE_AGENT_ROLES,
       },
       eventBounds: bounds,
+      evidenceExport: {
+        enabled: true,
+        scopes: ["run", "trace"],
+        formats: ["json"],
+        schemaVersion: MISSION_CONTROL_EXPORT_SCHEMA_VERSION,
+        maxRows: MISSION_CONTROL_EXPORT_MAX_ROWS,
+        maxBytes: MISSION_CONTROL_EXPORT_MAX_BYTES,
+        maxTimeRangeMs: MISSION_CONTROL_EXPORT_MAX_TIME_RANGE_MS,
+        content: "operational_summaries_and_bounded_detail",
+        redactionReapplied: true,
+      },
     });
   });
 
@@ -93,6 +121,77 @@ export function missionControlRoutes(
       generatedAt: Date.now(),
       apiVersion: MISSION_CONTROL_API_VERSION,
     });
+  });
+
+  /**
+   * Authenticated, read-only evidence export. Trace scope is derived from the
+   * selected run, preventing a client from enumerating free-form trace IDs.
+   * The store supplies a durable high-water snapshot; this route serializes it
+   * once and rejects configured limits rather than silently dropping evidence.
+   */
+  router.get("/runs/:id/export", auth, (req, res) => {
+    const parsedId = ExportRunId.safeParse(req.params.id);
+    const parsedQuery = ExportQuery.safeParse(req.query);
+    if (!parsedId.success || !parsedQuery.success) {
+      res.status(400).json({
+        error: "invalid_export_request",
+        message: "A valid selected run, scope=run|trace and format=json are required. Unsupported filters are rejected.",
+      });
+      return;
+    }
+
+    const result = buildMissionControlExport({
+      store: observability.store,
+      anchorRunId: parsedId.data,
+      scope: parsedQuery.data.scope,
+      apiVersion: MISSION_CONTROL_API_VERSION,
+    });
+    if (result.status === "not_found") {
+      res.status(404).json({
+        error: "mission_export_scope_not_found",
+        message: "The selected Mission Control scope does not exist or its compact record was removed.",
+      });
+      return;
+    }
+    if (result.status === "too_many_rows") {
+      res.status(413).json({
+        error: "mission_export_row_limit",
+        message: "This evidence scope exceeds AVA's bounded export row limit. Select a single run or a smaller trace.",
+        limit: MISSION_CONTROL_EXPORT_MAX_ROWS,
+        observed: result,
+      });
+      return;
+    }
+    if (result.status === "time_range_exceeded") {
+      res.status(413).json({
+        error: "mission_export_time_range_limit",
+        message: "This evidence scope spans more time than the bounded export permits.",
+        limitMs: MISSION_CONTROL_EXPORT_MAX_TIME_RANGE_MS,
+        observedMs: result.timeRangeMs,
+      });
+      return;
+    }
+
+    const serialized = JSON.stringify(result.document, null, 2);
+    const bytes = Buffer.byteLength(serialized, "utf8");
+    if (bytes > MISSION_CONTROL_EXPORT_MAX_BYTES) {
+      res.status(413).json({
+        error: "mission_export_byte_limit",
+        message: "This evidence scope exceeds AVA's bounded export byte limit. No partial file was generated.",
+        limit: MISSION_CONTROL_EXPORT_MAX_BYTES,
+        observed: bytes,
+      });
+      return;
+    }
+
+    const safeId = parsedId.data.replace(/[^A-Za-z0-9._-]/g, "_");
+    const stamp = new Date(result.document.generatedAt).toISOString().replace(/[:.]/g, "-");
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="ava-mission-${parsedQuery.data.scope}-${safeId}-${stamp}.json"`);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.status(200).send(serialized);
   });
 
   /**

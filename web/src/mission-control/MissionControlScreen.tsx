@@ -9,7 +9,9 @@ import {
   CircleDot,
   Clock3,
   Coins,
+  Download,
   Eye,
+  FileJson,
   Octagon,
   Radio,
   RefreshCw,
@@ -21,12 +23,16 @@ import {
 } from "lucide-react";
 import {
   ApiError,
+  fetchMissionExport,
   fetchMissionMeta,
   fetchMissionRun,
   fetchMissionRuns,
+  saveMissionExport,
   stopMissionRun,
   subscribeMissionEvents,
   type MissionEvent,
+  type MissionEvidenceExport,
+  type MissionExportScope,
   type MissionRun,
 } from "../api.js";
 
@@ -142,6 +148,11 @@ export function MissionControlScreen() {
   const [error, setError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [streamReady, setStreamReady] = useState(false);
+  const [exportSupported, setExportSupported] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<MissionExportScope>("run");
+  const [exporting, setExporting] = useState(false);
+  const [exportReceipt, setExportReceipt] = useState<MissionEvidenceExport | null>(null);
   const refreshTimer = useRef<number | null>(null);
   const cursor = useRef(0);
 
@@ -179,6 +190,7 @@ export function MissionControlScreen() {
         // retained heartbeat. Reconnects still use the advancing local cursor.
         const meta = await fetchMissionMeta();
         cursor.current = Math.max(cursor.current, meta.eventBounds.max ?? 0);
+        setExportSupported(meta.evidenceExport?.enabled === true);
         await loadRuns();
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -195,6 +207,8 @@ export function MissionControlScreen() {
       return;
     }
     setSelectedEvent(null);
+    setExportOpen(false);
+    setExportReceipt(null);
     void loadDetail(selectedId).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
   }, [loadDetail, selectedId]);
 
@@ -246,6 +260,22 @@ export function MissionControlScreen() {
       }
     } finally {
       setStopping(false);
+    }
+  };
+
+  const exportEvidence = async () => {
+    if (!selectedRun || !exportSupported || exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const next = await fetchMissionExport(selectedRun.id, exportScope);
+      saveMissionExport(next);
+      setExportReceipt(next);
+    } catch (cause) {
+      setExportReceipt(null);
+      setError(cause instanceof Error ? cause.message : "Mission Control could not export this evidence scope.");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -343,16 +373,81 @@ export function MissionControlScreen() {
                     {operationalSummary(selectedRun)}
                   </p>
                 </div>
-                {selectedRun.controlAvailable && (
-                  <button
-                    onClick={() => void stop()}
-                    disabled={stopping}
-                    className="flex shrink-0 items-center gap-2 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-2 text-xs font-medium text-red-100 transition hover:bg-red-400/15 disabled:opacity-50"
-                  >
-                    <Square size={12} fill="currentColor" /> {stopping ? "Stopping…" : `Stop ${selectedRun.runKind.replaceAll("_", " ")}`}
-                  </button>
-                )}
+                <div className="flex shrink-0 items-center gap-2">
+                  {exportSupported && (
+                    <button
+                      onClick={() => setExportOpen((current) => !current)}
+                      aria-expanded={exportOpen}
+                      className="flex items-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.055] px-4 py-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/10"
+                    >
+                      <Download size={13} /> Export evidence
+                    </button>
+                  )}
+                  {selectedRun.controlAvailable && (
+                    <button
+                      onClick={() => void stop()}
+                      disabled={stopping}
+                      className="flex shrink-0 items-center gap-2 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-2 text-xs font-medium text-red-100 transition hover:bg-red-400/15 disabled:opacity-50"
+                    >
+                      <Square size={12} fill="currentColor" /> {stopping ? "Stopping…" : `Stop ${selectedRun.runKind.replaceAll("_", " ")}`}
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {exportOpen && (
+                <section className="mt-4 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.035] p-4" aria-label="Evidence export">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-medium text-white/78"><FileJson size={14} /> Privacy-safe JSON evidence</div>
+                      <p className="mt-1 max-w-2xl text-[11px] leading-5 text-white/40">
+                        AVA exports a fixed SQLite snapshot, re-applies redaction, and leaves collapsed prompts and sensitive payload bodies out of the file.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {(["run", "trace"] as MissionExportScope[]).map((scope) => (
+                        <button
+                          key={scope}
+                          onClick={() => { setExportScope(scope); setExportReceipt(null); }}
+                          aria-pressed={exportScope === scope}
+                          className={`rounded-lg border px-3 py-1.5 text-[10px] uppercase tracking-wider transition ${
+                            exportScope === scope
+                              ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
+                              : "border-white/10 text-white/38 hover:text-white/65"
+                          }`}
+                        >
+                          {scope}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => void exportEvidence()}
+                        disabled={exporting}
+                        className="flex items-center gap-2 rounded-lg border border-white/15 bg-white/[0.07] px-3 py-1.5 text-[10px] text-white/72 transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <Download size={11} /> {exporting ? "Preparing..." : "Download JSON"}
+                      </button>
+                    </div>
+                  </div>
+                  {exportReceipt && (
+                    <div className={`mt-3 rounded-xl border p-3 text-[10px] leading-5 ${
+                      exportReceipt.completeness.partial
+                        ? "border-amber-300/20 bg-amber-300/[0.05] text-amber-100/75"
+                        : "border-emerald-300/15 bg-emerald-300/[0.04] text-emerald-100/70"
+                    }`}>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                        <span>Export schema v{exportReceipt.exportSchemaVersion}</span>
+                        <span>{exportReceipt.scope.type} scope</span>
+                        <span>{exportReceipt.bounds.rows.total} rows</span>
+                        <span>Snapshot through event {exportReceipt.snapshot.highWaterEventSeq}</span>
+                        <span>{new Date(exportReceipt.generatedAt).toLocaleString()}</span>
+                        <span>Sanitizer reapplied</span>
+                        <span>{exportReceipt.completeness.partial ? "Evidence partial" : "Complete at snapshot"}</span>
+                      </div>
+                      {exportReceipt.completeness.reasons.map((reason) => <div key={reason} className="mt-1">{reason}</div>)}
+                    </div>
+                  )}
+                </section>
+              )}
 
               <div className="mt-5 grid grid-cols-5 gap-2">
                 {[

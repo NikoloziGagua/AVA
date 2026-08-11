@@ -5,7 +5,10 @@ import {
   ApiError,
   fetchExplorerLive,
   fetchExplorerTask,
+  fetchMissionExport,
   fetchSessions,
+  saveMissionExport,
+  type MissionEvidenceExport,
 } from "./api.js";
 import { setToken, getToken } from "./auth/tokens.js";
 
@@ -46,6 +49,56 @@ describe("api 401 recovery", () => {
     } finally {
       window.removeEventListener("ava:unauthorized", seen);
     }
+  });
+});
+
+describe("Mission Control export API", () => {
+  it("requests the selected authenticated scope without placing the token in the URL", async () => {
+    setToken("paired-export-token");
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      service: "ava-mission-control",
+      format: "json",
+      exportSchemaVersion: 1,
+      scope: { type: "trace", anchorRunId: "run:one", traceId: "trace-one" },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+
+    const result = await fetchMissionExport("run:one", "trace");
+    const mock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const [path, init] = mock.mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/mission-control/runs/run%3Aone/export?scope=trace&format=json");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer paired-export-token");
+    expect(path).not.toContain("paired-export-token");
+    expect(result).toMatchObject({ exportSchemaVersion: 1, scope: { type: "trace" } });
+  });
+
+  it("creates and revokes a local JSON download without server-side persistence", () => {
+    const createObjectURL = vi.fn(() => "blob:mission-export");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(globalThis.URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(globalThis.URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+    const evidence = {
+      generatedAt: Date.UTC(2026, 7, 11, 12, 30, 0),
+      scope: { type: "run", anchorRunId: "run:unsafe/name", traceId: "trace-one" },
+      service: "ava-mission-control",
+      format: "json",
+    } as unknown as MissionEvidenceExport;
+
+    saveMissionExport(evidence);
+
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mission-export");
+    click.mockRestore();
   });
 });
 

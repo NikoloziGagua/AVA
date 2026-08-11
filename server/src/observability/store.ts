@@ -100,6 +100,22 @@ type EventRow = {
   dedup_key: string;
 };
 
+export type ObservabilityExportScope = "run" | "trace";
+
+export type ObservabilityExportSnapshot = {
+  anchorRun: ObservabilityRun;
+  runs: ObservabilityRun[];
+  events: ObservabilityEvent[];
+  highWaterSeq: number;
+  retainedEventBounds: { min: number | null; max: number | null };
+  totalRows: number;
+};
+
+export type ObservabilityExportSelection =
+  | { status: "not_found" }
+  | { status: "too_many_rows"; runCount: number; eventCount: number; totalRows: number }
+  | { status: "ok"; snapshot: ObservabilityExportSnapshot };
+
 const RUN_SELECT = `
   SELECT
     r.*,
@@ -621,6 +637,72 @@ export class ObservabilityStore {
       min: row.min === null ? null : Number(row.min),
       max: row.max === null ? null : Number(row.max),
     };
+  }
+
+  /**
+   * Select a deterministic read-only export snapshot anchored by a run. Trace
+   * scope is derived from that run rather than accepting a freely enumerable
+   * trace ID. The SQLite read transaction fixes the durable high-water cursor;
+   * later arrivals belong to a future export and cannot drift into this one.
+   */
+  selectExportSnapshot(
+    anchorRunId: string,
+    scope: ObservabilityExportScope,
+    maxRows: number,
+  ): ObservabilityExportSelection {
+    const boundedRows = Math.max(1, Math.floor(maxRows));
+    return this.db.transaction((): ObservabilityExportSelection => {
+      const anchor = plainRun(this.db, anchorRunId);
+      if (!anchor) return { status: "not_found" };
+
+      const bounds = this.eventBounds();
+      const highWaterSeq = bounds.max ?? 0;
+      const runPredicate = scope === "trace" ? "r.trace_id = ?" : "r.id = ?";
+      const eventPredicate = scope === "trace" ? "trace_id = ?" : "run_id = ?";
+      const selector = scope === "trace" ? anchor.trace_id : anchor.id;
+      const runRows = this.db.prepare(`
+        ${RUN_SELECT}
+        WHERE ${runPredicate}
+        GROUP BY r.id
+        ORDER BY r.started_at ASC, r.id ASC
+      `).all(selector) as RunRow[];
+      const eventCountRow = this.db.prepare(`
+        SELECT COUNT(*) AS value
+        FROM observability_events
+        WHERE ${eventPredicate} AND seq <= ?
+      `).get(selector, highWaterSeq) as { value: number };
+      const eventCount = Number(eventCountRow.value);
+      const totalRows = runRows.length + eventCount;
+      if (totalRows > boundedRows) {
+        return {
+          status: "too_many_rows",
+          runCount: runRows.length,
+          eventCount,
+          totalRows,
+        };
+      }
+
+      const eventRows = this.db.prepare(`
+        SELECT * FROM observability_events
+        WHERE ${eventPredicate} AND seq <= ?
+        ORDER BY seq ASC, event_id ASC
+      `).all(selector, highWaterSeq) as EventRow[];
+      const now = Date.now();
+      const runs = runRows.map((row) => runFromRow(row, now));
+      const anchorRun = runs.find((run) => run.id === anchorRunId);
+      if (!anchorRun) return { status: "not_found" };
+      return {
+        status: "ok",
+        snapshot: {
+          anchorRun,
+          runs,
+          events: eventRows.map(eventFromRow),
+          highWaterSeq,
+          retainedEventBounds: bounds,
+          totalRows,
+        },
+      };
+    })();
   }
 
   markOrphanedRuns(at = Date.now()): number {

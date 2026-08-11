@@ -27,6 +27,7 @@ These are defaults, not unanswered questions.
 | Screenshots | Off by default. If selective checkpoint capture is added later, avoid credentials/payment surfaces and use a shorter seven-day retention unless explicitly preserved as an artifact. |
 | Cost display | Show actual leaf provider usage when the provider supplies it. Show “not reported” instead of manufacturing a number. Parent/run totals are query-time rollups, never re-ingested costs. |
 | Direct agent communication | Allowed only among agents inside one AVA-authorized Forge run and only through Forge's recorded router. Cross-environment direct messaging is prohibited; it must route through AVA. |
+| Evidence export | A selected run or its AVA-derived trace can be downloaded as bounded JSON. Export is authenticated, read-only, re-sanitized, fixed to a durable high-water cursor, and generated in the browser without a duplicate server-side file. |
 
 ## Authority and runtime boundaries
 
@@ -86,7 +87,55 @@ Sanitization happens before SQLite and is applied again on read. Mission Control
 - unsanitized tool arguments/output;
 - screenshots captured around credential or payment interfaces.
 
-The frontend has no “request unredacted data” capability. Prompt/response and source-sensitive content is collapsed by default. Export is not present in v1; a future export must pass through sanitization again.
+The frontend has no “request unredacted data” capability. Prompt/response and source-sensitive content is collapsed by default. Evidence export applies the same sanitizer again at export time, excludes collapsed objective and non-detail payload bodies by default, and removes raw audio, screenshots, provider payloads, authorization material, and hidden-reasoning fields even if a legacy record was contaminated.
+
+## Privacy-preserving evidence export
+
+Mission Control exposes one authenticated read-only endpoint:
+
+```text
+GET /api/mission-control/runs/:anchorRunId/export?scope=run|trace&format=json
+```
+
+The selected run is the authority for both scopes. `scope=trace` derives the
+trace ID from that run; clients cannot submit a free-form trace ID. Missing and
+removed anchors return the same bounded 404 response. Unknown filters, malformed
+run IDs, and unsupported formats return 400.
+
+Every successful document includes:
+
+- API, observability, and export schema versions;
+- generation time and the selected run/derived trace scope;
+- the durable global event high-water cursor and retained event bounds;
+- applied content filters and deterministic run/event ordering;
+- run, trace, parent, span, causation, actor, runtime, action, provider, and
+  verification/accounting provenance already present in Mission Control;
+- exact row counts, observed time span, active runs at the snapshot, and the
+  configured limits;
+- 30-day detail / 365-day compact retention metadata;
+- explicit complete-at-snapshot or partial-due-to-retention state;
+- an export-time redaction notice and disclosure rule.
+
+The first version is JSON-only. It permits at most 1,000 combined run/event
+rows, 1,000,000 serialized bytes, and a 30-day observed execution span. AVA
+returns a typed 413 error rather than silently truncating rows, bytes, or time.
+`truncated` is therefore always false in a successful v1 document. A compacted
+run is still exportable, but the document says that detailed evidence is partial
+and contains only the retained compact outcome.
+
+The SQLite read transaction fixes `highWaterEventSeq` before selecting the
+scope. Events arriving afterward remain authoritative history but belong to a
+future export; they cannot drift into an in-progress file. Exports do not create
+events, change run versions, replay actions, or write files on the server. The
+web client creates a temporary Blob from the authenticated response and revokes
+its object URL after download.
+
+Default export content is deliberately narrower than the expanded UI. It
+includes operational summaries and bounded `detail` evidence; objectives and
+non-detail payload bodies are represented only by availability/disclosure
+markers. Raw secrets, cookies, authorization data, environment secrets, raw
+audio, screenshots, raw provider payloads, unsanitized tool data, and hidden
+reasoning are prohibited.
 
 ## Implemented vertical slice
 
@@ -102,6 +151,7 @@ The first slice covers:
 8. Sanitized SQLite storage and 30-day detail / 365-day compact retention.
 9. Authenticated replayable SSE.
 10. A desktop-first run tree, live timeline, status, latency, usage, errors, evidence, and scoped Stop.
+11. Authenticated, bounded, export-time-sanitized JSON evidence for a selected run or trace.
 
 Coverage is deliberately honest:
 

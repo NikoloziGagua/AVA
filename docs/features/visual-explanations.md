@@ -163,6 +163,17 @@ mechanisms select their specialized forms. The separate authenticated
 Updates require both `revisesVisualMessageId` and `expectedRevision`; a stale
 revision receives `409` without writing.
 
+Tool availability is also narrowed from the literal user request before the
+provider chooses a tool. Explicit map, timeline, evidence-matrix, claim-graph
+and chart requests expose only the research contract; the server copies that
+explicit choice into `userSelectedForm` and rejects a conflicting model choice.
+Plain architecture/workflow requests expose only the lightweight process
+contract. Broad deep-research requests expose the research contract without
+forcing a form, so evidence still determines the recommendation. Ambiguous
+non-research visual requests retain both contracts for backward compatibility,
+with the multi-form contract ordered first. This boundary prevents the smaller
+flowchart schema from silently shadowing a specialized visual request.
+
 ## Rendering and map data
 
 All v2 renderers consume the semantic model; the small renderer payload is only

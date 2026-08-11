@@ -12,6 +12,7 @@ import {
   validateResearchVisual,
   type CreateResearchVisualInput,
 } from "../visual-explanations/research-model.js";
+import { selectVisualRequest } from "../visual-explanations/request-selection.js";
 import type { ObservabilityService } from "../observability/store.js";
 import type { ToolDef } from "./ava-mcp.js";
 
@@ -163,13 +164,15 @@ export function buildVisualExplanationTools(options: {
   sessionId: string | null;
   source: Exclude<VisualExplanationSource, "manual">;
   observability?: ObservabilityService;
+  request?: string;
 }): ToolDef[] {
-  return [
+  const routing = selectVisualRequest(options.request ?? "");
+  const tools: ToolDef[] = [
     {
       tool: {
         name: "visual_explanation_create",
         description:
-          "Create or conversationally revise an inline AVA VisualMessage. Prefer semanticModel: stable element and relationship IDs are canonical, while the storyboard references element IDs. Restricted Mermaid remains a backward-compatible ingest alternative and is converted to the semantic model. Every element must appear in a scene. To revise (for example 'add the database' or 'show only auth'), send the complete revised model plus revisesVisualMessageId and expectedRevision. Never add active links, HTML, scripts or renderer directives.",
+          "Create or conversationally revise an inline AVA workflow/process VisualMessage. Use this only for operational workflows, architectures, mechanisms, request paths, or branching decisions. Never use this flowchart contract for geographic maps, timelines, evidence matrices, claim-evidence graphs, quantitative charts, or research results; those require research_visual_create. Prefer semanticModel: stable element and relationship IDs are canonical, while the storyboard references element IDs. Restricted Mermaid remains a backward-compatible ingest alternative and is converted to the semantic model. Every element must appear in a scene. To revise (for example 'add the database' or 'show only auth'), send the complete revised model plus revisesVisualMessageId and expectedRevision. Never add active links, HTML, scripts or renderer directives.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -223,7 +226,10 @@ export function buildVisualExplanationTools(options: {
       tool: {
         name: "research_visual_create",
         description:
-          "Create a first-class evidence-linked visual for a substantial research result and present it inline. Use after multi-source research, or whenever Sir asks for deep research with a visual. Choose geographic_map for real movement/regions (longitude/latitude plus coordinate sources), timeline for chronology, evidence_matrix for coverage/gaps, claim_evidence_graph for claims/support/counterevidence, chart for sourced quantities/ranges, or process for mechanisms. Omit userSelectedForm for AVA's automatic selection; set it only when Sir explicitly chose the form. Every claim and visual entity has stable IDs and source/claim references, every entity appears in a progressive scene, uncertainty remains explicit, and all URLs must be direct http(s) sources. Never invent coordinates, dates, quantities, confidence or citations.",
+          "Create a first-class evidence-linked visual for a substantial research result and present it inline. Use after multi-source research, or whenever Sir asks for deep research with a visual. Choose geographic_map for real movement/regions (longitude/latitude plus coordinate sources), timeline for chronology, evidence_matrix for coverage/gaps, claim_evidence_graph for claims/support/counterevidence, chart for sourced quantities/ranges, or process for mechanisms. Omit userSelectedForm for AVA's automatic selection; set it only when Sir explicitly chose the form. Every claim and visual entity has stable IDs and source/claim references, every entity appears in a progressive scene, uncertainty remains explicit, and all URLs must be direct http(s) sources. Never invent coordinates, dates, quantities, confidence or citations." +
+          (routing.explicitForm
+            ? ` This request explicitly requires ${routing.explicitForm}; use that exact semanticModel kind and set userSelectedForm to ${routing.explicitForm}.`
+            : ""),
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -292,7 +298,18 @@ export function buildVisualExplanationTools(options: {
         },
       },
       run: async (args, ctx) => {
-        const inputKey = createHash("sha256").update(JSON.stringify(args)).digest("hex").slice(0, 16);
+        const statedForm = typeof args.userSelectedForm === "string" ? args.userSelectedForm : null;
+        if (routing.explicitForm && statedForm && statedForm !== routing.explicitForm) {
+          return { ok: false, text: JSON.stringify({
+            error: "requested_visual_form_mismatch",
+            requestedForm: routing.explicitForm,
+            receivedForm: statedForm,
+          }) };
+        }
+        const routedArgs = routing.explicitForm
+          ? { ...args, userSelectedForm: routing.explicitForm }
+          : args;
+        const inputKey = createHash("sha256").update(JSON.stringify(routedArgs)).digest("hex").slice(0, 16);
         const observe = (stage: string, status: string, title: string, payload?: unknown, error?: string) => {
           try {
             options.observability?.record(ctx.runId, {
@@ -310,7 +327,7 @@ export function buildVisualExplanationTools(options: {
           } catch { /* the research result always wins over its telemetry */ }
         };
         try {
-          const valid = validateResearchVisual(args as unknown as CreateResearchVisualInput);
+          const valid = validateResearchVisual(routedArgs as unknown as CreateResearchVisualInput);
           observe("planning", "running", "Research visual form selected", {
             selectedForm: valid.selection.selectedForm,
             recommendedForm: valid.selection.recommendedForm,
@@ -323,7 +340,7 @@ export function buildVisualExplanationTools(options: {
             sceneCount: valid.storyboard.scenes.length,
             limitationsRecorded: valid.limitations.length,
           });
-          const result = createResearchVisual(options.db, args as unknown as CreateResearchVisualInput, {
+          const result = createResearchVisual(options.db, routedArgs as unknown as CreateResearchVisualInput, {
             source: options.source,
             sessionId: options.sessionId,
             runId: ctx.runId,
@@ -379,4 +396,12 @@ export function buildVisualExplanationTools(options: {
       },
     },
   ];
+  const workflow = tools.find((entry) => entry.tool.name === "visual_explanation_create")!;
+  const research = tools.find((entry) => entry.tool.name === "research_visual_create")!;
+  const list = tools.find((entry) => entry.tool.name === "visual_explanation_list")!;
+  if (routing.toolMode === "research") return [research, list];
+  if (routing.toolMode === "workflow") return [workflow, list];
+  // Keep both tools for genuinely ambiguous turns, but put the richer
+  // form-selecting contract first so it is not shadowed by flowchart input.
+  return [research, workflow, list];
 }

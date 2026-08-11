@@ -44,6 +44,26 @@ function setup(runAgentImpl: (opts: any) => Promise<void>) {
 }
 
 describe("inline visual message chat boundary", () => {
+  it.each([
+    ["Research development of AI and create a visual timeline", "research_visual_create", "visual_explanation_create"],
+    ["draw me a chart here of the comparisons in chat", "research_visual_create", "visual_explanation_create"],
+    ["show me with a map Viking migrations", "research_visual_create", "visual_explanation_create"],
+    ["research the best free AI models in a comprehensive report with benchmarks", "research_visual_create", "visual_explanation_create"],
+    ["visually explain AVA's Instagram architecture", "visual_explanation_create", "research_visual_create"],
+  ])("routes the real request %s to %s", async (text, expected, absent) => {
+    const runAgent = vi.fn(async (opts: { emit: (event: AgentEvent) => void; deps: { tools: Array<{ tool: { name: string } }> } }) => {
+      const names = opts.deps.tools.map((entry) => entry.tool.name);
+      expect(names).toContain(expected);
+      expect(names).not.toContain(absent);
+      opts.emit({ kind: "final", payload: { text: "Routed." } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const { app } = setup(runAgent);
+    await request(app).post("/api/chat").send({ text }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(runAgent).toHaveBeenCalledOnce();
+  });
+
   it("attaches every successful created visual revision to the persisted assistant message", async () => {
     let db!: Db;
     const runAgent = vi.fn(async (opts: { emit: (event: AgentEvent) => void; sessionId: string; runId: string }) => {

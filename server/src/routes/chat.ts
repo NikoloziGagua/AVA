@@ -729,6 +729,7 @@ export function chatRoutes(
           sessionId: sid,
           source: parsed.data.voice ? "ava_voice" : "ava_chat",
           observability: agentDeps.observability,
+          request: parsed.data.text,
         });
         // Discuss-with-Claude is available in BOTH modes (Sir may ask by voice):
         // it queues a background, read-only consult bound to THIS session (sid),

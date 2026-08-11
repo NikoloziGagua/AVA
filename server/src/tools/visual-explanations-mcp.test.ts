@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { openInMemoryDb, type Db } from "../state/db.js";
 import { listVisualExplanations } from "../state/visual-explanations.js";
 import { requestPathFixture } from "../visual-explanations/fixtures.test-helper.js";
-import { vikingMapFixture } from "../visual-explanations/research-fixtures.test-helper.js";
+import { timelineFixture, vikingMapFixture } from "../visual-explanations/research-fixtures.test-helper.js";
 import { ObservabilityService } from "../observability/store.js";
 import { buildVisualExplanationTools } from "./visual-explanations-mcp.js";
 
@@ -15,6 +15,45 @@ function tool(name: string) {
 }
 
 describe("visual explanation tools", () => {
+  it.each([
+    ["Research development of AI and create a visual timeline", ["research_visual_create", "visual_explanation_list"]],
+    ["draw me a chart here of the comparisons in chat", ["research_visual_create", "visual_explanation_list"]],
+    ["show me with a map Viking migrations", ["research_visual_create", "visual_explanation_list"]],
+    ["visually explain AVA's Instagram architecture", ["visual_explanation_create", "visual_explanation_list"]],
+    ["show this visually", ["research_visual_create", "visual_explanation_create", "visual_explanation_list"]],
+  ] as const)("exposes the correct visual contract for %s", (request, names) => {
+    expect(buildVisualExplanationTools({ db, sessionId: "chat-visual", source: "ava_chat", request })
+      .map((entry) => entry.tool.name)).toEqual(names);
+  });
+
+  it("enforces the explicit form even when the model omits userSelectedForm", async () => {
+    const research = buildVisualExplanationTools({
+      db, sessionId: "chat-visual", source: "ava_chat",
+      request: "Research development of AI and create a visual timeline",
+    })[0]!;
+    const result = await research.run(timelineFixture as unknown as Record<string, unknown>, { runId: "run-timeline" });
+    expect(result.ok).toBe(true);
+    expect(listVisualExplanations(db)[0]).toMatchObject({
+      diagramKind: "timeline",
+      selection: { selectedForm: "timeline", userSelected: true },
+    });
+  });
+
+  it("rejects a model attempt to override the user's explicit visual form", async () => {
+    const research = buildVisualExplanationTools({
+      db, sessionId: "chat-visual", source: "ava_chat",
+      request: "show me with a map Viking migrations",
+    })[0]!;
+    const result = await research.run({ ...vikingMapFixture, userSelectedForm: "chart" } as unknown as Record<string, unknown>, { runId: "run-wrong-form" });
+    expect(result.ok).toBe(false);
+    expect(JSON.parse(result.text)).toMatchObject({
+      error: "requested_visual_form_mismatch",
+      requestedForm: "geographic_map",
+      receivedForm: "chart",
+    });
+    expect(listVisualExplanations(db)).toHaveLength(0);
+  });
+
   it("creates a traceable visual and returns the exact viewer ID", async () => {
     const result = await tool("visual_explanation_create").run(requestPathFixture as unknown as Record<string, unknown>, { runId: "run-visual" });
     expect(result.ok).toBe(true);

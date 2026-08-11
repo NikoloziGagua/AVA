@@ -1,105 +1,123 @@
-# Visual explanations
+# Inline visual explanations
 
-## Purpose
+## Product contract
 
-Visuals lets Niko ask AVA to explain a repository, request path, workflow or
-branching process as a progressive presentation. The source of truth is small
-and inspectable:
+When Niko asks AVA to explain a repository, request path, workflow or branching
+process visually, the explanation appears as first-class interactive content
+directly beneath AVA's answer in Chat. The separate **Visuals** screen remains an
+optional workspace for browsing and reopening visuals; it is not the default
+presentation path.
 
-- restricted Mermaid flowchart text owns topology;
-- versioned storyboard JSON owns scenes, captions, highlights, transitions and
-  optional interaction cues; and
-- storyboard references use the stable node IDs declared in Mermaid.
+Each assistant message stores an exact `{ visualMessageId, revision }` reference.
+Session reload resolves that immutable revision, so a later conversational edit
+does not silently rewrite an earlier answer.
 
-Generated HTML, SVG and PNG are disposable presentation artifacts. They are
-never canonical state and are not persisted by the server.
+## Canonical VisualMessage v1
 
-## Authoring contract (v1)
+The canonical source is renderer-neutral `VisualMessage` JSON:
 
-The canonical schema version is `1.0`. Mermaid is deliberately limited to
-`flowchart`/`graph` with one of `TD`, `TB`, `LR`, `RL` or `BT`, explicit nodes,
-and `-->`, `-.->` or `==>` edges. Supported node shapes are process, decision
-and terminal. Stable IDs must start with a letter, contain only letters,
-numbers, `_` or `-`, and be unique.
+- `visualMessageId`, positive `revision`, `schemaVersion` and `diagramKind`;
+- `semanticModel.elements` and `semanticModel.relationships`, each with stable IDs;
+- a versioned `storyboard` with scenes, captions, referenced IDs, highlights,
+  transitions and optional interaction cues;
+- validated renderer metadata and a disposable renderer payload; and
+- an AVA-generated accessible static fallback.
 
-A storyboard contains a `startSceneId` and one or more scenes. Every scene has
-an ID, title, caption, bounded node list, optional highlighted subset,
-`none`/`fade`/`slide` transition and optional cue. Validation requires:
+The semantic model owns meaning and topology. Mermaid is the first renderer and
+legacy ingest format, not the source of truth. Generated Mermaid, SVG and PNG are
+disposable browser artifacts and are never canonical state.
 
-- every scene and highlight reference to resolve to a declared Mermaid node;
-- highlights to be a subset of the scene;
-- every topology node to appear in at least one scene;
-- no duplicate IDs;
-- at most 80 topology nodes, 20 scenes and 14 nodes per scene; and
-- more than one scene when the complete topology would exceed the per-scene
-  limit, enforcing progressive disclosure rather than a giant first view.
+Stable IDs start with a letter and contain only letters, numbers, `_` or `-`.
+Validation rejects duplicate and dangling element, relationship, scene and
+highlight references. Scenes are bounded and every semantic element must be
+covered, which enforces progressive disclosure instead of a giant diagram.
 
-The parser rejects Mermaid directives, click/href/style/link directives, HTML,
-scripts, JavaScript/data URLs, external URLs and CSS `url()` input. Canonical
-text passes through AVA's secret scrubber before storage.
+## Agent, revision and persistence path
 
-## Agent and API path
+- `visual_explanation_create` accepts the preferred semantic model or the
+  backward-compatible restricted Mermaid ingest shape, validates it, and stores
+  an immutable VisualMessage revision.
+- A conversational change such as “add the database” or “show only auth path”
+  sends the complete revised model with `revisesVisualMessageId` and
+  `expectedRevision`. A stale expected revision receives a typed `409` and does
+  not overwrite current state.
+- Chat trusts only a successful structured tool result, confirms the referenced
+  visual belongs to the same session/run path, and attaches the exact revision
+  to the final assistant message.
+- Message metadata and VisualMessage revisions live in SQLite. Session history
+  returns hydrated exact revisions for reload.
+- `visual_explanation_list` and the Visuals workspace reopen existing revisions
+  without regenerating them.
 
-Text and voice action turns expose:
-
-- `visual_explanation_create` to validate, persist and return an exact visual ID;
-- `visual_explanation_list` to find existing presentations without returning
-  their complete source.
-
-When creation succeeds, Chat reads the structured tool result—not assistant
-prose—and opens the exact result in **Visuals**. Niko can also open Visuals and
-enter a subject; AVA receives a normal chat request to build it.
-
-Authenticated API routes:
+Authenticated routes are:
 
 - `GET /api/visual-explanations?limit=...`
-- `GET /api/visual-explanations/:id`
+- `GET /api/visual-explanations/:id?revision=...`
 - `POST /api/visual-explanations`
 
-SQLite stores only schema versions, sanitized title/summary/Mermaid/storyboard,
-lineage, version and timestamps. A sanitized source fingerprint makes repeated
-identical creation idempotent.
+Legacy visual rows remain readable and are converted to the v1 semantic model at
+the state boundary. New writes use `visual_message_revisions`.
 
-## Rendering and security
+## Native rendering and security
 
-The web client projects one bounded scene from canonical topology and renders
-it with the Mermaid package bundled into AVA. The output is sanitized again
-with an inert SVG allow-list, then embedded through `srcdoc` in an iframe with
-an empty `sandbox` attribute, `no-referrer`, and a restrictive CSP:
+The chat uses a native React card rather than the earlier iframe. Reusing the
+iframe would have required a second cross-frame state/event protocol for sizing,
+scroll anchoring, selection, expansion and semantic actions. Native rendering
+keeps those states in one component and met the stricter interaction gates with
+less security surface.
 
-- no scripts;
-- no network connections;
-- no forms, frames, media, objects or fonts;
-- no external images; and
-- inline style only for the sanitized local SVG.
+For the active scene the client derives a small Mermaid projection from the
+validated semantic model, renders it with AVA's bundled Mermaid dependency in
+strict mode, and sanitizes the returned SVG again at the injection boundary. The
+allow-list removes scripts, foreign HTML, event handlers, links, external URLs,
+`data:` references and unsafe CSS. Generated HTML and JavaScript are never run.
+Unique title/description IDs keep multiple inline SVGs accessible.
 
-The frontend never executes generated HTML and never gives the iframe
-same-origin or script privileges. Exports are explicit browser-local actions:
-SVG downloads use the sanitized active scene, while PNG uses a local canvas.
+The server also rejects active legacy Mermaid syntax, directives, click/href,
+style/link directives, HTML, JavaScript/data URLs, external URLs and CSS `url()`.
+Secret scrubbing occurs before persistence. Client schema validation protects
+API, cache and history inputs before rendering.
 
-## Accessibility and offline behavior
+## Interaction and accessibility
 
-- Captions are visible outside the diagram.
-- Previous/next, scene tabs, Arrow Left/Right, Home and End navigate scenes.
-- The active scene is announced through a polite live region.
-- Reduced-motion preference removes scene movement and transition delay.
-- Every explanation includes a complete static text fallback listing all scenes,
-  captions, node labels and highlights.
-- Mermaid and every renderer chunk are part of the PWA precache. The renderer
-  therefore works without a CDN after installation. The most recent 20 loaded
-  explanations are cached locally so already-seen canonical sources remain
-  viewable while AVA's server is temporarily unreachable.
+- Visible captions and optional cues accompany every scene.
+- Buttons, scene tabs, Arrow Left/Right, Home and End navigate scenes.
+- `+`, `-` and `0` control zoom; pointer drag pans only while zoomed.
+- Reduced-motion mode removes transitions.
+- The complete static text fallback lists the summary, scenes, elements and
+  relationships and remains available if rendering fails.
+- SVG and PNG export are explicit, browser-local actions for the active scene.
+- Expanded mode is an in-app modal, not a new window. The same card instance
+  preserves revision, scene, zoom and selection and restores chat scroll/focus
+  on return.
+
+Zoom, pan, hover, scene animation and unsubmitted selections stay local. Only
+the explicit **Explain this**, **Ask AVA about this branch**, and **Attach selected
+context** actions create a structured context envelope. The server revalidates
+the exact revision, scene and selected semantic IDs, derives the prompt text from
+stored labels, and rejects stale or invented context. Attach places a visible
+context chip above the composer; it is sent only with the next submitted message.
+
+## Offline and performance behavior
+
+Mermaid and renderer chunks are part of AVA's PWA build/precache, so rendering
+needs no CDN after installation. The last 20 validated VisualMessages are cached
+locally for reopening while the server is unavailable. Inline rendering is lazy
+per active scene; a message with several visuals uses separate unique render IDs
+and never persists the generated result.
 
 ## Verification and limitations
 
-Deterministic fixtures cover a repository map, a request-path walkthrough and a
-branching approval process. Server tests cover grammar/schema validation,
-stable references, security rejection, authenticated routes, idempotence and
-tool lineage. Web tests cover scene projection, sanitizer/CSP boundaries,
-sandboxing, captions, keyboard navigation, static fallback, offline cache and
-automatic opening from a structured tool result.
+Deterministic server fixtures cover repository maps, request paths and branching
+processes. Tests cover semantic/stable-ID validation, immutable revisions, stale
+guards, assistant-message attachment, reload hydration, explicit context,
+security filtering, multiple/narrow visuals, keyboard and reduced motion,
+expansion state, semantic actions, fallback, offline cache and builds.
 
-V1 does not include OpenFlowKit, Dashmotion, Manim/ManimML, Excalidraw,
-video, narration, free-form Mermaid syntax or editable rendered artifacts. A
-visual proves that AVA stored and presented the supplied structure; it does not
-independently prove the described system is correct.
+V1 intentionally defers direct canvas editing, OpenFlowKit, Dashmotion,
+Manim/ManimML, Excalidraw, video and narration. Conversational revision is the
+editing model. Voice can create a VisualMessage through the existing tool path,
+but voice's `persist:false` delegated action path does not yet attach that visual
+to a spoken transcript; it remains available in the Visuals workspace. A visual
+proves that AVA validated and presented the supplied structure, not that the
+described external system is factually correct.

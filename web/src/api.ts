@@ -1,4 +1,5 @@
 import { getToken, clearToken } from "./auth/tokens.js";
+import type { VisualMessage, VisualMessageContext } from "./visuals/types.js";
 
 export class ApiError extends Error {
   readonly name = "ApiError";
@@ -121,10 +122,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ code, label }),
     }),
-  sendMessage: (sessionId: string | null, text: string, opts?: { voice?: boolean }) =>
+  sendMessage: (sessionId: string | null, text: string, opts?: { voice?: boolean; visualContext?: VisualMessageContext }) =>
     request<{ sessionId: string; taskId?: string }>("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ sessionId, text, voice: opts?.voice }),
+      body: JSON.stringify({ sessionId, text, voice: opts?.voice, visualContext: opts?.visualContext }),
     }),
   kill: (sessionId: string) =>
     request<{ aborted: boolean }>(`/api/chat/${sessionId}/kill`, { method: "POST" }),
@@ -154,11 +155,25 @@ export async function fetchSessions(): Promise<SessionRow[]> {
 
 export async function fetchSession(id: string): Promise<{
   session: SessionRow;
-  messages: Array<{ id: number; role: string; content: string; created_at: number }>;
+  messages: Array<{
+    id: number;
+    role: string;
+    content: string;
+    created_at: number;
+    visualMessages?: VisualMessage[];
+    metadata?: { visualContext?: VisualMessageContext };
+  }>;
 }> {
   return request<{
     session: SessionRow;
-    messages: Array<{ id: number; role: string; content: string; created_at: number }>;
+    messages: Array<{
+      id: number;
+      role: string;
+      content: string;
+      created_at: number;
+      visualMessages?: VisualMessage[];
+      metadata?: { visualContext?: VisualMessageContext };
+    }>;
   }>(`/api/sessions/${id}`);
 }
 

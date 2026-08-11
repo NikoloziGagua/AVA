@@ -6,7 +6,7 @@ import {
   fetchVisualExplanation,
   fetchVisualExplanations,
   readCachedVisuals,
-  type VisualExplanation,
+  type VisualMessage,
 } from "./api.js";
 import { VisualExplanationViewer } from "./VisualExplanationViewer.js";
 
@@ -18,8 +18,8 @@ export function VisualsScreen({
   onCreate: (prompt: string) => void;
 }) {
   const cached = useMemo(() => readCachedVisuals(), []);
-  const [visuals, setVisuals] = useState<VisualExplanation[]>(cached);
-  const [selectedId, setSelectedId] = useState<string | null>(initialVisualId ?? cached[0]?.id ?? null);
+  const [visuals, setVisuals] = useState<VisualMessage[]>(cached);
+  const [selectedId, setSelectedId] = useState<string | null>(initialVisualId ?? cached[0]?.visualMessageId ?? null);
   const [loading, setLoading] = useState(true);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,27 +30,27 @@ export function VisualsScreen({
     setError(null);
     try {
       let next = await fetchVisualExplanations();
-      if (initialVisualId && !next.some((visual) => visual.id === initialVisualId)) {
+      if (initialVisualId && !next.some((visual) => visual.visualMessageId === initialVisualId)) {
         const requested = await fetchVisualExplanation(initialVisualId);
         next = [requested, ...next];
       }
       setVisuals(next);
-      setSelectedId((current) => current && next.some((visual) => visual.id === current) ? current : initialVisualId ?? next[0]?.id ?? null);
+      setSelectedId((current) => current && next.some((visual) => visual.visualMessageId === current) ? current : initialVisualId ?? next[0]?.visualMessageId ?? null);
       setOffline(false);
     } catch (cause) {
       const fallback = readCachedVisuals();
       setVisuals(fallback);
-      setSelectedId((current) => current && fallback.some((visual) => visual.id === current) ? current : fallback[0]?.id ?? null);
+      setSelectedId((current) => current && fallback.some((visual) => visual.visualMessageId === current) ? current : fallback[0]?.visualMessageId ?? null);
       setOffline(cause instanceof ApiError && cause.status === 0);
       if (!fallback.length) setError(cause instanceof Error ? cause.message : "Visual explanations could not be loaded.");
     } finally { setLoading(false); }
   };
 
   useEffect(() => { void load(); }, [initialVisualId]);
-  const selected = visuals.find((visual) => visual.id === selectedId) ?? null;
+  const selected = visuals.find((visual) => visual.visualMessageId === selectedId) ?? null;
   const start = () => {
     const topic = prompt.trim() || "the system or process I describe next";
-    onCreate(`Create and present a progressive visual explanation of ${topic}. Use stable Mermaid IDs, concise scenes, captions, highlights, transitions, interaction cues, and an accessible structure.`);
+    onCreate(`Create and present an inline progressive visual explanation of ${topic}. Use stable semantic IDs, concise scenes, captions, highlights, transitions, interaction cues, and an accessible structure.`);
   };
 
   return (
@@ -68,7 +68,7 @@ export function VisualsScreen({
           />
           <button type="button" onClick={start} className="btn-deck btn-primary flex items-center justify-center gap-2"><Sparkles size={14} /> Ask AVA to build it</button>
         </div>
-        <p className="mt-3 text-xs leading-5 text-white/40">AVA creates validated canonical Mermaid plus a small scene storyboard, then opens the result here automatically.</p>
+        <p className="mt-3 text-xs leading-5 text-white/40">Inline chat is the default. This optional workspace reopens validated visual messages for deeper inspection.</p>
       </PanelSection>
 
       <PanelSection
@@ -85,15 +85,15 @@ export function VisualsScreen({
           <div className="space-y-2">
             {visuals.map((visual) => (
               <button
-                key={visual.id}
+                key={`${visual.visualMessageId}:${visual.revision}`}
                 type="button"
-                onClick={() => setSelectedId(visual.id)}
-                aria-current={visual.id === selectedId ? "true" : undefined}
-                className={`w-full rounded-xl border px-3 py-3 text-left transition ${visual.id === selectedId ? "border-cyan-300/35 bg-cyan-300/[0.08]" : "border-white/[0.07] bg-white/[0.025] hover:border-white/15"}`}
+                onClick={() => setSelectedId(visual.visualMessageId)}
+                aria-current={visual.visualMessageId === selectedId ? "true" : undefined}
+                className={`w-full rounded-xl border px-3 py-3 text-left transition ${visual.visualMessageId === selectedId ? "border-cyan-300/35 bg-cyan-300/[0.08]" : "border-white/[0.07] bg-white/[0.025] hover:border-white/15"}`}
               >
                 <span className="flex items-center gap-2 text-sm font-medium text-white/85"><Network size={13} className="text-cyan-200/70" /> {visual.title}</span>
                 <span className="mt-1 block line-clamp-2 text-[11px] leading-4 text-white/40">{visual.summary}</span>
-                <span className="mt-2 block text-[9px] uppercase tracking-[0.16em] text-white/25">{visual.storyboard.scenes.length} scenes · schema {visual.schemaVersion}</span>
+                <span className="mt-2 block text-[9px] uppercase tracking-[0.16em] text-white/25">{visual.storyboard.scenes.length} scenes · revision {visual.revision}</span>
               </button>
             ))}
           </div>
@@ -119,4 +119,3 @@ export function VisualsScreen({
     </PanelShell>
   );
 }
-

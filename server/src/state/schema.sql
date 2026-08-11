@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS messages (
   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   role TEXT NOT NULL,
   content TEXT NOT NULL,
+  metadata TEXT NOT NULL DEFAULT '{}',
   created_at INTEGER NOT NULL
 );
 
@@ -425,9 +426,9 @@ CREATE INDEX IF NOT EXISTS idx_notes_updated
 CREATE INDEX IF NOT EXISTS idx_notes_kind_status
   ON notes(kind, status, updated_at DESC);
 
--- Visual explanations keep only canonical, validated source: Mermaid owns
--- topology and the versioned storyboard owns presentation. Rendered HTML/SVG/
--- PNG remain disposable browser artifacts and are never persisted here.
+-- Legacy visual explanations remain readable for migration. New revisions use
+-- the renderer-neutral visual_message_revisions table below; rendered HTML,
+-- SVG, and PNG remain disposable browser artifacts and are never persisted.
 CREATE TABLE IF NOT EXISTS visual_explanations (
   id TEXT PRIMARY KEY,
   schema_version TEXT NOT NULL,
@@ -446,6 +447,34 @@ CREATE TABLE IF NOT EXISTS visual_explanations (
 
 CREATE INDEX IF NOT EXISTS idx_visual_explanations_updated
   ON visual_explanations(updated_at DESC, id);
+
+-- Renderer-neutral visual messages are immutable by (id, revision). Mermaid is
+-- one validated renderer payload derived from the semantic model, never the
+-- canonical source. Message metadata stores only exact id/revision references.
+CREATE TABLE IF NOT EXISTS visual_message_revisions (
+  visual_message_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  schema_version TEXT NOT NULL,
+  diagram_kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  semantic_model TEXT NOT NULL,
+  storyboard TEXT NOT NULL,
+  renderer TEXT NOT NULL,
+  accessible_fallback TEXT NOT NULL,
+  fingerprint TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL,
+  source_session_id TEXT,
+  source_run_id TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (visual_message_id, revision)
+);
+
+CREATE INDEX IF NOT EXISTS idx_visual_message_revisions_latest
+  ON visual_message_revisions(visual_message_id, revision DESC);
+
+CREATE INDEX IF NOT EXISTS idx_visual_message_revisions_created
+  ON visual_message_revisions(created_at DESC, visual_message_id);
 
 CREATE TABLE IF NOT EXISTS watches (
   id TEXT PRIMARY KEY,

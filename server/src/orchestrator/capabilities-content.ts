@@ -84,12 +84,14 @@ genuinely failed — then I offer the next approach.
 
 ## Explain visually
 - I can turn a repository map, request path, workflow, or branching process
-  into an interactive visual walkthrough in AVA. Mermaid is the stable topology
-  and a small storyboard reveals it scene by scene with captions, highlights,
-  transitions and interaction cues instead of showing one giant diagram. The
-  viewer is sandboxed, keyboard accessible, supports reduced motion and static
-  text, and exports the active scene as SVG or PNG. Installed AVA caches the
-  viewer and recently opened explanations for offline presentation.
+  into an interactive VisualMessage directly beneath my chat explanation. A
+  renderer-neutral semantic model owns stable elements and relationships; a
+  small storyboard reveals it scene by scene with captions and highlights.
+  Mermaid is the bundled renderer, not the source of truth. The native card is
+  keyboard accessible, supports reduced motion, zoom/pan, static text, in-app
+  expansion and SVG/PNG export. Explicit Explain/branch/attach actions are the
+  only view actions that send structured visual context back to me. Installed
+  AVA caches the renderer and recent validated visuals for offline presentation.
 
 ## Message people (app modules)
 - Instagram is a first-class skill: I open profiles or safe search results

@@ -9,16 +9,16 @@ describe("visual explanation model", () => {
     ["branching process", branchingProcessFixture],
   ])("validates a representative %s with stable IDs and progressive scenes", (_name, fixture) => {
     const result = validateVisualExplanation(fixture);
-    expect(result.topology.nodes.length).toBeGreaterThan(4);
+    expect(result.semanticModel.elements.length).toBeGreaterThan(4);
     expect(result.storyboard.scenes.every((scene) => scene.nodeIds.length <= 14)).toBe(true);
     expect(new Set(result.storyboard.scenes.flatMap((scene) => scene.nodeIds)))
-      .toEqual(new Set(result.topology.nodes.map((node) => node.id)));
+      .toEqual(new Set(result.semanticModel.elements.map((element) => element.id)));
   });
 
-  it("rejects storyboard references that do not exist in canonical Mermaid", () => {
+  it("rejects storyboard references that do not exist in the semantic model", () => {
     const invalid = structuredClone(requestPathFixture);
     invalid.storyboard.scenes[0]!.nodeIds.push("inventedNode");
-    expect(() => validateVisualExplanation(invalid)).toThrowError(/unknown Mermaid node ID inventedNode/);
+    expect(() => validateVisualExplanation(invalid)).toThrowError(/unknown semantic element ID inventedNode/);
   });
 
   it("rejects duplicate IDs and unsupported implicit topology", () => {

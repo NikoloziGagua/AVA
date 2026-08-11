@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
 import { visualFixture } from "./fixtures.test-helper.js";
-import { buildSandboxDocument, buildSceneMermaid, sanitizeRenderedSvg } from "./render.js";
+import { buildSceneMermaid, sanitizeRenderedSvg } from "./render.js";
 
 describe("visual explanation rendering boundaries", () => {
   it("projects only the active scene from canonical topology", () => {
@@ -26,12 +26,11 @@ describe("visual explanation rendering boundaries", () => {
     expect(safe).toContain("Safe description");
   });
 
-  it("builds a no-script, no-network sandbox document", () => {
-    const document = buildSandboxDocument("<svg role=\"img\"></svg>");
-    expect(document).toContain("default-src 'none'");
-    expect(document).toContain("script-src 'none'");
-    expect(document).toContain("connect-src 'none'");
-    expect(document).toContain("form-action 'none'");
-    expect(document).not.toContain("allow-scripts");
+  it("assigns unique accessible SVG labels for multiple inline visuals", () => {
+    const first = sanitizeRenderedSvg("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>", "One", "First", "message_one");
+    const second = sanitizeRenderedSvg("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>", "Two", "Second", "message_two");
+    expect(first).toContain("ava-visual-title-message_one");
+    expect(second).toContain("ava-visual-title-message_two");
+    expect(second).not.toContain("ava-visual-title-message_one");
   });
 });

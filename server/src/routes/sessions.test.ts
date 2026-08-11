@@ -8,6 +8,8 @@ import { openDb } from "../state/db.js";
 import { createSession, listSessions } from "../state/sessions.js";
 import { appendMessage } from "../state/messages.js";
 import { sessionsRoutes } from "./sessions.js";
+import { createVisualExplanation } from "../state/visual-explanations.js";
+import { requestPathFixture } from "../visual-explanations/fixtures.test-helper.js";
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "ava-sessions-"));
@@ -43,6 +45,32 @@ describe("sessionsRoutes", () => {
   it("GET /api/sessions/:id returns 404 for unknown session", async () => {
     const { app } = setup();
     await request(app).get("/api/sessions/nope").expect(404);
+  });
+
+  it("restores exact visual message revisions with assistant history", async () => {
+    const { app, db } = setup();
+    const session = createSession(db, { title: "inline visual" });
+    const visual = createVisualExplanation(db, requestPathFixture, {
+      source: "ava_chat",
+      sessionId: session.id,
+      runId: "run-inline",
+    }).visual;
+    appendMessage(db, {
+      sessionId: session.id,
+      role: "assistant",
+      content: "Here is the path.",
+      metadata: { visualMessages: [{ visualMessageId: visual.visualMessageId, revision: visual.revision }] },
+    });
+
+    const res = await request(app).get(`/api/sessions/${session.id}`).expect(200);
+    expect(res.body.messages[0].visualMessages).toHaveLength(1);
+    expect(res.body.messages[0].visualMessages[0]).toMatchObject({
+      visualMessageId: visual.visualMessageId,
+      revision: 1,
+      diagramKind: "flowchart",
+    });
+    expect(res.body.messages[0].visualMessages[0]).not.toHaveProperty("html");
+    expect(res.body.messages[0].visualMessages[0]).not.toHaveProperty("svg");
   });
 });
 

@@ -5,7 +5,11 @@ import {
   getVisualExplanation,
   listVisualExplanations,
 } from "../state/visual-explanations.js";
-import { VisualExplanationValidationError, type CreateVisualExplanationInput } from "../visual-explanations/model.js";
+import {
+  StaleVisualRevisionError,
+  VisualExplanationValidationError,
+  type CreateVisualExplanationInput,
+} from "../visual-explanations/model.js";
 
 export function visualExplanationRoutes(db: Db, auth: RequestHandler): Router {
   const router = Router();
@@ -26,7 +30,13 @@ export function visualExplanationRoutes(db: Db, auth: RequestHandler): Router {
       res.status(400).json({ error: "bad_request", message: "invalid visual explanation ID" });
       return;
     }
-    const visual = getVisualExplanation(db, id);
+    const rawRevision = req.query.revision;
+    const revision = rawRevision === undefined ? null : Number(rawRevision);
+    if (revision !== null && (!Number.isInteger(revision) || revision < 1)) {
+      res.status(400).json({ error: "bad_request", message: "revision must be a positive integer" });
+      return;
+    }
+    const visual = getVisualExplanation(db, id, revision);
     if (!visual) {
       res.status(404).json({ error: "visual_explanation_not_found" });
       return;
@@ -43,10 +53,13 @@ export function visualExplanationRoutes(db: Db, auth: RequestHandler): Router {
         res.status(400).json({ error: "invalid_visual_explanation", issues: error.issues });
         return;
       }
+      if (error instanceof StaleVisualRevisionError) {
+        res.status(409).json({ error: "stale_visual_revision", currentRevision: error.currentRevision });
+        return;
+      }
       throw error;
     }
   });
 
   return router;
 }
-

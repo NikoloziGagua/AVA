@@ -1,7 +1,11 @@
 import type { Db } from "../state/db.js";
 import type { VisualExplanationSource } from "../state/visual-explanations.js";
 import { createVisualExplanation, listVisualExplanations } from "../state/visual-explanations.js";
-import { VisualExplanationValidationError, type CreateVisualExplanationInput } from "../visual-explanations/model.js";
+import {
+  StaleVisualRevisionError,
+  VisualExplanationValidationError,
+  type CreateVisualExplanationInput,
+} from "../visual-explanations/model.js";
 import type { ToolDef } from "./ava-mcp.js";
 
 const storyboardSchema = {
@@ -33,6 +37,47 @@ const storyboardSchema = {
   required: ["schemaVersion", "startSceneId", "scenes"],
 } as const;
 
+const semanticModelSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    direction: { type: "string", enum: ["TD", "TB", "LR", "RL", "BT"] },
+    elements: {
+      type: "array",
+      minItems: 2,
+      maxItems: 80,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string" },
+          label: { type: "string" },
+          kind: { type: "string", enum: ["process", "decision", "terminal"] },
+        },
+        required: ["id", "label", "kind"],
+      },
+    },
+    relationships: {
+      type: "array",
+      minItems: 1,
+      maxItems: 160,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string" },
+          from: { type: "string" },
+          to: { type: "string" },
+          label: { type: ["string", "null"] },
+          kind: { type: "string", enum: ["flow", "dotted", "strong"] },
+        },
+        required: ["id", "from", "to", "label", "kind"],
+      },
+    },
+  },
+  required: ["direction", "elements", "relationships"],
+} as const;
+
 export function buildVisualExplanationTools(options: {
   db: Db;
   sessionId: string | null;
@@ -43,17 +88,22 @@ export function buildVisualExplanationTools(options: {
       tool: {
         name: "visual_explanation_create",
         description:
-          "Create and present an AVA visual explanation. Mermaid is canonical topology. Use only explicit flowchart node declarations on separate lines: processId[\"Label\"], decisionId{\"Question\"}, terminalId([\"Start or result\"]), followed by edges such as processId -->|label| decisionId. Every stable Mermaid node ID must appear in one or more storyboard scenes; each scene may contain at most 14 nodes. The storyboard controls captions, highlights, transitions and interaction cues. Do not add click, href, HTML, style, classDef, linkStyle or initialization directives.",
+          "Create or conversationally revise an inline AVA VisualMessage. Prefer semanticModel: stable element and relationship IDs are canonical, while the storyboard references element IDs. Restricted Mermaid remains a backward-compatible ingest alternative and is converted to the semantic model. Every element must appear in a scene. To revise (for example 'add the database' or 'show only auth'), send the complete revised model plus revisesVisualMessageId and expectedRevision. Never add active links, HTML, scripts or renderer directives.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
           properties: {
             title: { type: "string", description: "Concise explanation title." },
             summary: { type: "string", description: "Plain-language overview and purpose." },
-            mermaid: { type: "string", description: "Canonical Mermaid flowchart topology with stable explicit node IDs." },
+            diagramKind: { type: "string", enum: ["flowchart"] },
+            semanticModel: semanticModelSchema,
+            mermaid: { type: "string", description: "Backward-compatible restricted Mermaid ingest with stable explicit node IDs; AVA converts it to the canonical semantic model." },
             storyboard: storyboardSchema,
+            revisesVisualMessageId: { type: "string", description: "Existing visual message ID when creating a conversational revision." },
+            expectedRevision: { type: "integer", minimum: 1, description: "Revision the new visual is based on; stale revisions are rejected." },
           },
-          required: ["title", "summary", "mermaid", "storyboard"],
+          required: ["title", "summary", "storyboard"],
+          anyOf: [{ required: ["semanticModel"] }, { required: ["mermaid"] }],
         },
       },
       run: async (args, ctx) => {
@@ -66,13 +116,21 @@ export function buildVisualExplanationTools(options: {
           return {
             ok: true,
             text: JSON.stringify({
-              visualExplanationId: result.visual.id,
+              visualExplanationId: result.visual.visualMessageId,
+              visualMessageId: result.visual.visualMessageId,
+              revision: result.visual.revision,
               title: result.visual.title,
               created: result.created,
-              presentation: "Open in AVA Visuals",
+              presentation: "Inline beneath AVA's reply",
             }),
           };
         } catch (error) {
+          if (error instanceof StaleVisualRevisionError) {
+            return {
+              ok: false,
+              text: JSON.stringify({ error: "stale_visual_revision", currentRevision: error.currentRevision }),
+            };
+          }
           const issues = error instanceof VisualExplanationValidationError
             ? error.issues
             : [error instanceof Error ? error.message : "visual explanation could not be created"];
@@ -93,14 +151,15 @@ export function buildVisualExplanationTools(options: {
       run: async (args) => {
         const limit = typeof args.limit === "number" ? Math.max(1, Math.min(20, Math.trunc(args.limit))) : 10;
         const visuals = listVisualExplanations(options.db, limit).map((visual) => ({
-          id: visual.id,
+          id: visual.visualMessageId,
+          visualMessageId: visual.visualMessageId,
+          revision: visual.revision,
           title: visual.title,
           summary: visual.summary,
-          updatedAt: visual.updatedAt,
+          updatedAt: visual.createdAt,
         }));
         return { ok: true, text: JSON.stringify({ visuals }) };
       },
     },
   ];
 }
-

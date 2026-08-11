@@ -34,17 +34,22 @@ describe("visual explanations API", () => {
       .set("authorization", "Bearer test-device")
       .send(repositoryMapFixture).expect(201);
     expect(created.body.visual).toMatchObject({ schemaVersion: "1.0", title: repositoryMapFixture.title });
-    expect(created.body.visual.topology.nodes.map((node: { id: string }) => node.id)).toContain("agent");
+    expect(created.body.visual.semanticModel.elements.map((element: { id: string }) => element.id)).toContain("agent");
+    expect(created.body.visual).toMatchObject({
+      diagramKind: "flowchart",
+      revision: 1,
+      renderer: { renderer: "mermaid", generatedFrom: "semantic_model" },
+    });
     for (const forbidden of ["html", "svg", "png"]) expect(created.body.visual).not.toHaveProperty(forbidden);
 
-    const id = created.body.visual.id as string;
+    const id = created.body.visual.visualMessageId as string;
     const listed = await request(app()).get("/api/visual-explanations")
       .set("authorization", "Bearer test-device").expect(200);
     expect(listed.body.visuals).toHaveLength(1);
     await request(app()).get(`/api/visual-explanations/${id}`)
       .set("authorization", "Bearer test-device").expect(200);
 
-    const columns = db.prepare("PRAGMA table_info(visual_explanations)").all() as Array<{ name: string }>;
+    const columns = db.prepare("PRAGMA table_info(visual_message_revisions)").all() as Array<{ name: string }>;
     expect(columns.map((column) => column.name)).not.toEqual(expect.arrayContaining(["html", "svg", "png"]));
   });
 
@@ -53,7 +58,7 @@ describe("visual explanations API", () => {
       .set("authorization", "Bearer test-device").send(repositoryMapFixture).expect(201);
     const second = await request(app()).post("/api/visual-explanations")
       .set("authorization", "Bearer test-device").send(repositoryMapFixture).expect(200);
-    expect(second.body).toMatchObject({ created: false, visual: { id: first.body.visual.id } });
+    expect(second.body).toMatchObject({ created: false, visual: { visualMessageId: first.body.visual.visualMessageId } });
 
     const unsafe = structuredClone(repositoryMapFixture);
     unsafe.mermaid += `\nclick ui "https://evil.example"`;
@@ -69,5 +74,23 @@ describe("visual explanations API", () => {
     await request(app()).get("/api/visual-explanations/not-a-visual")
       .set("authorization", "Bearer test-device").expect(400);
   });
-});
 
+  it("preserves immutable revisions and rejects a stale conversational revision", async () => {
+    const first = await request(app()).post("/api/visual-explanations")
+      .set("authorization", "Bearer test-device").send(repositoryMapFixture).expect(201);
+    const id = first.body.visual.visualMessageId as string;
+    const revision = { ...structuredClone(repositoryMapFixture), title: "AVA repository with database", revisesVisualMessageId: id, expectedRevision: 1 };
+    const second = await request(app()).post("/api/visual-explanations")
+      .set("authorization", "Bearer test-device").send(revision).expect(201);
+    expect(second.body.visual).toMatchObject({ visualMessageId: id, revision: 2 });
+
+    const original = await request(app()).get(`/api/visual-explanations/${id}?revision=1`)
+      .set("authorization", "Bearer test-device").expect(200);
+    expect(original.body.visual.title).toBe(repositoryMapFixture.title);
+
+    const stale = { ...revision, title: "Conflicting stale revision" };
+    const rejected = await request(app()).post("/api/visual-explanations")
+      .set("authorization", "Bearer test-device").send(stale).expect(409);
+    expect(rejected.body).toMatchObject({ error: "stale_visual_revision", currentRevision: 2 });
+  });
+});

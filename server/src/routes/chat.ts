@@ -5,7 +5,15 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import type { Db } from "../state/db.js";
 import { createSession, getSession, getSessionFull, touchSession, updateTitle } from "../state/sessions.js";
-import { appendMessage, listMessages, listMessagesAfterId } from "../state/messages.js";
+import {
+  appendMessage,
+  listMessages,
+  listMessagesAfterId,
+  type Message,
+  type MessageVisualContext,
+  type MessageVisualReference,
+} from "../state/messages.js";
+import { getVisualExplanation } from "../state/visual-explanations.js";
 import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
@@ -81,6 +89,15 @@ const Body = z.object({
   // the voice-turn storage (user transcript + spoken result), so the internal
   // /api/chat run must not double-store. Independent of `voice`. Defaults to true.
   persist: z.boolean().optional(),
+  // Only explicit visual-card actions or composer attachments send this. Zoom,
+  // pan, hover, animation and unsubmitted selection remain browser-local.
+  visualContext: z.object({
+    visualMessageId: z.string().regex(/^visual_[A-Za-z0-9_-]{8,32}$/),
+    revision: z.number().int().positive(),
+    action: z.enum(["explain", "branch", "attach"]),
+    sceneId: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{1,63}$/),
+    selectedElementIds: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{1,63}$/)).max(14),
+  }).strict().optional(),
   // An internal handoff may attach this run beneath a voice/Forge/Codex span.
   // It carries identifiers only; AVA still owns dispatch and policy.
   observability: z.object({
@@ -90,6 +107,53 @@ const Body = z.object({
     causationEventId: z.string().min(1).max(160).nullish(),
   }).optional(),
 });
+
+function validateVisualContext(
+  db: Db,
+  context: MessageVisualContext | undefined,
+): { context: MessageVisualContext; prompt: string } | null {
+  if (!context) return null;
+  const current = getVisualExplanation(db, context.visualMessageId);
+  if (!current) throw Object.assign(new Error("visual message not found"), { code: "visual_message_not_found", status: 404 });
+  if (current.revision !== context.revision) {
+    throw Object.assign(new Error("visual revision is stale"), {
+      code: "stale_visual_revision",
+      status: 409,
+      currentRevision: current.revision,
+    });
+  }
+  const scene = current.storyboard.scenes.find((item) => item.id === context.sceneId);
+  if (!scene) throw Object.assign(new Error("visual scene is invalid"), { code: "invalid_visual_context", status: 400 });
+  const elements = new Map(current.semanticModel.elements.map((element) => [element.id, element]));
+  const selected = [...new Set(context.selectedElementIds)];
+  if (selected.some((id) => !scene.nodeIds.includes(id) || !elements.has(id))) {
+    throw Object.assign(new Error("selected visual elements are invalid"), { code: "invalid_visual_context", status: 400 });
+  }
+  const safeContext: MessageVisualContext = { ...context, selectedElementIds: selected };
+  const selectedLabels = selected.map((id) => `${id}: ${elements.get(id)!.label}`);
+  const prompt = [
+    "[EXPLICIT VISUAL CONTEXT — server validated]",
+    `visualMessageId: ${current.visualMessageId}`,
+    `revision: ${current.revision}`,
+    `action: ${context.action}`,
+    `scene: ${scene.id} — ${scene.title}`,
+    `scene caption: ${scene.caption}`,
+    selectedLabels.length ? `selected elements:\n${selectedLabels.map((line) => `- ${line}`).join("\n")}` : "selected elements: none (use the current scene)",
+    "[/EXPLICIT VISUAL CONTEXT]",
+  ].join("\n");
+  return { context: safeContext, prompt };
+}
+
+function messageContentForAgent(db: Db, message: Message): string {
+  if (message.role !== "user" || !message.metadata?.visualContext) return message.content;
+  try {
+    const resolved = validateVisualContext(db, message.metadata.visualContext);
+    return resolved ? `${resolved.prompt}\n\n${message.content}` : message.content;
+  } catch {
+    // Never substitute a newer visual revision into immutable chat history.
+    return message.content;
+  }
+}
 
 
 // Shown/persisted in place of a blank assistant turn when the model produces an
@@ -160,6 +224,18 @@ export function chatRoutes(
       res.status(503).json({ error: "no_llm_provider" });
       return;
     }
+    let resolvedVisualContext: ReturnType<typeof validateVisualContext> = null;
+    try {
+      resolvedVisualContext = validateVisualContext(db, parsed.data.visualContext);
+    } catch (error) {
+      const failure = error as Error & { code?: string; status?: number; currentRevision?: number };
+      res.status(failure.status ?? 400).json({
+        error: failure.code ?? "invalid_visual_context",
+        message: failure.message,
+        ...(failure.currentRevision ? { currentRevision: failure.currentRevision } : {}),
+      });
+      return;
+    }
     let sessionId = parsed.data.sessionId;
     let createdNew = false;
     if (!sessionId || !getSession(db, sessionId)) {
@@ -218,7 +294,12 @@ export function chatRoutes(
     // persist:false (HYBRID voice handoff) runs the tools but stores nothing —
     // the realtime proxy is the single source of truth for voice turns.
     if (parsed.data.persist !== false) {
-      appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
+      appendMessage(db, {
+        sessionId,
+        role: "user",
+        content: parsed.data.text,
+        ...(resolvedVisualContext ? { metadata: { visualContext: resolvedVisualContext.context } } : {}),
+      });
     }
 
     // Fire-and-forget: summarization must NOT block the response. Awaiting it
@@ -274,7 +355,7 @@ export function chatRoutes(
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({
         role: m.role as "user" | "assistant",
-        content: m.content,
+        content: messageContentForAgent(db, m),
       }));
     // A persist:false voice handoff deliberately does not append its generated
     // computer-action instruction to chat history. The latest stored row is the
@@ -340,7 +421,9 @@ export function chatRoutes(
       }
     }
 
-    const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix + latestUserText;
+    const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix
+      + (resolvedVisualContext ? `${resolvedVisualContext.prompt}\n\n` : "")
+      + latestUserText;
     const reasoningEffort = agentDeps.provider!.name === "openai"
       ? (parsed.data.voice ? "none" : mapReasoning(getReasoningLevel(db), mode))
       : undefined;
@@ -429,6 +512,7 @@ export function chatRoutes(
       // Collect the run's tool steps so a successful >=2-tool run can be
       // distilled into a reusable playbook (best-effort, fire-and-forget).
       const runSteps: RunStep[] = [];
+      const runVisualReferences = new Map<string, MessageVisualReference>();
       const toolStartedAt = new Map<string, number[]>();
       let terminalReceiptPublished = false;
       const publishReceipt = (at: number, remember: boolean): TaskReceipt => {
@@ -461,6 +545,26 @@ export function chatRoutes(
         } else if (e.kind === "tool_result") {
           const s = runSteps[runSteps.length - 1];
           if (s && s.tool === e.payload.tool) s.ok = e.payload.ok;
+          if (e.payload.ok && e.payload.tool === "visual_explanation_create") {
+            try {
+              const result = JSON.parse(e.payload.result) as {
+                visualMessageId?: unknown;
+                visualExplanationId?: unknown;
+                revision?: unknown;
+              };
+              const id = typeof result.visualMessageId === "string"
+                ? result.visualMessageId
+                : typeof result.visualExplanationId === "string" ? result.visualExplanationId : "";
+              const requestedRevision = typeof result.revision === "number" ? result.revision : null;
+              const visual = /^visual_[A-Za-z0-9_-]{8,32}$/.test(id)
+                ? getVisualExplanation(db, id, requestedRevision)
+                : null;
+              if (visual && visual.sourceSessionId === sid) {
+                const reference = { visualMessageId: visual.visualMessageId, revision: visual.revision };
+                runVisualReferences.set(`${reference.visualMessageId}:${reference.revision}`, reference);
+              }
+            } catch { /* malformed output cannot become a trusted attachment */ }
+          }
         }
         // Normalize an empty/whitespace final to a graceful message so we never
         // stream or persist a blank assistant turn (the run did something — the
@@ -557,7 +661,13 @@ export function chatRoutes(
         // here; the realtime proxy persists the spoken turn instead (no double-store).
         if (parsed.data.persist !== false) {
           if (e.kind === "final") {
-            appendMessage(db, { sessionId: sid, role: "assistant", content: e.payload.text });
+            const visualMessages = [...runVisualReferences.values()];
+            appendMessage(db, {
+              sessionId: sid,
+              role: "assistant",
+              content: e.payload.text,
+              ...(visualMessages.length ? { metadata: { visualMessages } } : {}),
+            });
           } else if (e.kind === "error") {
             // Surface a run-ending error (LLM quota/timeout, stream failure) in the
             // transcript instead of leaving the chat silent — the run otherwise
@@ -565,6 +675,9 @@ export function chatRoutes(
             appendMessage(db, {
               sessionId: sid, role: "assistant",
               content: `That didn't work, Sir — ${e.payload.message}`,
+              ...([...runVisualReferences.values()].length
+                ? { metadata: { visualMessages: [...runVisualReferences.values()] } }
+                : {}),
             });
           }
         }

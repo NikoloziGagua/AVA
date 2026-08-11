@@ -1,73 +1,87 @@
 import { ApiError } from "../api.js";
 import { clearToken, getToken } from "../auth/tokens.js";
+import { isVisualMessage, type VisualMessage } from "./types.js";
 
-export type VisualNodeShape = "process" | "decision" | "terminal";
-export type VisualEdgeStyle = "flow" | "dotted" | "strong";
+export type { VisualMessage, VisualMessageContext, VisualMessageReference, VisualScene } from "./types.js";
 
-export type VisualTopology = {
-  direction: "TD" | "TB" | "LR" | "RL" | "BT";
-  nodes: Array<{ id: string; label: string; shape: VisualNodeShape }>;
-  edges: Array<{ from: string; to: string; label: string | null; style: VisualEdgeStyle }>;
-};
-
-export type VisualScene = {
-  id: string;
-  title: string;
-  caption: string;
-  nodeIds: string[];
-  highlightNodeIds: string[];
-  transition: "none" | "fade" | "slide";
-  interactionCue?: string;
-};
-
-export type VisualExplanation = {
-  id: string;
-  schemaVersion: "1.0";
-  title: string;
-  summary: string;
-  mermaid: string;
-  storyboard: { schemaVersion: "1.0"; startSceneId: string; scenes: VisualScene[] };
-  topology: VisualTopology;
-  source: "manual" | "ava_chat" | "ava_voice";
-  sourceSessionId: string | null;
-  sourceRunId: string | null;
-  version: number;
-  createdAt: number;
-  updatedAt: number;
-};
-
-const CACHE_KEY = "ava.visual-explanations.cache.v1";
+const CACHE_KEY = "ava.visual-messages.cache.v2";
+const LEGACY_CACHE_KEY = "ava.visual-explanations.cache.v1";
 const CACHE_LIMIT = 20;
 
-function isVisual(value: unknown): value is VisualExplanation {
-  if (!value || typeof value !== "object") return false;
-  const visual = value as Partial<VisualExplanation>;
-  return typeof visual.id === "string"
-    && visual.schemaVersion === "1.0"
-    && typeof visual.mermaid === "string"
-    && !!visual.storyboard
-    && Array.isArray(visual.storyboard.scenes)
-    && !!visual.topology
-    && Array.isArray(visual.topology.nodes);
+function normalizeLegacy(value: unknown): VisualMessage | null {
+  if (!value || typeof value !== "object") return null;
+  const legacy = value as any;
+  if (typeof legacy.id !== "string" || !legacy.topology || !legacy.storyboard || typeof legacy.mermaid !== "string") return null;
+  const visual: VisualMessage = {
+    schemaVersion: "1.0",
+    visualMessageId: legacy.id,
+    revision: Number.isInteger(legacy.version) ? legacy.version : 1,
+    diagramKind: "flowchart",
+    title: String(legacy.title ?? "Visual explanation"),
+    summary: String(legacy.summary ?? "Visual explanation"),
+    semanticModel: {
+      direction: legacy.topology.direction,
+      elements: (legacy.topology.nodes ?? []).map((node: any) => ({ id: node.id, label: node.label, kind: node.shape })),
+      relationships: (legacy.topology.edges ?? []).map((edge: any, index: number) => ({
+        id: `legacy_rel_${index + 1}`,
+        from: edge.from,
+        to: edge.to,
+        label: edge.label ?? null,
+        kind: edge.style,
+      })),
+    },
+    storyboard: legacy.storyboard,
+    renderer: { renderer: "mermaid", rendererSchemaVersion: "1.0", generatedFrom: "semantic_model", payload: legacy.mermaid },
+    accessibleFallback: {
+      heading: String(legacy.title ?? "Visual explanation"),
+      summary: String(legacy.summary ?? "Visual explanation"),
+      elements: (legacy.topology.nodes ?? []).map((node: any) => ({ id: node.id, label: node.label, kind: node.shape })),
+      relationships: (legacy.topology.edges ?? []).map((edge: any, index: number) => ({ id: `legacy_rel_${index + 1}`, text: `${edge.from} leads to ${edge.to}` })),
+      scenes: (legacy.storyboard.scenes ?? []).map((scene: any) => ({ id: scene.id, title: scene.title, caption: scene.caption })),
+    },
+    source: legacy.source ?? "manual",
+    sourceSessionId: legacy.sourceSessionId ?? null,
+    sourceRunId: legacy.sourceRunId ?? null,
+    createdAt: legacy.updatedAt ?? legacy.createdAt ?? Date.now(),
+  };
+  return isVisualMessage(visual) ? visual : null;
 }
 
-export function readCachedVisuals(): VisualExplanation[] {
+function normalize(value: unknown): VisualMessage | null {
+  return isVisualMessage(value) ? value : normalizeLegacy(value);
+}
+
+export function readCachedVisuals(): VisualMessage[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(CACHE_KEY) ?? "[]") as unknown;
-    return Array.isArray(parsed) ? parsed.filter(isVisual).slice(0, CACHE_LIMIT) : [];
+    const current = JSON.parse(localStorage.getItem(CACHE_KEY) ?? "[]") as unknown;
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_CACHE_KEY) ?? "[]") as unknown;
+    const merged = new Map<string, VisualMessage>();
+    for (const candidate of [
+      ...(Array.isArray(current) ? current : []),
+      ...(Array.isArray(legacy) ? legacy : []),
+    ]) {
+      const visual = normalize(candidate);
+      if (!visual) continue;
+      const key = `${visual.visualMessageId}:${visual.revision}`;
+      if (!merged.has(key)) merged.set(key, visual);
+    }
+    return [...merged.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, CACHE_LIMIT);
   } catch { return []; }
 }
 
-export function cacheVisuals(visuals: VisualExplanation[]): void {
+export function cacheVisuals(visuals: VisualMessage[]): void {
   try {
-    const merged = new Map<string, VisualExplanation>();
-    for (const visual of [...visuals, ...readCachedVisuals()]) {
-      if (isVisual(visual) && !merged.has(visual.id)) merged.set(visual.id, visual);
+    const merged = new Map<string, VisualMessage>();
+    for (const candidate of [...visuals, ...readCachedVisuals()]) {
+      const visual = normalize(candidate);
+      if (!visual) continue;
+      const key = `${visual.visualMessageId}:${visual.revision}`;
+      if (!merged.has(key)) merged.set(key, visual);
     }
     localStorage.setItem(CACHE_KEY, JSON.stringify([...merged.values()]
-      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .sort((a, b) => b.createdAt - a.createdAt)
       .slice(0, CACHE_LIMIT)));
-  } catch { /* cache quota/private mode: online viewer still works */ }
+  } catch { /* cache quota/private mode: online rendering still works */ }
 }
 
 async function visualRequest<T>(path: string): Promise<T> {
@@ -92,15 +106,23 @@ async function visualRequest<T>(path: string): Promise<T> {
   return body as T;
 }
 
-export async function fetchVisualExplanations(): Promise<VisualExplanation[]> {
-  const result = await visualRequest<{ visuals: VisualExplanation[] }>("/api/visual-explanations?limit=40");
-  cacheVisuals(result.visuals);
-  return result.visuals;
+function requireVisual(value: unknown): VisualMessage {
+  const visual = normalize(value);
+  if (!visual) throw new ApiError(500, "AVA returned an invalid visual message.", "invalid_visual_message");
+  return visual;
 }
 
-export async function fetchVisualExplanation(id: string): Promise<VisualExplanation> {
-  const result = await visualRequest<{ visual: VisualExplanation }>(`/api/visual-explanations/${encodeURIComponent(id)}`);
-  cacheVisuals([result.visual]);
-  return result.visual;
+export async function fetchVisualExplanations(): Promise<VisualMessage[]> {
+  const result = await visualRequest<{ visuals: unknown[] }>("/api/visual-explanations?limit=40");
+  const visuals = result.visuals.map(requireVisual);
+  cacheVisuals(visuals);
+  return visuals;
 }
 
+export async function fetchVisualExplanation(id: string, revision?: number): Promise<VisualMessage> {
+  const query = revision ? `?revision=${revision}` : "";
+  const result = await visualRequest<{ visual: unknown }>(`/api/visual-explanations/${encodeURIComponent(id)}${query}`);
+  const visual = requireVisual(result.visual);
+  cacheVisuals([visual]);
+  return visual;
+}

@@ -18,7 +18,7 @@ describe("visual explanation tools", () => {
     expect(result.ok).toBe(true);
     const output = JSON.parse(result.text) as { visualExplanationId: string };
     const stored = listVisualExplanations(db)[0]!;
-    expect(output.visualExplanationId).toBe(stored.id);
+    expect(output.visualExplanationId).toBe(stored.visualMessageId);
     expect(stored).toMatchObject({ source: "ava_chat", sourceSessionId: "chat-visual", sourceRunId: "run-visual" });
   });
 

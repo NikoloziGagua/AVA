@@ -1,11 +1,41 @@
-import type { VisualExplanation } from "./api.js";
+import type { VisualMessage } from "./types.js";
 
-export const visualFixture: VisualExplanation = {
-  id: "visual_fixture01",
+const elements: VisualMessage["semanticModel"]["elements"] = [
+  { id: "request", label: "Niko asks AVA", kind: "terminal" },
+  { id: "route", label: "Route request", kind: "process" },
+  { id: "tool", label: "Run tool", kind: "process" },
+  { id: "verify", label: "Verified?", kind: "decision" },
+  { id: "done", label: "Report result", kind: "terminal" },
+];
+
+const relationships: VisualMessage["semanticModel"]["relationships"] = [
+  { id: "rel_request_route", from: "request", to: "route", label: null, kind: "flow" },
+  { id: "rel_route_tool", from: "route", to: "tool", label: null, kind: "flow" },
+  { id: "rel_tool_verify", from: "tool", to: "verify", label: null, kind: "flow" },
+  { id: "rel_verify_done", from: "verify", to: "done", label: "Yes or no", kind: "flow" },
+];
+
+export const visualFixture: VisualMessage = {
   schemaVersion: "1.0",
+  visualMessageId: "visual_fixture01",
+  revision: 1,
+  diagramKind: "flowchart",
   title: "Request path",
   summary: "A compact walkthrough from request to verified result.",
-  mermaid: `flowchart TD
+  semanticModel: { direction: "TD", elements, relationships },
+  storyboard: {
+    schemaVersion: "1.0",
+    startSceneId: "routeScene",
+    scenes: [
+      { id: "routeScene", title: "Route", caption: "AVA interprets and routes the request.", nodeIds: ["request", "route", "tool"], highlightNodeIds: ["route"], transition: "fade", interactionCue: "Move next to inspect verification." },
+      { id: "verifyScene", title: "Verify", caption: "AVA reports what evidence actually proves.", nodeIds: ["tool", "verify", "done"], highlightNodeIds: ["verify"], transition: "slide" },
+    ],
+  },
+  renderer: {
+    renderer: "mermaid",
+    rendererSchemaVersion: "1.0",
+    generatedFrom: "semantic_model",
+    payload: `flowchart TD
 request(["Niko asks AVA"])
 route["Route request"]
 tool["Run tool"]
@@ -15,35 +45,24 @@ request --> route
 route --> tool
 tool --> verify
 verify -->|Yes or no| done`,
-  storyboard: {
-    schemaVersion: "1.0",
-    startSceneId: "routeScene",
-    scenes: [
-      { id: "routeScene", title: "Route", caption: "AVA interprets and routes the request.", nodeIds: ["request", "route", "tool"], highlightNodeIds: ["route"], transition: "fade", interactionCue: "Move next to inspect verification." },
-      { id: "verifyScene", title: "Verify", caption: "AVA reports what evidence actually proves.", nodeIds: ["tool", "verify", "done"], highlightNodeIds: ["verify"], transition: "slide" },
-    ],
   },
-  topology: {
-    direction: "TD",
-    nodes: [
-      { id: "request", label: "Niko asks AVA", shape: "terminal" },
-      { id: "route", label: "Route request", shape: "process" },
-      { id: "tool", label: "Run tool", shape: "process" },
-      { id: "verify", label: "Verified?", shape: "decision" },
-      { id: "done", label: "Report result", shape: "terminal" },
+  accessibleFallback: {
+    heading: "Request path",
+    summary: "A compact walkthrough from request to verified result.",
+    elements,
+    relationships: [
+      { id: "rel_request_route", text: "Niko asks AVA leads to Route request" },
+      { id: "rel_route_tool", text: "Route request leads to Run tool" },
+      { id: "rel_tool_verify", text: "Run tool leads to Verified?" },
+      { id: "rel_verify_done", text: "Verified? — Yes or no — Report result" },
     ],
-    edges: [
-      { from: "request", to: "route", label: null, style: "flow" },
-      { from: "route", to: "tool", label: null, style: "flow" },
-      { from: "tool", to: "verify", label: null, style: "flow" },
-      { from: "verify", to: "done", label: "Yes or no", style: "flow" },
+    scenes: [
+      { id: "routeScene", title: "Route", caption: "AVA interprets and routes the request." },
+      { id: "verifyScene", title: "Verify", caption: "AVA reports what evidence actually proves." },
     ],
   },
   source: "ava_chat",
   sourceSessionId: "chat-visual",
   sourceRunId: "run-visual",
-  version: 1,
   createdAt: 1,
-  updatedAt: 1,
 };
-

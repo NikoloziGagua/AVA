@@ -12,10 +12,12 @@ import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import { stripMarkdown } from "./strip-markdown.js";
 import type { StreamEvent } from "./useChatStream.js";
 import { TaskReceiptCard } from "./TaskReceiptCard.js";
+import { VisualMessageCard, type VisualSemanticActionHandler } from "../visuals/VisualMessageCard.js";
+import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
 
 export type ChatMessage =
-  | { role: "user"; text: string; id: string }
-  | { role: "assistant"; text: string; id: string }
+  | { role: "user"; text: string; id: string; visualContext?: VisualMessageContext }
+  | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[] }
   // `system` rows are server notices (e.g. the "Server restarted…" recovery
   // message) — rendered as a centered notice, never attributed to Ava.
   | { role: "system"; text: string; id: string };
@@ -54,6 +56,7 @@ export interface MessageListProps {
    * collapsed) the chips stay, as they're the only live-step surface.
    */
   toolChipsDocked?: boolean;
+  onVisualSemanticAction?: VisualSemanticActionHandler;
 }
 
 export function MessageList({
@@ -67,6 +70,7 @@ export function MessageList({
   runningTool,
   headerState = "idle",
   toolChipsDocked = false,
+  onVisualSemanticAction,
 }: MessageListProps) {
   const reduced = useReducedMotion();
   const internalRef = useRef<HTMLDivElement>(null);
@@ -218,7 +222,14 @@ export function MessageList({
         return (
         <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
           {m.role === "user" ? (
-            <OwnerBubble text={m.text} reduced={reduced} />
+            <div className="flex max-w-[78%] flex-col items-end gap-1.5">
+              <OwnerBubble text={m.text} reduced={reduced} />
+              {m.visualContext && (
+                <span className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.06] px-2.5 py-1 text-[10px] text-cyan-100/60">
+                  Visual context · rev {m.visualContext.revision} · {m.visualContext.selectedElementIds.length || "scene"}
+                </span>
+              )}
+            </div>
           ) : (
             <AvaBubble reduced={reduced}>
               <div
@@ -234,6 +245,13 @@ export function MessageList({
                 text={m.text}
                 onRetry={!lastFinal && m.id === lastAssistantHistoryId ? onRetry : undefined}
               />
+              {m.visualMessages?.map((visual) => (
+                <VisualMessageCard
+                  key={`${visual.visualMessageId}:${visual.revision}`}
+                  visual={visual}
+                  onSemanticAction={onVisualSemanticAction}
+                />
+              ))}
             </AvaBubble>
           )}
         </div>
@@ -403,7 +421,7 @@ function AvaBubble({ children, reduced }: { children: React.ReactNode; reduced: 
   return (
     // group/msg: desktop hover-reveals the action row (see MessageActions) —
     // scoped/named so it can't collide with other `group` uses in the tree.
-    <div className="group/msg flex items-start gap-3 max-w-[88%] lg:max-w-[92%]">
+    <div className="group/msg flex w-full max-w-[96%] items-start gap-3 lg:max-w-[94%]">
       <div className="shrink-0 mt-1">
         <Orb state="idle" size={22} />
       </div>
@@ -412,7 +430,7 @@ function AvaBubble({ children, reduced }: { children: React.ReactNode; reduced: 
         data-bubble
         onPointerEnter={() => ref.current && hoverLift(ref.current, true, reduced)}
         onPointerLeave={() => ref.current && hoverLift(ref.current, false, reduced)}
-        className="lg-slab lg-sweep flex flex-col gap-2 px-4 py-3"
+        className="lg-slab lg-sweep flex min-w-0 w-full flex-col gap-2 px-4 py-3"
         style={{ boxShadow: SHADOW.rest }}
       >
         {children}

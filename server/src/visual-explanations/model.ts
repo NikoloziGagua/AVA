@@ -1,34 +1,51 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { scrubSecrets } from "../security/scrub.js";
 
-export const VISUAL_EXPLANATION_SCHEMA_VERSION = "1.0" as const;
+export const VISUAL_MESSAGE_SCHEMA_VERSION = "1.0" as const;
+/** Compatibility name for callers of the original visual_explanation API. */
+export const VISUAL_EXPLANATION_SCHEMA_VERSION = VISUAL_MESSAGE_SCHEMA_VERSION;
 export const STORYBOARD_SCHEMA_VERSION = "1.0" as const;
 export const MAX_VISUAL_NODES = 80;
 export const MAX_SCENE_NODES = 14;
 
-export type VisualNodeShape = "process" | "decision" | "terminal";
-export type VisualEdgeStyle = "flow" | "dotted" | "strong";
+export type VisualElementKind = "process" | "decision" | "terminal";
+export type VisualRelationshipKind = "flow" | "dotted" | "strong";
+export type VisualDiagramKind = "flowchart";
 
-export type VisualTopologyNode = {
+export type VisualSemanticElement = {
   id: string;
   label: string;
-  shape: VisualNodeShape;
+  kind: VisualElementKind;
 };
 
-export type VisualTopologyEdge = {
+export type VisualSemanticRelationship = {
+  id: string;
   from: string;
   to: string;
   label: string | null;
-  style: VisualEdgeStyle;
+  kind: VisualRelationshipKind;
 };
 
-export type VisualTopology = {
+export type VisualSemanticModel = {
   direction: "TD" | "TB" | "LR" | "RL" | "BT";
+  elements: VisualSemanticElement[];
+  relationships: VisualSemanticRelationship[];
+};
+
+// Compatibility projections used only while reading the original v1 table.
+export type VisualTopologyNode = { id: string; label: string; shape: VisualElementKind };
+export type VisualTopologyEdge = Omit<VisualSemanticRelationship, "id" | "kind"> & { style: VisualRelationshipKind };
+export type VisualTopology = {
+  direction: VisualSemanticModel["direction"];
   nodes: VisualTopologyNode[];
   edges: VisualTopologyEdge[];
 };
 
-const StableId = z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{1,63}$/, "must be a stable ID (letter first; letters, numbers, _ or - only)");
+const StableId = z.string().regex(
+  /^[A-Za-z][A-Za-z0-9_-]{1,63}$/,
+  "must be a stable ID (letter first; letters, numbers, _ or - only)",
+);
 
 export const StoryboardSceneSchema = z.object({
   id: StableId,
@@ -46,25 +63,84 @@ export const StoryboardSchema = z.object({
   scenes: z.array(StoryboardSceneSchema).min(1).max(20),
 }).strict();
 
+const SemanticModelSchema = z.object({
+  direction: z.enum(["TD", "TB", "LR", "RL", "BT"]),
+  elements: z.array(z.object({
+    id: StableId,
+    label: z.string().trim().min(1).max(120),
+    kind: z.enum(["process", "decision", "terminal"]),
+  }).strict()).min(2).max(MAX_VISUAL_NODES),
+  relationships: z.array(z.object({
+    id: StableId,
+    from: StableId,
+    to: StableId,
+    label: z.string().trim().min(1).max(120).nullable().default(null),
+    kind: z.enum(["flow", "dotted", "strong"]),
+  }).strict()).min(1).max(160),
+}).strict();
+
 export type VisualStoryboard = z.infer<typeof StoryboardSchema>;
+
+export type VisualRendererMetadata = {
+  renderer: "mermaid";
+  rendererSchemaVersion: "1.0";
+  generatedFrom: "semantic_model";
+  payload: string;
+};
+
+export type VisualAccessibleFallback = {
+  heading: string;
+  summary: string;
+  elements: Array<{ id: string; label: string; kind: VisualElementKind }>;
+  relationships: Array<{ id: string; text: string }>;
+  scenes: Array<{ id: string; title: string; caption: string }>;
+};
+
+export type VisualMessage = {
+  schemaVersion: typeof VISUAL_MESSAGE_SCHEMA_VERSION;
+  visualMessageId: string;
+  revision: number;
+  diagramKind: VisualDiagramKind;
+  title: string;
+  summary: string;
+  semanticModel: VisualSemanticModel;
+  storyboard: VisualStoryboard;
+  renderer: VisualRendererMetadata;
+  accessibleFallback: VisualAccessibleFallback;
+  source: "manual" | "ava_chat" | "ava_voice";
+  sourceSessionId: string | null;
+  sourceRunId: string | null;
+  createdAt: number;
+};
 
 export type CreateVisualExplanationInput = {
   title: string;
   summary: string;
-  mermaid: string;
+  diagramKind?: VisualDiagramKind;
+  /** Preferred renderer-neutral authoring contract. */
+  semanticModel?: VisualSemanticModel;
+  /** Backward-compatible ingest format for the established tool. */
+  mermaid?: string;
   storyboard: VisualStoryboard;
+  revisesVisualMessageId?: string;
+  expectedRevision?: number;
 };
 
 export class VisualExplanationValidationError extends Error {
   readonly name = "VisualExplanationValidationError";
-  constructor(readonly issues: string[]) {
-    super(issues.join("; "));
+  constructor(readonly issues: string[]) { super(issues.join("; ")); }
+}
+
+export class StaleVisualRevisionError extends Error {
+  readonly name = "StaleVisualRevisionError";
+  constructor(readonly currentRevision: number) {
+    super(`visual revision is stale; current revision is ${currentRevision}`);
   }
 }
 
 const FORBIDDEN_MERMAID = [
   { pattern: /%%\s*\{/i, label: "initialization directives" },
-  { pattern: /^\s*(click|href|style|classDef|linkStyle)\b/im, label: "interactive or style directives" },
+  { pattern: /^\s*(click|href|style|classDef|class|linkStyle)\b/im, label: "interactive or style directives" },
   { pattern: /javascript\s*:/i, label: "javascript URLs" },
   { pattern: /data\s*:/i, label: "data URLs" },
   { pattern: /url\s*\(/i, label: "external CSS URLs" },
@@ -77,7 +153,7 @@ function cleanText(value: string, max: number): string {
 
 function cleanLabel(value: string): string {
   const clean = cleanText(value, 120).replace(/\s+/g, " ");
-  if (!clean) throw new VisualExplanationValidationError(["Mermaid node and edge labels cannot be empty"]);
+  if (!clean) throw new VisualExplanationValidationError(["Visual labels cannot be empty"]);
   return clean;
 }
 
@@ -102,14 +178,10 @@ function parseEdge(line: string): VisualTopologyEdge | null {
   };
 }
 
-/**
- * Parse AVA's deliberately small Mermaid v1 grammar. Restricting canonical
- * topology to explicit node declarations and edges makes stable IDs verifiable
- * and removes Mermaid's link/callback/HTML attack surface before rendering.
- */
+/** Parse the deliberately small legacy Mermaid ingest grammar. */
 export function parseMermaidTopology(raw: string): { mermaid: string; topology: VisualTopology } {
   const mermaid = cleanText(raw, 30_000);
-  if (!mermaid) throw new VisualExplanationValidationError(["Mermaid topology is required"]);
+  if (!mermaid) throw new VisualExplanationValidationError(["Mermaid or semanticModel is required"]);
   for (const forbidden of FORBIDDEN_MERMAID) {
     if (forbidden.pattern.test(mermaid)) {
       throw new VisualExplanationValidationError([`Mermaid ${forbidden.label} are not allowed`]);
@@ -119,9 +191,7 @@ export function parseMermaidTopology(raw: string): { mermaid: string; topology: 
   if (allLines.length > 400) throw new VisualExplanationValidationError(["Mermaid topology exceeds 400 lines"]);
   const lines = allLines.map((line) => line.trim()).filter((line) => line && !line.startsWith("%%"));
   const header = lines.shift()?.match(/^(?:flowchart|graph)\s+(TD|TB|LR|RL|BT)$/);
-  if (!header) {
-    throw new VisualExplanationValidationError(["Mermaid v1 must start with flowchart TD, TB, LR, RL or BT"]);
-  }
+  if (!header) throw new VisualExplanationValidationError(["Mermaid v1 must start with flowchart TD, TB, LR, RL or BT"]);
 
   const nodes: VisualTopologyNode[] = [];
   const edges: VisualTopologyEdge[] = [];
@@ -146,13 +216,70 @@ export function parseMermaidTopology(raw: string): { mermaid: string; topology: 
     if (!ids.has(edge.to)) invalid.push(`edge references undeclared node: ${edge.to}`);
   }
   if (invalid.length) throw new VisualExplanationValidationError(invalid.slice(0, 20));
+  return { mermaid, topology: { direction: header[1] as VisualTopology["direction"], nodes, edges } };
+}
+
+function relationshipId(edge: VisualTopologyEdge, occurrence: number): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify([edge.from, edge.to, edge.label, edge.style, occurrence]))
+    .digest("hex").slice(0, 12);
+  return `rel_${digest}`;
+}
+
+export function topologyToSemanticModel(topology: VisualTopology): VisualSemanticModel {
+  const seen = new Map<string, number>();
   return {
-    mermaid,
-    topology: {
-      direction: header[1] as VisualTopology["direction"],
-      nodes,
-      edges,
-    },
+    direction: topology.direction,
+    elements: topology.nodes.map((node) => ({ id: node.id, label: node.label, kind: node.shape })),
+    relationships: topology.edges.map((edge) => {
+      const key = JSON.stringify([edge.from, edge.to, edge.label, edge.style]);
+      const occurrence = (seen.get(key) ?? 0) + 1;
+      seen.set(key, occurrence);
+      return { id: relationshipId(edge, occurrence), from: edge.from, to: edge.to, label: edge.label, kind: edge.style };
+    }),
+  };
+}
+
+export function semanticModelToTopology(model: VisualSemanticModel): VisualTopology {
+  return {
+    direction: model.direction,
+    nodes: model.elements.map((element) => ({ id: element.id, label: element.label, shape: element.kind })),
+    edges: model.relationships.map((relationship) => ({
+      from: relationship.from,
+      to: relationship.to,
+      label: relationship.label,
+      style: relationship.kind,
+    })),
+  };
+}
+
+function quoteLabel(label: string): string {
+  return label.replace(/["\\\r\n]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function semanticModelToMermaid(model: VisualSemanticModel): string {
+  const lines = [`flowchart ${model.direction}`];
+  for (const element of model.elements) {
+    const label = quoteLabel(element.label);
+    if (element.kind === "decision") lines.push(`${element.id}{"${label}"}`);
+    else if (element.kind === "terminal") lines.push(`${element.id}(["${label}"])`);
+    else lines.push(`${element.id}["${label}"]`);
+  }
+  for (const relationship of model.relationships) {
+    const operator = relationship.kind === "dotted" ? "-.->" : relationship.kind === "strong" ? "==>" : "-->";
+    lines.push(`${relationship.from} ${operator}${relationship.label ? `|${quoteLabel(relationship.label)}| ` : " "}${relationship.to}`);
+  }
+  return lines.join("\n");
+}
+
+function sanitizeSemanticModel(model: VisualSemanticModel): VisualSemanticModel {
+  return {
+    direction: model.direction,
+    elements: model.elements.map((element) => ({ ...element, label: cleanLabel(element.label) })),
+    relationships: model.relationships.map((relationship) => ({
+      ...relationship,
+      label: relationship.label ? cleanLabel(relationship.label) : null,
+    })),
   };
 }
 
@@ -172,34 +299,92 @@ function sanitizeStoryboard(storyboard: VisualStoryboard): VisualStoryboard {
   };
 }
 
+export function buildAccessibleFallback(
+  title: string,
+  summary: string,
+  model: VisualSemanticModel,
+  storyboard: VisualStoryboard,
+): VisualAccessibleFallback {
+  const labels = new Map(model.elements.map((element) => [element.id, element.label]));
+  return {
+    heading: title,
+    summary,
+    elements: model.elements.map((element) => ({ ...element })),
+    relationships: model.relationships.map((relationship) => ({
+      id: relationship.id,
+      text: `${labels.get(relationship.from) ?? relationship.from}${relationship.label ? ` — ${relationship.label} —` : " leads to"} ${labels.get(relationship.to) ?? relationship.to}`,
+    })),
+    scenes: storyboard.scenes.map((scene) => ({ id: scene.id, title: scene.title, caption: scene.caption })),
+  };
+}
+
 export function validateVisualExplanation(input: CreateVisualExplanationInput): {
   title: string;
   summary: string;
-  mermaid: string;
+  diagramKind: VisualDiagramKind;
+  semanticModel: VisualSemanticModel;
   storyboard: VisualStoryboard;
-  topology: VisualTopology;
+  renderer: VisualRendererMetadata;
+  accessibleFallback: VisualAccessibleFallback;
+  revisesVisualMessageId: string | null;
+  expectedRevision: number | null;
 } {
   const title = cleanText(String(input?.title ?? ""), 160);
   const summary = cleanText(String(input?.summary ?? ""), 1_000);
   const issues: string[] = [];
   if (!title) issues.push("title is required");
   if (!summary) issues.push("summary is required");
+  if (input.diagramKind && input.diagramKind !== "flowchart") issues.push("diagramKind must be flowchart in v1");
+
   const parsedStoryboard = StoryboardSchema.safeParse(input?.storyboard);
   if (!parsedStoryboard.success) {
     issues.push(...parsedStoryboard.error.issues.map((issue) => `storyboard.${issue.path.join(".") || "root"}: ${issue.message}`));
   }
-  let parsedTopology: ReturnType<typeof parseMermaidTopology> | null = null;
-  try { parsedTopology = parseMermaidTopology(String(input?.mermaid ?? "")); }
-  catch (error) {
-    if (error instanceof VisualExplanationValidationError) issues.push(...error.issues);
-    else issues.push("Mermaid topology could not be parsed");
+
+  let semanticModel: VisualSemanticModel | null = null;
+  if (input.semanticModel) {
+    const parsed = SemanticModelSchema.safeParse(input.semanticModel);
+    if (!parsed.success) {
+      issues.push(...parsed.error.issues.map((issue) => `semanticModel.${issue.path.join(".") || "root"}: ${issue.message}`));
+    } else semanticModel = sanitizeSemanticModel(parsed.data);
+  } else {
+    try { semanticModel = topologyToSemanticModel(parseMermaidTopology(String(input?.mermaid ?? "")).topology); }
+    catch (error) {
+      if (error instanceof VisualExplanationValidationError) issues.push(...error.issues);
+      else issues.push("Mermaid topology could not be parsed");
+    }
   }
-  if (issues.length || !parsedStoryboard.success || !parsedTopology) {
+
+  const revisesVisualMessageId = input.revisesVisualMessageId ?? null;
+  const expectedRevision = input.expectedRevision ?? null;
+  if (revisesVisualMessageId && !/^visual_[A-Za-z0-9_-]{8,32}$/.test(revisesVisualMessageId)) {
+    issues.push("revisesVisualMessageId is invalid");
+  }
+  if ((revisesVisualMessageId === null) !== (expectedRevision === null)) {
+    issues.push("revisesVisualMessageId and expectedRevision must be supplied together");
+  }
+  if (expectedRevision !== null && (!Number.isInteger(expectedRevision) || expectedRevision < 1)) {
+    issues.push("expectedRevision must be a positive integer");
+  }
+
+  if (issues.length || !parsedStoryboard.success || !semanticModel) {
     throw new VisualExplanationValidationError(issues.slice(0, 30));
   }
 
   const storyboard = sanitizeStoryboard(parsedStoryboard.data);
-  const nodeIds = new Set(parsedTopology.topology.nodes.map((node) => node.id));
+  const elementIds = new Set<string>();
+  const relationshipIds = new Set<string>();
+  for (const element of semanticModel.elements) {
+    if (elementIds.has(element.id)) issues.push(`duplicate semantic element ID: ${element.id}`);
+    elementIds.add(element.id);
+  }
+  for (const relationship of semanticModel.relationships) {
+    if (relationshipIds.has(relationship.id)) issues.push(`duplicate semantic relationship ID: ${relationship.id}`);
+    relationshipIds.add(relationship.id);
+    if (!elementIds.has(relationship.from)) issues.push(`relationship ${relationship.id} references unknown source ${relationship.from}`);
+    if (!elementIds.has(relationship.to)) issues.push(`relationship ${relationship.id} references unknown target ${relationship.to}`);
+  }
+
   const sceneIds = new Set<string>();
   const covered = new Set<string>();
   for (const scene of storyboard.scenes) {
@@ -207,24 +392,40 @@ export function validateVisualExplanation(input: CreateVisualExplanationInput): 
     sceneIds.add(scene.id);
     const sceneNodes = new Set<string>();
     for (const id of scene.nodeIds) {
-      if (sceneNodes.has(id)) issues.push(`scene ${scene.id} repeats node ID ${id}`);
+      if (sceneNodes.has(id)) issues.push(`scene ${scene.id} repeats element ID ${id}`);
       sceneNodes.add(id);
       covered.add(id);
-      if (!nodeIds.has(id)) issues.push(`scene ${scene.id} references unknown Mermaid node ID ${id}`);
+      if (!elementIds.has(id)) issues.push(`scene ${scene.id} references unknown semantic element ID ${id}`);
     }
     for (const id of scene.highlightNodeIds) {
       if (!sceneNodes.has(id)) issues.push(`scene ${scene.id} highlights ${id} without including it`);
     }
   }
   if (!sceneIds.has(storyboard.startSceneId)) issues.push("startSceneId does not match a storyboard scene");
-  for (const id of nodeIds) {
-    if (!covered.has(id)) issues.push(`Mermaid node ${id} is not covered by any storyboard scene`);
-  }
-  if (parsedTopology.topology.nodes.length > MAX_SCENE_NODES && storyboard.scenes.length < 2) {
-    issues.push("larger topologies require multiple scenes for progressive disclosure");
+  for (const id of elementIds) if (!covered.has(id)) issues.push(`semantic element ${id} is not covered by any storyboard scene`);
+  if (semanticModel.elements.length > MAX_SCENE_NODES && storyboard.scenes.length < 2) {
+    issues.push("larger models require multiple scenes for progressive disclosure");
   }
   if (issues.length) throw new VisualExplanationValidationError(issues.slice(0, 30));
 
-  return { title, summary, mermaid: parsedTopology.mermaid, storyboard, topology: parsedTopology.topology };
+  const payload = semanticModelToMermaid(semanticModel);
+  // The derived payload must pass the same restricted grammar used for legacy
+  // input. This is a security assertion, not a second canonical source.
+  parseMermaidTopology(payload);
+  return {
+    title,
+    summary,
+    diagramKind: "flowchart",
+    semanticModel,
+    storyboard,
+    renderer: {
+      renderer: "mermaid",
+      rendererSchemaVersion: "1.0",
+      generatedFrom: "semantic_model",
+      payload,
+    },
+    accessibleFallback: buildAccessibleFallback(title, summary, semanticModel, storyboard),
+    revisesVisualMessageId,
+    expectedRevision,
+  };
 }
-

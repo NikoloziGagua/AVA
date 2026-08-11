@@ -1,4 +1,4 @@
-import type { VisualExplanation, VisualScene, VisualTopology } from "./api.js";
+import type { VisualMessage, VisualScene, VisualSemanticModel } from "./types.js";
 
 const SAFE_SVG_ELEMENTS = new Set([
   "svg", "g", "path", "rect", "circle", "ellipse", "polygon", "polyline", "line",
@@ -10,27 +10,27 @@ function quoteLabel(label: string): string {
   return label.replace(/["\\\r\n]/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function nodeStatement(node: VisualTopology["nodes"][number]): string {
-  const label = quoteLabel(node.label);
-  if (node.shape === "decision") return `${node.id}{"${label}"}`;
-  if (node.shape === "terminal") return `${node.id}(["${label}"])`;
-  return `${node.id}["${label}"]`;
+function nodeStatement(element: VisualSemanticModel["elements"][number]): string {
+  const label = quoteLabel(element.label);
+  if (element.kind === "decision") return `${element.id}{"${label}"}`;
+  if (element.kind === "terminal") return `${element.id}(["${label}"])`;
+  return `${element.id}["${label}"]`;
 }
 
-function edgeStatement(edge: VisualTopology["edges"][number]): string {
-  const operator = edge.style === "dotted" ? "-.->" : edge.style === "strong" ? "==>" : "-->";
-  return `${edge.from} ${operator}${edge.label ? `|${quoteLabel(edge.label)}| ` : " "}${edge.to}`;
+function edgeStatement(relationship: VisualSemanticModel["relationships"][number]): string {
+  const operator = relationship.kind === "dotted" ? "-.->" : relationship.kind === "strong" ? "==>" : "-->";
+  return `${relationship.from} ${operator}${relationship.label ? `|${quoteLabel(relationship.label)}| ` : " "}${relationship.to}`;
 }
 
-/** Project one small storyboard scene from canonical topology. This generated
- * Mermaid is disposable; the stored Mermaid remains the source of truth. */
-export function buildSceneMermaid(visual: VisualExplanation, scene: VisualScene): string {
+/** Project one small scene from the renderer-neutral semantic model. Both the
+ * Mermaid string and rendered SVG are disposable browser artifacts. */
+export function buildSceneMermaid(visual: VisualMessage, scene: VisualScene): string {
   const visible = new Set(scene.nodeIds);
-  const nodes = visual.topology.nodes.filter((node) => visible.has(node.id));
-  const edges = visual.topology.edges.filter((edge) => visible.has(edge.from) && visible.has(edge.to));
-  const lines = [`flowchart ${visual.topology.direction}`];
-  for (const node of nodes) lines.push(`  ${nodeStatement(node)}`);
-  for (const edge of edges) lines.push(`  ${edgeStatement(edge)}`);
+  const elements = visual.semanticModel.elements.filter((element) => visible.has(element.id));
+  const relationships = visual.semanticModel.relationships.filter((relationship) => visible.has(relationship.from) && visible.has(relationship.to));
+  const lines = [`flowchart ${visual.semanticModel.direction}`];
+  for (const element of elements) lines.push(`  ${nodeStatement(element)}`);
+  for (const relationship of relationships) lines.push(`  ${edgeStatement(relationship)}`);
   if (scene.highlightNodeIds.length) {
     lines.push("  classDef avaFocus fill:#12343c,stroke:#5cf2ff,stroke-width:3px,color:#f4feff");
     lines.push(`  class ${scene.highlightNodeIds.join(",")} avaFocus`);
@@ -44,7 +44,7 @@ function safeCss(value: string): string {
 }
 
 /** Defense in depth after Mermaid's strict renderer. Only inert SVG survives. */
-export function sanitizeRenderedSvg(raw: string, title: string, description: string): string {
+export function sanitizeRenderedSvg(raw: string, title: string, description: string, idSeed = "visual"): string {
   const doc = new DOMParser().parseFromString(raw, "image/svg+xml");
   const svg = doc.documentElement;
   if (svg.localName.toLowerCase() !== "svg" || doc.querySelector("parsererror")) {
@@ -72,15 +72,18 @@ export function sanitizeRenderedSvg(raw: string, title: string, description: str
     if (name === "style") element.textContent = safeCss(element.textContent ?? "");
   }
   svg.removeAttribute("xmlns:xlink");
+  const safeSeed = idSeed.replace(/[^A-Za-z0-9_-]/g, "_").slice(-80) || "visual";
+  const titleId = `ava-visual-title-${safeSeed}`;
+  const descriptionId = `ava-visual-desc-${safeSeed}`;
   svg.setAttribute("role", "img");
-  svg.setAttribute("aria-labelledby", "ava-visual-title ava-visual-desc");
+  svg.setAttribute("aria-labelledby", `${titleId} ${descriptionId}`);
   svg.querySelector("title")?.remove();
   svg.querySelector("desc")?.remove();
   const titleNode = doc.createElementNS("http://www.w3.org/2000/svg", "title");
-  titleNode.setAttribute("id", "ava-visual-title");
+  titleNode.setAttribute("id", titleId);
   titleNode.textContent = title;
   const descNode = doc.createElementNS("http://www.w3.org/2000/svg", "desc");
-  descNode.setAttribute("id", "ava-visual-desc");
+  descNode.setAttribute("id", descriptionId);
   descNode.textContent = description;
   svg.prepend(descNode);
   svg.prepend(titleNode);
@@ -108,11 +111,7 @@ export async function renderMermaidSvg(source: string, id: string, title: string
     },
   });
   const rendered = await mermaid.render(`ava_visual_${id.replace(/[^A-Za-z0-9_]/g, "_")}`, source);
-  return sanitizeRenderedSvg(rendered.svg, title, description);
-}
-
-export function buildSandboxDocument(svg: string): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; base-uri 'none'; connect-src 'none'; font-src 'none'; form-action 'none'; frame-src 'none'; img-src data:; media-src 'none'; object-src 'none'; script-src 'none'; style-src 'unsafe-inline'"><meta name="referrer" content="no-referrer"><style>html,body{margin:0;min-height:100%;background:#05080b;color:#fff}body{display:grid;place-items:center;padding:20px;box-sizing:border-box}svg{display:block;max-width:100%;height:auto;max-height:680px}</style></head><body>${svg}</body></html>`;
+  return sanitizeRenderedSvg(rendered.svg, title, description, id);
 }
 
 function safeFilename(value: string): string {

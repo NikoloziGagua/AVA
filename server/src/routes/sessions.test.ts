@@ -8,8 +8,9 @@ import { openDb } from "../state/db.js";
 import { createSession, listSessions } from "../state/sessions.js";
 import { appendMessage } from "../state/messages.js";
 import { sessionsRoutes } from "./sessions.js";
-import { createVisualExplanation } from "../state/visual-explanations.js";
+import { createResearchVisual, createVisualExplanation } from "../state/visual-explanations.js";
 import { requestPathFixture } from "../visual-explanations/fixtures.test-helper.js";
+import { vikingMapFixture } from "../visual-explanations/research-fixtures.test-helper.js";
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "ava-sessions-"));
@@ -71,6 +72,32 @@ describe("sessionsRoutes", () => {
     });
     expect(res.body.messages[0].visualMessages[0]).not.toHaveProperty("html");
     expect(res.body.messages[0].visualMessages[0]).not.toHaveProperty("svg");
+  });
+
+  it("restores cited research visuals from exact assistant-message revisions", async () => {
+    const { app, db } = setup();
+    const session = createSession(db, { title: "research visual" });
+    const visual = createResearchVisual(db, vikingMapFixture, {
+      source: "ava_chat", sessionId: session.id, runId: "run-research-inline",
+    }).visual;
+    appendMessage(db, {
+      sessionId: session.id,
+      role: "assistant",
+      content: "Here is the cited map.",
+      metadata: { visualMessages: [{ visualMessageId: visual.visualMessageId, revision: visual.revision }] },
+    });
+
+    const res = await request(app).get(`/api/sessions/${session.id}`).expect(200);
+    expect(res.body.messages[0].visualMessages[0]).toMatchObject({
+      visualMessageId: visual.visualMessageId,
+      revision: 1,
+      schemaVersion: "2.0",
+      diagramKind: "geographic_map",
+    });
+    expect(res.body.messages[0].visualMessages[0].sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "sourcePrimary", url: "https://example.org/research/primary" }),
+    ]));
+    expect(res.body.messages[0].visualMessages[0]).not.toHaveProperty("html");
   });
 });
 

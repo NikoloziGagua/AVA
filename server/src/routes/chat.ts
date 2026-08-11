@@ -14,6 +14,7 @@ import {
   type MessageVisualReference,
 } from "../state/messages.js";
 import { getVisualExplanation } from "../state/visual-explanations.js";
+import { researchEntityRecords } from "../visual-explanations/research-model.js";
 import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
@@ -124,13 +125,24 @@ function validateVisualContext(
   }
   const scene = current.storyboard.scenes.find((item) => item.id === context.sceneId);
   if (!scene) throw Object.assign(new Error("visual scene is invalid"), { code: "invalid_visual_context", status: 400 });
-  const elements = new Map(current.semanticModel.elements.map((element) => [element.id, element]));
+  const records = current.schemaVersion === "1.0"
+    ? current.semanticModel.elements.map((element) => ({ id: element.id, label: element.label, claimIds: [] as string[], sourceIds: [] as string[] }))
+    : researchEntityRecords(current.semanticModel);
+  const elements = new Map(records.map((element) => [element.id, element]));
+  const sceneEntityIds = "nodeIds" in scene ? scene.nodeIds : scene.entityIds;
   const selected = [...new Set(context.selectedElementIds)];
-  if (selected.some((id) => !scene.nodeIds.includes(id) || !elements.has(id))) {
+  if (selected.some((id) => !sceneEntityIds.includes(id) || !elements.has(id))) {
     throw Object.assign(new Error("selected visual elements are invalid"), { code: "invalid_visual_context", status: 400 });
   }
   const safeContext: MessageVisualContext = { ...context, selectedElementIds: selected };
-  const selectedLabels = selected.map((id) => `${id}: ${elements.get(id)!.label}`);
+  const selectedLabels = selected.map((id) => {
+    const element = elements.get(id)!;
+    if (current.schemaVersion === "1.0") return `${id}: ${element.label}`;
+    const claimText = element.claimIds.map((claimId) => current.claims.find((claim) => claim.id === claimId)?.text).filter(Boolean);
+    const sourceText = element.sourceIds.map((sourceId) => current.sources.find((source) => source.id === sourceId)).filter(Boolean)
+      .map((source) => `${source!.title} (${source!.url})`);
+    return `${id}: ${element.label}${claimText.length ? `\n  claims: ${claimText.join(" | ")}` : ""}${sourceText.length ? `\n  sources: ${sourceText.join(" | ")}` : ""}`;
+  });
   const prompt = [
     "[EXPLICIT VISUAL CONTEXT — server validated]",
     `visualMessageId: ${current.visualMessageId}`,
@@ -545,7 +557,7 @@ export function chatRoutes(
         } else if (e.kind === "tool_result") {
           const s = runSteps[runSteps.length - 1];
           if (s && s.tool === e.payload.tool) s.ok = e.payload.ok;
-          if (e.payload.ok && e.payload.tool === "visual_explanation_create") {
+          if (e.payload.ok && (e.payload.tool === "visual_explanation_create" || e.payload.tool === "research_visual_create")) {
             try {
               const result = JSON.parse(e.payload.result) as {
                 visualMessageId?: unknown;
@@ -716,6 +728,7 @@ export function chatRoutes(
           db,
           sessionId: sid,
           source: parsed.data.voice ? "ava_voice" : "ava_chat",
+          observability: agentDeps.observability,
         });
         // Discuss-with-Claude is available in BOTH modes (Sir may ask by voice):
         // it queues a background, read-only consult bound to THIS session (sid),

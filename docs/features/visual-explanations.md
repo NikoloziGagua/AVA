@@ -125,3 +125,124 @@ but voice's `persist:false` delegated action path does not yet attach that visua
 to a spoken transcript; it remains available in the Visuals workspace. A visual
 proves that AVA validated and presented the supplied structure, not that the
 described external system is factually correct.
+
+## Research VisualMessage v2
+
+Deep research uses the same immutable VisualMessage revision and inline-chat
+path, but schema `2.0` adds an evidence-grounded, renderer-neutral research
+artifact. The canonical record contains the research question, automatic versus
+explicit form selection, written synthesis, methodology, limitations, sources,
+claims, semantic entities, storyboard, renderer metadata and accessible text.
+Every source has a direct HTTP(S) URL and quality classification. Every visual
+entity carries claim/source IDs, confidence, evidence status and an uncertainty
+note. Sources, claims, entities, relations, scenes and highlights are checked for
+duplicate or dangling IDs before anything is stored.
+
+The supported forms are:
+
+- `geographic_map`: sourced longitude/latitude locations, directed routes,
+  approximate regions, time layers and a legend;
+- `timeline`: events with explicit exact/year/range/approximate/unknown date
+  precision and causal or chronological links;
+- `evidence_matrix`: region/topic cells labelled strong, moderate, weak,
+  missing or disputed;
+- `claim_evidence_graph`: claims, sources, counterevidence, objections,
+  disputed points and evidence gaps;
+- `chart`: sourced bar, line or range points, including nullable unavailable
+  values and explicit low/high uncertainty; and
+- `process`: mechanisms, architectures, workflows and branching decisions.
+
+`research_visual_create` is the deep-research write tool. AVA first researches
+with ordinary source-reading tools, then selects the form from the question and
+evidence. An explicit user form wins and the differing automatic recommendation
+is retained. Validation rejects a semantic model that does not match that
+selection. Generic argument/claim questions default to a claim-evidence graph;
+geographic movement/regions, chronology, evidence coverage, quantities and
+mechanisms select their specialized forms. The separate authenticated
+`POST /api/visual-explanations/research` route is the manual typed boundary.
+Updates require both `revisesVisualMessageId` and `expectedRevision`; a stale
+revision receives `409` without writing.
+
+## Rendering and map data
+
+All v2 renderers consume the semantic model; the small renderer payload is only
+validated metadata (`renderer`, `read_only`, `claim_level`) and is never
+executed. Charts, timelines and matrices use native SVG/HTML. Claim and process
+graphs reuse the existing React Flow/Dagre projection. Geographic maps use
+bundled D3 Geo with a Natural Earth projection, `world-atlas` land geometry and
+TopoJSON conversion. This produces a genuine spherical geographic map from
+sourced coordinates—routes are not a left-to-right flowchart with place labels.
+
+The 1:110m Natural Earth land data is public domain and its attribution is shown
+in the map and exports. D3 and TopoJSON dependencies are permissively licensed.
+All code and basemap data are bundled into the production/PWA build: no map API,
+tile key, CDN, network stylesheet, provider HTML, WebGL worker or generated
+script is needed after installation. MapLibre was intentionally not used for
+this first slice because its WebGL/CSP workers and external tile/style lifecycle
+would add a larger online and security boundary without improving the bounded
+research-route use case.
+
+Regions are honest rectangular evidence zones, not asserted historical borders.
+V2 rejects inverted and antimeridian-crossing boxes rather than rendering them
+incorrectly; split rectangles or a future sourced polygon form are required.
+Location precision and optional uncertainty distance are visible, uncertain
+routes are dashed, route direction is shown with arrows, and scene changes select
+the best matching time layer. The user can still choose a different layer
+without messaging AVA.
+
+## Research-result interaction
+
+Each scene shows at most fourteen entities and at most eight highlights, and
+every semantic entity must occur in at least one scene. The inline card keeps the
+written synthesis, method, limitations and source panel synchronized with the
+selected exact revision. Selecting an entity reveals its claims, direct source
+links, confidence, evidence status and uncertainty. Only explicit Explain,
+Ask-about-selection and Attach actions send exact revision/scene/entity context
+back to AVA; layer selection, zoom, pan, hover and animation remain local.
+
+The card supports scene tabs and Arrow/Home/End navigation, focusable map/chart
+entities, reduced-motion rendering, responsive/narrow layouts, in-app expansion,
+and browser-local SVG/PNG export. A complete textual scene/source view is always
+available. A specialized-renderer exception is caught at the card boundary and
+replaced with a labelled static entity fallback rather than breaking Chat.
+
+## Privacy, persistence and observability
+
+Schema limits bound all collections and text. The server recursively secret-
+scrubs all persistable research strings, removes URL credentials/fragments and
+sensitive query parameters, and never stores generated HTML, scripts, SVG, PNG,
+raw browser/provider payloads or hidden reasoning. The client independently
+validates schema, renderer/form compatibility, direct URLs, coordinate/range
+bounds, relations, scene coverage and the allowlisted renderer payload before
+rendering API, history or offline-cache data.
+
+Planning, validation, persistence and safe failure emit idempotent normalized
+Mission Control events under the initiating AVA chat run. These events expose
+form, counts, revision, status and error boundary—not the raw research prompt or
+source bodies. Existing AVA/Codex/Claude communication traces remain visible
+through Mission Control's provider-neutral run/event model; research visuals do
+not add a second telemetry store or a hidden communication route.
+
+V1 and v2 rows coexist in `visual_message_revisions`; the schema version selects
+the decoder, so existing Mermaid/flow VisualMessages and legacy rows remain
+readable. Assistant message metadata stores only the exact ID/revision and
+session reload hydrates that immutable v2 artifact. List/cache/workspace paths
+accept both versions.
+
+## Adding a future visual form
+
+Add one discriminated semantic model to server and client types, define its
+evidence-bearing entity collection and relationship checks, add its strict
+provider-facing tool schema, map it to a bundled inert renderer, and add scene,
+fallback, security, persistence and renderer-failure tests. Canonical data must
+remain independent of layout/output artifacts. Paid/proprietary renderers,
+generated HTML/JavaScript, fabricated coordinates/dates/quantities and
+consequential verification replays are not acceptable fallbacks.
+
+Current limitations: the selection heuristic is deterministic rather than a
+separate classifier model; maps use regional points, routes and rectangular
+zones rather than country-boundary choropleths or arbitrary polygons; chart
+axes are intentionally compact rather than a full statistical workbench; and
+source quality labels record AVA's assessment but do not independently prove a
+source is correct. If specialized evidence is absent, AVA must present the
+written/static fallback and name what is missing instead of inventing data.

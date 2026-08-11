@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1786482422575,
+  "generatedAt": 1786486845693,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -897,6 +897,10 @@
     },
     {
       "name": "visual_explanation_create",
+      "file": "server/src/tools/visual-explanations-mcp.ts"
+    },
+    {
+      "name": "research_visual_create",
       "file": "server/src/tools/visual-explanations-mcp.ts"
     },
     {

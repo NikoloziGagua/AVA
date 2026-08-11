@@ -50,7 +50,7 @@ export function VisualsScreen({
   const selected = visuals.find((visual) => visual.visualMessageId === selectedId) ?? null;
   const start = () => {
     const topic = prompt.trim() || "the system or process I describe next";
-    onCreate(`Create and present an inline progressive visual explanation of ${topic}. Use stable semantic IDs, concise scenes, captions, highlights, transitions, interaction cues, and an accessible structure.`);
+    onCreate(`Research and present an inline progressive visual explanation of ${topic}. Choose the evidence-grounded form automatically (real geographic map, timeline, evidence-gap matrix, claim-evidence graph, quantitative chart, or process diagram), use stable semantic IDs, attach direct claim-level sources, preserve uncertainty, and build concise scenes with an accessible fallback.`);
   };
 
   return (

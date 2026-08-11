@@ -1,6 +1,6 @@
-import type { VisualMessage } from "./types.js";
+import type { FlowVisualMessage } from "./types.js";
 
-const elements: VisualMessage["semanticModel"]["elements"] = [
+const elements: FlowVisualMessage["semanticModel"]["elements"] = [
   { id: "request", label: "Niko asks AVA", kind: "terminal" },
   { id: "route", label: "Route request", kind: "process" },
   { id: "tool", label: "Run tool", kind: "process" },
@@ -8,14 +8,14 @@ const elements: VisualMessage["semanticModel"]["elements"] = [
   { id: "done", label: "Report result", kind: "terminal" },
 ];
 
-const relationships: VisualMessage["semanticModel"]["relationships"] = [
+const relationships: FlowVisualMessage["semanticModel"]["relationships"] = [
   { id: "rel_request_route", from: "request", to: "route", label: null, kind: "flow" },
   { id: "rel_route_tool", from: "route", to: "tool", label: null, kind: "flow" },
   { id: "rel_tool_verify", from: "tool", to: "verify", label: null, kind: "flow" },
   { id: "rel_verify_done", from: "verify", to: "done", label: "Yes or no", kind: "flow" },
 ];
 
-export const visualFixture: VisualMessage = {
+export const visualFixture: FlowVisualMessage = {
   schemaVersion: "1.0",
   visualMessageId: "visual_fixture01",
   revision: 1,

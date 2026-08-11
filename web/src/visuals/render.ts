@@ -1,6 +1,6 @@
 import dagre from "@dagrejs/dagre";
 import { MarkerType, Position, type Edge, type Node } from "@xyflow/react";
-import type { VisualElementKind, VisualMessage, VisualScene } from "./types.js";
+import type { FlowVisualMessage, VisualElementKind, VisualScene } from "./types.js";
 
 export type VisualFlowNodeData = Record<string, unknown> & {
   label: string;
@@ -23,7 +23,7 @@ export type VisualFlowEdge = Edge<VisualFlowEdgeData, "visual">;
 const NODE_WIDTH = 210;
 const NODE_HEIGHT = 82;
 
-function layoutDirection(direction: VisualMessage["semanticModel"]["direction"]): "TB" | "BT" | "LR" | "RL" {
+function layoutDirection(direction: FlowVisualMessage["semanticModel"]["direction"]): "TB" | "BT" | "LR" | "RL" {
   return direction === "TD" ? "TB" : direction;
 }
 
@@ -40,7 +40,7 @@ function handlePositions(direction: ReturnType<typeof layoutDirection>): { targe
  * persists semantic state.
  */
 export function buildSceneFlow(
-  visual: VisualMessage,
+  visual: FlowVisualMessage,
   scene: VisualScene,
   selectedIds: readonly string[],
   reducedMotion: boolean,

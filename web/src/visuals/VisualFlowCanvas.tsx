@@ -15,10 +15,10 @@ import {
 import "@xyflow/react/dist/style.css";
 import { CircleCheck, GitBranch, Route } from "lucide-react";
 import { buildSceneFlow, type VisualFlowEdge, type VisualFlowNode } from "./render.js";
-import type { VisualMessage, VisualScene } from "./types.js";
+import type { FlowVisualMessage, VisualScene } from "./types.js";
 
 export type VisualFlowCanvasProps = {
-  visual: VisualMessage;
+  visual: FlowVisualMessage;
   scene: VisualScene;
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;

@@ -60,7 +60,7 @@ approval row + a push notification, blocking up to 10 minutes). `.env` access an
 | **look_at_screen** | Ava's honest eyes: capture the desktop **and** run ONE vision call on a standard multimodal model, returning a factual 2–4 sentence description (or an answer to a specific `question`). This is what Ava uses to describe the screen or verify a visual result. Registered **only when an OpenAI key is set**; 60 s tool budget. | Medium (a paid vision call). |
 | **memory_read / memory_remember / memory_forget** | Durable cross-session memory (see §3). | Low; secrets scrubbed on write. |
 | **notes_capture / notes_search / notes_update / notes_promote** | Capture, find and organise general or project Notes; move cards through Ideas/Doing/Review/Done; promote a note to a task or explicit self-improvement request. | Note changes are low-risk local persistence. Self-improvement promotion enters the existing approval gate. |
-| **visual_explanation_create / visual_explanation_list** | Create, revise or reopen a progressive inline VisualMessage. A renderer-neutral stable-ID semantic model owns topology; storyboard scenes own captions, highlights, transitions and cues. React Flow renders the interactive canvas, Dagre lays it out, and Mermaid is a legacy ingest format only. | Low-risk local persistence. Inputs are schema-validated and secret-scrubbed; native rendering never executes generated HTML/JavaScript and works offline after installation. |
+| **visual_explanation_create / research_visual_create / visual_explanation_list** | Create, revise or reopen progressive inline visuals. Ordinary mechanisms use the stable-ID process model. Deep research automatically chooses a genuine geographic map, timeline, evidence-gap matrix, claim-evidence graph, sourced chart or process diagram and carries claim-level sources, confidence, disagreement and gaps into every scene. | Low-risk local persistence. Inputs are schema-validated and recursively secret-scrubbed; renderers never execute generated HTML/JavaScript and work offline after installation. |
 | **strategy_room_open** | Move the authoritative current AVA chat snapshot into the shared Niko + AVA + Codex Strategy Room. | Low-risk, bounded discussion only. Returning an approved conclusion adds a proposal to the source chat and never executes it. |
 | **self_improve / self_improve_status** | Queue an autonomous change to Ava's own code / report task states (see §4). | Gated pipeline. |
 | **read_claude_updates** | Read the notes Claude — Sir's developer/coding agent — leaves about changes to Ava's own code (a started/shipped/note JSON-lines log at `<dataDir>/claude-updates.jsonl`). Used when Sir asks what's happening / what changed / what Claude did; surfaces any in-flight update. Available in **both** action and conversation/voice mode. Attribution stays honest — Claude's work is Claude's. | Read-only. |
@@ -135,6 +135,17 @@ optional minimap, in-app expansion and explicit SVG/PNG export. Explicit
 Explain/branch/attach actions send server-validated visual context; ordinary view
 state remains local. The renderer is PWA-precached and recent validated messages
 are cached for offline reopening. See `docs/features/visual-explanations.md`.
+
+For substantial research, schema v2 keeps the written synthesis, methodology,
+limitations, source-quality panel and visual entities in one immutable artifact.
+AVA selects the form from the question/evidence unless Sir explicitly asks for
+one. A migration, conflict or trade-route request uses an actual offline Natural
+Earth geographic projection with sourced coordinates, directions, periods,
+regions, legends and geographic uncertainty. Timelines retain date precision;
+charts retain ranges and unavailable values; matrices and claim graphs make
+weak, disputed and missing evidence visible rather than smoothing it away.
+Mission Control records sanitized planning, validation, persistence and failure
+stages under the initiating run.
 
 ## 4. Self-Improvement
 

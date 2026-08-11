@@ -1974,7 +1974,7 @@ const capabilities: ExplorerCapability[] = [
       stopConditions: ["Reject undeclared or duplicate stable IDs.", "Reject active legacy Mermaid features or unsafe markup instead of ingesting them."],
     }),
     runtime: runtime(
-      ["visual_explanation_create", "visual_explanation_list"],
+      ["visual_explanation_create", "research_visual_create", "visual_explanation_list"],
       [],
       ["/api/visual-explanations"],
     ),

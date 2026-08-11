@@ -30,6 +30,7 @@ describe("VisualsScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ask AVA to build it" }));
     expect(onCreate).toHaveBeenCalledWith(expect.stringContaining("the AVA request path"));
     expect(onCreate).toHaveBeenCalledWith(expect.stringContaining("stable semantic IDs"));
+    expect(onCreate).toHaveBeenCalledWith(expect.stringContaining("real geographic map"));
   });
 
   it("keeps cached explanations usable when AVA is offline", async () => {

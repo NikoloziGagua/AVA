@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from "express";
 import type { Db } from "../state/db.js";
 import {
   createVisualExplanation,
+  createResearchVisual,
   getVisualExplanation,
   listVisualExplanations,
 } from "../state/visual-explanations.js";
@@ -10,6 +11,7 @@ import {
   VisualExplanationValidationError,
   type CreateVisualExplanationInput,
 } from "../visual-explanations/model.js";
+import type { CreateResearchVisualInput } from "../visual-explanations/research-model.js";
 
 export function visualExplanationRoutes(db: Db, auth: RequestHandler): Router {
   const router = Router();
@@ -51,6 +53,26 @@ export function visualExplanationRoutes(db: Db, auth: RequestHandler): Router {
     } catch (error) {
       if (error instanceof VisualExplanationValidationError) {
         res.status(400).json({ error: "invalid_visual_explanation", issues: error.issues });
+        return;
+      }
+      if (error instanceof StaleVisualRevisionError) {
+        res.status(409).json({ error: "stale_visual_revision", currentRevision: error.currentRevision });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  // Research artifacts share immutable VisualMessage revisions but use a
+  // separate typed write boundary so flowchart callers cannot accidentally
+  // smuggle an unvalidated renderer/data payload into the richer schema.
+  router.post("/research", auth, (req, res) => {
+    try {
+      const result = createResearchVisual(db, req.body as CreateResearchVisualInput, { source: "manual" });
+      res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+      if (error instanceof VisualExplanationValidationError) {
+        res.status(400).json({ error: "invalid_research_visual", issues: error.issues });
         return;
       }
       if (error instanceof StaleVisualRevisionError) {

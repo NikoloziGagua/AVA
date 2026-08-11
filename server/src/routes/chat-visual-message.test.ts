@@ -7,8 +7,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openDb, type Db } from "../state/db.js";
 import { listMessages } from "../state/messages.js";
 import { createSession } from "../state/sessions.js";
-import { createVisualExplanation } from "../state/visual-explanations.js";
+import { createResearchVisual, createVisualExplanation } from "../state/visual-explanations.js";
 import { requestPathFixture } from "../visual-explanations/fixtures.test-helper.js";
+import { vikingMapFixture } from "../visual-explanations/research-fixtures.test-helper.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
 import type { AgentEvent } from "../orchestrator/agent.js";
@@ -97,6 +98,36 @@ describe("inline visual message chat boundary", () => {
     expect(prompt).toContain("[EXPLICIT VISUAL CONTEXT — server validated]");
     expect(prompt).toContain("verify: Evidence available?");
     expect(listMessages(db, session.id)[0]?.metadata?.visualContext).toMatchObject({ action: "branch", revision: 1 });
+  });
+
+  it("attaches research visuals and returns validated claim/source context to AVA", async () => {
+    let db!: Db;
+    let storedId = "";
+    const runAgent = vi.fn(async (opts: { emit: (event: AgentEvent) => void; sessionId: string; runId: string; prompt: string }) => {
+      if (!storedId) {
+        const visual = createResearchVisual(db, vikingMapFixture, { source: "ava_chat", sessionId: opts.sessionId, runId: opts.runId }).visual;
+        storedId = visual.visualMessageId;
+        opts.emit({ kind: "tool_result", payload: { tool: "research_visual_create", ok: true, result: JSON.stringify({ visualMessageId: storedId, revision: 1 }) } });
+        opts.emit({ kind: "final", payload: { text: "Here is the grounded map." } });
+      } else {
+        expect(opts.prompt).toContain("westRoute: Western migration route");
+        expect(opts.prompt).toContain("Primary research source (https://example.org/research/primary)");
+        opts.emit({ kind: "final", payload: { text: "The route is broadly supported." } });
+      }
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const configured = setup(runAgent); db = configured.db;
+    const started = await request(configured.app).post("/api/chat").send({ text: "Research Viking migrations with a map" }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const assistant = listMessages(db, started.body.sessionId).find((message) => message.role === "assistant")!;
+    expect(assistant.metadata?.visualMessages).toEqual([{ visualMessageId: storedId, revision: 1 }]);
+    await request(configured.app).post("/api/chat").send({
+      sessionId: started.body.sessionId,
+      text: "Explain the route evidence",
+      visualContext: { visualMessageId: storedId, revision: 1, action: "branch", sceneId: "origins", selectedElementIds: ["westRoute"] },
+    }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(runAgent).toHaveBeenCalledTimes(2);
   });
 
   it("rejects stale revisions and invalid selections before creating a chat turn", async () => {

@@ -22,6 +22,8 @@ import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { exportVisualCanvas } from "./render.js";
 import type { VisualMessage, VisualMessageContext } from "./types.js";
 import { VisualFlowCanvas } from "./VisualFlowCanvas.js";
+import { ResearchVisualCard } from "./ResearchVisualCard.js";
+import type { FlowVisualMessage } from "./types.js";
 
 export type VisualSemanticActionHandler = (
   context: VisualMessageContext,
@@ -54,13 +56,13 @@ function startSceneIndex(visual: VisualMessage): number {
 
 const KIND_ICON = { process: Route, decision: GitBranch, terminal: CircleCheck } as const;
 
-export function VisualMessageCard({
+function FlowVisualMessageCard({
   visual,
   mode = "inline",
   onSemanticAction,
   canvasComponent: Canvas = VisualFlowCanvas,
   exporter = exportVisualCanvas,
-}: Props) {
+}: Props & { visual: FlowVisualMessage }) {
   const reducedMotion = useReducedMotion();
   const [sceneIndex, setSceneIndex] = useState(() => startSceneIndex(visual));
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -335,4 +337,11 @@ export function VisualMessageCard({
       {card(false)}
     </section>
   );
+}
+
+export function VisualMessageCard(props: Props) {
+  if (props.visual.schemaVersion === "2.0") {
+    return <ResearchVisualCard visual={props.visual} mode={props.mode} onSemanticAction={props.onSemanticAction} exporter={props.exporter} />;
+  }
+  return <FlowVisualMessageCard {...props} visual={props.visual} />;
 }

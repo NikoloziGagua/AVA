@@ -76,6 +76,9 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   // permissions). Instant — queueing a consult is not a risky act.
   if (tool === "discuss_with_claude") return { tier: "low", reason: "read-only background consult" };
   if (tool === "strategy_room_open") return { tier: "low", reason: "bounded read-only Strategy Room discussion" };
+  if (tool === "visual_explanation_create" || tool === "research_visual_create") {
+    return { tier: "low", reason: "validated local visual revision" };
+  }
 
   // Mutates live store products — keep Sir's veto window.
   if (tool === "shopify_update_product") return { tier: "medium", reason: "mutates live Shopify products" };
@@ -148,10 +151,6 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (tool === "notes_capture" || tool === "notes_update" || tool === "notes_promote") {
     return { tier: "low", reason: "Notes mutation stays in local AVA state; downstream improvements retain their own approval gate" };
-  }
-
-  if (tool === "visual_explanation_create") {
-    return { tier: "low", reason: "validated visual source stored only in local AVA state" };
   }
 
   return { tier: "medium", reason: "unknown tool defaults to ask" };

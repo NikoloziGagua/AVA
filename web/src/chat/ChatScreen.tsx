@@ -207,7 +207,7 @@ export function ChatScreen({
   useEffect(() => {
     const created = events.filter((event) =>
       event.kind === "tool_result" &&
-      event.payload.tool === "visual_explanation_create" &&
+      (event.payload.tool === "visual_explanation_create" || event.payload.tool === "research_visual_create") &&
       event.payload.ok,
     );
     for (const event of created) {

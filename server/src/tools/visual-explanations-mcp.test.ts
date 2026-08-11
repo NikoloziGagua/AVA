@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { openInMemoryDb, type Db } from "../state/db.js";
 import { listVisualExplanations } from "../state/visual-explanations.js";
 import { requestPathFixture } from "../visual-explanations/fixtures.test-helper.js";
+import { vikingMapFixture } from "../visual-explanations/research-fixtures.test-helper.js";
+import { ObservabilityService } from "../observability/store.js";
 import { buildVisualExplanationTools } from "./visual-explanations-mcp.js";
 
 let db: Db;
@@ -47,5 +49,36 @@ describe("visual explanation tools", () => {
     expect(result.ok).toBe(true);
     expect(result.text).toContain(requestPathFixture.title);
     expect(result.text).not.toContain("flowchart TD");
+  });
+
+  it("creates an evidence-linked research visual and exposes bounded progress in Mission Control", async () => {
+    const observability = new ObservabilityService(db);
+    observability.startRun({ id: "run-research", runKind: "chat_agent", runtimeType: "ava", ownerType: "ava", title: "Research" });
+    const research = buildVisualExplanationTools({ db, sessionId: "chat-visual", source: "ava_chat", observability })
+      .find((entry) => entry.tool.name === "research_visual_create")!;
+    const result = await research.run(vikingMapFixture as unknown as Record<string, unknown>, { runId: "run-research" });
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(result.text)).toMatchObject({ visualForm: "geographic_map", recommendedForm: "geographic_map" });
+    const events = observability.getEvents("run-research").filter((event) => event.type.startsWith("research.visual."));
+    expect(events.map((event) => event.type)).toEqual([
+      "research.visual.planning", "research.visual.validated", "research.visual.persisted",
+    ]);
+    expect(JSON.stringify(events)).not.toContain("Primary research source");
+    expect(events[0]).toMatchObject({ visibility: "sensitive_collapsed", privacyLevel: "source_sensitive" });
+  });
+
+  it("records a safe failure boundary without persisting invalid research evidence", async () => {
+    const observability = new ObservabilityService(db);
+    observability.startRun({ id: "run-research-fail", runKind: "chat_agent", runtimeType: "ava", ownerType: "ava", title: "Research" });
+    const research = buildVisualExplanationTools({ db, sessionId: "chat-visual", source: "ava_chat", observability })
+      .find((entry) => entry.tool.name === "research_visual_create")!;
+    const invalid = structuredClone(vikingMapFixture);
+    invalid.sources[0]!.url = "javascript:secret-token";
+    const result = await research.run(invalid as unknown as Record<string, unknown>, { runId: "run-research-fail" });
+    expect(result.ok).toBe(false);
+    expect(listVisualExplanations(db)).toHaveLength(0);
+    const failure = observability.getEvents("run-research-fail").find((event) => event.type === "research.visual.failed");
+    expect(failure).toMatchObject({ status: "error", title: "Research visual generation failed safely" });
+    expect(JSON.stringify(failure)).not.toContain("secret-token");
   });
 });

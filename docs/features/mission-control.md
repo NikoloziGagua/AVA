@@ -159,6 +159,15 @@ Coverage is deliberately honest:
 - Hume voice: not yet instrumented.
 - Forge, Codex, and Claude Code: adapter contract exists, live ingestion is not connected yet.
 
+Deep-research visual creation reuses this same normalized run/event store. The
+initiating AVA run receives idempotent `research.visual.planning`, `validated`,
+`persisted` or `failed` events. Mission Control can therefore show form
+selection, evidence/entity counts, artifact revision and the exact failure
+boundary while the final visual remains attached to Chat. Raw research prompts,
+source bodies, generated renderer output and secrets are not telemetry. Codex or
+Claude activity remains in its existing correlated communication trace; visual
+generation does not create a hidden agent channel or double-count their work.
+
 ## Forge adapter contract
 
 Forge's append-only journal remains authoritative for its internal state machine. An AVA registration supplies:

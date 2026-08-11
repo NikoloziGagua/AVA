@@ -60,6 +60,7 @@ approval row + a push notification, blocking up to 10 minutes). `.env` access an
 | **look_at_screen** | Ava's honest eyes: capture the desktop **and** run ONE vision call on a standard multimodal model, returning a factual 2–4 sentence description (or an answer to a specific `question`). This is what Ava uses to describe the screen or verify a visual result. Registered **only when an OpenAI key is set**; 60 s tool budget. | Medium (a paid vision call). |
 | **memory_read / memory_remember / memory_forget** | Durable cross-session memory (see §3). | Low; secrets scrubbed on write. |
 | **notes_capture / notes_search / notes_update / notes_promote** | Capture, find and organise general or project Notes; move cards through Ideas/Doing/Review/Done; promote a note to a task or explicit self-improvement request. | Note changes are low-risk local persistence. Self-improvement promotion enters the existing approval gate. |
+| **visual_explanation_create / visual_explanation_list** | Create or reopen a progressive visual explanation. Restricted Mermaid owns topology; a versioned stable-ID storyboard owns scenes, captions, highlights, transitions and cues. | Low-risk local persistence. Inputs are validated and secret-scrubbed; rendering occurs offline in a scriptless/no-network sandbox. |
 | **strategy_room_open** | Move the authoritative current AVA chat snapshot into the shared Niko + AVA + Codex Strategy Room. | Low-risk, bounded discussion only. Returning an approved conclusion adds a proposal to the source chat and never executes it. |
 | **self_improve / self_improve_status** | Queue an autonomous change to Ava's own code / report task states (see §4). | Gated pipeline. |
 | **read_claude_updates** | Read the notes Claude — Sir's developer/coding agent — leaves about changes to Ava's own code (a started/shipped/note JSON-lines log at `<dataDir>/claude-updates.jsonl`). Used when Sir asks what's happening / what changed / what Claude did; surfaces any in-flight update. Available in **both** action and conversation/voice mode. Attribution stays honest — Claude's work is Claude's. | Read-only. |
@@ -114,6 +115,22 @@ from ordinary text or voice requests. A note may be promoted into a prefilled AV
 task or an approval-gated self-improvement request without deleting or rewriting
 the source note. Saving or promoting a note never implies that the downstream
 task is complete. See `docs/features/notes.md` for the data and safety contract.
+
+### Progressive visual explanations
+
+The **Visuals** navigation section turns repository maps, request paths and
+branching processes into captioned scene-by-scene presentations. Ask AVA to
+"explain this visually" in text or voice, or start from the Visuals screen.
+Creation returns an exact visual ID and opens the validated result automatically.
+
+Canonical state is restricted Mermaid topology plus a versioned storyboard that
+references stable Mermaid node IDs. AVA stores no generated HTML, SVG or PNG.
+The locally bundled renderer projects one small scene at a time, sanitizes the
+SVG, and embeds it in a scriptless, no-network sandbox. Keyboard controls,
+reduced-motion behavior, visible captions and a full text fallback remain
+available; SVG/PNG export is explicit and browser-local. The renderer and its
+chunks are PWA-precached for offline use, and recently loaded visuals are cached
+on the installed device. See `docs/features/visual-explanations.md`.
 
 ## 4. Self-Improvement
 

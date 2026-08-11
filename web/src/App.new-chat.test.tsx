@@ -35,12 +35,13 @@ vi.mock("./splash/Splash.js", () => ({ Splash: () => <div>Splash</div> }));
 vi.mock("./chat/ChatScreen.js", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatScreen: ({ onOpenStrategy }: { onOpenStrategy?: (sessionId: string) => void }) => {
+    ChatScreen: ({ onOpenStrategy, onOpenVisual }: { onOpenStrategy?: (sessionId: string) => void; onOpenVisual?: (visualId: string) => void }) => {
       const mount = React.useRef(++state.nextChatMount);
       return (
         <div data-testid="mock-chat">
           chat-{mount.current}
           <button onClick={() => onOpenStrategy?.("internal-chat-17")}>mock take to room</button>
+          <button onClick={() => onOpenVisual?.("visual_abcdefgh")}>mock open visual</button>
         </div>
       );
     },
@@ -66,6 +67,9 @@ vi.mock("./strategy/StrategyRoomScreen.js", () => ({
     </div>
   ),
 }));
+vi.mock("./visuals/VisualsScreen.js", () => ({
+  VisualsScreen: ({ initialVisualId }: { initialVisualId?: string | null }) => <div>visual-id-{initialVisualId ?? "none"}</div>,
+}));
 
 import { App } from "./App.js";
 
@@ -89,5 +93,12 @@ describe("App New-chat navigation", () => {
     expect(screen.getByText("room-source-internal-chat-17")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "mock return to chat" }));
     expect(screen.getByTestId("mock-chat")).toBeTruthy();
+  });
+
+  it("opens the exact AVA visual emitted by the chat tool path", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock open visual" }));
+    expect(screen.getByText("visual-id-visual_abcdefgh")).toBeTruthy();
   });
 });

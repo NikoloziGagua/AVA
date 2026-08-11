@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Plus, List, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen } from "lucide-react";
+import { Home, Plus, List, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen, Presentation } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
 import { TubelightNav, type TubelightItem } from "./components/ava/TubelightNav.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
@@ -18,6 +18,7 @@ import { VoiceScreen } from "./voice/VoiceScreen.js";
 import { ExplorerScreen } from "./explorer/ExplorerScreen.js";
 import { MissionControlScreen } from "./mission-control/MissionControlScreen.js";
 import { StrategyRoomScreen } from "./strategy/StrategyRoomScreen.js";
+import { VisualsScreen } from "./visuals/VisualsScreen.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 
@@ -31,6 +32,7 @@ type View =
   | { name: "rules" }
   | { name: "self" }
   | { name: "strategy"; sourceSessionId?: string }
+  | { name: "visuals"; visualId?: string }
   | { name: "capabilities" }
   | { name: "list" };
 
@@ -52,6 +54,7 @@ function navForView(v: View): string | undefined {
     case "rules": return "Rules";
     case "self": return "Self";
     case "strategy": return "Room";
+    case "visuals": return "Visuals";
     case "capabilities": return "Explore";
     case "list": return "Chats";
     default: return undefined;
@@ -133,6 +136,7 @@ export function App() {
     { name: "Memory", icon: Brain, onSelect: () => setView({ name: "memory" }) },
     { name: "Notes", icon: NotebookPen, onSelect: () => setView({ name: "notes" }) },
     { name: "Explore", icon: Radar, onSelect: () => setView({ name: "capabilities" }) },
+    { name: "Visuals", icon: Presentation, onSelect: () => setView({ name: "visuals" }) },
     { name: "Room", icon: MessagesSquare, onSelect: () => setView({ name: "strategy" }) },
     { name: "Rules", icon: Settings2, onSelect: () => setView({ name: "rules" }) },
     { name: "Self", icon: Sparkles, onSelect: () => setView({ name: "self" }) },
@@ -208,6 +212,7 @@ export function App() {
               onOpenList={() => setView({ name: "list" })}
               onEnterVoice={() => setView({ name: "voice", from: "chat", sessionId: view.sessionId })}
               onOpenStrategy={(sessionId) => setView({ name: "strategy", sourceSessionId: sessionId })}
+              onOpenVisual={(visualId) => setView({ name: "visuals", visualId })}
             />
           </motion.div>
         )}
@@ -301,6 +306,23 @@ export function App() {
             <StrategyRoomScreen
               sourceSessionId={view.sourceSessionId ?? null}
               onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
+            />
+          </motion.div>
+        )}
+        {view.name === "visuals" && (
+          <motion.div
+            key={view.visualId ? `visuals-${view.visualId}` : "visuals"}
+            data-view="visuals"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
+          >
+            <VisualsScreen
+              initialVisualId={view.visualId ?? null}
+              onCreate={(text) => openNewChat(text)}
             />
           </motion.div>
         )}

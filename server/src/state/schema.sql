@@ -425,6 +425,28 @@ CREATE INDEX IF NOT EXISTS idx_notes_updated
 CREATE INDEX IF NOT EXISTS idx_notes_kind_status
   ON notes(kind, status, updated_at DESC);
 
+-- Visual explanations keep only canonical, validated source: Mermaid owns
+-- topology and the versioned storyboard owns presentation. Rendered HTML/SVG/
+-- PNG remain disposable browser artifacts and are never persisted here.
+CREATE TABLE IF NOT EXISTS visual_explanations (
+  id TEXT PRIMARY KEY,
+  schema_version TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  mermaid TEXT NOT NULL,
+  storyboard TEXT NOT NULL,
+  fingerprint TEXT NOT NULL UNIQUE,
+  source TEXT NOT NULL,
+  source_session_id TEXT,
+  source_run_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_visual_explanations_updated
+  ON visual_explanations(updated_at DESC, id);
+
 CREATE TABLE IF NOT EXISTS watches (
   id TEXT PRIMARY KEY,
   prompt TEXT NOT NULL,               -- what to check + what counts as triggered

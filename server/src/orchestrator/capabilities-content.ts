@@ -82,6 +82,15 @@ genuinely failed — then I offer the next approach.
   links and change history. I can search or update saved notes and promote one
   into a task draft or an approval-gated self-improvement request.
 
+## Explain visually
+- I can turn a repository map, request path, workflow, or branching process
+  into an interactive visual walkthrough in AVA. Mermaid is the stable topology
+  and a small storyboard reveals it scene by scene with captions, highlights,
+  transitions and interaction cues instead of showing one giant diagram. The
+  viewer is sandboxed, keyboard accessible, supports reduced motion and static
+  text, and exports the active scene as SVG or PNG. Installed AVA caches the
+  viewer and recently opened explanations for offline presentation.
+
 ## Message people (app modules)
 - Instagram is a first-class skill: I open profiles or safe search results
   without messaging, send DMs, open and read chats, and check

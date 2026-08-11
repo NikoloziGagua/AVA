@@ -15,6 +15,7 @@ const READ_ONLY_TOOLS = new Set([
   "find_places", "shopify_list_products", "shopify_get_product",
   "watch_list", "person_list",
   "notes_search",
+  "visual_explanation_list",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -147,6 +148,10 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (tool === "notes_capture" || tool === "notes_update" || tool === "notes_promote") {
     return { tier: "low", reason: "Notes mutation stays in local AVA state; downstream improvements retain their own approval gate" };
+  }
+
+  if (tool === "visual_explanation_create") {
+    return { tier: "low", reason: "validated visual source stored only in local AVA state" };
   }
 
   return { tier: "medium", reason: "unknown tool defaults to ask" };

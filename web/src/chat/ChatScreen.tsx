@@ -23,6 +23,7 @@ export interface ChatScreenProps {
   onOpenList?: () => void;
   onEnterVoice?: () => void;
   onOpenStrategy?: (sessionId: string) => void;
+  onOpenVisual?: (visualId: string) => void;
 }
 
 /**
@@ -53,6 +54,7 @@ export function ChatScreen({
   initialText,
   onEnterVoice,
   onOpenStrategy,
+  onOpenVisual,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
@@ -85,6 +87,7 @@ export function ChatScreen({
   // never change), so the dedupe stays stable across later re-renders.
   const seededLastAssistantRef = useRef<string | null>(null);
   const openedRoomEventRef = useRef<string | null>(null);
+  const openedVisualEventRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -175,6 +178,29 @@ export function ChatScreen({
     openedRoomEventRef.current = key;
     onOpenStrategy(sessionId);
   }, [events, onOpenStrategy, sessionId]);
+
+  // A successful visual tool result carries the server-issued artifact ID.
+  // Open the AVA-native viewer directly; do not trust assistant prose to copy
+  // or reconstruct an ID, and do not open on a failed/invalid tool attempt.
+  useEffect(() => {
+    if (!onOpenVisual) return;
+    const created = [...events].reverse().find((event) =>
+      event.kind === "tool_result" &&
+      event.payload.tool === "visual_explanation_create" &&
+      event.payload.ok,
+    );
+    if (!created || created.kind !== "tool_result") return;
+    const key = `${created.runEpoch}-${created.id}`;
+    if (openedVisualEventRef.current === key) return;
+    let visualId = "";
+    try {
+      const parsed = JSON.parse(created.payload.result) as { visualExplanationId?: unknown };
+      if (typeof parsed.visualExplanationId === "string") visualId = parsed.visualExplanationId;
+    } catch { return; }
+    if (!/^visual_[A-Za-z0-9_-]{8,32}$/.test(visualId)) return;
+    openedVisualEventRef.current = key;
+    onOpenVisual(visualId);
+  }, [events, onOpenVisual]);
 
   const currentRunFinished = events.some(
     (e) => e.runEpoch === runEpoch && (e.kind === "done" || e.kind === "killed" || e.kind === "error"),

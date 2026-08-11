@@ -42,6 +42,7 @@ import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
 import { buildNotesTools } from "../tools/notes-mcp.js";
 import { buildStrategyRoomTools } from "../tools/strategy-room-mcp.js";
+import { buildVisualExplanationTools } from "../tools/visual-explanations-mcp.js";
 import type { StrategyChatHandoffResult } from "../strategy/coordinator.js";
 import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
 import { buildShopifyTools } from "../tools/shopify-mcp.js";
@@ -598,6 +599,11 @@ export function chatRoutes(
               openFromSession: agentDeps.openStrategyRoomFromSession,
             })
           : [];
+        const visualExplanationTools = buildVisualExplanationTools({
+          db,
+          sessionId: sid,
+          source: parsed.data.voice ? "ava_voice" : "ava_chat",
+        });
         // Discuss-with-Claude is available in BOTH modes (Sir may ask by voice):
         // it queues a background, read-only consult bound to THIS session (sid),
         // returns immediately, and can recount past discussions. Only wired when
@@ -653,6 +659,7 @@ export function chatRoutes(
             ...memoryTools,
             ...notesTools,
             ...strategyRoomTools,
+            ...visualExplanationTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
             // Standing background checks ("notify me if/when …") — the
             // scheduler re-runs them; Ava just registers/lists/deletes here.
@@ -674,6 +681,7 @@ export function chatRoutes(
             ...memoryTools,
             ...notesTools,
             ...strategyRoomTools,
+            ...visualExplanationTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
           ];
         }

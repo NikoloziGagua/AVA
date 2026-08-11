@@ -95,4 +95,34 @@ describe("ChatScreen Strategy Room handoff", () => {
     await waitFor(() => expect(openRoom).toHaveBeenCalledTimes(1));
     expect(openRoom).toHaveBeenCalledWith("chat-17");
   });
+
+  it("opens the exact visual only after AVA's validated creation tool succeeds", async () => {
+    mocks.fetchSession.mockResolvedValue({
+      session: { id: "chat-17" },
+      messages: [{ id: 1, role: "user", content: "Visualize the request path", created_at: 1 }],
+    });
+    mocks.events = [{
+      id: 9,
+      runEpoch: 0,
+      kind: "tool_result",
+      payload: {
+        tool: "visual_explanation_create",
+        ok: true,
+        result: JSON.stringify({ visualExplanationId: "visual_abcdefgh" }),
+      },
+    }];
+    const openVisual = vi.fn();
+
+    render(
+      <ChatScreen
+        sessionId="chat-17"
+        onOpenSessions={() => {}}
+        onOpenRules={() => {}}
+        onOpenMemory={() => {}}
+        onOpenVisual={openVisual}
+      />,
+    );
+
+    await waitFor(() => expect(openVisual).toHaveBeenCalledWith("visual_abcdefgh"));
+  });
 });

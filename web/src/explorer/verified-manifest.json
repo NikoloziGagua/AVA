@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1786472516680,
+  "generatedAt": 1786477261348,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -520,6 +520,60 @@
       "kind": "implementation"
     },
     {
+      "capability": "interface.visual-explanations",
+      "path": "server/src/visual-explanations/model.ts",
+      "symbol": "validateVisualExplanation",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "server/src/state/visual-explanations.ts",
+      "symbol": "createVisualExplanation",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "server/src/routes/visual-explanations.ts",
+      "symbol": "visualExplanationRoutes",
+      "kind": "route"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "server/src/tools/visual-explanations-mcp.ts",
+      "symbol": "buildVisualExplanationTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "web/src/visuals/VisualsScreen.tsx",
+      "symbol": "VisualsScreen",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "web/src/visuals/VisualExplanationViewer.tsx",
+      "symbol": "VisualExplanationViewer",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "server/src/visual-explanations/model.test.ts",
+      "symbol": "validateVisualExplanation",
+      "kind": "test"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "web/src/visuals/VisualExplanationViewer.test.tsx",
+      "symbol": "VisualExplanationViewer",
+      "kind": "test"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "docs/features/visual-explanations.md",
+      "symbol": "Visual explanations",
+      "kind": "documentation"
+    },
+    {
       "capability": "interface.pwa",
       "path": "web/src/App.tsx",
       "symbol": "App",
@@ -602,6 +656,10 @@
     {
       "capability": "security.risk-policy",
       "route": "/api/approvals/pending"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "route": "/api/visual-explanations"
     },
     {
       "capability": "interface.pwa",
@@ -824,6 +882,14 @@
     {
       "name": "read_claude_updates",
       "file": "server/src/tools/update-log-mcp.ts"
+    },
+    {
+      "name": "visual_explanation_create",
+      "file": "server/src/tools/visual-explanations-mcp.ts"
+    },
+    {
+      "name": "visual_explanation_list",
+      "file": "server/src/tools/visual-explanations-mcp.ts"
     },
     {
       "name": "watch_create",

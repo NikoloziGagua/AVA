@@ -102,6 +102,10 @@ describe("classifyRisk", () => {
     expect(classifyRisk("notes_update", { id: "note_1", expected_version: 1 }).tier).toBe("low");
     expect(classifyRisk("notes_promote", { id: "note_1", target: "self_improvement" }).tier).toBe("low");
   });
+  it("routes visual creation as bounded local state and visual listing as read-only", () => {
+    expect(classifyRisk("visual_explanation_create", { title: "Map" }).tier).toBe("low");
+    expect(classifyRisk("visual_explanation_list", {}).tier).toBe("read-only");
+  });
 });
 
 describe("screen-sight and watch tools (2026-07-03 stall fix)", () => {

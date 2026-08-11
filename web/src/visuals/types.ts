@@ -33,7 +33,7 @@ export type VisualMessage = {
   semanticModel: VisualSemanticModel;
   storyboard: { schemaVersion: "1.0"; startSceneId: string; scenes: VisualScene[] };
   renderer: {
-    renderer: "mermaid";
+    renderer: "react-flow" | "mermaid";
     rendererSchemaVersion: "1.0";
     generatedFrom: "semantic_model";
     payload: string;
@@ -71,6 +71,19 @@ const ELEMENT_KINDS = new Set(["process", "decision", "terminal"]);
 const RELATIONSHIP_KINDS = new Set(["flow", "dotted", "strong"]);
 const TRANSITIONS = new Set(["none", "fade", "slide"]);
 const SOURCES = new Set(["manual", "ava_chat", "ava_voice"]);
+const RENDERERS = new Set(["react-flow", "mermaid"]);
+
+function hasValidRendererPayload(renderer: VisualMessage["renderer"]): boolean {
+  if (renderer.renderer === "mermaid") return true; // Legacy source is never executed by the current renderer.
+  try {
+    const value = JSON.parse(renderer.payload) as Record<string, unknown>;
+    return value !== null && !Array.isArray(value) &&
+      value.layout === "dagre" && value.interaction === "read_only" &&
+      Object.keys(value).every((key) => key === "layout" || key === "interaction");
+  } catch {
+    return false;
+  }
+}
 
 /** Defensive client gate for API, cache and message-history payloads. */
 export function isVisualMessage(value: unknown): value is VisualMessage {
@@ -87,7 +100,7 @@ export function isVisualMessage(value: unknown): value is VisualMessage {
     !Array.isArray(visual.semanticModel.relationships) ||
     !DIRECTIONS.has(visual.semanticModel.direction) ||
     !visual.storyboard || visual.storyboard.schemaVersion !== "1.0" || !Array.isArray(visual.storyboard.scenes) ||
-    !visual.renderer || visual.renderer.renderer !== "mermaid" ||
+    !visual.renderer || !RENDERERS.has(visual.renderer.renderer ?? "") ||
     visual.renderer.rendererSchemaVersion !== "1.0" ||
     visual.renderer.generatedFrom !== "semantic_model" ||
     typeof visual.renderer.payload !== "string" || visual.renderer.payload.length > 40_000 ||
@@ -100,6 +113,7 @@ export function isVisualMessage(value: unknown): value is VisualMessage {
     !SOURCES.has(visual.source ?? "") ||
     !Number.isSafeInteger(visual.createdAt) || (visual.createdAt ?? 0) < 0
   ) return false;
+  if (!hasValidRendererPayload(visual.renderer)) return false;
   const ids = new Set<string>();
   for (const element of visual.semanticModel.elements) {
     if (!STABLE_ID.test(element.id) || ids.has(element.id) || typeof element.label !== "string" ||

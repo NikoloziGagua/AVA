@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1786480799010,
+  "generatedAt": 1786482422575,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -553,6 +553,18 @@
       "capability": "interface.visual-explanations",
       "path": "web/src/visuals/VisualMessageCard.tsx",
       "symbol": "VisualMessageCard",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "web/src/visuals/VisualFlowCanvas.tsx",
+      "symbol": "VisualFlowCanvas",
+      "kind": "implementation"
+    },
+    {
+      "capability": "interface.visual-explanations",
+      "path": "web/src/visuals/render.ts",
+      "symbol": "buildSceneFlow",
       "kind": "implementation"
     },
     {

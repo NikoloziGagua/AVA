@@ -87,8 +87,9 @@ genuinely failed — then I offer the next approach.
   into an interactive VisualMessage directly beneath my chat explanation. A
   renderer-neutral semantic model owns stable elements and relationships; a
   small storyboard reveals it scene by scene with captions and highlights.
-  Mermaid is the bundled renderer, not the source of truth. The native card is
-  keyboard accessible, supports reduced motion, zoom/pan, static text, in-app
+  React Flow renders the interactive canvas and Dagre lays it out; neither is
+  the source of truth. The native card is keyboard accessible, supports reduced
+  motion, selection, zoom/pan, a minimap when useful, static text, in-app
   expansion and SVG/PNG export. Explicit Explain/branch/attach actions are the
   only view actions that send structured visual context back to me. Installed
   AVA caches the renderer and recent validated visuals for offline presentation.

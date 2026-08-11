@@ -5,12 +5,10 @@ import { VisualMessageCard, type VisualSemanticActionHandler } from "./VisualMes
  * directly and is the primary presentation path. */
 export function VisualExplanationViewer({
   visual,
-  render,
   onSemanticAction,
 }: {
   visual: VisualMessage;
-  render?: (source: string, id: string, title: string, description: string) => Promise<string>;
   onSemanticAction?: VisualSemanticActionHandler;
 }) {
-  return <VisualMessageCard visual={visual} mode="workspace" render={render} onSemanticAction={onSemanticAction} />;
+  return <VisualMessageCard visual={visual} mode="workspace" onSemanticAction={onSemanticAction} />;
 }

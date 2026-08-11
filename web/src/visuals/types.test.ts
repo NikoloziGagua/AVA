@@ -30,6 +30,10 @@ describe("VisualMessage client validation", () => {
         visualFixture.storyboard.scenes[1]!,
       ] },
     }],
+    ["unvalidated native renderer payload", {
+      ...visualFixture,
+      renderer: { ...visualFixture.renderer, payload: '<script src="https://evil.test/x.js"></script>' },
+    }],
   ])("rejects %s", (_name, candidate) => {
     expect(isVisualMessage(candidate)).toBe(false);
   });

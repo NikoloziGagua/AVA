@@ -11,6 +11,12 @@ describe("visual explanation model", () => {
     const result = validateVisualExplanation(fixture);
     expect(result.semanticModel.elements.length).toBeGreaterThan(4);
     expect(result.storyboard.scenes.every((scene) => scene.nodeIds.length <= 14)).toBe(true);
+    expect(result.renderer).toEqual({
+      renderer: "react-flow",
+      rendererSchemaVersion: "1.0",
+      generatedFrom: "semantic_model",
+      payload: JSON.stringify({ layout: "dagre", interaction: "read_only" }),
+    });
     expect(new Set(result.storyboard.scenes.flatMap((scene) => scene.nodeIds)))
       .toEqual(new Set(result.semanticModel.elements.map((element) => element.id)));
   });

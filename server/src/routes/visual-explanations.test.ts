@@ -38,7 +38,7 @@ describe("visual explanations API", () => {
     expect(created.body.visual).toMatchObject({
       diagramKind: "flowchart",
       revision: 1,
-      renderer: { renderer: "mermaid", generatedFrom: "semantic_model" },
+      renderer: { renderer: "react-flow", generatedFrom: "semantic_model" },
     });
     for (const forbidden of ["html", "svg", "png"]) expect(created.body.visual).not.toHaveProperty(forbidden);
 

@@ -23,9 +23,11 @@ The canonical source is renderer-neutral `VisualMessage` JSON:
 - validated renderer metadata and a disposable renderer payload; and
 - an AVA-generated accessible static fallback.
 
-The semantic model owns meaning and topology. Mermaid is the first renderer and
-legacy ingest format, not the source of truth. Generated Mermaid, SVG and PNG are
-disposable browser artifacts and are never canonical state.
+The semantic model owns meaning and topology. React Flow is the native
+interactive renderer and Dagre creates a disposable directed layout for the
+active scene; neither owns or mutates semantic state. Mermaid remains a
+restricted backward-compatible ingest format only. Generated layout, SVG and
+PNG are disposable browser artifacts and are never canonical state.
 
 Stable IDs start with a letter and contain only letters, numbers, `_` or `-`.
 Validation rejects duplicate and dangling element, relationship, scene and
@@ -66,12 +68,12 @@ scroll anchoring, selection, expansion and semantic actions. Native rendering
 keeps those states in one component and met the stricter interaction gates with
 less security surface.
 
-For the active scene the client derives a small Mermaid projection from the
-validated semantic model, renders it with AVA's bundled Mermaid dependency in
-strict mode, and sanitizes the returned SVG again at the injection boundary. The
-allow-list removes scripts, foreign HTML, event handlers, links, external URLs,
-`data:` references and unsafe CSS. Generated HTML and JavaScript are never run.
-Unique title/description IDs keep multiple inline SVGs accessible.
+For the active scene the client derives typed React Flow nodes and edges directly
+from the validated semantic model. Dagre positions that disposable projection.
+Labels are rendered as React text, not injected markup, and renderer payloads
+are never executed or inserted into the DOM. Generated HTML, JavaScript and
+provider-authored SVG are never run. Each card has isolated viewport, scene and
+selection state, so multiple inline visuals do not share mutable renderer state.
 
 The server also rejects active legacy Mermaid syntax, directives, click/href,
 style/link directives, HTML, JavaScript/data URLs, external URLs and CSS `url()`.
@@ -82,14 +84,15 @@ API, cache and history inputs before rendering.
 
 - Visible captions and optional cues accompany every scene.
 - Buttons, scene tabs, Arrow Left/Right, Home and End navigate scenes.
-- `+`, `-` and `0` control zoom; pointer drag pans only while zoomed.
-- Reduced-motion mode removes transitions.
+- Native controls, wheel/pinch and pointer drag provide fit, zoom and pan;
+  selecting a node highlights its directly connected branch without messaging AVA.
+- React Flow exposes keyboard-focusable nodes and controls. Reduced-motion mode
+  removes scene/edge motion while preserving state changes and focus behavior.
 - The complete static text fallback lists the summary, scenes, elements and
   relationships and remains available if rendering fails.
 - SVG and PNG export are explicit, browser-local actions for the active scene.
-- Expanded mode is an in-app modal, not a new window. The same card instance
-  preserves revision, scene, zoom and selection and restores chat scroll/focus
-  on return.
+- Expanded mode is an in-app modal, not a new window. It preserves the exact
+  revision, scene and selection and restores chat scroll/focus on return.
 
 Zoom, pan, hover, scene animation and unsubmitted selections stay local. Only
 the explicit **Explain this**, **Ask AVA about this branch**, and **Attach selected
@@ -100,11 +103,12 @@ context chip above the composer; it is sent only with the next submitted message
 
 ## Offline and performance behavior
 
-Mermaid and renderer chunks are part of AVA's PWA build/precache, so rendering
-needs no CDN after installation. The last 20 validated VisualMessages are cached
-locally for reopening while the server is unavailable. Inline rendering is lazy
-per active scene; a message with several visuals uses separate unique render IDs
-and never persists the generated result.
+React Flow, Dagre and the browser-local export helper are bundled into AVA's PWA
+build/precache, so rendering needs no CDN after installation. The last 20
+validated VisualMessages are cached locally for reopening while the server is
+unavailable. Only the active bounded scene is projected; larger graphs use
+visible-element rendering and a minimap, multiple visuals keep separate state,
+and AVA never persists the generated layout or exported image.
 
 ## Verification and limitations
 

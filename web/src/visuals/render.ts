@@ -1,165 +1,175 @@
-import type { VisualMessage, VisualScene, VisualSemanticModel } from "./types.js";
+import dagre from "@dagrejs/dagre";
+import { MarkerType, Position, type Edge, type Node } from "@xyflow/react";
+import type { VisualElementKind, VisualMessage, VisualScene } from "./types.js";
 
-const SAFE_SVG_ELEMENTS = new Set([
-  "svg", "g", "path", "rect", "circle", "ellipse", "polygon", "polyline", "line",
-  "text", "tspan", "defs", "marker", "clippath", "lineargradient", "radialgradient",
-  "stop", "style", "title", "desc",
-]);
+export type VisualFlowNodeData = Record<string, unknown> & {
+  label: string;
+  kind: VisualElementKind;
+  step: number;
+  highlighted: boolean;
+  dimmed: boolean;
+  targetPosition: Position;
+  sourcePosition: Position;
+};
 
-function quoteLabel(label: string): string {
-  return label.replace(/["\\\r\n]/g, " ").replace(/\s+/g, " ").trim();
+export type VisualFlowEdgeData = Record<string, unknown> & {
+  highlighted: boolean;
+  dimmed: boolean;
+};
+
+export type VisualFlowNode = Node<VisualFlowNodeData, "visual">;
+export type VisualFlowEdge = Edge<VisualFlowEdgeData, "visual">;
+
+const NODE_WIDTH = 210;
+const NODE_HEIGHT = 82;
+
+function layoutDirection(direction: VisualMessage["semanticModel"]["direction"]): "TB" | "BT" | "LR" | "RL" {
+  return direction === "TD" ? "TB" : direction;
 }
 
-function nodeStatement(element: VisualSemanticModel["elements"][number]): string {
-  const label = quoteLabel(element.label);
-  if (element.kind === "decision") return `${element.id}{"${label}"}`;
-  if (element.kind === "terminal") return `${element.id}(["${label}"])`;
-  return `${element.id}["${label}"]`;
+function handlePositions(direction: ReturnType<typeof layoutDirection>): { target: Position; source: Position } {
+  if (direction === "LR") return { target: Position.Left, source: Position.Right };
+  if (direction === "RL") return { target: Position.Right, source: Position.Left };
+  if (direction === "BT") return { target: Position.Bottom, source: Position.Top };
+  return { target: Position.Top, source: Position.Bottom };
 }
 
-function edgeStatement(relationship: VisualSemanticModel["relationships"][number]): string {
-  const operator = relationship.kind === "dotted" ? "-.->" : relationship.kind === "strong" ? "==>" : "-->";
-  return `${relationship.from} ${operator}${relationship.label ? `|${quoteLabel(relationship.label)}| ` : " "}${relationship.to}`;
-}
-
-/** Project one small scene from the renderer-neutral semantic model. Both the
- * Mermaid string and rendered SVG are disposable browser artifacts. */
-export function buildSceneMermaid(visual: VisualMessage, scene: VisualScene): string {
+/**
+ * Project one storyboard scene into React Flow primitives. VisualMessage remains
+ * canonical; Dagre positions a disposable projection and never mutates or
+ * persists semantic state.
+ */
+export function buildSceneFlow(
+  visual: VisualMessage,
+  scene: VisualScene,
+  selectedIds: readonly string[],
+  reducedMotion: boolean,
+): { nodes: VisualFlowNode[]; edges: VisualFlowEdge[] } {
   const visible = new Set(scene.nodeIds);
-  const elements = visual.semanticModel.elements.filter((element) => visible.has(element.id));
-  const relationships = visual.semanticModel.relationships.filter((relationship) => visible.has(relationship.from) && visible.has(relationship.to));
-  const lines = [`flowchart ${visual.semanticModel.direction}`];
-  for (const element of elements) lines.push(`  ${nodeStatement(element)}`);
-  for (const relationship of relationships) lines.push(`  ${edgeStatement(relationship)}`);
-  if (scene.highlightNodeIds.length) {
-    lines.push("  classDef avaFocus fill:#12343c,stroke:#5cf2ff,stroke-width:3px,color:#f4feff");
-    lines.push(`  class ${scene.highlightNodeIds.join(",")} avaFocus`);
-  }
-  return lines.join("\n");
-}
-
-function safeCss(value: string): string {
-  if (/@import|expression\s*\(|javascript\s*:|https?:|data\s*:/i.test(value)) return "";
-  return value;
-}
-
-/** Defense in depth after Mermaid's strict renderer. Only inert SVG survives. */
-export function sanitizeRenderedSvg(raw: string, title: string, description: string, idSeed = "visual"): string {
-  const doc = new DOMParser().parseFromString(raw, "image/svg+xml");
-  const svg = doc.documentElement;
-  if (svg.localName.toLowerCase() !== "svg" || doc.querySelector("parsererror")) {
-    throw new Error("The diagram renderer returned invalid SVG.");
-  }
-  for (const element of [svg, ...svg.querySelectorAll("*")]) {
-    const name = element.localName.toLowerCase();
-    if (!SAFE_SVG_ELEMENTS.has(name)) {
-      // Unknown SVG/HTML containers are removed with their contents. Unwrapping
-      // would let script text or foreign HTML leak into an otherwise inert SVG.
-      if (element !== svg) element.remove();
-      continue;
+  const selected = new Set(selectedIds.filter((id) => visible.has(id)));
+  const relationships = visual.semanticModel.relationships.filter(
+    (relationship) => visible.has(relationship.from) && visible.has(relationship.to),
+  );
+  const related = new Set(selected);
+  for (const relationship of relationships) {
+    if (selected.has(relationship.from) || selected.has(relationship.to)) {
+      related.add(relationship.from);
+      related.add(relationship.to);
     }
-    for (const attribute of [...element.attributes]) {
-      const attr = attribute.name.toLowerCase();
-      const value = attribute.value;
-      const unsafeName = attr.startsWith("on") || attr === "href" || attr === "xlink:href" || attr === "src";
-      const unsafeValue = /javascript\s*:|https?:|data\s*:/i.test(value);
-      if (unsafeName || unsafeValue) element.removeAttribute(attribute.name);
-      else if (attr === "style") {
-        const cleaned = safeCss(value);
-        if (cleaned) element.setAttribute("style", cleaned); else element.removeAttribute("style");
-      }
-    }
-    if (name === "style") element.textContent = safeCss(element.textContent ?? "");
   }
-  svg.removeAttribute("xmlns:xlink");
-  const safeSeed = idSeed.replace(/[^A-Za-z0-9_-]/g, "_").slice(-80) || "visual";
-  const titleId = `ava-visual-title-${safeSeed}`;
-  const descriptionId = `ava-visual-desc-${safeSeed}`;
-  svg.setAttribute("role", "img");
-  svg.setAttribute("aria-labelledby", `${titleId} ${descriptionId}`);
-  svg.querySelector("title")?.remove();
-  svg.querySelector("desc")?.remove();
-  const titleNode = doc.createElementNS("http://www.w3.org/2000/svg", "title");
-  titleNode.setAttribute("id", titleId);
-  titleNode.textContent = title;
-  const descNode = doc.createElementNS("http://www.w3.org/2000/svg", "desc");
-  descNode.setAttribute("id", descriptionId);
-  descNode.textContent = description;
-  svg.prepend(descNode);
-  svg.prepend(titleNode);
-  return new XMLSerializer().serializeToString(svg);
-}
 
-export async function renderMermaidSvg(source: string, id: string, title: string, description: string): Promise<string> {
-  const { default: mermaid } = await import("mermaid");
-  mermaid.initialize({
-    startOnLoad: false,
-    securityLevel: "strict",
-    theme: "dark",
-    deterministicIds: true,
-    deterministicIDSeed: id,
-    flowchart: { htmlLabels: false, useMaxWidth: true, curve: "basis" },
-    themeVariables: {
-      background: "#05080b",
-      primaryColor: "#10252c",
-      primaryTextColor: "#ecfeff",
-      primaryBorderColor: "#5cf2ff",
-      lineColor: "#7894a0",
-      secondaryColor: "#17152a",
-      tertiaryColor: "#0b1217",
-      fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
-    },
+  const rankdir = layoutDirection(visual.semanticModel.direction);
+  const positions = handlePositions(rankdir);
+  const graph = new dagre.graphlib.Graph({ multigraph: true })
+    .setDefaultEdgeLabel(() => ({}))
+    .setGraph({
+      rankdir,
+      ranker: "network-simplex",
+      acyclicer: "greedy",
+      align: rankdir === "LR" || rankdir === "RL" ? "UL" : undefined,
+      nodesep: 46,
+      ranksep: 86,
+      edgesep: 24,
+      marginx: 30,
+      marginy: 30,
+    });
+
+  for (const element of visual.semanticModel.elements) {
+    if (visible.has(element.id)) graph.setNode(element.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+  }
+  for (const relationship of relationships) {
+    graph.setEdge(relationship.from, relationship.to, {}, relationship.id);
+  }
+  dagre.layout(graph);
+
+  const nodes: VisualFlowNode[] = visual.semanticModel.elements
+    .filter((element) => visible.has(element.id))
+    .map((element) => {
+      const point = graph.node(element.id) as { x: number; y: number };
+      const isSelected = selected.has(element.id);
+      return {
+        id: element.id,
+        type: "visual",
+        position: { x: point.x - NODE_WIDTH / 2, y: point.y - NODE_HEIGHT / 2 },
+        selected: isSelected,
+        draggable: false,
+        connectable: false,
+        deletable: false,
+        focusable: true,
+        ariaRole: "button",
+        domAttributes: {
+          "aria-label": `${element.label}, ${element.kind}${scene.highlightNodeIds.includes(element.id) ? ", highlighted" : ""}`,
+          "aria-pressed": isSelected,
+          "data-semantic-id": element.id,
+        },
+        data: {
+          label: element.label,
+          kind: element.kind,
+          step: scene.nodeIds.indexOf(element.id) + 1,
+          highlighted: scene.highlightNodeIds.includes(element.id),
+          dimmed: selected.size > 0 && !related.has(element.id),
+          targetPosition: positions.target,
+          sourcePosition: positions.source,
+        },
+      };
+    });
+
+  const edges: VisualFlowEdge[] = relationships.map((relationship) => {
+    const isRelated = selected.has(relationship.from) || selected.has(relationship.to);
+    const highlighted = relationship.kind === "strong" || isRelated;
+    return {
+      id: relationship.id,
+      source: relationship.from,
+      target: relationship.to,
+      type: "visual",
+      label: relationship.label ?? undefined,
+      focusable: true,
+      selectable: false,
+      animated: !reducedMotion && highlighted,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        width: 16,
+        height: 16,
+        color: highlighted ? "#73f4ff" : "#617784",
+      },
+      data: {
+        highlighted,
+        dimmed: selected.size > 0 && !isRelated,
+      },
+      ariaLabel: `${visual.semanticModel.elements.find((item) => item.id === relationship.from)?.label ?? relationship.from}${relationship.label ? `, ${relationship.label},` : " leads to"} ${visual.semanticModel.elements.find((item) => item.id === relationship.to)?.label ?? relationship.to}`,
+    };
   });
-  const rendered = await mermaid.render(`ava_visual_${id.replace(/[^A-Za-z0-9_]/g, "_")}`, source);
-  return sanitizeRenderedSvg(rendered.svg, title, description, id);
+
+  return { nodes, edges };
 }
 
 function safeFilename(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "ava-visual";
 }
 
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
+function downloadDataUrl(url: string, filename: string): void {
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
   anchor.rel = "noopener";
   anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export function downloadSvg(svg: string, title: string, sceneTitle: string): void {
-  downloadBlob(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }), `${safeFilename(title)}-${safeFilename(sceneTitle)}.svg`);
-}
-
-export async function downloadPng(svg: string, title: string, sceneTitle: string): Promise<void> {
-  const source = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(source);
-  try {
-    const image = new Image();
-    image.decoding = "async";
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("The SVG could not be converted to PNG."));
-      image.src = url;
-    });
-    const width = Math.min(2400, Math.max(800, image.naturalWidth || 1200));
-    const ratio = (image.naturalHeight || 700) / Math.max(1, image.naturalWidth || 1200);
-    const height = Math.min(1800, Math.max(500, Math.round(width * ratio)));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("PNG export is unavailable in this browser.");
-    context.fillStyle = "#05080b";
-    context.fillRect(0, 0, width, height);
-    context.drawImage(image, 0, 0, width, height);
-    const png = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
-      (blob) => blob ? resolve(blob) : reject(new Error("PNG export failed.")),
-      "image/png",
-    ));
-    downloadBlob(png, `${safeFilename(title)}-${safeFilename(sceneTitle)}.png`);
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+/** Export the visible native graph. No duplicate artifact is persisted. */
+export async function exportVisualCanvas(
+  element: HTMLElement,
+  format: "svg" | "png",
+  title: string,
+  sceneTitle: string,
+): Promise<void> {
+  const { toPng, toSvg } = await import("html-to-image");
+  const options = {
+    backgroundColor: "#071019",
+    cacheBust: false,
+    pixelRatio: format === "png" ? 2 : 1,
+    skipFonts: true,
+    filter: (node: HTMLElement) => !node.classList?.contains("visual-export-ignore"),
+  };
+  const url = format === "png" ? await toPng(element, options) : await toSvg(element, options);
+  downloadDataUrl(url, `${safeFilename(title)}-${safeFilename(sceneTitle)}.${format}`);
 }

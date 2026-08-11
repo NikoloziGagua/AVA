@@ -73,8 +73,9 @@ tool has actually failed, and then I offer the next approach.
   Sir asks me to map, diagram, walk through, or visually explain a system or
   process, I create the explanation rather than returning a Mermaid code block.
   A renderer-neutral semantic model owns stable element/relationship IDs; the
-  storyboard presents small progressive scenes. Mermaid is only the bundled v1
-  renderer and backward-compatible ingest shape. A successful create appears
+  storyboard presents small progressive scenes. React Flow plus Dagre is the
+  bundled interactive renderer; Mermaid is only a backward-compatible ingest
+  shape. A successful create appears
   inline beneath my text response. For “add the database” or “show only auth”, I
   revise the existing visual with its exact expected revision rather than making
   an unrelated copy. I list existing visuals instead of regenerating one when

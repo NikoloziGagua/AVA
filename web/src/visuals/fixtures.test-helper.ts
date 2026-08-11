@@ -32,19 +32,10 @@ export const visualFixture: VisualMessage = {
     ],
   },
   renderer: {
-    renderer: "mermaid",
+    renderer: "react-flow",
     rendererSchemaVersion: "1.0",
     generatedFrom: "semantic_model",
-    payload: `flowchart TD
-request(["Niko asks AVA"])
-route["Route request"]
-tool["Run tool"]
-verify{"Verified?"}
-done(["Report result"])
-request --> route
-route --> tool
-tool --> verify
-verify -->|Yes or no| done`,
+    payload: JSON.stringify({ layout: "dagre", interaction: "read_only" }),
   },
   accessibleFallback: {
     heading: "Request path",

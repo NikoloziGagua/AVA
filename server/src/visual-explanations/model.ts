@@ -82,7 +82,7 @@ const SemanticModelSchema = z.object({
 export type VisualStoryboard = z.infer<typeof StoryboardSchema>;
 
 export type VisualRendererMetadata = {
-  renderer: "mermaid";
+  renderer: "react-flow" | "mermaid";
   rendererSchemaVersion: "1.0";
   generatedFrom: "semantic_model";
   payload: string;
@@ -408,10 +408,6 @@ export function validateVisualExplanation(input: CreateVisualExplanationInput): 
   }
   if (issues.length) throw new VisualExplanationValidationError(issues.slice(0, 30));
 
-  const payload = semanticModelToMermaid(semanticModel);
-  // The derived payload must pass the same restricted grammar used for legacy
-  // input. This is a security assertion, not a second canonical source.
-  parseMermaidTopology(payload);
   return {
     title,
     summary,
@@ -419,10 +415,10 @@ export function validateVisualExplanation(input: CreateVisualExplanationInput): 
     semanticModel,
     storyboard,
     renderer: {
-      renderer: "mermaid",
+      renderer: "react-flow",
       rendererSchemaVersion: "1.0",
       generatedFrom: "semantic_model",
-      payload,
+      payload: JSON.stringify({ layout: "dagre", interaction: "read_only" }),
     },
     accessibleFallback: buildAccessibleFallback(title, summary, semanticModel, storyboard),
     revisesVisualMessageId,

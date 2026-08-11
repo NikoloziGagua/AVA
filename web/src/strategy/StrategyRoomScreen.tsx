@@ -227,6 +227,30 @@ export function StrategyRoomScreen({ sourceSessionId = null, onOpenChat }: Strat
     }
   };
 
+  const approveConclusion = async () => {
+    const room = activeRoom;
+    if (!room || busy) return;
+    if (!room.sourceSessionId) {
+      await runAction(() => approveStrategyRoom(room.id, room.version));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const approved = await approveStrategyRoom(room.id, room.version);
+      const returned = await returnStrategyConclusionToChat(approved.id, approved.version);
+      setDetail((current) => current ? { ...current, room: returned.room } : current);
+      onOpenChat?.(returned.sessionId);
+    } catch (cause) {
+      setError(cause instanceof ApiError && cause.code === "stale_version"
+        ? "The room changed in another event. It has been refreshed; try again."
+        : cause instanceof Error ? cause.message : "The conclusion could not be approved and returned.");
+      void selectRoom(room.id);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <PanelShell title="Strategy Room" grid>
       <PanelSection
@@ -345,12 +369,16 @@ export function StrategyRoomScreen({ sourceSessionId = null, onOpenChat }: Strat
             <div className="mt-4 border-t border-white/[0.07] pt-4">
               <button
                 disabled={busy}
-                onClick={() => void runAction(() => approveStrategyRoom(activeRoom.id, activeRoom.version))}
+                onClick={() => void approveConclusion()}
                 className="btn-deck btn-primary flex w-full items-center justify-center gap-2 disabled:opacity-40"
               >
-                <Check size={13} /> Approve conclusion
+                <Check size={13} /> {activeRoom.sourceSessionId ? "Approve & return to AVA chat" : "Approve conclusion"}
               </button>
-              <p className="mt-2 text-[9px] leading-4 text-white/35">Records the decision only. It does not begin development.</p>
+              <p className="mt-2 text-[9px] leading-4 text-white/35">
+                {activeRoom.sourceSessionId
+                  ? "Records the decision and returns its proposal to the linked chat. It does not begin development."
+                  : "Records the decision only. It does not begin development."}
+              </p>
             </div>
           )}
           {activeRoom?.status === "approved" && activeRoom.sourceSessionId && (
@@ -379,7 +407,10 @@ export function StrategyRoomScreen({ sourceSessionId = null, onOpenChat }: Strat
               <CirclePause size={13} /> Pause discussion
             </button>
           )}
-          {activeRoom && ["paused", "failed", "approved"].includes(activeRoom.status) && (
+          {activeRoom && (
+            ["paused", "failed"].includes(activeRoom.status) ||
+            (activeRoom.status === "approved" && (!activeRoom.sourceSessionId || activeRoom.returnedMessageId !== null))
+          ) && (
             <button
               disabled={busy}
               onClick={() => void runAction(() => resumeStrategyRoom(activeRoom.id, activeRoom.version))}

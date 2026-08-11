@@ -82,4 +82,34 @@ describe("StrategyRoomCoordinator", () => {
     expect(store.listMessages(id).some((message) => message.content.includes("change one assumption"))).toBe(true);
     db.close();
   });
+
+  it("does not reopen a linked approved room before its conclusion is returned", () => {
+    const db = openInMemoryDb();
+    const store = new StrategyRoomStore(db);
+    const coordinator = new StrategyRoomCoordinator({ store, provider: provider(), codex: codex(), repoRoot: "C:/repo" });
+    const linked = store.createRoomFromChat({
+      topic: "Choose a linked plan",
+      context: "Niko: Choose a linked plan",
+      sourceSessionId: "chat-linked",
+      sourceThroughMessageId: 91,
+    });
+    const proposed = store.updateRoom(linked.detail.room.id, {
+      status: "awaiting_niko",
+      phase: "waiting_for_niko",
+      activeActor: null,
+      conclusion: "Use the approved plan.",
+      livingBrief: "Use the approved plan.",
+    });
+    const approved = coordinator.approve(linked.detail.room.id, proposed.version);
+    expect(approved.ok).toBe(true);
+    if (!approved.ok) throw new Error("approval failed");
+
+    expect(coordinator.resume(linked.detail.room.id, approved.room.version)).toMatchObject({
+      ok: false,
+      reason: "invalid_status",
+      room: { status: "approved", returnedMessageId: null },
+    });
+    expect(store.getRoom(linked.detail.room.id)).toMatchObject({ status: "approved", conclusion: "Use the approved plan." });
+    db.close();
+  });
 });

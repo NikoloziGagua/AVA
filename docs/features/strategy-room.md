@@ -108,9 +108,12 @@ can instead say “take this conversation to the Room” or “bring Codex into 
 discussion”; `strategy_room_open` uses the same server-authoritative path and
 the UI follows the successful tool event into the linked room. A linked room
 identifies its source snapshot and provides **Back to chat**. After Niko
-approves the room's conclusion, **Return conclusion to AVA chat** adds the
-proposal and navigates to the exact source conversation so Niko can issue,
-revise, or reject the course of action.
+approves a linked room's conclusion, **Approve & return to AVA chat** records
+the decision, adds the proposal and navigates to the exact source conversation
+in one step so Niko can issue, revise, or reject the course of action. If
+approval succeeded but navigation or return failed, the approved room retains
+a separate **Return conclusion to AVA chat** recovery action. A linked approved
+room cannot be reopened until that conclusion has been returned.
 
 The screen uses authenticated fetch-SSE rather than putting AVA's device token
 in a URL. Polling is not the source of truth; an offline indicator and replay

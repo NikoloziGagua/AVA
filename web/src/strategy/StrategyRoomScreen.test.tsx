@@ -128,8 +128,37 @@ describe("StrategyRoomScreen", () => {
     render(<StrategyRoomScreen sourceSessionId="chat-17" onOpenChat={openChat} />);
 
     expect(await screen.findByText(/linked to ava chat through message 42/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reopen discussion" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Return conclusion to AVA chat" }));
     await waitFor(() => expect(api.returnStrategyConclusionToChat).toHaveBeenCalledWith("room_1", 12));
+    expect(openChat).toHaveBeenCalledWith("chat-17");
+  });
+
+  it("approves and returns a linked conclusion in one unambiguous action", async () => {
+    const linked = {
+      ...room,
+      sourceSessionId: "chat-17",
+      sourceThroughMessageId: 42,
+    };
+    const approved = { ...linked, status: "approved" as const, phase: "approved", version: 13 };
+    const returned = { ...approved, returnedMessageId: 43, returnedAt: Date.now(), version: 14 };
+    const openChat = vi.fn();
+    api.fetchStrategyMeta.mockResolvedValue(meta);
+    api.fetchStrategyRooms.mockResolvedValue([]);
+    api.createStrategyRoomFromChat.mockResolvedValue({ ...detail, room: linked });
+    api.approveStrategyRoom.mockResolvedValue(approved);
+    api.returnStrategyConclusionToChat.mockResolvedValue({
+      room: returned,
+      sessionId: "chat-17",
+      messageId: 43,
+      idempotent: false,
+    });
+
+    render(<StrategyRoomScreen sourceSessionId="chat-17" onOpenChat={openChat} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Approve & return to AVA chat" }));
+    await waitFor(() => expect(api.approveStrategyRoom).toHaveBeenCalledWith("room_1", 12));
+    expect(api.returnStrategyConclusionToChat).toHaveBeenCalledWith("room_1", 13);
     expect(openChat).toHaveBeenCalledWith("chat-17");
   });
 });

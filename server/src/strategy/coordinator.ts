@@ -171,6 +171,12 @@ export class StrategyRoomCoordinator {
     if (!current) return { ok: false, reason: "not_found", room: null };
     if (current.version !== expectedVersion) return { ok: false, reason: "stale_version", room: current };
     if (current.status === "discussing") return { ok: false, reason: "invalid_status", room: current };
+    // A linked decision must reach its originating chat before another round
+    // can replace the approved projection. This keeps the primary next action
+    // unambiguous and preserves the approved conclusion until it is returned.
+    if (current.status === "approved" && current.sourceSessionId && current.returnedMessageId === null) {
+      return { ok: false, reason: "invalid_status", room: current };
+    }
     const room = this.deps.store.reopenForInput(roomId);
     this.start(roomId);
     return { ok: true, room };

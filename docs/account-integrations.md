@@ -20,6 +20,17 @@ The same persistent browser covers Instagram, WhatsApp Web, Gmail, Calendar,
 Outlook, and other websites. Instagram and WhatsApp have dedicated verified
 workflows; other sites use AVA's general browser tools.
 
+### Instagram message routing
+
+Instagram sends are profile-first. AVA resolves the person from the local
+people map, reads that person's saved Instagram username, opens the exact
+`https://www.instagram.com/<username>/` profile, verifies that the browser
+remained on that username, and clicks the profile's exact **Message** action.
+Only then does she type, send, and verify the requested text in the opened
+thread. She does not search the Instagram inbox and does not use a stored
+thread ID to choose the recipient. If the username, profile, Message action,
+login, or verification is missing, she stops without trying another account.
+
 ## One-time setup per service
 
 ### WhatsApp

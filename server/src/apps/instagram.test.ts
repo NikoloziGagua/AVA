@@ -241,55 +241,48 @@ describe("openProfile", () => {
 // ── openThread ───────────────────────────────────────────────────────────────
 
 describe("openThread", () => {
-  it("uses the learned thread id fast path without any profile navigation", async () => {
+  it("ignores a learned thread route and re-enters through the saved username profile", async () => {
     upsertPerson(dir, { name: "Lasha", instagram: { username: "lasha_b", threadId: "424242" } });
-    const { chrome } = makeChrome();
+    const { chrome, setUrl } = makeChrome();
+    chrome.readPage.mockResolvedValue({ ok: true, text: PROFILE_TEXT });
+    chrome.click.mockImplementation(async (selector: string) => {
+      if (selector === 'text="Message"') {
+        setUrl(`${BASE}/direct/t/777888999/`);
+        return { ok: true };
+      }
+      return { ok: false, reason: "no matches" };
+    });
     const res = await settle(() => openThread(depsWith(chrome), "Lasha"));
     expect(res.ok).toBe(true);
-    expect(res.threadId).toBe("424242");
-    expect(res.detail).toContain("fast path");
+    expect(res.threadId).toBe("777888999");
+    expect(res.detail).toContain("verified profile @lasha_b");
     expect(res.person?.name).toBe("Lasha");
-    // Exactly two navigations: inbox (readiness) + the thread. Never the profile.
     expect(chrome.navigate.mock.calls.map((c) => c[0])).toEqual([
-      `${BASE}/direct/inbox/`,
-      `${BASE}/direct/t/424242/`,
+      `${BASE}/lasha_b/`,
     ]);
-    expect(chrome.click.mock.calls.map((c) => c[0])).not.toContain('text="Message"');
+    expect(chrome.click).toHaveBeenCalledWith('text="Message"');
+    expect(chrome.navigate).not.toHaveBeenCalledWith(`${BASE}/direct/t/424242/`);
+    expect(chrome.navigate).not.toHaveBeenCalledWith(`${BASE}/direct/new/`);
+    expect(listPeople(dir)[0]!.instagram?.threadId).toBe("777888999");
   });
 
-  it("clears a dead thread id, falls through to the profile, and learns the new id", async () => {
+  it("replaces stored thread evidence only after the profile Message action opens a new thread", async () => {
     upsertPerson(dir, { name: "Lasha", instagram: { username: "lasha_b", threadId: "111" } });
     const { chrome, setUrl } = makeChrome();
-    chrome.navigate.mockImplementation(async (url: string) => {
-      // The stored thread is dead: Instagram bounces that URL to the inbox.
-      setUrl(url === `${BASE}/direct/t/111/` ? `${BASE}/direct/inbox/` : url);
-      return { ok: true };
-    });
     chrome.click.mockImplementation(async (selector: string) => {
       if (selector === 'text="Message"') { setUrl(`${BASE}/direct/t/222333444/`); return { ok: true }; }
       return { ok: false, reason: "no matches" };
     });
-    // Capture the stored threadId at the moment the profile page is read —
-    // the dead id must already be cleared before discovery proceeds. (Read 1 =
-    // readiness, read 2 = the dead-thread state check, read 3 = the profile.)
-    let reads = 0;
-    let threadAtProfileRead: string | undefined;
-    chrome.readPage.mockImplementation(async () => {
-      reads += 1;
-      if (reads === 3) threadAtProfileRead = listPeople(dir)[0]?.instagram?.threadId;
-      return { ok: true, text: reads <= 2 ? INBOX_TEXT : PROFILE_TEXT };
-    });
+    chrome.readPage.mockResolvedValue({ ok: true, text: PROFILE_TEXT });
 
     const res = await settle(() => openThread(depsWith(chrome), "Lasha"));
     expect(res.ok).toBe(true);
     expect(res.threadId).toBe("222333444");
-    expect(res.detail).toContain("thread learned");
-    expect(threadAtProfileRead).toBe("");
+    expect(res.detail).toContain("verified profile");
     expect(chrome.navigate.mock.calls.map((c) => c[0])).toEqual([
-      `${BASE}/direct/inbox/`,
-      `${BASE}/direct/t/111/`,
       `${BASE}/lasha_b/`,
     ]);
+    expect(chrome.navigate).not.toHaveBeenCalledWith(`${BASE}/direct/t/111/`);
     expect(listPeople(dir)[0]!.instagram).toEqual({ username: "lasha_b", threadId: "222333444" });
   });
 
@@ -310,6 +303,28 @@ describe("openThread", () => {
     expect(chrome.navigate).toHaveBeenCalledWith(`${BASE}/cool.user_99/`);
   });
 
+  it("uses the people-map username exactly for the profile-to-Message route", async () => {
+    upsertPerson(dir, { name: "Princi", aliases: ["Prince"], instagram: { username: "_princi150" } });
+    const { chrome, setUrl } = makeChrome();
+    chrome.readPage.mockResolvedValue({ ok: true, text: "_princi150\nMessage" });
+    chrome.click.mockImplementation(async (selector: string) => {
+      if (selector === 'text="Message"') {
+        setUrl(`${BASE}/direct/t/150150/`);
+        return { ok: true };
+      }
+      return { ok: false, reason: "no matches" };
+    });
+
+    const res = await settle(() => openThread(depsWith(chrome), "Prince"));
+
+    expect(res.ok).toBe(true);
+    expect(res.threadId).toBe("150150");
+    expect(chrome.navigate.mock.calls.map((call) => call[0])).toEqual([
+      "https://www.instagram.com/_princi150/",
+    ]);
+    expect(chrome.click).toHaveBeenCalledWith('text="Message"');
+  });
+
   it("asks for the person when an unknown query does not look like a username", async () => {
     const { chrome } = makeChrome();
     const res = await settle(() => openThread(depsWith(chrome), "that guy from the gym"));
@@ -328,59 +343,69 @@ describe("openThread", () => {
     expect(res.detail).toContain("Guram");
   });
 
+  it("does not trust a learned thread when the people-map username is missing", async () => {
+    upsertPerson(dir, { name: "Guram", instagram: { threadId: "123456" } });
+    const { chrome } = makeChrome();
+    const res = await settle(() => openThread(depsWith(chrome), "Guram"));
+    expect(res.ok).toBe(false);
+    expect(res.needs).toBe("username");
+    expect(chrome.navigate).not.toHaveBeenCalled();
+  });
+
   it("flags a wrong username when the profile page is unavailable", async () => {
     upsertPerson(dir, { name: "Ghost", instagram: { username: "ghost_user_404" } });
     const { chrome } = makeChrome();
-    chrome.readPage
-      .mockResolvedValueOnce({ ok: true, text: INBOX_TEXT }) // ensureReady
-      .mockResolvedValueOnce({ ok: true, text: "Sorry, this page isn't available." });
+    chrome.readPage.mockResolvedValue({ ok: true, text: "Sorry, this page isn't available." });
     const res = await settle(() => openThread(depsWith(chrome), "Ghost"));
     expect(res.ok).toBe(false);
     expect(res.needs).toBe("username");
     expect(res.detail).toContain("@ghost_user_404");
   });
 
-  it("falls back to the compose dialog when the profile has no Message button", async () => {
-    upsertPerson(dir, { name: "Lasha Beridze", instagram: { username: "lasha_b" } });
+  it("reports login from the requested profile without detouring through the inbox", async () => {
+    upsertPerson(dir, { name: "Princi", instagram: { username: "_princi150" } });
     const { chrome, setUrl } = makeChrome();
-    // No Message button anywhere; the compose flow must carry the day.
-    chrome.click.mockImplementation(async (selector: string) => {
-      if (selector === "aria-ref=e21") return { ok: true }; // the result row
-      if (selector === "aria-ref=e30") { setUrl(`${BASE}/direct/t/555000111/`); return { ok: true }; } // "Chat"
-      return { ok: false, reason: "no matches" };
+    chrome.navigate.mockImplementation(async () => {
+      setUrl(`${BASE}/accounts/login/?next=%2F_princi150%2F`);
+      return { ok: true };
     });
-    chrome.snapshot
-      .mockResolvedValueOnce({ ok: true, text: '- dialog "New message":\n  - textbox "Search" [ref=e5]' })
-      .mockResolvedValueOnce({
-        ok: true,
-        text: [
-          '- link "lasha_b" [ref=e3]', // left-rail mention — must NOT be picked
-          '- dialog "New message":',
-          '  - button "Lasha Beridze (lasha_b)" [ref=e21]',
-        ].join("\n"),
-      })
-      .mockResolvedValueOnce({ ok: true, text: '- dialog "New message":\n  - button "Chat" [ref=e30]' });
+    chrome.readPage.mockResolvedValue({ ok: true, text: LOGIN_WALL_TEXT });
 
-    const res = await settle(() => openThread(depsWith(chrome), "Lasha Beridze"));
-    expect(res.ok).toBe(true);
-    expect(res.threadId).toBe("555000111");
-    expect(chrome.navigate).toHaveBeenCalledWith(`${BASE}/direct/new/`);
-    expect(chrome.type).toHaveBeenCalledWith("aria-ref=e5", "lasha_b");
-    // The LAST snapshot line mentioning the username wins, not the rail link.
-    const clicked = chrome.click.mock.calls.map((c) => c[0]);
-    expect(clicked).toContain("aria-ref=e21");
-    expect(clicked).not.toContain("aria-ref=e3");
-    expect(listPeople(dir)[0]!.instagram?.threadId).toBe("555000111");
+    const res = await settle(() => openThread(depsWith(chrome), "Princi"));
+
+    expect(res.ok).toBe(false);
+    expect(res.needs).toBe("login");
+    expect(chrome.navigate.mock.calls.map((call) => call[0])).toEqual([
+      `${BASE}/_princi150/`,
+    ]);
   });
 
-  it("fails with a diagnosis when both the Message button and the compose dialog fail", async () => {
-    upsertPerson(dir, { name: "Lasha", instagram: { username: "lasha_b" } });
-    const { chrome } = makeChrome(); // default: every click fails, snapshots are empty
-    const res = await settle(() => openThread(depsWith(chrome), "Lasha"));
+  it("stops on the exact profile when Message is unavailable instead of searching the inbox", async () => {
+    upsertPerson(dir, { name: "Lasha Beridze", instagram: { username: "lasha_b" } });
+    const { chrome } = makeChrome();
+    chrome.readPage.mockResolvedValue({ ok: true, text: PROFILE_TEXT });
+
+    const res = await settle(() => openThread(depsWith(chrome), "Lasha Beridze"));
     expect(res.ok).toBe(false);
-    expect(res.needs).toBeUndefined();
-    expect(res.detail).toContain("couldn't reach a DM thread with @lasha_b");
-    expect(res.detail).toContain("compose dialog also failed");
+    expect(res.detail).toContain("verified profile @lasha_b");
+    expect(res.detail).toContain("No inbox search");
+    expect(chrome.navigate.mock.calls.map((c) => c[0])).toEqual([`${BASE}/lasha_b/`]);
+    expect(chrome.type).not.toHaveBeenCalled();
+  });
+
+  it("refuses to click Message after Instagram redirects to a different profile", async () => {
+    upsertPerson(dir, { name: "Princi", instagram: { username: "_princi150" } });
+    const { chrome, setUrl } = makeChrome();
+    chrome.navigate.mockImplementation(async () => {
+      setUrl(`${BASE}/wrong_person/`);
+      return { ok: true };
+    });
+    chrome.readPage.mockResolvedValue({ ok: true, text: "wrong_person\nMessage" });
+    const res = await settle(() => openThread(depsWith(chrome), "Princi"));
+    expect(res.ok).toBe(false);
+    expect(res.needs).toBe("username");
+    expect(res.detail).toContain("exact saved profile @_princi150");
+    expect(chrome.click).not.toHaveBeenCalledWith('text="Message"');
   });
 });
 
@@ -400,6 +425,13 @@ describe("sendDm", () => {
   function chatSetup() {
     upsertPerson(dir, { name: "Lasha", instagram: { username: "lasha_b", threadId: "424242" } });
     const made = makeChrome();
+    made.chrome.click.mockImplementation(async (selector: string) => {
+      if (selector === 'text="Message"') {
+        made.setUrl(`${BASE}/direct/t/424242/`);
+        return { ok: true };
+      }
+      return { ok: false, reason: "no matches" };
+    });
     made.chrome.snapshot.mockResolvedValue({ ok: true, text: SNAPSHOT_WITH_COMPOSER });
     return made;
   }
@@ -407,7 +439,7 @@ describe("sendDm", () => {
   it("types into the LAST snapshot textbox and verifies the message on the page", async () => {
     const { chrome } = chatSetup();
     chrome.readPage
-      .mockResolvedValueOnce({ ok: true, text: INBOX_TEXT }) // ensureReady
+      .mockResolvedValueOnce({ ok: true, text: PROFILE_TEXT }) // exact saved profile
       .mockResolvedValueOnce({ ok: true, text: `Lasha\nYou: ${MSG}\nSeen just now` }); // verification
     const res = await settle(() => sendDm(depsWith(chrome), "Lasha", MSG));
     expect(res.ok).toBe(true);
@@ -418,12 +450,41 @@ describe("sendDm", () => {
     expect(chrome.type).toHaveBeenCalledTimes(1);
     expect(chrome.type).toHaveBeenCalledWith("aria-ref=e42", MSG);
     expect(chrome.press).toHaveBeenCalledWith("Enter");
+    expect(chrome.navigate.mock.calls.map((c) => c[0])).toEqual([`${BASE}/lasha_b/`]);
+    expect(chrome.navigate).not.toHaveBeenCalledWith(`${BASE}/direct/inbox/`);
+    expect(chrome.navigate).not.toHaveBeenCalledWith(`${BASE}/direct/new/`);
+  });
+
+  it("sends to a saved _princi150 identity only through that exact profile", async () => {
+    upsertPerson(dir, { name: "Princi", instagram: { username: "_princi150", threadId: "old-thread" } });
+    const { chrome, setUrl } = makeChrome();
+    chrome.click.mockImplementation(async (selector: string) => {
+      if (selector === 'text="Message"') {
+        setUrl(`${BASE}/direct/t/150150/`);
+        return { ok: true };
+      }
+      return { ok: false, reason: "no matches" };
+    });
+    chrome.snapshot.mockResolvedValue({ ok: true, text: SNAPSHOT_WITH_COMPOSER });
+    chrome.readPage
+      .mockResolvedValueOnce({ ok: true, text: "_princi150\nMessage" })
+      .mockResolvedValueOnce({ ok: true, text: `Princi\nYou: ${MSG}` });
+
+    const res = await settle(() => sendDm(depsWith(chrome), "Princi", MSG));
+
+    expect(res.ok).toBe(true);
+    expect(chrome.navigate.mock.calls.map((call) => call[0])).toEqual([
+      "https://www.instagram.com/_princi150/",
+    ]);
+    expect(chrome.click).toHaveBeenCalledWith('text="Message"');
+    expect(chrome.type).toHaveBeenCalledWith("aria-ref=e42", MSG);
+    expect(listPeople(dir)[0]?.instagram?.threadId).toBe("150150");
   });
 
   it("refuses to claim success when the message never appears in the chat", async () => {
     const { chrome } = chatSetup();
     chrome.readPage
-      .mockResolvedValueOnce({ ok: true, text: INBOX_TEXT }) // ensureReady
+      .mockResolvedValueOnce({ ok: true, text: PROFILE_TEXT })
       .mockResolvedValueOnce({ ok: true, text: "Lasha\nYou: an older message\nSeen" });
     const res = await settle(() => sendDm(depsWith(chrome), "Lasha", MSG));
     expect(res.ok).toBe(false);

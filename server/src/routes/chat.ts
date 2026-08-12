@@ -792,7 +792,7 @@ export function chatRoutes(
             // scheduler re-runs them; Ava just registers/lists/deletes here.
             ...(buildWatchTools({ db, resolveCodexTarget: agentDeps.resolveCodexWatchTarget }) as ToolDef[]),
             // App modules: deterministic Instagram workflows + the people map
-            // (identity resolution + learned DM threads = the fast path).
+            // (saved usernames are authoritative; sends re-verify the profile).
             ...(buildInstagramTools({ getChrome: agentDeps.getChrome, memoryDir: agentDeps.memoryDir }) as ToolDef[]),
             ...(buildWhatsappTools({ getChrome: agentDeps.getChrome, memoryDir: agentDeps.memoryDir }) as ToolDef[]),
             ...(buildPeopleTools({ memoryDir: agentDeps.memoryDir }) as ToolDef[]),

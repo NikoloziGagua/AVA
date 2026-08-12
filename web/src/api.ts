@@ -763,7 +763,7 @@ export async function fetchWatches(): Promise<WatchRow[]> {
 
 // ── People map (GET /api/people) — Ava's identity-resolution layer, read-only here.
 
-/** Per-app identity: username/phone, plus the learned DM thread id (the speed unlock). */
+/** Per-app identity plus the last thread observed after exact identity routing. */
 export type PersonApp = {
   username?: string;
   phone?: string;

@@ -11,7 +11,7 @@ const REFRESH_MS = 30_000;
 /**
  * "People" — the read surface over Ava's people map (GET /api/people). Shows WHO
  * Ava knows how to reach: name + aliases, per-app identity chips (IG / WA) and a
- * small ✓ badge when the Instagram DM thread is already learned (instant sends).
+ * small ✓ badge when an Instagram DM thread was previously verified.
  * Read-only by design: the map is grown conversationally, not edited here.
  */
 export function PeopleSection() {
@@ -103,8 +103,8 @@ function PersonCard({ person: p }: { person: PersonRow }) {
               {ig?.threadId && (
                 <span
                   className="text-[var(--ac)]"
-                  title="DM thread known — instant send"
-                  aria-label="instant"
+                  title="A DM thread was previously verified; sends still reopen this username's exact profile"
+                  aria-label="previously verified thread"
                 >
                   ✓
                 </span>

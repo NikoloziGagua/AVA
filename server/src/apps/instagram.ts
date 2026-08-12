@@ -3,10 +3,11 @@ import { resolvePerson, upsertPerson, setAppField, type Person } from "./people.
 
 // The Instagram module — deterministic workflows on the browser layer, built
 // from the live debugging sessions of 2026-07-03. Design rules:
-//  - FAST PATH FIRST: a learned thread id is one navigation
-//    (instagram.com/direct/t/<id>/) — no search, no clicking through results.
+//  - PROFILE FIRST: resolve the people-map username, open that exact profile,
+//    verify its URL, and enter the conversation only through its Message action.
+//    A learned thread ID is evidence/history, never recipient-routing authority.
 //  - EVERY edge case is a STATE, not an exception: logged out, 2FA checkpoint,
-//    unknown person, ambiguous person, dead thread id, missing composer. Each
+//    unknown person, ambiguous person, redirected profile, missing composer. Each
 //    returns `needs` + a human `detail` so Ava can ask Sir for exactly the
 //    missing thing (credentials, a code, a username) and retry.
 //  - Verify what matters: a send is only reported sent after the message text
@@ -29,6 +30,24 @@ export type IgResult = {
 };
 
 const BASE = "https://www.instagram.com";
+const USERNAME_RE = /^[a-z0-9._]{1,30}$/i;
+
+function normalizeInstagramUsername(raw: string | undefined): string | null {
+  const username = (raw ?? "").trim().replace(/^@/, "").toLowerCase();
+  return USERNAME_RE.test(username) ? username : null;
+}
+
+function profileUsernameFromUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.hostname !== "instagram.com" && url.hostname !== "www.instagram.com") return null;
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length !== 1) return null;
+    return normalizeInstagramUsername(decodeURIComponent(parts[0]!));
+  } catch {
+    return null;
+  }
+}
 
 // ── page-state detection ─────────────────────────────────────────────────────
 
@@ -159,10 +178,11 @@ export async function submitCode(deps: IgDeps, code: string): Promise<IgResult> 
 function resolveIg(deps: IgDeps, personQuery: string): { person?: Person; transient?: boolean; result?: IgResult } {
   const { person, candidates } = resolvePerson(deps.memoryDir, personQuery);
   if (person) {
-    if (!person.instagram?.username && !person.instagram?.threadId) {
+    const username = normalizeInstagramUsername(person.instagram?.username);
+    if (!username) {
       return { result: { ok: false, needs: "username", detail: `I know ${person.name} but not their Instagram username. Ask Sir for it, save it with person_remember, then retry.` } };
     }
-    return { person };
+    return { person: { ...person, instagram: { ...person.instagram, username } } };
   }
   if (candidates.length > 1) {
     return { result: { ok: false, needs: "person", detail: `"${personQuery}" is ambiguous — candidates: ${candidates.map((c) => `${c.name}${c.instagram?.username ? ` (@${c.instagram.username})` : ""}`).join(", ")}. Ask Sir which one.` } };
@@ -176,7 +196,10 @@ function resolveIg(deps: IgDeps, personQuery: string): { person?: Person; transi
   const q = personQuery.trim();
   const handleLike = q.startsWith("@") || (/^[a-z0-9._]{2,30}$/i.test(q) && /[._0-9]/.test(q));
   if (handleLike) {
-    const username = q.toLowerCase().replace(/^@/, "");
+    const username = normalizeInstagramUsername(q);
+    if (!username) {
+      return { result: { ok: false, needs: "username", detail: `"${personQuery}" is not a valid Instagram username. Ask Sir for the exact username.` } };
+    }
     const transient: Person = {
       id: "", name: q.replace(/^@/, ""), aliases: [], updated: "",
       instagram: { username },
@@ -212,8 +235,10 @@ export async function openProfile(deps: IgDeps, personQuery: string): Promise<Ig
     };
   }
 
-  const knownUsername = person?.instagram?.username?.replace(/^@/, "");
-  const explicitUsername = query.startsWith("@") ? query.slice(1) : null;
+  const knownUsername = normalizeInstagramUsername(person?.instagram?.username);
+  const explicitLooksLikeUsername = query.startsWith("@")
+    || (/^[a-z0-9._]{2,30}$/i.test(query) && /[._0-9]/.test(query));
+  const explicitUsername = explicitLooksLikeUsername ? normalizeInstagramUsername(query) : null;
   const username = knownUsername || explicitUsername;
   if (username) {
     const nav = await deps.chrome.navigate(`${BASE}/${encodeURIComponent(username)}/`);
@@ -250,54 +275,14 @@ async function waitForThreadUrl(chrome: Chrome, ms = 6000): Promise<string | nul
   return null;
 }
 
-/** Compose-dialog route: works for anyone searchable, INCLUDING Sir himself
- *  (your own profile has no Message button — the self-DM trap). Every click
- *  is ref-based from the live snapshot — text selectors are ambiguous here
- *  (the same username appears in the left rail), and nag dialogs stack on
- *  top of the compose dialog. */
-async function composeTo(deps: IgDeps, username: string): Promise<string | null> {
-  await deps.chrome.navigate(`${BASE}/direct/new/`);
-  await sleep(1500);
-  await dismissPopups(deps.chrome);
-  const snap1 = await deps.chrome.snapshot();
-  const searchRef = /textbox[^\n]*?\[ref=(e\d+)\]/.exec(snap1.text ?? "")?.[1];
-  if (!searchRef) return null;
-  const typed = await deps.chrome.type(`aria-ref=${searchRef}`, username);
-  if (!typed.ok) return null;
-  await sleep(2000);
-  // Result rows render below the search box — take the LAST snapshot line
-  // mentioning the username (tree order puts dialog content after the rail).
-  const snap2 = await deps.chrome.snapshot();
-  const lines = (snap2.text ?? "").split("\n");
-  const uname = username.toLowerCase();
-  // EXACT-token match: "nika_gagua_" must not click "nika_gagua_2"'s row
-  // (identity is the one thing a messenger must never fuzz).
-  const tokenRe = new RegExp(`(^|[^a-z0-9._])${uname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9._])`, "i");
-  const rowRefs = lines
-    .filter((l) => tokenRe.test(l))
-    .map((l) => /\[ref=(e\d+)\]/.exec(l)?.[1])
-    .filter((r): r is string => !!r);
-  const rowRef = rowRefs[rowRefs.length - 1];
-  if (!rowRef) return null;
-  const picked = await deps.chrome.click(`aria-ref=${rowRef}`);
-  if (!picked.ok) return null;
-  await sleep(800);
-  // The confirm button ("Chat" / "Next") — again by ref.
-  const snap3 = await deps.chrome.snapshot();
-  const goRef = [...(snap3.text ?? "").matchAll(/button "(?:Chat|Next)"[^\n]*?\[ref=(e\d+)\]/g)].map((m) => m[1]!).pop();
-  if (goRef) await deps.chrome.click(`aria-ref=${goRef}`);
-  else await deps.chrome.press("Enter");
-  return waitForThreadUrl(deps.chrome);
-}
-
 export async function openThread(deps: IgDeps, personQuery: string): Promise<IgResult & { person?: Person }> {
-  const ready = await ensureReady(deps);
-  if (!ready.ok) return ready;
+  // Resolve the people-map identity before touching Instagram. A stored
+  // thread ID is not sufficient: the saved username is authoritative.
   const { person, transient, result } = resolveIg(deps, personQuery);
   if (result) return result;
   const p = person!;
 
-  // Persist identity + learned thread ONLY on success: a transient (guessed)
+  // Persist identity + observed thread evidence ONLY on success: a transient
   // person must never enter the people map off a failed or unverified flow.
   const learn = (id: string): Person => {
     const saved = transient
@@ -307,64 +292,56 @@ export async function openThread(deps: IgDeps, personQuery: string): Promise<IgR
     return saved;
   };
 
-  // FAST PATH: learned thread id — one navigation. IG redirects dead threads
-  // only after hydration (2-6s), so poll rather than peeking at 1.2s.
-  if (p.instagram?.threadId) {
-    const nav = await deps.chrome.navigate(`${BASE}/direct/t/${p.instagram.threadId}/`);
-    const id = nav.ok ? await waitForThreadUrl(deps.chrome, 5000) : null;
-    if (id === p.instagram.threadId) {
-      return { ok: true, detail: `chat with ${p.name} open (fast path)`, threadId: id, person: p };
-    }
-    // Before declaring the thread dead, rule out a session problem — a login
-    // wall mid-flow must NOT erase a perfectly good learned thread.
-    const { state } = await pageState(deps.chrome);
-    if (state !== "in") {
-      const again = await ensureReady(deps);
-      if (!again.ok) return again;
-    } else {
-      // Genuinely dead/moved — self-heal: forget it, rediscover below.
-      setAppField(deps.memoryDir, p.id, "instagram", "threadId", "");
-    }
-  }
-
-  // DISCOVERY: profile → Message button → thread URL. More stable than the
-  // "new message" search dialog (learned live: search-result clicks are flaky).
+  // The only recipient route: saved username -> exact profile -> Message.
+  // Never navigate a learned /direct/t/... address and never use /direct/new/.
   const username = p.instagram!.username!;
-  const nav = await deps.chrome.navigate(`${BASE}/${username}/`);
+  const profileUrl = `${BASE}/${encodeURIComponent(username)}/`;
+  const nav = await deps.chrome.navigate(profileUrl);
   if (!nav.ok) return { ok: false, detail: `couldn't open @${username}'s profile: ${nav.reason}` };
   await sleep(1200);
   await dismissPopups(deps.chrome);
-  const read = await deps.chrome.readPage();
+  let read = await deps.chrome.readPage();
+  for (let attempt = 0; attempt < 4 && (!read.ok || !read.text); attempt++) {
+    await sleep(1000);
+    read = await deps.chrome.readPage();
+  }
   if (read.ok && /Sorry, this page isn't available/i.test(read.text ?? "")) {
     return { ok: false, needs: "username", detail: `@${username} doesn't exist (profile page unavailable). The username on file for ${p.name} is wrong — ask Sir for the right one.` };
   }
-  // Mid-flow session check: the profile page is outside /direct/, so a wall
-  // here is real (not a preview false-positive).
   const profState = detectState(read.ok ? (read.text ?? "") : "", deps.chrome.url());
-  if (profState !== "in") {
-    const again = await ensureReady(deps);
-    if (!again.ok) return again;
-    await deps.chrome.navigate(`${BASE}/${username}/`);
-    await sleep(1200);
+  if (profState === "wall") {
+    return { ok: false, needs: "login", detail: "Not logged in to Instagram in AVA's browser. Ask Sir to log in there once, then retry." };
+  }
+  if (profState === "checkpoint") {
+    return { ok: false, needs: "code", detail: "Instagram is asking for a verification code. Ask Sir for the code, submit it, then retry." };
+  }
+  if (profState === "challenge") {
+    return { ok: false, needs: "manual", detail: "Instagram raised a challenge page that Sir must complete in AVA's browser." };
+  }
+  if (profState === "unknown") {
+    return { ok: false, detail: `@${username}'s profile did not render; no message was attempted.` };
+  }
+
+  const verifiedUsername = profileUsernameFromUrl(deps.chrome.url());
+  if (verifiedUsername !== username) {
+    return {
+      ok: false,
+      needs: "username",
+      detail: `Instagram did not remain on the exact saved profile @${username} (landed at ${deps.chrome.url()}); no message was attempted.`,
+    };
   }
 
   // EXACT text match: unquoted text=Message substring-matches the left-nav
   // "Messages" link and silently dumps us on the inbox (live bug 2026-07-03).
   const msg = await deps.chrome.click('text="Message"');
-  let id: string | null = null;
-  if (msg.ok) id = await waitForThreadUrl(deps.chrome);
-  if (!id) {
-    // No Message button (own profile / restricted DMs) or the click didn't
-    // land on a thread — the compose dialog covers both, including self-DM.
-    id = await composeTo(deps, username);
-  }
+  const id = msg.ok ? await waitForThreadUrl(deps.chrome) : null;
   if (id) {
     const saved = learn(id);
-    return { ok: true, detail: `chat with ${saved.name} open (thread learned — next time is instant)`, threadId: id, person: saved };
+    return { ok: true, detail: `chat with ${saved.name} open from verified profile @${username}`, threadId: id, person: saved };
   }
   return {
     ok: false,
-    detail: `couldn't reach a DM thread with @${username} (profile Message button: ${msg.ok ? "clicked but no thread URL" : msg.reason}; compose dialog also failed) — at ${deps.chrome.url()}. chrome_snapshot to see the page.`,
+    detail: `couldn't reach a DM thread from verified profile @${username} (Message button: ${msg.ok ? "clicked but no thread URL appeared" : msg.reason}). No inbox search or alternate recipient route was attempted.`,
   };
 }
 

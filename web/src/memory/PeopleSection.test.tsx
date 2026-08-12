@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // "People" smoke: people render (name + aliases + IG/WA identity chips + notes),
-// the ✓ instant badge appears only when the Instagram DM thread id is known,
+// the ✓ prior-verification badge appears only when an Instagram thread was observed,
 // the empty state shows a quiet one-liner, and hand-grown JSON with missing
 // fields degrades instead of crashing.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -60,8 +60,8 @@ describe("PeopleSection", () => {
     expect(screen.getByText("WA Lasha K")).toBeTruthy();
     expect(screen.getByText("WA +995555000111")).toBeTruthy();
 
-    // ✓ instant badge ONLY where instagram.threadId is present (Lasha, not Nino).
-    expect(screen.getAllByLabelText("instant")).toHaveLength(1);
+    // Prior-verification badge ONLY where instagram.threadId is present.
+    expect(screen.getAllByLabelText("previously verified thread")).toHaveLength(1);
     expect(screen.getByText("✓")).toBeTruthy();
 
     // Notes line + count chip.
@@ -99,7 +99,7 @@ describe("PeopleSection", () => {
     expect(screen.getByText("aka keti-chan")).toBeTruthy();
     // Thread-only Instagram still shows a bare IG chip with the ✓ badge.
     expect(screen.getByText("IG")).toBeTruthy();
-    expect(screen.getAllByLabelText("instant")).toHaveLength(1);
+    expect(screen.getAllByLabelText("previously verified thread")).toHaveLength(1);
     // Empty whatsapp object → no WA chip at all.
     expect(screen.queryByText(/^WA /)).toBeNull();
   });

@@ -158,6 +158,10 @@ describe("Explorer capability registry", () => {
     expect(
       instagram.nodes.find((node) => node.id === "instagram.messaging.verify-send")?.parentNodeId,
     ).toBe("instagram.messaging.send");
+    const openChat = instagram.nodes.find((node) => node.id === "instagram.messaging.open-chat");
+    expect(openChat?.description).toMatch(/instagram\.com\/<username>\/.*verify.*Message/i);
+    expect(openChat?.description).toMatch(/never search the inbox/i);
+    expect(openChat?.description).not.toMatch(/learned thread|compose-dialog/i);
     expect(instagram.edges.some((edge) => edge.kind === "branch")).toBe(true);
     expect(instagram.edges.some((edge) => edge.kind === "stop")).toBe(true);
 

@@ -3,7 +3,7 @@ import type { Chrome } from "../tools/chrome.js";
 import { ensureReady, login, submitCode, openProfile, openThread, sendDm, readThread } from "./instagram.js";
 import { listPeople, upsertPerson } from "./people.js";
 
-// Instagram + people tools — the deterministic fast path for Sir's most-used
+// Instagram + people tools — the deterministic identity path for Sir's most-used
 // app. Every edge case returns instructions for what to ask Sir, so the agent
 // never flails: needs=login → ask for credentials or a window login;
 // needs=code → ask for the 2FA code; needs=person/username → ask who/what.
@@ -38,8 +38,9 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
         name: "instagram_send_dm",
         description:
           "Send an Instagram DM. person = a name/alias from the people map, or a raw " +
-          "IG username. Uses the learned thread for known people (instant), otherwise " +
-          "discovers the chat via the profile's Message button and LEARNS the thread. " +
+          "IG username. Always resolves the exact username, opens instagram.com/<username>/, " +
+          "verifies that profile URL, and enters through its exact Message action. It never " +
+          "searches the inbox or routes by a learned thread ID. " +
           "Verifies the message appears on the page before claiming success. If it " +
           "returns needs=login/code/person, ask Sir for exactly that and retry.",
         inputSchema: {
@@ -59,7 +60,7 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
     {
       tool: {
         name: "instagram_open_chat",
-        description: "Open the Instagram DM thread with a person (people-map name or IG username) without sending anything.",
+        description: "Open the Instagram DM thread with a person without sending: resolve the people-map username, verify the exact profile URL, then click its Message action. Never searches the inbox.",
         inputSchema: { type: "object", properties: { person: { type: "string" } }, required: ["person"] },
       },
       run: async (args) => {
@@ -70,7 +71,7 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
     {
       tool: {
         name: "instagram_read_chat",
-        description: "Open the DM thread with a person and return the visible tail of the conversation (for 'what did X reply?').",
+        description: "Open a person's DM through their exact saved Instagram profile and return the visible conversation tail. Never searches the inbox for the recipient.",
         inputSchema: { type: "object", properties: { person: { type: "string" } }, required: ["person"] },
       },
       run: async (args) => {
@@ -174,7 +175,7 @@ export function buildPeopleTools(o: { memoryDir: string }): ToolDef[] {
           ok: true,
           text: all.map((p) =>
             `${p.name}${p.aliases.length ? ` (${p.aliases.join(", ")})` : ""}` +
-            `${p.instagram?.username ? ` | IG @${p.instagram.username}${p.instagram.threadId ? " ✓thread" : ""}` : ""}` +
+            `${p.instagram?.username ? ` | IG @${p.instagram.username}${p.instagram.threadId ? " ✓verified-thread" : ""}` : ""}` +
             `${p.whatsapp?.phone || p.whatsapp?.username ? ` | WA ${p.whatsapp.username ?? p.whatsapp.phone}` : ""}`).join("\n"),
         };
       },

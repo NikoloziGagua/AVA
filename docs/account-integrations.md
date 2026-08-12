@@ -26,8 +26,10 @@ Instagram sends are profile-first. AVA resolves the person from the local
 people map, reads that person's saved Instagram username, opens the exact
 `https://www.instagram.com/<username>/` profile, verifies that the browser
 remained on that username, and clicks the profile's exact **Message** action.
-Only then does she type, send, and verify the requested text in the opened
-thread. She does not search the Instagram inbox and does not use a stored
+Instagram may open the conversation as a drawer over that profile or navigate
+to its direct-thread URL; both are accepted only as the result of that verified
+profile click. Only then does she type, send, and verify the requested text.
+She does not search the Instagram inbox and does not use a stored
 thread ID to choose the recipient. If the username, profile, Message action,
 login, or verification is missing, she stops without trying another account.
 

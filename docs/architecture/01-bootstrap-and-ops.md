@@ -593,6 +593,12 @@ npm -w server run start      # node dist/index.js
 ```
 No hot-reload; self-improve swaps won't take effect until a manual restart.
 
+The production build also writes `server/dist/build-id.txt`. AVA captures that
+identifier once at process boot and returns it from `/api/health`. The desktop
+runtime launcher compares the live value with the installed file: an already
+healthy but older AVA listener is safely replaced instead of being mistaken
+for the new build. A matching live build is left running.
+
 ### Pair a device
 Tray → **Show pairing code**, *or*:
 ```

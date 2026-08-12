@@ -3,6 +3,8 @@ import { Router } from "express";
 export type HealthRouteState = {
   /** Null means the server booted but chat cannot run. */
   provider: string | null;
+  /** Immutable identifier captured from this process's built artifact at boot. */
+  buildId?: string;
 };
 
 export function healthRoutes(
@@ -22,6 +24,7 @@ export function healthRoutes(
       issues,
       uptime: Date.now() - startedAt,
       version: "0.0.1",
+      buildId: state.buildId ?? "unknown",
     });
   });
   return r;

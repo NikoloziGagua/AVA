@@ -20,7 +20,7 @@ describe("healthRoutes", () => {
 
   it("reports ready with the selected provider", async () => {
     const app = express();
-    app.use("/api", healthRoutes(Date.now(), { provider: "openai" }));
+    app.use("/api", healthRoutes(Date.now(), { provider: "openai", buildId: "build-test-123" }));
 
     const res = await request(app).get("/api/health").expect(200);
 
@@ -29,6 +29,16 @@ describe("healthRoutes", () => {
       ready: true,
       provider: "openai",
       issues: [],
+      buildId: "build-test-123",
     });
+  });
+
+  it("reports an honest unknown build for callers that do not provide one", async () => {
+    const app = express();
+    app.use("/api", healthRoutes(Date.now(), { provider: "openai" }));
+
+    const res = await request(app).get("/api/health").expect(200);
+
+    expect(res.body.buildId).toBe("unknown");
   });
 });

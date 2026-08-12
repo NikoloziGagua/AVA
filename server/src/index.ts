@@ -2,6 +2,7 @@ import "./net-tuning.js"; // MUST be first: happy-eyeballs for IPv6-only/NAT64 n
 import express from "express";
 import { fileURLToPath } from "node:url";
 import { execFile, execFileSync, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,7 +84,19 @@ import { StrategyRoomStore } from "./strategy/store.js";
 import { StrategyRoomCoordinator } from "./strategy/coordinator.js";
 import { buildCodexConsultant } from "./strategy/codex-consultant.js";
 
+function loadRuntimeBuildId(): string {
+  try {
+    // Read once at process boot. Rebuilding files underneath a live process
+    // must not let that stale process impersonate the newly installed build.
+    return readFileSync(fileURLToPath(new URL("./build-id.txt", import.meta.url)), "utf8").trim() || "unknown";
+  } catch {
+    // `tsx src/index.ts` intentionally has no generated production build ID.
+    return "dev";
+  }
+}
+
 const startedAt = Date.now();
+const runtimeBuildId = loadRuntimeBuildId();
 const cfg = loadConfig();
 // Claim the singleton before opening shared runtime state. On Windows a second
 // listener can briefly reach its callback before EADDRINUSE; the file lock is
@@ -590,7 +603,10 @@ const capabilityRouteDeps: CapabilityRouteDeps = {
   pushReady: !!(cfg.vapidPublicKey && cfg.vapidPrivateKey),
 };
 
-app.use("/api", healthRoutes(startedAt, { provider: provider?.name ?? null }));
+app.use("/api", healthRoutes(startedAt, {
+  provider: provider?.name ?? null,
+  buildId: runtimeBuildId,
+}));
 app.use("/api/auth", authRoutes(db, requireToken(db)));
 app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps, { anthropic, openai }));
 app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));

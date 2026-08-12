@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json && node -e \"const fs=require('node:fs');fs.copyFileSync('src/state/schema.sql','dist/state/schema.sql');fs.copyFileSync('src/self/SELF.md','dist/self/SELF.md')\"",
+    "build": "tsc -p tsconfig.json && node -e \"const fs=require('node:fs'),crypto=require('node:crypto');fs.copyFileSync('src/state/schema.sql','dist/state/schema.sql');fs.copyFileSync('src/self/SELF.md','dist/self/SELF.md');fs.writeFileSync('dist/build-id.txt',crypto.randomUUID()+'\\n')\"",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",

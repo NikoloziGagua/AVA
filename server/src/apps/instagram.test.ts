@@ -13,6 +13,13 @@ const BASE = "https://www.instagram.com";
 
 const INBOX_TEXT = "Your messages\nSend private photos and messages to a friend or group.";
 const PROFILE_TEXT = "lasha_b\n42 posts\n1,024 followers\nMessage\nFollow";
+const PROFILE_MESSAGE_DRAWER = [
+  '- button "Go back" [ref=e10]',
+  '- button "Close" [ref=e11]',
+  '- textbox [active] [ref=e42]',
+  '- generic: Message...',
+  '- button "Choose an emoji" [ref=e43]',
+].join("\n");
 const LOGIN_WALL_TEXT =
   "Instagram\nPhone number, username, or email\nPassword\nLog in\nOR\nSign up\nForgot password?";
 const CHECKPOINT_TEXT = "Check your phone\nEnter the code we sent to +995 5** *** ***.";
@@ -325,6 +332,25 @@ describe("openThread", () => {
     expect(chrome.click).toHaveBeenCalledWith('text="Message"');
   });
 
+  it("accepts Instagram's profile message drawer without requiring a direct-thread URL", async () => {
+    upsertPerson(dir, { name: "Princi", instagram: { username: "_princi150", threadId: "old-evidence" } });
+    const { chrome } = makeChrome();
+    chrome.readPage.mockResolvedValue({ ok: true, text: "_princi150\nMessage" });
+    chrome.click.mockImplementation(async (selector: string) => (
+      selector === 'text="Message"' ? { ok: true } : { ok: false, reason: "no matches" }
+    ));
+    chrome.snapshot.mockResolvedValue({ ok: true, text: PROFILE_MESSAGE_DRAWER });
+
+    const res = await settle(() => openThread(depsWith(chrome), "Princi"));
+
+    expect(res.ok).toBe(true);
+    expect(res.threadId).toBeUndefined();
+    expect(res.detail).toContain("verified profile message drawer @_princi150");
+    expect(chrome.url()).toBe(`${BASE}/_princi150/`);
+    expect(chrome.navigate.mock.calls.map((call) => call[0])).toEqual([`${BASE}/_princi150/`]);
+    expect(listPeople(dir)[0]?.instagram?.threadId).toBe("old-evidence");
+  });
+
   it("asks for the person when an unknown query does not look like a username", async () => {
     const { chrome } = makeChrome();
     const res = await settle(() => openThread(depsWith(chrome), "that guy from the gym"));
@@ -479,6 +505,26 @@ describe("sendDm", () => {
     expect(chrome.click).toHaveBeenCalledWith('text="Message"');
     expect(chrome.type).toHaveBeenCalledWith("aria-ref=e42", MSG);
     expect(listPeople(dir)[0]?.instagram?.threadId).toBe("150150");
+  });
+
+  it("types and verifies inside the profile message drawer while retaining the profile URL", async () => {
+    upsertPerson(dir, { name: "Princi", instagram: { username: "_princi150" } });
+    const { chrome } = makeChrome();
+    chrome.click.mockImplementation(async (selector: string) => (
+      selector === 'text="Message"' ? { ok: true } : { ok: false, reason: "no matches" }
+    ));
+    chrome.snapshot.mockResolvedValue({ ok: true, text: PROFILE_MESSAGE_DRAWER });
+    chrome.readPage
+      .mockResolvedValueOnce({ ok: true, text: "_princi150\nMessage" })
+      .mockResolvedValueOnce({ ok: true, text: `Princi\nYou: ${MSG}` });
+
+    const res = await settle(() => sendDm(depsWith(chrome), "Princi", MSG));
+
+    expect(res.ok).toBe(true);
+    expect(res.threadId).toBeUndefined();
+    expect(chrome.url()).toBe(`${BASE}/_princi150/`);
+    expect(chrome.type).toHaveBeenCalledWith("aria-ref=e42", MSG);
+    expect(chrome.press).toHaveBeenCalledWith("Enter");
   });
 
   it("refuses to claim success when the message never appears in the chat", async () => {

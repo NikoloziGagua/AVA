@@ -263,13 +263,36 @@ export async function openProfile(deps: IgDeps, personQuery: string): Promise<Ig
   };
 }
 
-/** IG's SPA navigates on its own schedule — poll for the thread URL instead
- *  of trusting one fixed sleep. */
-async function waitForThreadUrl(chrome: Chrome, ms = 6000): Promise<string | null> {
+/** IG's SPA opens either a direct URL or an in-profile message drawer on its
+ *  own schedule, so poll for the resulting conversation surface. */
+type ThreadSurface =
+  | { kind: "thread-url"; threadId: string }
+  | { kind: "profile-drawer" };
+
+function isProfileMessageDrawer(snapshot: string): boolean {
+  // Instagram's current desktop UI opens a conversation drawer over the
+  // profile without changing the address bar. Require the drawer controls and
+  // composer together so a global search box cannot be mistaken for success.
+  return /button "Go back"/i.test(snapshot)
+    && /button "Close"/i.test(snapshot)
+    && /textbox[\s\S]*?(?:Message\.\.\.|Choose an emoji|Voice Clip)/i.test(snapshot);
+}
+
+async function waitForThreadSurface(
+  chrome: Chrome,
+  expectedUsername: string,
+  ms = 6000,
+): Promise<ThreadSurface | null> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     const id = threadIdFromUrl(chrome.url());
-    if (id) return id;
+    if (id) return { kind: "thread-url", threadId: id };
+    if (profileUsernameFromUrl(chrome.url()) === expectedUsername) {
+      const snapshot = await chrome.snapshot();
+      if (snapshot.ok && isProfileMessageDrawer(snapshot.text ?? "")) {
+        return { kind: "profile-drawer" };
+      }
+    }
     await sleep(500);
   }
   return null;
@@ -284,11 +307,17 @@ export async function openThread(deps: IgDeps, personQuery: string): Promise<IgR
 
   // Persist identity + observed thread evidence ONLY on success: a transient
   // person must never enter the people map off a failed or unverified flow.
-  const learn = (id: string): Person => {
+  const rememberVerifiedSurface = (id?: string): Person => {
     const saved = transient
-      ? upsertPerson(deps.memoryDir, { name: p.name, instagram: { username: p.instagram!.username!, threadId: id } })
+      ? upsertPerson(deps.memoryDir, {
+          name: p.name,
+          instagram: {
+            username: p.instagram!.username!,
+            ...(id ? { threadId: id } : {}),
+          },
+        })
       : p;
-    setAppField(deps.memoryDir, saved.id, "instagram", "threadId", id);
+    if (id) setAppField(deps.memoryDir, saved.id, "instagram", "threadId", id);
     return saved;
   };
 
@@ -334,14 +363,22 @@ export async function openThread(deps: IgDeps, personQuery: string): Promise<IgR
   // EXACT text match: unquoted text=Message substring-matches the left-nav
   // "Messages" link and silently dumps us on the inbox (live bug 2026-07-03).
   const msg = await deps.chrome.click('text="Message"');
-  const id = msg.ok ? await waitForThreadUrl(deps.chrome) : null;
-  if (id) {
-    const saved = learn(id);
-    return { ok: true, detail: `chat with ${saved.name} open from verified profile @${username}`, threadId: id, person: saved };
+  const surface = msg.ok ? await waitForThreadSurface(deps.chrome, username) : null;
+  if (surface) {
+    const id = surface.kind === "thread-url" ? surface.threadId : undefined;
+    const saved = rememberVerifiedSurface(id);
+    return {
+      ok: true,
+      detail: surface.kind === "profile-drawer"
+        ? `chat with ${saved.name} open in the verified profile message drawer @${username}`
+        : `chat with ${saved.name} open from verified profile @${username}`,
+      ...(id ? { threadId: id } : {}),
+      person: saved,
+    };
   }
   return {
     ok: false,
-    detail: `couldn't reach a DM thread from verified profile @${username} (Message button: ${msg.ok ? "clicked but no thread URL appeared" : msg.reason}). No inbox search or alternate recipient route was attempted.`,
+    detail: `couldn't open a message surface from verified profile @${username} (Message button: ${msg.ok ? "clicked but no conversation drawer or thread appeared" : msg.reason}). No inbox search or alternate recipient route was attempted.`,
   };
 }
 

@@ -59,7 +59,7 @@ export function buildNotesTools(options: {
   db: Db;
   sessionId?: string | null;
   source?: "ava_chat" | "ava_voice";
-  queueSelfImprove?: (goal: string) => string;
+  queueSelfImprove?: (goal: string) => string | Promise<string>;
 }): ToolDef[] {
   const { db } = options;
   return [
@@ -234,7 +234,7 @@ export function buildNotesTools(options: {
         let promotionId: string;
         if (target === "self_improvement") {
           if (!options.queueSelfImprove) return { ok: false, text: "Self-improvement is unavailable." };
-          try { promotionId = options.queueSelfImprove(buildNoteActionPrompt(current)); }
+          try { promotionId = await options.queueSelfImprove(buildNoteActionPrompt(current)); }
           catch (error) { return { ok: false, text: error instanceof Error ? error.message : String(error) }; }
         } else promotionId = `task_draft_${nanoid(10)}`;
         const result = promoteNote(db, id, expectedVersion, target, promotionId);

@@ -8,6 +8,24 @@ export type Intent = {
   outcome?: string;
   /** While awaiting_approval this holds the drafted plan (prefixed "PLAN:"). */
   diff_summary?: string | null;
+  worker_provider?: "claude" | "codex";
+};
+
+export type WorkerOption = {
+  provider: "claude" | "codex";
+  label: string;
+  installed: boolean;
+  configuration: "not_checked" | "unavailable";
+  available: boolean;
+  version: string | null;
+  reason: string | null;
+};
+
+export type WorkerState = {
+  provider: "claude" | "codex";
+  version: number;
+  updatedAt: number;
+  options: WorkerOption[];
 };
 
 const POLL_MS = 4000;
@@ -27,14 +45,14 @@ function jsonAuthHeaders(): HeadersInit {
  * array) to `{improvements, paused}`. Parse all three shapes so the UI never breaks
  * mid-deploy; a shape with no `paused` field means the server can't pause → false.
  */
-async function getSelf(): Promise<{ intents: Intent[]; paused: boolean } | null> {
+async function getSelf(): Promise<{ intents: Intent[]; paused: boolean; worker: WorkerState | null } | null> {
   const r = await fetch("/api/self", { headers: authHeaders() });
   if (!r.ok) return null;
   const j: unknown = await r.json();
-  if (Array.isArray(j)) return { intents: j as Intent[], paused: false };
+  if (Array.isArray(j)) return { intents: j as Intent[], paused: false, worker: null };
   if (j && typeof j === "object") {
-    const o = j as { improvements?: Intent[]; intents?: Intent[]; paused?: boolean };
-    return { intents: o.improvements ?? o.intents ?? [], paused: o.paused === true };
+    const o = j as { improvements?: Intent[]; intents?: Intent[]; paused?: boolean; worker?: WorkerState };
+    return { intents: o.improvements ?? o.intents ?? [], paused: o.paused === true, worker: o.worker ?? null };
   }
   return null;
 }
@@ -42,6 +60,9 @@ async function getSelf(): Promise<{ intents: Intent[]; paused: boolean } | null>
 export function useSelfJournal() {
   const [intents, setIntents] = useState<Intent[]>([]);
   const [paused, setPausedState] = useState(false);
+  const [worker, setWorkerState] = useState<WorkerState | null>(null);
+  const [workerError, setWorkerError] = useState<string | null>(null);
+  const [selectingWorker, setSelectingWorker] = useState(false);
   const intentsRef = useRef<Intent[]>([]);
   intentsRef.current = intents;
 
@@ -51,6 +72,7 @@ export function useSelfJournal() {
       if (!s) return; // transient failure — keep the last good view
       setIntents(s.intents);
       setPausedState(s.paused);
+      setWorkerState(s.worker);
     } catch {
       /* best-effort polling */
     }
@@ -108,8 +130,12 @@ export function useSelfJournal() {
           body: JSON.stringify({ goal: trimmed }),
         });
         if (!r.ok) {
-          if (r.status === 409)
+          if (r.status === 409) {
+            const body = await r.json().catch(() => ({})) as { error?: string; reason?: string };
+            if (body.error === "worker_unavailable")
+              return { ok: false, error: body.reason ?? "the selected worker is unavailable" };
             return { ok: false, error: "self-improvement is paused — resume it first" };
+          }
           return { ok: false, error: `couldn't start (HTTP ${r.status})` };
         }
         await refresh();
@@ -140,7 +166,42 @@ export function useSelfJournal() {
     }
   }, []);
 
-  return { intents, paused, setPaused, improve, revertLast, cancel, approve, reject };
+  const selectWorker = useCallback(async (provider: "claude" | "codex") => {
+    const current = worker;
+    if (!current || current.provider === provider || selectingWorker) return;
+    setSelectingWorker(true);
+    setWorkerError(null);
+    try {
+      const r = await fetch("/api/self/worker", {
+        method: "POST",
+        headers: jsonAuthHeaders(),
+        body: JSON.stringify({ provider, expectedVersion: current.version }),
+      });
+      const body = await r.json().catch(() => ({})) as {
+        error?: string;
+        reason?: string;
+        worker?: Omit<WorkerState, "options">;
+      };
+      if (!r.ok) {
+        setWorkerError(body.error === "stale_version"
+          ? "The worker choice changed elsewhere. Refreshed the latest setting."
+          : body.reason ?? "That worker is unavailable.");
+        await refresh();
+        return;
+      }
+      if (body.worker) setWorkerState({ ...body.worker, options: current.options });
+      await refresh();
+    } catch {
+      setWorkerError("Couldn't change the worker. Check AVA's connection and try again.");
+    } finally {
+      setSelectingWorker(false);
+    }
+  }, [refresh, selectingWorker, worker]);
+
+  return {
+    intents, paused, setPaused, improve, revertLast, cancel, approve, reject,
+    worker, workerError, selectingWorker, selectWorker,
+  };
 }
 
 /** A self-improvement is still in flight (cancellable) in these states. */

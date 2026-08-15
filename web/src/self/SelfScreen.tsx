@@ -15,9 +15,14 @@ function statusLook(status: string): { spine: string; chip: string } {
 }
 
 export function SelfScreen(_props: { onClose?: () => void }) {
-  const { intents, paused, setPaused, improve, revertLast, cancel, approve, reject } =
+  const {
+    intents, paused, setPaused, improve, revertLast, cancel, approve, reject,
+    worker, workerError, selectingWorker, selectWorker,
+  } =
     useSelfJournal();
   const canRevert = intents.some((i) => i.status === "swapped");
+  const selectedWorker = worker?.options.find((option) => option.provider === worker.provider);
+  const selectedWorkerReady = selectedWorker?.available !== false;
   const reduced = useReducedMotion();
 
   // Left-column summary — gives the short CONTROLS rail useful body so it isn't a
@@ -99,6 +104,47 @@ export function SelfScreen(_props: { onClose?: () => void }) {
           <div className="hud text-[11px] tracking-[0.18em] text-white/55">
             {paused ? "AUTONOMOUS · PAUSED" : "AUTONOMOUS · ACTIVE"}
           </div>
+          <div className="mt-4 rounded-xl border border-white/[0.08] bg-black/20 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span className="hud text-[10px] tracking-[0.18em] text-white/55">IMPLEMENTATION WORKER</span>
+              {worker && <span className="text-[10px] text-white/35">new requests only</span>}
+            </div>
+            {worker ? (
+              <div role="radiogroup" aria-label="Self-improvement implementation worker" className="grid grid-cols-2 gap-2">
+                {worker.options.map((option) => {
+                  const selected = option.provider === worker.provider;
+                  return (
+                    <button
+                      key={option.provider}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={`${option.label}${option.available ? " available" : " unavailable"}`}
+                      disabled={!option.available || selectingWorker}
+                      onClick={() => void selectWorker(option.provider)}
+                      className={`rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${selected
+                        ? "border-[rgba(92,242,255,.45)] bg-[rgba(92,242,255,.08)]"
+                        : "border-white/[0.08] bg-white/[0.02] hover:border-white/20"}`}
+                    >
+                      <span className="block text-xs font-medium text-white/90">{option.label}</span>
+                      <span className={`mt-0.5 block text-[9px] uppercase tracking-[0.13em] ${option.available ? "text-[var(--ac-live)]" : "text-[var(--ac-stop)]"}`}>
+                        {option.available ? (selected ? "selected" : "available") : "unavailable"}
+                      </span>
+                      <span className="mt-1 block truncate text-[9px] text-white/35" title={option.reason ?? undefined}>
+                        {option.installed ? `CLI installed · sign-in not checked${option.version ? ` · ${option.version}` : ""}` : option.reason ?? "CLI missing"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-[11px] text-white/40">Checking installed workers…</div>
+            )}
+            <div className="mt-2 text-[10px] leading-relaxed text-white/40">
+              Account sign-in is verified when the approved worker starts. There is no silent fallback.
+            </div>
+            {workerError && <div role="alert" className="mt-2 text-[10px] text-[var(--ac-stop)]">{workerError}</div>}
+          </div>
           <form aria-label="Start a self-improvement" onSubmit={onImprove} className="mt-4 flex gap-2">
             <input
               value={goal}
@@ -112,7 +158,7 @@ export function SelfScreen(_props: { onClose?: () => void }) {
             />
             <button
               type="submit"
-              disabled={submitting || !goal.trim()}
+              disabled={submitting || !goal.trim() || !selectedWorkerReady}
               onPointerDown={onDown}
               onPointerUp={onUp}
               onPointerLeave={onUp}
@@ -293,6 +339,11 @@ function JournalEntry({
         </span>
         {i.outcome ? (
           <span className="hud text-[10px] tracking-[0.16em] text-white/40">· {i.outcome}</span>
+        ) : null}
+        {i.worker_provider ? (
+          <span className="hud text-[9px] uppercase tracking-[0.14em] text-white/35">
+            · {i.worker_provider === "claude" ? "Claude Code" : "Codex"}
+          </span>
         ) : null}
       </div>
 

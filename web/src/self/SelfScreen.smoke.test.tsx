@@ -8,18 +8,22 @@ afterEach(() => {
   hooked.paused = false;
   hooked.improve.mockClear();
   hooked.setPaused.mockClear();
+  hooked.selectWorker.mockClear();
+  hooked.codexAvailable = false;
 });
 
 const hooked = vi.hoisted(() => ({
   paused: false,
   improve: vi.fn(async (_goal: string) => ({ ok: true as boolean, error: undefined as string | undefined })),
   setPaused: vi.fn(),
+  selectWorker: vi.fn(),
+  codexAvailable: false,
 }));
 
 vi.mock("./useSelfJournal.js", () => ({
   useSelfJournal: () => ({
     intents: [
-      { id: "i1", goal: "be faster", status: "swapped", outcome: "shipped" },
+      { id: "i1", goal: "be faster", status: "swapped", outcome: "shipped", worker_provider: "claude" },
       { id: "i2", goal: "in progress thing", status: "implementing" },
       { id: "i3", goal: "gated thing", status: "awaiting_approval", diff_summary: "PLAN:\nCHANGE: edit foo.ts" },
     ],
@@ -28,6 +32,16 @@ vi.mock("./useSelfJournal.js", () => ({
     improve: hooked.improve,
     revertLast: vi.fn(),
     cancel: vi.fn(), approve: vi.fn(), reject: vi.fn(),
+    worker: {
+      provider: "claude", version: 1, updatedAt: 1,
+      options: [
+        { provider: "claude", label: "Claude Code", installed: true, configuration: "not_checked", available: true, version: "2.1", reason: null },
+        { provider: "codex", label: "Codex", installed: hooked.codexAvailable, configuration: hooked.codexAvailable ? "not_checked" : "unavailable", available: hooked.codexAvailable, version: hooked.codexAvailable ? "0.147" : null, reason: hooked.codexAvailable ? null : "missing" },
+      ],
+    },
+    workerError: null,
+    selectingWorker: false,
+    selectWorker: hooked.selectWorker,
   }),
   isRunningStatus: (s: string) => ["queued", "reflecting", "implementing", "verifying"].includes(s),
   planText: (s: string | null | undefined) => (s ?? "").replace(/^PLAN:\s*/, "").trim(),
@@ -43,6 +57,22 @@ describe("SelfScreen", () => {
   it("shows a Stop button on a running self-improvement", () => {
     render(<SelfScreen onClose={() => {}} />);
     expect(screen.getByRole("button", { name: /stop/i })).toBeTruthy();
+  });
+
+  it("shows the selected worker, availability, and disables an unavailable option", () => {
+    render(<SelfScreen onClose={() => {}} />);
+    const claude = screen.getByRole("radio", { name: /claude code available/i });
+    const codex = screen.getByRole("radio", { name: /codex unavailable/i });
+    expect(claude.getAttribute("aria-checked")).toBe("true");
+    expect((codex as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/no silent fallback/i)).toBeTruthy();
+  });
+
+  it("switches to an available worker through the explicit selector", () => {
+    hooked.codexAvailable = true;
+    render(<SelfScreen onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("radio", { name: /codex available/i }));
+    expect(hooked.selectWorker).toHaveBeenCalledWith("codex");
   });
 
   it("shows the plan and Approve/Reject on an awaiting_approval improvement", () => {

@@ -69,7 +69,7 @@ function mutationFailure(
 export function notesRoutes(
   db: Db,
   auth: RequestHandler,
-  deps: { queueSelfImprove?: (goal: string) => string } = {},
+  deps: { queueSelfImprove?: (goal: string) => string | Promise<string> } = {},
 ): Router {
   const r = Router();
 
@@ -164,7 +164,7 @@ export function notesRoutes(
     res.json({ ok: true });
   });
 
-  r.post("/:id/promote", auth, (req, res) => {
+  r.post("/:id/promote", auth, async (req, res) => {
     const id = typeof req.params.id === "string" ? req.params.id : "";
     const parsed = PromoteBody.safeParse(req.body);
     if (!id || !parsed.success) { res.status(400).json({ error: "bad_request" }); return; }
@@ -180,7 +180,7 @@ export function notesRoutes(
     try {
       if (parsed.data.target === "self_improvement") {
         if (!deps.queueSelfImprove) { res.status(503).json({ error: "self_improvement_unavailable" }); return; }
-        promotionId = deps.queueSelfImprove(buildNoteActionPrompt(current));
+        promotionId = await deps.queueSelfImprove(buildNoteActionPrompt(current));
       } else {
         promotionId = `task_draft_${nanoid(10)}`;
         prompt = buildNoteActionPrompt(current);

@@ -310,7 +310,16 @@ CREATE TABLE IF NOT EXISTS self_improvements (
   diff_summary TEXT,
   verify_log TEXT,
   outcome TEXT,
-  error TEXT
+  error TEXT,
+  worker_provider TEXT NOT NULL DEFAULT 'claude',
+  worker_selection_version INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS self_worker_settings (
+  scope_id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS discussions (

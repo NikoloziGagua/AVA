@@ -83,6 +83,8 @@ import { selfRoutes } from "./routes/self.js";
 import { StrategyRoomStore } from "./strategy/store.js";
 import { StrategyRoomCoordinator } from "./strategy/coordinator.js";
 import { buildCodexConsultant } from "./strategy/codex-consultant.js";
+import { getSelfWorkerSelection } from "./self/worker-selection.js";
+import { buildClaudeSelfWorker, buildCodexSelfWorker, buildSelfWorkerRegistry } from "./self/workers.js";
 
 function loadRuntimeBuildId(): string {
   try {
@@ -404,6 +406,10 @@ const selfClaudeCode = buildClaudeCode({
   pidfiles,
   check: (p) => p.startsWith(tmpdir()) ? { ok: true } : { ok: false, reason: "self-improve cwd must be a worktree" },
 });
+const selfWorkers = buildSelfWorkerRegistry([
+  buildClaudeSelfWorker({ claude: selfClaudeCode }),
+  buildCodexSelfWorker({ pidfiles }),
+]);
 const selfRunner = buildRunner();
 
 function buildImproverDeps(): ImproverDeps {
@@ -421,14 +427,10 @@ function buildImproverDeps(): ImproverDeps {
         : Promise.resolve("CHANGE: (no LLM provider configured)"),
     addWorktree: (id) => addWorktree(cfg.repoRoot, id),
     removeWorktree: (wt) => removeWorktree(cfg.repoRoot, wt),
-    implement: async (brief, cwd, signal) => {
-      // The edit worker runs in a throwaway worktree (a new directory each run),
-      // and Claude sessions are directory-scoped — so this step does NOT use the
-      // persistent session (resuming it from a different worktree fails). Ava's
-      // persistent chat lives in the stable-cwd advisory/planning conversation.
-      // `signal` lets a Stop/Cancel kill the claude worker mid-edit.
-      const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12), signal });
-      return r.ok ? { ok: true, output: r.output } : { ok: false, output: r.reason };
+    implement: async (workerProvider, brief, cwd, signal) => {
+      // The selected adapter runs only inside the throwaway worktree. Both
+      // providers share the cancellation and downstream release gates.
+      return selfWorkers.run(workerProvider, { brief, cwd, runId: `self-${nanoid(12)}`, signal });
     },
     verify: async (cwd, signal) => {
       const v = await verify({ cwd, run: selfRunner, bootSmoke, signal });
@@ -505,11 +507,16 @@ function startImprovement(id: string): void {
   void runImprovement(db, id, buildImproverDeps()).catch((e) =>
     log.error({ err: e instanceof Error ? e.message : String(e), id }, "self-improvement crashed"));
 }
-function queueSelfImprove(goal: string): string {
+async function queueSelfImprove(goal: string): Promise<string> {
   if (improvementsPaused()) {
     throw new Error("self-improvement is paused — Sir can resume it from the Self screen");
   }
-  const id = createIntent(db, { trigger: "explicit", goal });
+  const worker = getSelfWorkerSelection(db);
+  const state = await selfWorkers.availability(worker.provider);
+  if (!state.available) {
+    throw new Error(`${state.label} is unavailable: ${state.reason ?? "CLI not ready"}`);
+  }
+  const id = createIntent(db, { trigger: "explicit", goal, worker });
   startImprovement(id);
   return id;
 }
@@ -576,12 +583,12 @@ const agentDeps = {
   // reflecting → implementing → verifying → swapped/failed/rolled_back).
   listSelfImprovements: () =>
     listIntents(db).map((r) => ({
-      id: r.id, goal: r.goal, status: r.status, trigger: r.trigger,
+      id: r.id, goal: r.goal, status: r.status, trigger: r.trigger, worker: r.worker_provider,
       error: r.error, outcome: r.outcome, created_at: r.created_at,
       commit: r.commit_sha,
       // The reflect brief (what the change set out to do), trimmed for speech.
       detail: r.diff_summary
-        ? r.diff_summary.replace(/^BRIEF:\s*/, "").split(/\n\nWORKER:/)[0]!.trim().slice(0, 500)
+        ? r.diff_summary.replace(/^BRIEF:\s*/, "").split(/\n\nWORKER(?: \([^)]*\))?:/)[0]!.trim().slice(0, 500)
         : null,
     })),
 };
@@ -644,6 +651,7 @@ app.use("/api/self", selfRoutes(db, requireToken(db), {
   cancel: (id) => cancelImprovement(db, id),
   approve: (id) => approveImprovement(id),
   reject: (id) => rejectImprovement(id),
+  workers: selfWorkers,
 }));
 
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });

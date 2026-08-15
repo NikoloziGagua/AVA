@@ -184,7 +184,7 @@ export type AgentDeps = {
   pushDeliver?: (a: Approval) => Promise<void>;
   notifyDone?: (summary: string) => void;
   provider: LLMProvider | null;
-  queueSelfImprove?: (goal: string) => string;
+  queueSelfImprove?: (goal: string) => string | Promise<string>;
   listSelfImprovements?: () => IntentStatusSummary[];
   /** Discuss-with-Claude: queue a background, read-only consult and recount past ones. */
   queueDiscussion?: (topic: string, sessionId: string | null) => string;

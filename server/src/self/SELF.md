@@ -32,3 +32,8 @@ Monorepo (npm workspaces).
 - TDD throughout: every module has a co-located `*.test.ts`. Write the failing test first.
 - Small, focused files, one responsibility each.
 - Secrets are scrubbed at the memory store layer and in logs (`security/scrub.ts`).
+
+## Self-improvement workers
+- New improvement intents snapshot the versioned Self-screen choice: `claude` or `codex`.
+- Both workers edit only an isolated git worktree and enter the identical approval, verify, safety, swap, watchdog, and rollback gates.
+- Missing or unauthenticated CLIs fail closed; there is no silent provider fallback.

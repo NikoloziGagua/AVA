@@ -3,9 +3,20 @@ import { z } from "zod";
 import type { Db } from "../state/db.js";
 import { createIntent, listIntents, getIntent, updateIntent } from "../self/intents.js";
 import { setImprovementsPaused, improvementsPaused } from "../self/improver.js";
+import {
+  SELF_WORKER_PROVIDERS,
+  StaleSelfWorkerSelectionError,
+  getSelfWorkerSelection,
+  setSelfWorkerSelection,
+} from "../self/worker-selection.js";
+import type { SelfWorkerRegistry } from "../self/workers.js";
 
 const Body = z.object({ goal: z.string().min(1).max(2000) });
 const PauseBody = z.object({ paused: z.boolean() });
+const WorkerBody = z.object({
+  provider: z.enum(SELF_WORKER_PROVIDERS),
+  expectedVersion: z.number().int().positive(),
+});
 
 export type SelfRouteDeps = {
   startImprovement: (id: string) => void;
@@ -16,19 +27,58 @@ export type SelfRouteDeps = {
   approve: (id: string) => boolean;
   /** Reject a plan parked at awaiting_approval → it stops without writing code. */
   reject: (id: string) => boolean;
+  workers: SelfWorkerRegistry;
 };
 
 export function selfRoutes(db: Db, auth: RequestHandler, deps: SelfRouteDeps): Router {
   const r = Router();
-  r.post("/improve", auth, (req, res) => {
+  r.post("/improve", auth, async (req, res) => {
     const p = Body.safeParse(req.body);
     if (!p.success) { res.status(400).json({ error: "bad_request" }); return; }
     if (improvementsPaused()) { res.status(409).json({ error: "paused" }); return; }
-    const id = createIntent(db, { trigger: "explicit", goal: p.data.goal });
+    const worker = getSelfWorkerSelection(db);
+    const state = await deps.workers.availability(worker.provider);
+    if (!state.available) {
+      res.status(409).json({ error: "worker_unavailable", provider: worker.provider, reason: state.reason });
+      return;
+    }
+    const id = createIntent(db, { trigger: "explicit", goal: p.data.goal, worker });
     deps.startImprovement(id);
-    res.json({ id });
+    res.json({ id, worker: worker.provider });
   });
-  r.get("/", auth, (_req, res) => { res.json({ intents: listIntents(db), paused: improvementsPaused() }); });
+  r.get("/", auth, async (_req, res) => {
+    const selected = getSelfWorkerSelection(db);
+    const options = await deps.workers.listAvailability();
+    res.json({
+      intents: listIntents(db),
+      paused: improvementsPaused(),
+      worker: { ...selected, options },
+    });
+  });
+  r.post("/worker", auth, async (req, res) => {
+    const p = WorkerBody.safeParse(req.body);
+    if (!p.success) { res.status(400).json({ error: "bad_request" }); return; }
+    const current = getSelfWorkerSelection(db);
+    if (current.version !== p.data.expectedVersion) {
+      res.status(409).json({ error: "stale_version", worker: current });
+      return;
+    }
+    const state = await deps.workers.availability(p.data.provider);
+    if (!state.available) {
+      res.status(409).json({ error: "worker_unavailable", provider: p.data.provider, reason: state.reason });
+      return;
+    }
+    try {
+      const selection = setSelfWorkerSelection(db, p.data.provider, p.data.expectedVersion);
+      res.json({ worker: selection });
+    } catch (error) {
+      if (error instanceof StaleSelfWorkerSelectionError) {
+        res.status(409).json({ error: "stale_version", worker: error.current });
+        return;
+      }
+      throw error;
+    }
+  });
   // The Self screen's Pause toggle used to be pure client state — now it
   // actually gates intake (both this API and the self_improve chat tool).
   r.post("/pause", auth, (req, res) => {

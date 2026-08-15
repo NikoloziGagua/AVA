@@ -38,7 +38,7 @@ Two columns need a word of explanation:
 | `memory_remember` | same | Append/refresh/supersede a memory observation | none | `low` |
 | `memory_forget` | same | Drop a memory entry (last / match / project) | none | `low` |
 | `read_claude_updates` | `tools/update-log-mcp.ts` | Read Claude's dev-log notes about changes to Ava's own code | none | n/a (read) |
-| `self_improve` | `tools/self-improve-mcp.ts` | Queue an autonomous change to Ava's OWN code | (queue only; worker later uses Claude subscription) | n/a (queue) |
+| `self_improve` | `tools/self-improve-mcp.ts` | Queue an approval-gated change to Ava's OWN code | (queue only; selected Claude Code or Codex CLI worker runs later) | n/a (queue) |
 | `self_improve_status` | same | Report state of self-improvement tasks | none | n/a (read) |
 | `read_logs` | `tools/activity-log-mcp.ts` + `tools/activity-log.ts` | Read Ava's own activity/error logs | none | n/a (read) |
 | `shopify_list_products` / `shopify_get_product` / `shopify_update_product` | `tools/shopify-mcp.ts` | List/read/edit Shopify products' name + description over the **Admin API** (no browser) | none (vendor API; no metered LLM call) | n/a — only registered when `SHOPIFY_*` creds set |
@@ -432,11 +432,11 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 
 **Purpose.** `self_improve` queues an autonomous change to **Ava's own codebase**; `self_improve_status` reports where each such task is.
 
-**`self_improve`** `{ goal }` → `deps.queue(goal)` returns an intent id; tool replies `queued self-improvement <id>: <goal>`. The heavy lifting happens out-of-band: the queued intent is reflected on, implemented by a **Claude Code worker in a git worktree**, verified (tests + build + boot-smoke), and hot-swapped — auto-reverted if it fails verification or breaks at boot. (Wiring in `index.ts`; `selfClaudeCode` restricts the worker's cwd to the temp-dir worktree.)
+**`self_improve`** `{ goal }` → `deps.queue(goal)` returns an intent id; tool replies `queued self-improvement <id>: <goal>`. The heavy lifting happens out-of-band: the queued intent snapshots the Self screen's **Claude Code or Codex** selection, waits for explicit plan approval, runs that worker in an isolated git worktree, verifies (tests + build + boot-smoke), and hot-swaps — auto-reverted if it fails verification or breaks at boot. Both adapters enter the identical downstream gates, and an unavailable selected worker fails closed without fallback.
 
 **`self_improve_status`** `{ id? }` → list of tasks (id, status, goal) or, with an id, full detail (what it changed, commit sha, failure reason). States: `queued → reflecting → implementing → verifying → swapped (=shipped/live) → failed | rolled_back`. Concurrent requests queue and run one at a time.
 
-**API cost.** The wrappers only queue/read (no cost). The downstream worker uses the **Claude subscription**; the reflect step uses the configured provider (OpenAI in production per the token-economics memory). Honest caveat: triggering `self_improve` *does* eventually spend model calls in the background pipeline, even though the tool call itself returns instantly and free.
+**API cost.** The wrappers only queue/read (no cost). The downstream worker uses the selected CLI's saved subscription/account; the reflect step uses the configured provider. Triggering `self_improve` therefore does eventually spend model capacity in the background pipeline even though the queue tool returns immediately.
 
 **Gating.** Not in `classifyRisk` (queue/read wrappers). The real safety is the verify-and-auto-revert harness around the worker, not a per-call veto.
 

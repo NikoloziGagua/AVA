@@ -258,7 +258,7 @@ The loop is bounded by `MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS
 | `watch_create` / `watch_list` / `watch_delete` | `tools/watches-mcp.ts` | Register/list/delete standing background **watches** ("notify me if/when X"). The tools just manage the record; a scheduler runs the checks (see §11). | none (LLM); each *check* is a paid agent run |
 | `discuss_with_claude` / `read_discussion` | `tools/discuss-mcp.ts` | Queues a read-only background Claude consult. | none (subscription) |
 | `memory_read/remember/forget` | `tools/memory-mcp.ts` | Reads/writes durable memory files. | none |
-| `self_improve` / `self_improve_status` | `tools/self-improve-mcp.ts` | Queues a self-improvement and reports status. | none (subscription worker) |
+| `self_improve` / `self_improve_status` | `tools/self-improve-mcp.ts` | Queues an approval-gated self-improvement through the selected Claude Code or Codex worker and reports status. | none at queue time (selected CLI worker later) |
 | `read_claude_updates` | `tools/update-log-mcp.ts` | Reads Claude's dev-log so Ava can honestly say what changed. | none |
 | `read_logs` | `tools/activity-log.ts` | Reads the server's own activity logs. | none |
 | `shopify_list_products / _get_product / _update_product` | `tools/shopify-mcp.ts` | Edits a product's name + description over the **Shopify Admin API** (one `PUT`, no browser); never sends the `images` array. Registered only when `SHOPIFY_STORE` + `SHOPIFY_ADMIN_TOKEN` are set. | none (LLM); uses your Shopify billing |
@@ -342,7 +342,7 @@ flowchart TB
 
 **What it is:** Ava can change its own code. A goal is queued, an LLM reflects it into a brief, **Claude Code implements it in a throwaway git worktree**, the change is verified + built, then hot-swapped into the live tree — with a watchdog that rolls back if the new build never gets healthy. (See **W5** above for the state diagram.) **→ Full detail + every gap: [07](architecture/07-self-improvement.md).**
 
-**Who does what:** *reflect* uses the configured LLM (OpenAI by default); *implement* uses **Claude Code on your subscription**. This split is intentional — conserve OpenAI, lean on the abundant Claude subscription for the heavy code work. A **single-flight lock** means one improvement mutates the tree at a time; others queue FIFO.
+**Who does what:** *reflect* uses the configured LLM; *implement* uses the versioned **Claude Code or Codex** selection from the Self screen. Both adapters edit an isolated worktree and enter the same approval, verification, safety, swap, watchdog, and rollback gates. A **single-flight lock** means one improvement mutates the tree at a time; others queue FIFO.
 
 **The guardrails that make it safe to run unattended:** worktree isolation (a self-edit can't touch the live repo directly), the full verify+build+boot gate, a **safety-file refusal** (`assertSwapSafe` blocks any diff touching security/policy/auth or the self-improve machinery), the rollback watchdog, a **plan-approval gate** on user-asked improvements (they park at `awaiting_approval` and write no code until you approve), and a **Stop path** that cancels a running improvement end-to-end. (See `features/self-improve-stop-and-gate.md`.)
 

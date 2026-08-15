@@ -549,7 +549,9 @@ destroying it (§7, Guard 2).
 ### `self_improvements` table (`state/schema.sql:124-137`, typed in `intents.ts:9-14`)
 
 `id, created_at, trigger, goal, status, branch, commit_sha, last_known_good,
-diff_summary, verify_log, outcome, error`. Helpers: `createIntent` (inserts
+diff_summary, verify_log, outcome, error, worker_provider,
+worker_selection_version`. `self_worker_settings` separately stores the
+versioned default for future intents. Helpers: `createIntent` (inserts
 `status='queued'`), `getIntent`, `listIntents` (newest first), `updateIntent`
 (dynamic patch), and `failStaleIntents` (boot reconciliation, `intents.ts:38-46`).
 
@@ -589,11 +591,14 @@ repo is actually laid out.
 
 ## 11. The UI (`web/src/self/` + `routes/self.ts`)
 
-- **`routes/self.ts`** exposes seven endpoints (all token-auth'd):
+- **`routes/self.ts`** exposes the token-authenticated intent endpoints plus a
+  version-guarded worker selector:
   `POST /api/self/improve` (create + start, `trigger:"explicit"`; now returns
   **409 `paused`** if self-improvement is paused),
-  `GET /api/self` (list all intents — the response now also carries a top-level
-  `paused` boolean),
+  `GET /api/self` (list all intents plus `paused`, the selected worker version,
+  and honest Claude/Codex CLI availability),
+  `POST /api/self/worker` (select the worker for future intents using
+  `expectedVersion`; stale or unavailable selections return 409),
   `POST /api/self/pause` (**new**: set the server-side pause gate via
   `setImprovementsPaused`, `self.ts`),
   `POST /api/self/:id/cancel` (cancel a running/queued improvement →
@@ -666,9 +671,13 @@ doing X"):
    `outcome="cancelled"`. (The overnight/`schedule` path skips this step.)
 4. **Worktree.** `status=implementing`. A temp worktree on branch `self/<id>` is
    created and `node_modules` junctioned in.
-5. **Implement.** The **subscription Claude worker** runs `claude -p "<brief>"
-   --permission-mode acceptEdits` in that worktree, editing files. Brief + worker
-   output are saved to `diff_summary`. A no-op/error fails the intent here.
+5. **Implement.** The intent's snapshotted **Claude Code or Codex worker** edits
+   that worktree through the provider-neutral adapter boundary. Claude uses
+   non-interactive print mode with `acceptEdits`; Codex uses non-interactive
+   `codex exec` with `workspace-write` and receives the brief on stdin. Brief +
+   sanitized bounded worker evidence are saved to `diff_summary`. A missing CLI,
+   login/provider failure, no-op, or worker error fails the intent here without
+   silently falling back.
 6. **Verify.** `status=verifying`. `npm test` → `web build` → `server build` →
    boot-smoke, each capped at 10 min and tree-killed **on timeout or a Stop**.
    Output saved to `verify_log`. (flightcheck also runs, report-only, appended to

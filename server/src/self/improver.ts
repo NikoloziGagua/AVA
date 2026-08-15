@@ -1,5 +1,7 @@
 import type { Db } from "../state/db.js";
 import { getIntent, updateIntent, type Intent } from "./intents.js";
+import type { SelfWorkerProvider } from "./worker-selection.js";
+import { sanitizeWorkerEvidence } from "./workers.js";
 
 export type ImproverDeps = {
   reflect: (goal: string, failureLog: string | null, signal?: AbortSignal) => Promise<string>;
@@ -12,7 +14,7 @@ export type ImproverDeps = {
   onAwaitingApproval?: (id: string, plan: string) => void;
   addWorktree: (id: string) => { path: string; branch: string };
   removeWorktree: (wt: { path: string; branch: string }) => void;
-  implement: (brief: string, cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; output: string }>;
+  implement: (provider: SelfWorkerProvider, brief: string, cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; output: string }>;
   verify: (cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; log: string }>;
   headSha: () => string;
   commitWorktree: (cwd: string, msg: string) => string;
@@ -26,7 +28,7 @@ export type ImproverDeps = {
    *  `swapped` is the commit the swap moved HEAD to, so the watchdog can SKIP the
    *  rollback if newer work was committed on top in the meantime. */
   watch: (knownGood: string, swapped: string) => Promise<void>;
-  emit: (e: { intentId: string; step: string; ok?: boolean }) => void;
+  emit: (e: { intentId: string; step: string; ok?: boolean; provider?: SelfWorkerProvider }) => void;
   /** Fired after a successful swap — bindings append the self-changelog here so
    *  Ava keeps a cheap, durable record of how she has changed. */
   onSwapped?: (intent: Intent, sha: string) => void;
@@ -130,9 +132,10 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     // user to approve it BEFORE any code is written — so nothing runs away unseen.
     // (The unattended overnight loop sets requireApproval=false and skips this.)
     if (deps.requireApproval?.(intent)) {
-      updateIntent(db, id, { status: "awaiting_approval", diff_summary: `PLAN:\n${brief}`.slice(0, 4000) });
-      deps.emit({ intentId: id, step: "awaiting_approval" });
-      deps.onAwaitingApproval?.(id, brief);
+      const safePlan = sanitizeWorkerEvidence(brief, 3_990);
+      updateIntent(db, id, { status: "awaiting_approval", diff_summary: `PLAN:\n${safePlan}`.slice(0, 4000) });
+      deps.emit({ intentId: id, step: "awaiting_approval", provider: intent.worker_provider });
+      deps.onAwaitingApproval?.(id, safePlan);
       const approved = await new Promise<boolean>((resolve) => {
         planDecisions.set(id, resolve);
         // A cancel (abort) while parked counts as "do not proceed".
@@ -151,16 +154,18 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
       }
     }
 
-    updateIntent(db, id, { status: "implementing" }); deps.emit({ intentId: id, step: "implementing" });
+    updateIntent(db, id, { status: "implementing" }); deps.emit({ intentId: id, step: "implementing", provider: intent.worker_provider });
     wt = deps.addWorktree(id);
-    const impl = await deps.implement(brief, wt.path, signal);
+    const impl = await deps.implement(intent.worker_provider, brief, wt.path, signal);
     // Record what the worker was told and what it produced, so a no-op or a bad
     // edit is diagnosable from the intent instead of vanishing.
-    updateIntent(db, id, { diff_summary: `BRIEF:\n${brief}\n\nWORKER:\n${impl.output ?? ""}`.slice(0, 4000) });
+    const safeBrief = sanitizeWorkerEvidence(brief, 2_000);
+    const safeOutput = sanitizeWorkerEvidence(impl.output ?? "", 1_900);
+    updateIntent(db, id, { diff_summary: `BRIEF:\n${safeBrief}\n\nWORKER (${intent.worker_provider}):\n${safeOutput}`.slice(0, 4000) });
     if (!impl.ok) throw new Error(`implement failed: ${impl.output.slice(0, 500)}`);
     throwIfAborted();
 
-    updateIntent(db, id, { status: "verifying" }); deps.emit({ intentId: id, step: "verifying" });
+    updateIntent(db, id, { status: "verifying" }); deps.emit({ intentId: id, step: "verifying", provider: intent.worker_provider });
     const v = await deps.verify(wt.path, signal);
     updateIntent(db, id, { verify_log: v.log });
     if (!v.ok) throw new Error(v.log);

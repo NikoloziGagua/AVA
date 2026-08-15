@@ -37,6 +37,32 @@ describe("useSelfJournal", () => {
     unmount();
   });
 
+  it("parses worker availability and sends a version-guarded selector update", async () => {
+    const worker = {
+      provider: "claude", version: 4, updatedAt: 1,
+      options: [
+        { provider: "claude", label: "Claude Code", installed: true, configuration: "not_checked", available: true, version: "2.1", reason: null },
+        { provider: "codex", label: "Codex", installed: true, configuration: "not_checked", available: true, version: "0.147", reason: null },
+      ],
+    };
+    let selected = worker;
+    const fn = mockFetch({
+      "/api/self": () => ({ status: 200, body: { intents: [], paused: false, worker: selected } }),
+      "/api/self/worker": (init) => {
+        expect(JSON.parse(String(init?.body))).toEqual({ provider: "codex", expectedVersion: 4 });
+        selected = { ...worker, provider: "codex", version: 5 };
+        return { status: 200, body: { worker: selected } };
+      },
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.worker?.version).toBe(4));
+    await act(async () => { await result.current.selectWorker("codex"); });
+    expect(result.current.worker).toMatchObject({ provider: "codex", version: 5 });
+    const call = fn.mock.calls.find(([url]) => String(url) === "/api/self/worker");
+    expect((call?.[1] as RequestInit).headers).toMatchObject({ authorization: "Bearer test-token" });
+    unmount();
+  });
+
   it("treats a legacy bare-array response as unpaused", async () => {
     mockFetch({
       "/api/self": () => ({ status: 200, body: [{ id: "a", goal: "g", status: "swapped" }] }),
@@ -96,6 +122,18 @@ describe("useSelfJournal", () => {
     });
     expect(out!.ok).toBe(false);
     expect(out!.error).toMatch(/paused/i);
+    unmount();
+  });
+
+  it("improve reports an unavailable selected worker honestly", async () => {
+    mockFetch({
+      "/api/self": () => ({ status: 200, body: { improvements: [], paused: false } }),
+      "/api/self/improve": () => ({ status: 409, body: { error: "worker_unavailable", reason: "Codex CLI is missing" } }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    let out: { ok: boolean; error?: string } | undefined;
+    await act(async () => { out = await result.current.improve("do a thing"); });
+    expect(out).toEqual({ ok: false, error: "Codex CLI is missing" });
     unmount();
   });
 

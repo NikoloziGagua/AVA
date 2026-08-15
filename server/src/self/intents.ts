@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import type { Db } from "../state/db.js";
+import { getSelfWorkerSelection, type SelfWorkerProvider, type SelfWorkerSelection } from "./worker-selection.js";
 
 export type IntentTrigger = "explicit" | "failure" | "friction" | "schedule";
 export type IntentStatus =
@@ -11,13 +12,20 @@ export type Intent = {
   status: IntentStatus; branch: string | null; commit_sha: string | null;
   last_known_good: string | null; diff_summary: string | null;
   verify_log: string | null; outcome: string | null; error: string | null;
+  worker_provider: SelfWorkerProvider; worker_selection_version: number;
 };
 
-export function createIntent(db: Db, o: { trigger: IntentTrigger; goal: string }): string {
+export function createIntent(
+  db: Db,
+  o: { trigger: IntentTrigger; goal: string; worker?: SelfWorkerSelection },
+): string {
   const id = nanoid(12);
+  const worker = o.worker ?? getSelfWorkerSelection(db);
   db.prepare(
-    "INSERT INTO self_improvements (id, created_at, trigger, goal, status) VALUES (?, ?, ?, ?, 'queued')",
-  ).run(id, Date.now(), o.trigger, o.goal);
+    `INSERT INTO self_improvements
+      (id, created_at, trigger, goal, status, worker_provider, worker_selection_version)
+     VALUES (?, ?, ?, ?, 'queued', ?, ?)`,
+  ).run(id, Date.now(), o.trigger, o.goal, worker.provider, worker.version);
   return id;
 }
 

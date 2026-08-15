@@ -16,6 +16,14 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "sessions", "deleted_at", "INTEGER");
   tryAddColumn(db, "sessions", "pinned", "INTEGER NOT NULL DEFAULT 0");
   tryAddColumn(db, "messages", "metadata", "TEXT NOT NULL DEFAULT '{}'");
+  // Self worker selector: existing intents remain pinned to the historical
+  // Claude worker. New intents snapshot the versioned global selection.
+  tryAddColumn(db, "self_improvements", "worker_provider", "TEXT NOT NULL DEFAULT 'claude'");
+  tryAddColumn(db, "self_improvements", "worker_selection_version", "INTEGER NOT NULL DEFAULT 1");
+  db.prepare(`
+    INSERT OR IGNORE INTO self_worker_settings (scope_id, provider, version, updated_at)
+    VALUES ('global', 'claude', 1, ?)
+  `).run(Date.now());
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at)");
   // Watches v2: one-shot reminders (run_at), daily schedules (daily_at), and
   // the reminder kind (direct push at the due time — no agent run needed).

@@ -46,6 +46,23 @@ describe("runImprovement", () => {
     expect(ds).toContain("edited index.ts");
   });
 
+  it("dispatches the snapshotted Codex provider through the identical verification gate", async () => {
+    const d = db();
+    const id = createIntent(d, {
+      trigger: "explicit",
+      goal: "g",
+      worker: { provider: "codex", version: 2, updatedAt: Date.now() },
+    });
+    const seen: string[] = [];
+    await runImprovement(d, id, deps({
+      implement: async (provider: string) => { seen.push(`implement:${provider}`); return { ok: true, output: "changed" }; },
+      verify: async () => { seen.push("verify"); return { ok: true, log: "ok" }; },
+      swapTo: () => { seen.push("swap"); },
+    }));
+    expect(seen).toEqual(["implement:codex", "verify", "swap"]);
+    expect(getIntent(d, id)!.status).toBe("swapped");
+  });
+
   it("a safety-guard throw in swapTo fails the intent (no live swap)", async () => {
     // Simulates assertSwapSafe refusing a candidate that touches guardrail code:
     // swapTo throws → the intent is marked failed instead of clobbering.
@@ -91,7 +108,7 @@ describe("runImprovement", () => {
     const started = new Promise<void>((r) => { resolveStarted = r; });
     return {
       deps: deps({
-        implement: (_b: string, _c: string, signal?: AbortSignal) =>
+        implement: (_provider: string, _b: string, _c: string, signal?: AbortSignal) =>
           new Promise((resolve) => {
             resolveStarted();
             signal!.addEventListener("abort", () => resolve({ ok: false, output: "aborted" }), { once: true });

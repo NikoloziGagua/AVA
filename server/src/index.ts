@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createConnection } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
@@ -110,6 +110,7 @@ const codexDispatcher = buildCodexDispatcher({
   repoRoot: cfg.repoRoot,
   logsDir: cfg.logsDir,
   handoffDir: join(cfg.dataDir, "codex-watch-inbox"),
+  queueDbPath: join(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"), "queue_1.sqlite"),
 });
 const observability = new ObservabilityService(db);
 const strategyStore = new StrategyRoomStore(db);

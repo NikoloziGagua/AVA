@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -24,6 +25,31 @@ function tempRoot(): string {
 
 function event(type: string, extra: Record<string, unknown> = {}) {
   return JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type, ...extra } });
+}
+
+function hookPrompt(marker: string) {
+  return JSON.stringify({
+    timestamp: new Date().toISOString(),
+    type: "response_item",
+    payload: {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: `<hook_prompt hook_run_id="hook-1">${marker} build</hook_prompt>` }],
+    },
+  });
+}
+
+function createCodexQueue(path: string) {
+  const db = new Database(path);
+  db.exec(`CREATE TABLE queued_items (
+    id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    queue_order INTEGER NOT NULL,
+    created_at_ms INTEGER NOT NULL,
+    updated_at_ms INTEGER NOT NULL
+  )`);
+  db.close();
 }
 
 function makeSession(root: string, input: { id: string; cwd: string; state: "idle" | "busy"; mtimeHint?: number }): CodexWatchTarget {
@@ -80,15 +106,78 @@ describe("Codex thread evidence", () => {
     const root = tempRoot();
     const target = makeSession(root, { id: "thread-hook", cwd: "C:/repo/AVA", state: "busy" });
     const offset = inspectCodexThread(target).fileSize;
-    appendFileSync(target.sessionFile, `${event("response_item", { role: "user", content: "[AVA-WATCH:hook-1] build" })}\n`);
+    appendFileSync(target.sessionFile, `${hookPrompt("[AVA-WATCH:hook-1]")}\n`);
     expect(inspectCodexThread(target, "[AVA-WATCH:hook-1]", offset)).toMatchObject({
       markerSeen: true,
+      markerTurnCompleted: false,
+    });
+  });
+
+  it("does not accept marker text echoed in diagnostics or tool arguments as delivery", () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-echo", cwd: "C:/repo/AVA", state: "busy" });
+    const offset = inspectCodexThread(target).fileSize;
+    appendFileSync(target.sessionFile, `${event("tool_call", { input: "debug [AVA-WATCH:echo-1]" })}\n`);
+    appendFileSync(target.sessionFile, `${JSON.stringify({
+      type: "response_item",
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text: "ordinary [AVA-WATCH:echo-1] text" }] },
+    })}\n`);
+    appendFileSync(target.sessionFile, `${event("task_complete", { turn_id: "turn-echo" })}\n`);
+    expect(inspectCodexThread(target, "[AVA-WATCH:echo-1]", offset)).toMatchObject({
+      markerSeen: false,
       markerTurnCompleted: false,
     });
   });
 });
 
 describe("Codex watcher delivery", () => {
+  it("uses Codex's durable queue for an active pinned thread", async () => {
+    const root = tempRoot();
+    const inbox = join(root, "inbox");
+    const queueDbPath = join(root, "queue_1.sqlite");
+    createCodexQueue(queueDbPath);
+    const target = makeSession(root, { id: "thread-queue", cwd: "C:/repo/AVA", state: "busy" });
+    const spawnCodex = vi.fn(() => ({ pid: 1 }));
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      handoffDir: inbox,
+      queueDbPath,
+      spawnCodex,
+    });
+
+    const first = await dispatcher.dispatch({
+      watchId: "queue-1",
+      prompt: "build safely",
+      target,
+    });
+    expect(first).toMatchObject({ status: "pending", pid: null });
+    expect(spawnCodex).not.toHaveBeenCalled();
+    expect(readFileSync(join(inbox, "queued", "queue-1.json"), "utf8")).not.toContain("build safely");
+    expect(() => readFileSync(join(inbox, "pending", "queue-1.json"), "utf8")).toThrow();
+
+    const db = new Database(queueDbPath);
+    const row = db.prepare("SELECT thread_id, payload_json FROM queued_items WHERE id = ?")
+      .get("ava-watch:queue-1") as { thread_id: string; payload_json: string };
+    expect(row.thread_id).toBe(target.threadId);
+    expect(row.payload_json).toContain("[AVA-WATCH:queue-1]");
+    db.prepare("DELETE FROM queued_items WHERE id = ?").run("ava-watch:queue-1");
+    db.close();
+
+    const replay = await dispatcher.dispatch({
+      watchId: "queue-1",
+      prompt: "build safely",
+      target,
+      marker: "[AVA-WATCH:queue-1]",
+      dispatchOffset: "dispatchOffset" in first ? first.dispatchOffset : 0,
+    });
+    expect(replay).toMatchObject({ status: "pending" });
+    const verify = new Database(queueDbPath, { readonly: true });
+    expect(verify.prepare("SELECT COUNT(*) AS count FROM queued_items").get()).toEqual({ count: 0 });
+    verify.close();
+  });
+
   it("stages for the in-thread Stop hook while the pinned writer is busy", async () => {
     const root = tempRoot();
     const inbox = join(root, "inbox");

@@ -17,6 +17,7 @@ import {
   stageCodexHandoff,
   watchIdFromMarker,
 } from "./codex-handoff.js";
+import { hasCodexQueueReceipt, stageCodexQueue } from "./codex-queue.js";
 
 export type CodexWatchTarget = {
   threadId: string;
@@ -146,8 +147,26 @@ export function resolveLatestCodexTarget(
   return { threadId, sessionFile: selected.sessionFile, cwd: selected.meta.cwd };
 }
 
-function payloadContainsMarker(payload: unknown, marker: string): boolean {
-  try { return JSON.stringify(payload).includes(marker); } catch { return false; }
+function payloadContainsDeliveryMarker(record: unknown, marker: string): boolean {
+  if (!record || typeof record !== "object") return false;
+  const envelope = record as {
+    type?: string;
+    payload?: { type?: string; role?: string; content?: Array<{ type?: string; text?: string }> };
+  };
+  const payload = envelope.payload;
+  // Legacy/resumed delivery is a genuine Codex user_message event. Keep that
+  // supported for sessions without the active-writer handoff.
+  if (envelope.type === "event_msg" && payload?.type === "user_message") {
+    try { return JSON.stringify(payload).includes(marker); } catch { return false; }
+  }
+  if (envelope.type !== "response_item") return false;
+  if (payload?.type !== "message" || payload.role !== "user" || !Array.isArray(payload.content)) return false;
+  return payload.content.some((item) =>
+    item?.type === "input_text"
+    && typeof item.text === "string"
+    && /<hook_prompt\b[^>]*\bhook_run_id=(?:"[^"]+"|'[^']+')[^>]*>/i.test(item.text)
+    && item.text.includes(marker),
+  );
 }
 
 export function inspectCodexThread(
@@ -192,10 +211,10 @@ export function inspectCodexThread(
         const record = JSON.parse(line) as { type?: string; payload?: { type?: string; turn_id?: string } };
         const payload = record.payload;
         if (payload?.type === "task_started" && markerIndex < 0) turnId = payload.turn_id ?? turnId;
-        // A Stop-hook continuation is persisted as a hook prompt response item,
-        // not a user_message. The unique post-offset marker is the evidence;
-        // requiring a specific transport record would hide valid delivery.
-        if (payloadContainsMarker(payload, marker)) {
+        // A Stop-hook continuation is persisted as a typed hook-prompt response
+        // item, not a user_message. Require that semantic envelope: arbitrary
+        // diagnostic/tool text may echo the marker and is not delivery evidence.
+        if (payloadContainsDeliveryMarker(record, marker)) {
           markerSeen = true;
           markerIndex = index;
         }
@@ -269,6 +288,8 @@ export function buildCodexDispatcher(options: {
   isProcessRunning?: IsProcessRunning;
   /** When present, pinned TUI delivery is staged for the in-writer Stop hook. */
   handoffDir?: string | null;
+  /** Codex's durable queue; used only while the pinned TUI writer is busy. */
+  queueDbPath?: string | null;
 }): CodexDispatcher {
   const spawnCodex = options.spawnCodex ?? productionSpawn;
   const verifyMs = options.verifyMs ?? DEFAULT_VERIFY_MS;
@@ -340,6 +361,49 @@ export function buildCodexDispatcher(options: {
 
         const dispatchOffset = before.fileSize;
         const prompt = formatCodexWatchPrompt(marker, request.prompt);
+        // A busy pinned TUI already owns the rollout. Codex's durable queue is
+        // the authoritative cross-process boundary: the live writer consumes
+        // this typed user turn when it becomes idle. This also works for a TUI
+        // session that was loaded before AVA's Stop hook was installed.
+        if (before.state === "busy" && options.queueDbPath) {
+          try {
+            const staged = stageCodexQueue({
+              queueDbPath: options.queueDbPath,
+              receiptRoot: options.handoffDir,
+              watchId: request.watchId,
+              threadId: request.target.threadId,
+              prompt,
+            });
+            return {
+              status: "pending",
+              detail: staged.existing
+                ? "the existing durable Codex queue handoff remains staged; no duplicate was created"
+                : "instruction queued for the active Codex thread's next clean task boundary",
+              marker,
+              dispatchOffset,
+              pid: null,
+            };
+          } catch (error) {
+            // A receipt proves a prior successful stage even if Codex already
+            // consumed the queue row. Never enqueue the consequential task a
+            // second time while its rollout evidence is still catching up.
+            if (hasCodexQueueReceipt(options.handoffDir, request.watchId, request.target.threadId)) {
+              return {
+                status: "pending",
+                detail: "the durable Codex queue handoff is already recorded; no duplicate was created",
+                marker,
+                dispatchOffset,
+                pid: null,
+              };
+            }
+            // Older Codex builds have no supported queue. Only that narrow
+            // compatibility case falls through to the trusted Stop hook.
+            const detail = error instanceof Error ? error.message : String(error);
+            if (!/database is unavailable|schema is unavailable|schema is incompatible/.test(detail)) {
+              return { status: "error", detail, retryable: true };
+            }
+          }
+        }
         try {
           const staged = stageCodexHandoff(options.handoffDir, {
             watchId: request.watchId,

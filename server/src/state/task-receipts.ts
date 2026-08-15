@@ -53,7 +53,7 @@ export function getTaskReceipt(
 
   try {
     const parsed = JSON.parse(row.receipt_json) as Partial<TaskReceipt>;
-    if (parsed.schemaVersion !== 1 || parsed.taskId !== row.task_id ||
+    if ((parsed.schemaVersion !== 1 && parsed.schemaVersion !== 2) || parsed.taskId !== row.task_id ||
         typeof parsed.expected !== "string" || typeof parsed.actual !== "string" ||
         !Array.isArray(parsed.evidence)) {
       return null;

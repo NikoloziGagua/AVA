@@ -2419,12 +2419,12 @@ const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
     "Learn only from completed multi-step work and treat later recall as guidance that still requires verification.",
     [
       { key: "mode", name: "Choose capture or recall", description: "Route a completed run to learning or a new request to lexical matching.", kind: "decision" },
-      { key: "capture-eligible", parent: "mode", name: "Check capture eligibility", description: "Require a final reply and at least two tool steps before distillation.", kind: "verification" },
+      { key: "capture-eligible", parent: "mode", name: "Check verified learning gate", description: "Require terminal task-outcome evidence and at least two tool steps before distillation.", kind: "verification" },
       { key: "distill", parent: "mode", name: "Distil trigger, steps and lessons", description: "Create a concise trigger, keywords, successful steps and avoidance lessons.", kind: "operation", producesEvidence: ["artifact"] },
-      { key: "merge", parent: "mode", name: "Merge existing playbook", description: "Increment the version while retaining success, failure and duration history.", kind: "external-action", producesEvidence: ["artifact"] },
+      { key: "merge", parent: "mode", name: "Merge verified procedure", description: "Increment the version only after verified evidence while retaining typed outcome history.", kind: "external-action", producesEvidence: ["artifact"] },
       { key: "match", parent: "mode", name: "Lexically match request", description: "Tokenise the new prompt and choose a non-demoted matching playbook.", kind: "decision" },
       { key: "inject", parent: "mode", name: "Inject procedure and lessons", description: "Prepend the matched guidance to the current request.", kind: "operation", producesEvidence: ["task-event"] },
-      { key: "record", parent: "mode", name: "Record recalled outcome", description: "Update wins, failures, last-used date and rolling duration after execution.", kind: "external-action", producesEvidence: ["artifact", "task-event"] },
+      { key: "record", parent: "mode", name: "Record evidence-aware outcome", description: "Record verified, partial, unverified, contradicted or failed terminal evidence without treating prose as success.", kind: "external-action", producesEvidence: ["artifact", "task-event"] },
       { key: "none", parent: "mode", name: "Continue without playbook", description: "Do not manufacture a match when overlap or eligibility is insufficient.", kind: "result" },
     ],
     [

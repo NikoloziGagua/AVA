@@ -168,6 +168,16 @@ source bodies, generated renderer output and secrets are not telemetry. Codex or
 Claude activity remains in its existing correlated communication trace; visual
 generation does not create a hidden agent channel or double-count their work.
 
+Tool verification evidence now crosses the same normalized boundary as the
+executor result. A tool returning `ok` remains an executor report. When a tool
+also supplies a bounded, sanitized verification record, Mission Control emits a
+separate `verification.evidence.recorded` event with its state, scope, method,
+time, and provenance. Task-outcome evidence can project a run as verified;
+operation-only evidence projects partial verification. A contradiction or a
+later failed tool prevents a mixed run from being promoted to verified. These
+events are the evidence source for the playbook verified-learning gate; final
+assistant prose is never treated as proof.
+
 ## Forge adapter contract
 
 Forge's append-only journal remains authoritative for its internal state machine. An AVA registration supplies:
@@ -183,7 +193,7 @@ Forge events are mapped rather than reinterpreted. Unknown future roles remain v
 ## Milestones after this slice
 
 1. Instrument Hume with the same voice event grammar.
-2. Add verification/evidence wrappers so external success can be distinguished from a returned tool result.
+2. Extend the implemented verification/evidence wrapper beyond the initial filesystem and social-workflow producers.
 3. Connect Forge journal ingestion and show its 11 stations, assignments, messages, approvals, artifacts, and test/review outcomes as nested runs.
 4. Add explicit Codex and Claude Code adapters, including prompts/responses as sanitized collapsed messages and artifacts/diffs as typed resources.
 5. Add health aggregation, latency percentiles, retry/error signatures, cost trends, and stale adapter/agent panels.

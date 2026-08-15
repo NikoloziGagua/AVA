@@ -48,9 +48,9 @@ describe("learned workflow projection", () => {
       },
       metrics: {
         recalls: 1,
-        observedOutcomes: 0,
-        successRate: null,
-        averageSuccessfulDurationMs: null,
+        evidenceOutcomes: 0,
+        verificationRate: null,
+        averageVerifiedDurationMs: null,
       },
     });
     expect(learned.generatedAt).toBe(200);
@@ -58,7 +58,14 @@ describe("learned workflow projection", () => {
 
   it("reports only parsed records and labels malformed files as excluded", () => {
     const memoryDir = mkdtempSync(join(tmpdir(), "ava-explorer-workflows-"));
-    writePlaybook(memoryDir, playbook({ succ: 3, fail: 1, avg_secs: 7.5 }));
+    writePlaybook(memoryDir, playbook({
+      succ: 3, fail: 1, avg_secs: 7.5,
+      learning: {
+        verified: 3, partially_verified: 0, unverified: 0, contradicted: 1,
+        failed: 0, not_applicable: 0, last_task_id: "task-4",
+        last_method: "fixture", last_evidence_at: 4, recent_task_ids: ["task-4"],
+      },
+    }));
     const directory = join(memoryDir, "playbooks");
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "malformed.md"), "not a playbook", "utf8");
@@ -69,13 +76,15 @@ describe("learned workflow projection", () => {
       excludedUnparseableRecords: 1,
     });
     expect(snapshot.workflows[0]).toMatchObject({
-      evidenceState: "observed_outcomes",
+      evidenceState: "verified_outcomes",
       metrics: {
-        successfulRecalledRuns: 3,
-        failedRecalledRuns: 1,
-        observedOutcomes: 4,
-        successRate: 0.75,
-        averageSuccessfulDurationMs: 7_500,
+        verifiedRuns: 3,
+        contradictedRuns: 1,
+        evidenceOutcomes: 4,
+        verificationRate: 0.75,
+        averageVerifiedDurationMs: 7_500,
+        legacyReportedFinals: 3,
+        legacyRuntimeFailures: 1,
       },
     });
     expect(snapshot.coverage).toMatchObject({

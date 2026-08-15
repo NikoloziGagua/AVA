@@ -250,6 +250,11 @@ describe("Explorer read API", () => {
       fail: 2,
       avg_secs: 11,
       lessons: ["Bring an existing window forward before launching another."],
+      learning: {
+        verified: 8, partially_verified: 0, unverified: 1, contradicted: 1,
+        failed: 0, not_applicable: 0, last_task_id: "task-browser",
+        last_method: "window_probe", last_evidence_at: 123, recent_task_ids: ["task-browser"],
+      },
     };
     writePlaybook(memoryDir, playbook);
 
@@ -260,8 +265,9 @@ describe("Explorer read API", () => {
         total: 1,
         withObservedOutcomes: 1,
         totalRecalls: 12,
-        successfulRecalledRuns: 8,
-        failedRecalledRuns: 2,
+        verifiedRuns: 8,
+        unverifiedRuns: 1,
+        contradictedRuns: 1,
       },
       source: {
         type: "local_playbook_store",
@@ -273,12 +279,12 @@ describe("Explorer read API", () => {
       id: "playbook:open-browser-window",
       trigger: playbook.trigger,
       revision: 3,
-      evidenceState: "observed_outcomes",
+      evidenceState: "verified_outcomes",
       metrics: {
         recalls: 12,
-        observedOutcomes: 10,
-        successRate: 0.8,
-        averageSuccessfulDurationMs: 11_000,
+        evidenceOutcomes: 10,
+        verificationRate: 0.8,
+        averageVerifiedDurationMs: 11_000,
       },
       capabilityMapping: { status: "not_recorded", capabilityIds: [] },
       taskLinkage: { status: "not_recorded", taskIds: [] },

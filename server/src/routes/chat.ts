@@ -66,6 +66,7 @@ import { matchPlaybook } from "../playbooks/match.js";
 import { loadPlaybookIndex, readPlaybook } from "../playbooks/store.js";
 import { bumpUse, recordOutcome } from "../playbooks/mutate.js";
 import type { RunStep } from "../playbooks/distill.js";
+import { learningEvidenceFromReceipt, learningOutcomeFromReceipt } from "../playbooks/learning.js";
 import {
   cancelExplorerTaskIfRunning,
   createExplorerTask,
@@ -405,8 +406,8 @@ export function chatRoutes(
     // (documented in match.test.ts) is that pure paraphrases with no lexical
     // overlap no longer recall — the agent then simply runs without the hint.
     let playbookPrefix = "";
-    // Which playbook steered this run, if any — its win/loss record and
-    // rolling duration are updated when the run ends (recordOutcome below).
+    // Which playbook steered this run, if any — its typed evidence record and
+    // verified-duration trend are updated from the terminal receipt.
     let recalledSlug: string | null = null;
     if (mode === "action" && !parsed.data.voice) {
       try {
@@ -527,6 +528,8 @@ export function chatRoutes(
       const runVisualReferences = new Map<string, MessageVisualReference>();
       const toolStartedAt = new Map<string, number[]>();
       let terminalReceiptPublished = false;
+      let finalTextForLearning: string | null = null;
+      let playbookLearningSettled = false;
       const publishReceipt = (at: number, remember: boolean): TaskReceipt => {
         const receipt = receiptBuilder.snapshot(at);
         buffer.append({ kind: "receipt", payload: receipt });
@@ -543,6 +546,39 @@ export function chatRoutes(
           }
         }
         return receipt;
+      };
+      const settlePlaybookLearning = (at: number) => {
+        if (playbookLearningSettled) return;
+        playbookLearningSettled = true;
+        const receipt = receiptBuilder.snapshot(at);
+        const learningOutcome = learningOutcomeFromReceipt(receipt);
+        const evidence = learningEvidenceFromReceipt(receipt);
+        const durationSecs = Math.max(0, (at - runStartMs) / 1000);
+        if (finalTextForLearning && agentDeps.provider) {
+          void maybeCapture({
+            memoryDir: agentDeps.memoryDir,
+            provider: agentDeps.provider,
+            goal: objectiveForRun,
+            steps: runSteps,
+            resultText: finalTextForLearning,
+            learningOutcome,
+            evidence,
+            durationSecs,
+            today: new Date(at).toISOString().slice(0, 10),
+          });
+        }
+        if (recalledSlug) {
+          try {
+            recordOutcome(agentDeps.memoryDir, recalledSlug, {
+              outcome: learningOutcome,
+              secs: durationSecs,
+              evidence,
+            });
+          } catch (err) {
+            console.warn("[playbooks] outcome record failed:", err instanceof Error ? err.message : err);
+          }
+          recalledSlug = null;
+        }
       };
       const emit = (e: AgentEvent) => {
         // Stop publishes `killed` immediately through activeRun.cancel below.
@@ -589,6 +625,7 @@ export function chatRoutes(
         // secret scrub before committing anything to the execution history.
         const eventAt = Date.now();
         receiptBuilder.observe(e);
+        if (e.kind === "final") finalTextForLearning = e.payload.text;
         let toolDurationMs: number | null = null;
         if (e.kind === "tool_call") {
           const starts = toolStartedAt.get(e.payload.tool) ?? [];
@@ -620,44 +657,11 @@ export function chatRoutes(
             console.warn("[mission-control] event record failed:", err instanceof Error ? err.message : err);
           }
         }
-        if (e.kind === "final") {
-          const prov = agentDeps.provider;
-          const durationSecs = (Date.now() - runStartMs) / 1000;
-          if (prov) {
-            void maybeCapture({
-              memoryDir: agentDeps.memoryDir,
-              provider: prov,
-              goal: objectiveForRun,
-              steps: runSteps,
-              outcome: e.payload.text,
-              // "succeeded" = the run delivered a final reply. Mid-run tool
-              // failures Ava recovered from are wanted material — the capture
-              // gate (shouldCapture) rejects trailing failures and mostly-
-              // failed runs, and distill turns recovered detours into lessons.
-              succeeded: true,
-              durationSecs,
-              today: new Date().toISOString().slice(0, 10),
-            });
-          }
-          // Update the steering playbook's track record: reaching a final
-          // reply counts as a win for the procedure.
-          if (recalledSlug) {
-            try { recordOutcome(agentDeps.memoryDir, recalledSlug, { succeeded: true, secs: durationSecs }); }
-            catch (err) { console.warn("[playbooks] outcome record failed:", err instanceof Error ? err.message : err); }
-            recalledSlug = null; // count each run exactly once
-          }
-        }
-        if ((e.kind === "error" || e.kind === "killed") && recalledSlug) {
-          // The recalled playbook steered this run into a wall — count the loss
-          // so repeat offenders get demoted out of recall (match.isDemoted).
-          try { recordOutcome(agentDeps.memoryDir, recalledSlug, { succeeded: false }); }
-          catch (err) { console.warn("[playbooks] outcome record failed:", err instanceof Error ? err.message : err); }
-          recalledSlug = null; // a killed run can also emit error — count once
-        }
         // A terminal receipt must precede error/killed/done: the browser closes
         // its EventSource as soon as it sees one of those terminal events.
         if ((e.kind === "error" || e.kind === "killed" || e.kind === "done") &&
             !terminalReceiptPublished) {
+          settlePlaybookLearning(eventAt);
           publishReceipt(eventAt, true);
           terminalReceiptPublished = true;
         }
@@ -855,6 +859,7 @@ export function chatRoutes(
         try {
           const eventAt = Date.now();
           receiptBuilder.observe({ kind: "error", payload: { message: msg } });
+          settlePlaybookLearning(eventAt);
           if (!terminalReceiptPublished) {
             const receipt = receiptBuilder.snapshot(eventAt);
             buffer.append({ kind: "receipt", payload: receipt });

@@ -1,3 +1,5 @@
+import type { ToolVerificationEvidence } from "../verification-evidence.js";
+
 export type ToolDefinition = {
   name: string;
   description: string;
@@ -20,6 +22,8 @@ export type ToolResult = {
   call_id: string;
   output: string;      // tool stringified its own result
   is_error?: boolean;
+  /** AVA-local operational evidence. Provider adapters must not manufacture it. */
+  verification?: ToolVerificationEvidence;
 };
 
 export type Message =

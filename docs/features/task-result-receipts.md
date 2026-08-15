@@ -10,7 +10,7 @@ path. It answers, in plain language:
 - What was actually observed
 - Whether the run is still active, awaiting approval, finished, blocked,
   cancelled, or failed
-- Whether the outcome is verified, partial, unverified, or failed
+- Whether the outcome is verified, partial, unverified, contradicted, or failed
 - The last proven-good operational stage
 - The first failure or uncertainty observation point
 - Whether the cause is known, likely, unknown, or not applicable
@@ -59,14 +59,17 @@ Lifecycle and outcome quality are separate dimensions.
 | Conversational response reached the chat stream | finished | verified — response delivery only |
 | Tool returned success but no independent outcome check ran | finished | unverified |
 | Some work succeeded before a failed/uncertain step | finished | partial |
+| Executor report was disproved by post-action evidence | finished | contradicted |
 | Protected action denied or expired | blocked | failed |
 | Agent runtime returned an error | failed | failed |
 | Niko pressed Stop after some work | cancelled | partial |
 
 A successful tool return is recorded as operational evidence, but it does not
-automatically verify an external effect. The receipt explicitly says where
-evidence stopped. The first slice does not yet recognize workflow-specific
-verifiers for browser, file, Instagram, WhatsApp, or desktop actions.
+automatically verify an external effect. A validated verification envelope is
+shown separately with method, time, scope, and sanitized evidence. Initial
+task-outcome producers are exact `fs_write` readback and the deterministic
+Instagram/WhatsApp identity and visible-message checks. Other browser, shell,
+desktop, and provider results remain unverified until they gain a real verifier.
 
 ## Transport and retention
 

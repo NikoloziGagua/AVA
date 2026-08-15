@@ -20,6 +20,12 @@ export class AgentObservabilityRecorder {
   private activeTools = new Map<string, ToolOperation[]>();
   private finalResponseRecorded = false;
   private terminalRecorded = false;
+  private taskOutcomeVerifiedSeen = false;
+  private operationVerifiedSeen = false;
+  private contradictionSeen = false;
+  private toolFailureSeen = false;
+  private verificationStatus: "verified" | "partially_verified" | "not_verified" | "not_recorded" = "not_recorded";
+  private verificationOutcome: string | null = null;
 
   constructor(
     private readonly observability: ObservabilityService,
@@ -81,6 +87,7 @@ export class AgentObservabilityRecorder {
         return;
       }
       case "tool_result": {
+        if (!event.payload.ok) this.toolFailureSeen = true;
         const queue = this.activeTools.get(event.payload.tool) ?? [];
         const operation = queue.shift() ?? {
           spanId: `span_tool_${nanoid(12)}`,
@@ -108,6 +115,37 @@ export class AgentObservabilityRecorder {
           occurredAt: at,
           terminal: true,
         });
+        if (event.payload.verification) {
+          const evidence = event.payload.verification;
+          if (evidence.state === "verified") {
+            if (evidence.scope === "task_outcome") this.taskOutcomeVerifiedSeen = true;
+            else this.operationVerifiedSeen = true;
+          } else if (evidence.state === "contradicted") {
+            this.contradictionSeen = true;
+          }
+          this.observability.record(this.runId, {
+            spanId: operation.spanId,
+            parentSpanId: this.parentSpanId,
+            causationEventId: this.causationEventId,
+            type: "verification.evidence.recorded",
+            status: evidence.state === "verified"
+              ? "success"
+              : evidence.state === "contradicted" ? "error" : "observed",
+            title: `${event.payload.tool} verification ${evidence.state}`,
+            summary: evidence.summary,
+            visibility: "sensitive_collapsed",
+            payload: {
+              tool: event.payload.tool,
+              state: evidence.state,
+              scope: evidence.scope,
+              method: evidence.method,
+              evidenceRef: evidence.evidenceRef ?? null,
+              observedAt: evidence.observedAt ?? at,
+            },
+            occurredAt: evidence.observedAt ?? at,
+            dedupKey: `${operation.actionId}:verification:${evidence.method}:${evidence.state}`,
+          });
+        }
         return;
       }
       case "approval_required":
@@ -197,6 +235,18 @@ export class AgentObservabilityRecorder {
         if (this.terminalRecorded) return;
         this.terminalRecorded = true;
         const completed = this.finalResponseRecorded;
+        if (this.contradictionSeen) {
+          this.verificationStatus = "not_verified";
+          this.verificationOutcome = "executor_result_contradicted";
+        } else if (this.taskOutcomeVerifiedSeen && !this.toolFailureSeen) {
+          this.verificationStatus = "verified";
+          this.verificationOutcome = "verified_by_tool_evidence";
+        } else if (this.taskOutcomeVerifiedSeen || this.operationVerifiedSeen) {
+          this.verificationStatus = "partially_verified";
+          this.verificationOutcome = this.toolFailureSeen
+            ? "partial_with_tool_failure"
+            : "operation_verified_only";
+        }
         this.observability.record(this.runId, {
           parentSpanId: this.parentSpanId,
           causationEventId: this.causationEventId,
@@ -204,15 +254,29 @@ export class AgentObservabilityRecorder {
           status: completed ? "success" : "error",
           title: completed ? "Agent runtime finished" : "Agent runtime ended without a final response",
           summary: completed
-            ? "AVA returned a final response. External effects require separate verification evidence."
+            ? this.verificationOutcome === "executor_result_contradicted"
+              ? "AVA returned a final response, but verification contradicted an executor result."
+              : this.verificationStatus === "verified"
+              ? "AVA returned a final response backed by task-outcome verification evidence."
+              : this.verificationStatus === "partially_verified"
+                ? "AVA returned a final response with operation-level evidence only."
+                : "AVA returned a final response. External effects require separate verification evidence."
             : "The runtime stopped without recording a user-facing final response.",
           occurredAt: at,
           terminal: true,
           runStatus: completed ? "completed" : "failed",
-          outcome: completed ? "result_returned_unverified" : "runtime_ended_without_final",
-          verificationStatus: completed ? "not_recorded" : "not_verified",
+          outcome: completed
+            ? (this.verificationOutcome ?? "result_returned_unverified")
+            : "runtime_ended_without_final",
+          verificationStatus: completed ? this.verificationStatus : "not_verified",
           compactSummary: completed
-            ? "AVA returned a final response. External effects require separate verification evidence."
+            ? this.verificationOutcome === "executor_result_contradicted"
+              ? "AVA returned a final response, but verification contradicted an executor result."
+              : this.verificationStatus === "verified"
+              ? "AVA returned a final response backed by task-outcome verification evidence."
+              : this.verificationStatus === "partially_verified"
+                ? "AVA returned a final response with operation-level evidence only."
+                : "AVA returned a final response. External effects require separate verification evidence."
             : "The agent runtime ended without a final response.",
         });
         return;

@@ -145,22 +145,22 @@ function LearnedWorkflowTree({ workflow }: { workflow: ExplorerLearnedWorkflow }
 }
 
 function WorkflowMetrics({ workflow }: { workflow: ExplorerLearnedWorkflow }) {
-  const observed = workflow.evidenceState === "observed_outcomes";
+  const observed = workflow.evidenceState === "verified_outcomes";
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
       {[
         ["Recalls", String(workflow.metrics.recalls), "Playbook recall counter"],
-        ["Observed", String(workflow.metrics.observedOutcomes), "Recorded outcomes"],
-        ["Succeeded", String(workflow.metrics.successfulRecalledRuns), "Recalled runs"],
-        ["Failed", String(workflow.metrics.failedRecalledRuns), "Recalled runs"],
-        ["Success rate", successRate(workflow.metrics.successRate), observed ? "Observed outcomes" : "No outcomes yet"],
+        ["Evidence", String(workflow.metrics.evidenceOutcomes), "Terminal receipt outcomes"],
+        ["Verified", String(workflow.metrics.verifiedRuns), "Independent evidence"],
+        ["Unverified", String(workflow.metrics.unverifiedRuns), "Not treated as success"],
+        ["Verification rate", successRate(workflow.metrics.verificationRate), observed ? "Verified / evidence outcomes" : "No gate evidence yet"],
         [
-          "Average success",
+          "Verified average",
           formatExplorerDuration(
-            workflow.metrics.averageSuccessfulDurationMs,
+            workflow.metrics.averageVerifiedDurationMs,
             "Not measured",
           ),
-          "Successful recalled runs",
+          "Verified recalled runs",
         ],
       ].map(([label, value, detail]) => (
         <div key={label} className="rounded-xl border border-white/[0.07] bg-black/22 px-3 py-3">
@@ -174,7 +174,7 @@ function WorkflowMetrics({ workflow }: { workflow: ExplorerLearnedWorkflow }) {
 }
 
 function WorkflowCard({ workflow }: { workflow: ExplorerLearnedWorkflow }) {
-  const observed = workflow.evidenceState === "observed_outcomes";
+  const observed = workflow.evidenceState === "verified_outcomes";
   return (
     <article className="lg-slab overflow-hidden" aria-labelledby={`${workflow.id}-title`}>
       <header className="border-b border-white/[0.07] px-5 py-5 sm:px-7">
@@ -363,11 +363,11 @@ export function LearnedWorkflowsView({
 
         <div className="mt-5 grid grid-cols-2 gap-2 lg:grid-cols-6">
           <SummaryMetric label="Stored" value={response.summary.total} detail="Parseable playbooks" />
-          <SummaryMetric label="Observed" value={response.summary.withObservedOutcomes} detail="Have outcome counters" />
-          <SummaryMetric label="Definition only" value={response.summary.definitionOnly} detail="No outcome evidence" />
+          <SummaryMetric label="Evidence-backed" value={response.summary.withObservedOutcomes} detail="Have gate outcomes" />
+          <SummaryMetric label="Definition only" value={response.summary.definitionOnly} detail="No evidence or legacy reports" />
           <SummaryMetric label="Recalls" value={response.summary.totalRecalls} detail="All playbooks" />
-          <SummaryMetric label="Succeeded" value={response.summary.successfulRecalledRuns} detail="Observed recalled runs" />
-          <SummaryMetric label="Failed" value={response.summary.failedRecalledRuns} detail="Observed recalled runs" />
+          <SummaryMetric label="Verified" value={response.summary.verifiedRuns} detail="Independent outcome evidence" />
+          <SummaryMetric label="Contradicted" value={response.summary.contradictedRuns} detail="Verification disagreed" />
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-white/[0.065] pt-4 text-[8.5px] text-white/30">

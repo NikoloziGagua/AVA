@@ -143,9 +143,9 @@ The handler (`routes/chat.ts:104-430`) runs this sequence:
 
 Inside the IIFE, an `emit` function (`:282-330`) is the single sink the agent loop calls for every event. It does five jobs in order:
 
-1. **Records tool steps** for playbook capture: each `tool_call` pushes a step; each `tool_result` marks the last step's `ok` and flips an `anyToolFailed` flag if it failed (`:283-289`).
+1. **Records tool steps and evidence** for playbook capture: each `tool_call` pushes a step; each `tool_result` records executor status plus any validated verification envelope.
 2. **Normalizes an empty final.** If the model produces a `final` with blank text (it acted but wrote no closing words), it's rewritten to a graceful message so the chat never renders a silent bubble (`:292-294`, constant at `:70-71`).
-3. **Fires playbook capture** on `final` (`:296-311`): `maybeCapture` may distil a successful ≥2-tool run into a reusable playbook — but **only if no tool failed** (`succeeded: !anyToolFailed`), so broken procedures aren't learned as successes.
+3. **Settles playbook learning at the terminal receipt:** `final` stores only the response text. `done`, `error`, or `killed` first completes the task receipt, then maps its verified/partial/unverified/contradicted/failed evidence into procedural learning. Only independently verified task outcomes may distil or merge a ≥2-tool playbook.
 4. **Appends the event to the SSE buffer** (`:312`) and gets back a monotonic event id.
 5. **Persists the assistant message** (unless `persist:false`): on `final`, stores the assistant text; on `error`, stores a `"That didn't work — …"` line so a run-ending error surfaces in the transcript instead of leaving the chat silent (`:316-328`).
 

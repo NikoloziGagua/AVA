@@ -86,20 +86,25 @@ subscriptions, rules, and self-improvement intents.
   `password/secret/token:` lines).
 - **Projects:** a matching project note auto-loads as context when a prompt or
   tool path mentions its roots.
-- **Playbooks (procedural memory, self-optimizing):** after a run **reaches a
-  final reply** with ≥2 tool steps, a side model distills it into a playbook —
+- **Playbooks (procedural memory, evidence-gated):** after a run reaches a
+  terminal receipt with an independently **verified task outcome** and ≥2 tool
+  steps, a side model distills it into a playbook —
   short canonical trigger, keywords, success-path steps, and **`lessons[]`**
   (avoidance advice mined from failed/blocked detours, e.g. *"Google bot-walls
   automation — go straight to wttr.in"*). On a later matching request the steps +
   lessons are recalled. Recall is **lexical token-overlap** (instant, free — no
   side-model call per turn), so a pure paraphrase with no shared words may not
-  recall (precision over recall, by design). Playbooks then *improve*: each carries
-  a `version`, a `succ`/`fail` record, and a rolling `avg_secs`; re-learning a task
-  **merges** into the existing playbook (keeps its track record) rather than
-  duplicating; one that keeps failing on recall is **demoted** out of matching and
-  eventually pruned. `GET /api/playbooks` lists them with metrics; `DELETE
+  recall (precision over recall, by design). Playbooks record verified, partial,
+  unverified, contradicted, failed, and not-applicable outcomes separately. A
+  final response or executor `ok` never counts as proof. Re-learning a task
+  **merges** only after verified evidence; contradiction or repeated verified
+  failure demotes it. Old `succ`/`fail` values remain visible only as legacy
+  reports. `GET /api/playbooks` lists the evidence metrics; `DELETE
   /api/playbooks/:slug` removes one. Routine playbooks are followed directly;
 consequential ones are followed but verified.
+
+See [Verified learning gate](features/verified-learning-gate.md) for evidence,
+idempotency, privacy, compatibility, and current verifier coverage.
 
 ### Structured Notes workspace
 

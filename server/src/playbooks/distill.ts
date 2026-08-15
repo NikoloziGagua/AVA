@@ -1,5 +1,5 @@
 import type { LLMProvider } from "../orchestrator/llm/types.js";
-import { slugify, type Playbook, type Stakes } from "./store.js";
+import { EMPTY_PLAYBOOK_LEARNING, slugify, type Playbook, type Stakes } from "./store.js";
 
 export type RunStep = { tool: string; args: unknown; ok: boolean };
 
@@ -53,5 +53,6 @@ export async function distillPlaybook(o: {
     version: 1, succ: 0, fail: 0,
     avg_secs: Math.round(o.durationSecs ?? 0),
     lessons: Array.isArray(parsed.lessons) ? parsed.lessons.map(String).filter(Boolean) : [],
+    learning: { ...EMPTY_PLAYBOOK_LEARNING },
   };
 }

@@ -1,5 +1,6 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Chrome } from "../tools/chrome.js";
+import type { ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
 import { ensureReady, login, submitCode, openProfile, openThread, sendDm, readThread } from "./instagram.js";
 import { listPeople, upsertPerson } from "./people.js";
 
@@ -8,7 +9,16 @@ import { listPeople, upsertPerson } from "./people.js";
 // never flails: needs=login → ask for credentials or a window login;
 // needs=code → ask for the 2FA code; needs=person/username → ask who/what.
 
-type ToolDef = { tool: Tool; run: (args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }> };
+type ToolDef = { tool: Tool; run: (args: Record<string, unknown>) => Promise<{
+  text: string; ok: boolean; verification?: ToolVerificationEvidence;
+}> };
+
+const verified = (method: string, summary: string): ToolVerificationEvidence => ({
+  state: "verified",
+  scope: "task_outcome",
+  method,
+  summary,
+});
 
 export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memoryDir: string }): ToolDef[] {
   const deps = async () => ({ chrome: await o.getChrome(), memoryDir: o.memoryDir });
@@ -30,7 +40,11 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
       },
       run: async (args) => {
         const r = await openProfile(await deps(), s(args.person));
-        return { ok: r.ok, text: r.detail };
+        return {
+          ok: r.ok,
+          text: r.detail,
+          ...(r.ok ? { verification: verified("instagram_profile_url", "Instagram remained on the exact resolved profile URL.") } : {}),
+        };
       },
     },
     {
@@ -54,7 +68,11 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
       },
       run: async (args) => {
         const r = await sendDm(await deps(), s(args.person), s(args.text));
-        return { ok: r.ok, text: r.detail };
+        return {
+          ok: r.ok,
+          text: r.detail,
+          ...(r.ok ? { verification: verified("instagram_message_dom", "The message appeared in the verified recipient conversation and left the composer.") } : {}),
+        };
       },
     },
     {
@@ -65,7 +83,11 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
       },
       run: async (args) => {
         const r = await openThread(await deps(), s(args.person));
-        return { ok: r.ok, text: r.detail };
+        return {
+          ok: r.ok,
+          text: r.detail,
+          ...(r.ok ? { verification: verified("instagram_thread_identity", "The conversation opened through the exact verified recipient profile.") } : {}),
+        };
       },
     },
     {
@@ -76,7 +98,11 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
       },
       run: async (args) => {
         const r = await readThread(await deps(), s(args.person));
-        return { ok: r.ok, text: r.ok ? `${r.detail}:\n${r.text ?? ""}` : r.detail };
+        return {
+          ok: r.ok,
+          text: r.ok ? `${r.detail}:\n${r.text ?? ""}` : r.detail,
+          ...(r.ok ? { verification: verified("instagram_thread_identity", "Visible messages were read from the exact verified recipient conversation.") } : {}),
+        };
       },
     },
     {

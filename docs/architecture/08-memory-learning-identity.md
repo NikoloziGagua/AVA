@@ -642,18 +642,21 @@ any **mutating** tool ran (`fs_write`, `fs_delete`, `shell`, `claude_code`,
 reuse the policy risk classifier here, because that rates `fs_write` as "low" which
 would mislabel writes.
 
-### 4.2 Capture: learning from a successful run
+### 4.2 Capture: learning from a verified run
 
 Capture is wired into the chat route. As the agent runs, `chat.ts` collects each tool
-step into `runSteps` and tracks whether **any** tool result failed (`anyToolFailed`,
-`chat.ts:281`). When the run emits its `final`, it calls `maybeCapture` fire-and-forget
-(`chat.ts:299`).
+step and carries validated post-action evidence through the shared tool-result event.
+`final` records response text but does not teach. When `done`, `error`, or `killed`
+arrives, AVA builds the terminal task receipt and settles learning exactly once.
 
 `maybeCapture` (`C:/ai/chemiapebi/yovlisshemdzle/server/src/playbooks/capture.ts`)
 gates strictly:
-- **Only on success** (`succeeded`, which `chat.ts` sets to `!anyToolFailed` — a run
-  with any failed tool is not learned, so Ava never memorizes broken steps).
+- **Only on verified task-outcome evidence.** A final reply, executor `ok`,
+  response delivery, operation-only evidence, or an approval/cancellation boundary
+  cannot create or replace a procedure.
 - **Only multi-step** (`steps.length >= 2`) — a one-tool task isn't worth a playbook.
+- **No unresolved failed tail or mostly-failed trace.** Recovered detours may still
+  become lessons only when the final task outcome itself has independent proof.
 
 If gated through, it calls `distillPlaybook`
 (`C:/ai/chemiapebi/yovlisshemdzle/server/src/playbooks/distill.ts:20`): the **side
@@ -695,10 +698,9 @@ Steps:
      reporting done**."
    - `routine` → "follow these steps efficiently; no recheck needed."
 
-The matcher uses the **trigger**, not the stored `keywords` — the keywords field is
-captured but the current `match.ts` feeds only `slug: trigger` lines to the model (see
-findings). The tool rubric also documents this behavior to the model under "Procedural
-memory (playbooks)" (`tool-rubric.ts:64`).
+The matcher is local and lexical. It scores meaningful trigger-token coverage and
+uses keyword hits only as corroboration; keywords alone cannot select a playbook.
+This is effectively instantaneous and deliberately prefers no match over a loose one.
 
 ### 4.4 Pruning playbooks
 
@@ -707,7 +709,9 @@ run after each capture, keeps the library small and high-value:
 1. **Drop stale one-offs** — any playbook with `uses <= 1` *and* `last_used` (or
    `created`) older than `MAX_AGE_DAYS = 60` (`capture.ts:7`). A procedure tried once
    and never reused expires.
-2. **Enforce a soft cap** — `SOFT_CAP = 50` (`capture.ts:6`). If over, keep the
+2. **Drop contradicted or repeated evidence-backed failures.** Once gate evidence
+   exists, it supersedes legacy final-response counters for demotion and pruning.
+3. **Enforce a soft cap** — `SOFT_CAP = 50` (`capture.ts:6`). If over, keep the
    most-used (tie-break newest `last_used`) and drop the rest. So the library
    self-selects toward your genuinely recurring tasks.
 

@@ -3,6 +3,7 @@ import { buildToolRegistry } from "./tool-registry.js";
 import type { LLMProvider, Message, ProviderUsage, ToolCall } from "./llm/types.js";
 import type { ReasoningEffort } from "./reasoning.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
+import type { ToolVerificationEvidence } from "./verification-evidence.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 import { buildPolicyHook, type PolicyHook } from "../policy/runtime.js";
@@ -23,7 +24,12 @@ export type AgentEvent =
   | { kind: "thought"; payload: { text: string } }
   | { kind: "delta"; payload: { text: string } }
   | { kind: "tool_call"; payload: { tool: string; args: unknown } }
-  | { kind: "tool_result"; payload: { tool: string; ok: boolean; result: string } }
+  | { kind: "tool_result"; payload: {
+      tool: string;
+      ok: boolean;
+      result: string;
+      verification?: ToolVerificationEvidence;
+    } }
   | { kind: "final"; payload: { text: string } }
   | { kind: "error"; payload: { message: string } }
   | { kind: "killed"; payload: { reason?: "stuck" | "manual" } }
@@ -315,7 +321,15 @@ export async function runAgent(opts: RunOpts): Promise<void> {
         // Cancellation is a lifecycle event, not a failed tool outcome: do not
         // poison the receipt or ask the model for another turn.
         if (abort.signal.aborted) break;
-        emit({ kind: "tool_result", payload: { tool: call.name, ok: !r.is_error, result: r.output } });
+        emit({
+          kind: "tool_result",
+          payload: {
+            tool: call.name,
+            ok: !r.is_error,
+            result: r.output,
+            ...(r.verification ? { verification: r.verification } : {}),
+          },
+        });
         messages.push({ role: "tool", content: r });
         turnResultClasses.push(classifyActionResult(r));
       } catch (err) {

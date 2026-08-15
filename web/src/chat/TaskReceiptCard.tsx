@@ -25,6 +25,12 @@ const OUTCOME_STYLE: Record<TaskReceiptOutcome, { color: string; surface: string
     border: "rgba(125,211,252,0.30)",
     Icon: ShieldQuestion,
   },
+  contradicted: {
+    color: "rgb(253 186 116)",
+    surface: "rgba(249,115,22,0.11)",
+    border: "rgba(253,186,116,0.38)",
+    Icon: CircleAlert,
+  },
   failed: {
     color: "rgb(252 165 165)",
     surface: "rgba(239,68,68,0.10)",
@@ -110,6 +116,9 @@ export function TaskReceiptCard({ receipt }: { receipt: TaskReceipt }) {
                     <div className="text-[11px] text-white/72">{item.label}</div>
                     <div className="mt-0.5 text-[10.5px] leading-relaxed text-white/38">{item.detail}</div>
                     <div className="mt-1 text-[9px] uppercase tracking-[0.12em] text-white/25">{item.strength}</div>
+                    {item.method && (
+                      <div className="mt-1 font-mono text-[9px] text-white/25">method: {item.method}</div>
+                    )}
                   </div>
                 </div>
               ))}

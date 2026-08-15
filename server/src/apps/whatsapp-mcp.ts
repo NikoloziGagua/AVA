@@ -1,5 +1,6 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Chrome } from "../tools/chrome.js";
+import type { ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
 import { ensureReady, openChat, sendMessage, readChat } from "./whatsapp.js";
 
 // WhatsApp tools — the deterministic workflows for WhatsApp Web. Every edge
@@ -8,7 +9,16 @@ import { ensureReady, openChat, sendMessage, readChat } from "./whatsapp.js";
 // has no password login — a phone scan is the only way in);
 // needs=person/username → ask who/what and retry.
 
-type ToolDef = { tool: Tool; run: (args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }> };
+type ToolDef = { tool: Tool; run: (args: Record<string, unknown>) => Promise<{
+  text: string; ok: boolean; verification?: ToolVerificationEvidence;
+}> };
+
+const verified = (method: string, summary: string): ToolVerificationEvidence => ({
+  state: "verified",
+  scope: "task_outcome",
+  method,
+  summary,
+});
 
 export function buildWhatsappTools(o: { getChrome: () => Promise<Chrome>; memoryDir: string }): ToolDef[] {
   const deps = async () => ({ chrome: await o.getChrome(), memoryDir: o.memoryDir });
@@ -36,7 +46,11 @@ export function buildWhatsappTools(o: { getChrome: () => Promise<Chrome>; memory
       },
       run: async (args) => {
         const r = await sendMessage(await deps(), s(args.person), s(args.text));
-        return { ok: r.ok, text: r.detail };
+        return {
+          ok: r.ok,
+          text: r.detail,
+          ...(r.ok ? { verification: verified("whatsapp_message_dom", "The message appeared in the conversation whose header matched the resolved recipient.") } : {}),
+        };
       },
     },
     {
@@ -47,7 +61,11 @@ export function buildWhatsappTools(o: { getChrome: () => Promise<Chrome>; memory
       },
       run: async (args) => {
         const r = await openChat(await deps(), s(args.person));
-        return { ok: r.ok, text: r.detail };
+        return {
+          ok: r.ok,
+          text: r.detail,
+          ...(r.ok ? { verification: verified("whatsapp_header_identity", "The opened conversation header matched the resolved recipient.") } : {}),
+        };
       },
     },
     {
@@ -58,7 +76,11 @@ export function buildWhatsappTools(o: { getChrome: () => Promise<Chrome>; memory
       },
       run: async (args) => {
         const r = await readChat(await deps(), s(args.person));
-        return { ok: r.ok, text: r.ok ? `${r.detail}:\n${r.text ?? ""}` : r.detail };
+        return {
+          ok: r.ok,
+          text: r.ok ? `${r.detail}:\n${r.text ?? ""}` : r.detail,
+          ...(r.ok ? { verification: verified("whatsapp_header_identity", "Visible messages were read from the conversation whose header matched the recipient.") } : {}),
+        };
       },
     },
     {

@@ -45,6 +45,34 @@ describe("buildToolRegistry", () => {
     expect(r).toEqual({ call_id: "c1", output: "boom", is_error: true });
   });
 
+  it("preserves only valid structured verification evidence", async () => {
+    const verification = {
+      state: "verified" as const,
+      scope: "task_outcome" as const,
+      method: "fixture_readback",
+      summary: "The fixture matched; token: sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+    };
+    const valid = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({ text: "ok", ok: true, verification }))],
+      ctx: { runId: "r1" },
+    });
+    const validResult = await valid.dispatch({ id: "c1", name: "a", args: {} });
+    expect(validResult.verification).toMatchObject({
+      state: "verified", scope: "task_outcome", method: "fixture_readback",
+    });
+    expect(validResult.verification?.summary).not.toContain("abcdefghijklmnopqrstuvwxyz123456");
+
+    const malformed = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({
+        text: "ok", ok: true,
+        verification: { state: "verified", scope: "task_outcome", method: "", summary: "" },
+      }))],
+      ctx: { runId: "r1" },
+    });
+    await expect(malformed.dispatch({ id: "c2", name: "a", args: {} }))
+      .resolves.not.toHaveProperty("verification");
+  });
+
   it("returns an error result for an unknown tool", async () => {
     const reg = buildToolRegistry({ tools: [defOf("a")], ctx: { runId: "r1" } });
     const r = await reg.dispatch({ id: "c1", name: "ghost", args: {} });

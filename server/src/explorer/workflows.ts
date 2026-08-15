@@ -23,19 +23,24 @@ export type ExplorerLearnedWorkflow = {
   lessons: string[];
   metrics: {
     recalls: number;
-    successfulRecalledRuns: number;
-    failedRecalledRuns: number;
-    observedOutcomes: number;
-    successRate: number | null;
-    averageSuccessfulDurationMs: number | null;
+    verifiedRuns: number;
+    partiallyVerifiedRuns: number;
+    unverifiedRuns: number;
+    contradictedRuns: number;
+    failedRuns: number;
+    evidenceOutcomes: number;
+    verificationRate: number | null;
+    averageVerifiedDurationMs: number | null;
+    legacyReportedFinals: number;
+    legacyRuntimeFailures: number;
   };
-  evidenceState: "observed_outcomes" | "definition_only";
+  evidenceState: "verified_outcomes" | "legacy_reports" | "definition_only";
   provenance: {
     source: "procedural_memory_playbook";
     sourceId: string;
     storedDefinition: true;
     creationMethod: "not_recorded";
-    metricsSource: "playbook_recall_counters";
+    metricsSource: "verified_learning_gate";
     note: string;
   };
   capabilityMapping: {
@@ -57,8 +62,13 @@ export type ExplorerLearnedWorkflowSnapshot = {
     withObservedOutcomes: number;
     definitionOnly: number;
     totalRecalls: number;
-    successfulRecalledRuns: number;
-    failedRecalledRuns: number;
+    verifiedRuns: number;
+    partiallyVerifiedRuns: number;
+    unverifiedRuns: number;
+    contradictedRuns: number;
+    failedRuns: number;
+    legacyReportedFinals: number;
+    legacyRuntimeFailures: number;
   };
   source: {
     id: "procedural_memory_playbooks";
@@ -84,13 +94,13 @@ function nonNegativeInteger(value: number): number {
 
 function successfulDurationMs(
   seconds: number,
-  successfulRecalledRuns: number,
+  verifiedRuns: number,
 ): number | null {
   // New playbooks seed avg_secs from the task that created the procedure while
   // succ remains zero. Explorer must not call that seed an observed recalled-
   // run average until at least one recalled run has actually succeeded.
   if (
-    successfulRecalledRuns < 1 ||
+    verifiedRuns < 1 ||
     !Number.isFinite(seconds) ||
     seconds <= 0
   ) {
@@ -109,11 +119,16 @@ function safeStringList(values: string[]): string[] {
 
 function projectPlaybook(playbook: Playbook): ExplorerLearnedWorkflow {
   const recalls = nonNegativeInteger(playbook.uses);
-  const successfulRecalledRuns = nonNegativeInteger(playbook.succ);
-  const failedRecalledRuns = nonNegativeInteger(playbook.fail);
-  const observedOutcomes = successfulRecalledRuns + failedRecalledRuns;
-  const successRate = observedOutcomes > 0
-    ? Math.round((successfulRecalledRuns / observedOutcomes) * 1_000) / 1_000
+  const learning = playbook.learning;
+  const verifiedRuns = nonNegativeInteger(learning?.verified ?? 0);
+  const partiallyVerifiedRuns = nonNegativeInteger(learning?.partially_verified ?? 0);
+  const unverifiedRuns = nonNegativeInteger(learning?.unverified ?? 0);
+  const contradictedRuns = nonNegativeInteger(learning?.contradicted ?? 0);
+  const failedRuns = nonNegativeInteger(learning?.failed ?? 0);
+  const evidenceOutcomes = verifiedRuns + partiallyVerifiedRuns + unverifiedRuns +
+    contradictedRuns + failedRuns + nonNegativeInteger(learning?.not_applicable ?? 0);
+  const verificationRate = evidenceOutcomes > 0
+    ? Math.round((verifiedRuns / evidenceOutcomes) * 1_000) / 1_000
     : null;
   const slug = safeText(playbook.slug);
   const steps = safeStringList(playbook.steps).map((label, index) => ({
@@ -136,16 +151,23 @@ function projectPlaybook(playbook: Playbook): ExplorerLearnedWorkflow {
     lessons: safeStringList(playbook.lessons),
     metrics: {
       recalls,
-      successfulRecalledRuns,
-      failedRecalledRuns,
-      observedOutcomes,
-      successRate,
-      averageSuccessfulDurationMs: successfulDurationMs(
+      verifiedRuns,
+      partiallyVerifiedRuns,
+      unverifiedRuns,
+      contradictedRuns,
+      failedRuns,
+      evidenceOutcomes,
+      verificationRate,
+      averageVerifiedDurationMs: successfulDurationMs(
         playbook.avg_secs,
-        successfulRecalledRuns,
+        verifiedRuns,
       ),
+      legacyReportedFinals: nonNegativeInteger(playbook.succ),
+      legacyRuntimeFailures: nonNegativeInteger(playbook.fail),
     },
-    evidenceState: observedOutcomes > 0 ? "observed_outcomes" : "definition_only",
+    evidenceState: evidenceOutcomes > 0
+      ? "verified_outcomes"
+      : playbook.succ + playbook.fail > 0 ? "legacy_reports" : "definition_only",
     provenance: {
       source: "procedural_memory_playbook",
       sourceId: slug,
@@ -153,10 +175,9 @@ function projectPlaybook(playbook: Playbook): ExplorerLearnedWorkflow {
       // The current file schema does not retain whether a particular record
       // came from automatic capture, a merge, or an explicit store write.
       creationMethod: "not_recorded",
-      metricsSource: "playbook_recall_counters",
+      metricsSource: "verified_learning_gate",
       note:
-        "Definition and counters were parsed directly from AVA's durable playbook store. " +
-        "A counter records recalled-playbook outcomes, not independent task verification.",
+        "Learning outcomes come from terminal task receipts. Legacy final-response counters are retained separately and are not treated as proof.",
     },
     capabilityMapping: {
       status: "not_recorded",
@@ -191,13 +212,8 @@ export function buildLearnedWorkflowSnapshot(
       b.metrics.recalls - a.metrics.recalls ||
       (b.lastUsed ?? "").localeCompare(a.lastUsed ?? "") ||
       a.slug.localeCompare(b.slug));
-  const successfulRecalledRuns = workflows.reduce(
-    (sum, workflow) => sum + workflow.metrics.successfulRecalledRuns,
-    0,
-  );
-  const failedRecalledRuns = workflows.reduce(
-    (sum, workflow) => sum + workflow.metrics.failedRecalledRuns,
-    0,
+  const sumMetric = (key: keyof ExplorerLearnedWorkflow["metrics"]) => workflows.reduce(
+    (sum, workflow) => sum + Number(workflow.metrics[key] ?? 0), 0,
   );
 
   return {
@@ -205,7 +221,7 @@ export function buildLearnedWorkflowSnapshot(
     summary: {
       total: workflows.length,
       withObservedOutcomes: workflows.filter(
-        (workflow) => workflow.evidenceState === "observed_outcomes",
+        (workflow) => workflow.evidenceState === "verified_outcomes",
       ).length,
       definitionOnly: workflows.filter(
         (workflow) => workflow.evidenceState === "definition_only",
@@ -214,8 +230,13 @@ export function buildLearnedWorkflowSnapshot(
         (sum, workflow) => sum + workflow.metrics.recalls,
         0,
       ),
-      successfulRecalledRuns,
-      failedRecalledRuns,
+      verifiedRuns: sumMetric("verifiedRuns"),
+      partiallyVerifiedRuns: sumMetric("partiallyVerifiedRuns"),
+      unverifiedRuns: sumMetric("unverifiedRuns"),
+      contradictedRuns: sumMetric("contradictedRuns"),
+      failedRuns: sumMetric("failedRuns"),
+      legacyReportedFinals: sumMetric("legacyReportedFinals"),
+      legacyRuntimeFailures: sumMetric("legacyRuntimeFailures"),
     },
     source: {
       id: "procedural_memory_playbooks",

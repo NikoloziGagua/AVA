@@ -69,4 +69,67 @@ describe("AgentObservabilityRecorder", () => {
     expect(observability.getEvents(run.id).filter((event) => event.type === "provider.usage.recorded")).toHaveLength(1);
     db.close();
   });
+
+  it("projects explicit verification evidence without counting executor ok as proof", () => {
+    const { db, observability, run, recorder } = setup();
+    recorder.record({ kind: "tool_call", payload: { tool: "fs_write", args: {} } }, { at: 1_050 });
+    recorder.record({ kind: "tool_result", payload: {
+      tool: "fs_write", ok: true, result: "written",
+      verification: {
+        state: "verified", scope: "task_outcome", method: "fs_readback",
+        summary: "The file content matched exactly.",
+      },
+    } }, { at: 1_100 });
+    recorder.record({ kind: "final", payload: { text: "Done." } }, { at: 1_150 });
+    recorder.record({ kind: "done", payload: {} }, { at: 1_200 });
+
+    expect(observability.getRun(run.id)).toMatchObject({
+      status: "completed",
+      verificationStatus: "verified",
+      outcome: "verified_by_tool_evidence",
+    });
+    expect(observability.getEvents(run.id).filter((event) =>
+      event.type === "verification.evidence.recorded")).toHaveLength(1);
+    db.close();
+  });
+
+  it("keeps contradicted evidence distinct from an executor report", () => {
+    const { db, observability, run, recorder } = setup();
+    recorder.record({ kind: "tool_result", payload: {
+      tool: "fs_write", ok: false, result: "mismatch",
+      verification: {
+        state: "contradicted", scope: "task_outcome", method: "fs_readback",
+        summary: "The readback differed.",
+      },
+    } });
+    recorder.record({ kind: "final", payload: { text: "The check failed." } });
+    recorder.record({ kind: "done", payload: {} });
+    expect(observability.getRun(run.id)).toMatchObject({
+      verificationStatus: "not_verified",
+      outcome: "executor_result_contradicted",
+    });
+    db.close();
+  });
+
+  it("does not promote a mixed verified and failed tool run to verified", () => {
+    const { db, observability, run, recorder } = setup();
+    recorder.record({ kind: "tool_result", payload: {
+      tool: "fs_write", ok: true, result: "written",
+      verification: {
+        state: "verified", scope: "task_outcome", method: "fs_readback",
+        summary: "The file content matched exactly.",
+      },
+    } });
+    recorder.record({ kind: "tool_result", payload: {
+      tool: "follow_up", ok: false, result: "The follow-up step failed.",
+    } });
+    recorder.record({ kind: "final", payload: { text: "Only part of the task completed." } });
+    recorder.record({ kind: "done", payload: {} });
+
+    expect(observability.getRun(run.id)).toMatchObject({
+      verificationStatus: "partially_verified",
+      outcome: "partial_with_tool_failure",
+    });
+    db.close();
+  });
 });

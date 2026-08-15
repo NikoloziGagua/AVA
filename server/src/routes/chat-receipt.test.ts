@@ -88,7 +88,7 @@ describe("chat task receipt SSE", () => {
 
     expect(result.events.map((event) => event.event)).toEqual(["final", "receipt", "done"]);
     expect(result.receipt).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       taskId: result.taskId,
       lifecycle: "finished",
       outcome: "verified",

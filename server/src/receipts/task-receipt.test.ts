@@ -55,6 +55,63 @@ describe("TaskReceiptBuilder", () => {
     expect(receipt.observationPoint).toContain("no independent outcome verifier");
   });
 
+  it("marks an action verified only when task-outcome evidence is recorded", () => {
+    const receipt = observe(
+      build(),
+      { kind: "tool_call", payload: { tool: "fs_write", args: {} } },
+      { kind: "tool_result", payload: {
+        tool: "fs_write", ok: true, result: "written",
+        verification: {
+          state: "verified", scope: "task_outcome", method: "fs_readback",
+          summary: "The file content matched exactly.", observedAt: 1_500,
+        },
+      } },
+      { kind: "final", payload: { text: "Done." } },
+      { kind: "done", payload: {} },
+    );
+    expect(receipt).toMatchObject({
+      outcome: "verified",
+      verificationScope: "task_outcome",
+      verificationMethod: "fs_readback",
+      verificationObservedAt: 1_500,
+    });
+    expect(receipt.evidence.some((item) => item.kind === "verification")).toBe(true);
+  });
+
+  it("lets contradiction override executor-reported success", () => {
+    const receipt = observe(
+      build(),
+      { kind: "tool_result", payload: {
+        tool: "fs_write", ok: false, result: "readback mismatch",
+        verification: {
+          state: "contradicted", scope: "task_outcome", method: "fs_readback",
+          summary: "The bytes read back did not match.",
+        },
+      } },
+      { kind: "final", payload: { text: "The check failed." } },
+      { kind: "done", payload: {} },
+    );
+    expect(receipt).toMatchObject({ outcome: "contradicted", rootCause: "known" });
+    expect(receipt.actual).toContain("contradicted");
+  });
+
+  it("keeps mixed verified and failed operations partial", () => {
+    const receipt = observe(
+      build(),
+      { kind: "tool_result", payload: {
+        tool: "fs_write", ok: true, result: "written",
+        verification: {
+          state: "verified", scope: "task_outcome", method: "fs_readback",
+          summary: "The file matched.",
+        },
+      } },
+      { kind: "tool_result", payload: { tool: "notify", ok: false, result: "timeout" } },
+      { kind: "final", payload: { text: "Only part completed." } },
+      { kind: "done", payload: {} },
+    );
+    expect(receipt.outcome).toBe("partial");
+  });
+
   it("reports a partial outcome when some operational work succeeded before a tool failure", () => {
     const receipt = observe(
       build(),

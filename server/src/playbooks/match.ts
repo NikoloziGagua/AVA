@@ -25,10 +25,29 @@ export type PlaybookIndexEntry = {
   uses?: number;
   succ?: number;
   fail?: number;
+  learning?: {
+    verified?: number;
+    partially_verified?: number;
+    unverified?: number;
+    contradicted?: number;
+    failed?: number;
+    not_applicable?: number;
+  };
 };
 
 /** A playbook that keeps failing when recalled stops being offered. */
-export function isDemoted(e: { succ?: number; fail?: number }): boolean {
+export function isDemoted(e: Pick<PlaybookIndexEntry, "succ" | "fail" | "learning">): boolean {
+  const learning = e.learning;
+  const evidenceCount = learning
+    ? (learning.verified ?? 0) + (learning.partially_verified ?? 0) +
+      (learning.unverified ?? 0) + (learning.contradicted ?? 0) +
+      (learning.failed ?? 0) + (learning.not_applicable ?? 0)
+    : 0;
+  if (learning && evidenceCount > 0) {
+    const verified = learning.verified ?? 0;
+    const failed = learning.failed ?? 0;
+    return (learning.contradicted ?? 0) > 0 || (failed >= 3 && failed > verified);
+  }
   const succ = e.succ ?? 0;
   const fail = e.fail ?? 0;
   return fail >= 3 && fail > succ;

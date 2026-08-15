@@ -1,8 +1,9 @@
 import type { AgentEvent } from "../orchestrator/agent.js";
 import { classifyActionResult, type ActionResultClass } from "../orchestrator/tool-result-consistency.js";
 import { scrubSecrets } from "../security/scrub.js";
+import { validToolVerification, type ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
 
-export const TASK_RECEIPT_SCHEMA_VERSION = 1 as const;
+export const TASK_RECEIPT_SCHEMA_VERSION = 2 as const;
 
 export type TaskReceiptLifecycle =
   | "running"
@@ -12,24 +13,27 @@ export type TaskReceiptLifecycle =
   | "cancelled"
   | "failed";
 
-export type TaskReceiptOutcome = "verified" | "partial" | "unverified" | "failed";
+export type TaskReceiptOutcome = "verified" | "partial" | "unverified" | "contradicted" | "failed";
 export type TaskReceiptRootCause = "known" | "likely" | "unknown" | "not_applicable";
 
 export type TaskReceiptEvidence = {
-  kind: "request" | "approval" | "tool_result" | "response" | "runtime";
+  kind: "request" | "approval" | "tool_result" | "verification" | "response" | "runtime";
   label: string;
   detail: string;
   strength: "verified" | "observed" | "reported";
+  method?: string;
 };
 
 export type TaskReceipt = {
-  schemaVersion: typeof TASK_RECEIPT_SCHEMA_VERSION;
+  schemaVersion: 1 | typeof TASK_RECEIPT_SCHEMA_VERSION;
   taskId: string;
   expected: string;
   actual: string;
   lifecycle: TaskReceiptLifecycle;
   outcome: TaskReceiptOutcome;
-  verificationScope: "response_delivery" | "operational_steps" | "none";
+  verificationScope: "task_outcome" | "response_delivery" | "operational_steps" | "none";
+  verificationMethod?: string | null;
+  verificationObservedAt?: number | null;
   lastVerifiedStage: string;
   observationPoint: string | null;
   rootCause: TaskReceiptRootCause;
@@ -56,6 +60,7 @@ type ToolObservation = {
   classification: ActionResultClass;
   detail: string | null;
   knownCause: boolean;
+  verification: ToolVerificationEvidence | null;
 };
 
 const MAX_EXPECTED_CHARS = 240;
@@ -82,6 +87,8 @@ export class TaskReceiptBuilder {
   private deniedApproval: { tool: string; status: "denied" | "expired" } | null = null;
   private firstProblem: string | null = null;
   private lastSuccessfulTool: string | null = null;
+  private lastVerifiedEvidence: ToolVerificationEvidence | null = null;
+  private firstContradiction: ToolVerificationEvidence | null = null;
 
   constructor(private readonly input: BuilderInput) {
     this.expected = safeText(input.objective, MAX_EXPECTED_CHARS) || "Complete the requested AVA task.";
@@ -113,11 +120,21 @@ export class TaskReceiptBuilder {
         const detail = classification === "ok"
           ? null
           : safeText(event.payload.result, MAX_DETAIL_CHARS) || "The tool returned no diagnostic detail.";
+        const verification = validToolVerification(event.payload.verification)
+          ? {
+              ...event.payload.verification,
+              summary: safeText(event.payload.verification.summary, MAX_DETAIL_CHARS),
+              ...(event.payload.verification.evidenceRef
+                ? { evidenceRef: safeText(event.payload.verification.evidenceRef, MAX_DETAIL_CHARS) }
+                : {}),
+            }
+          : null;
         this.tools.push({
           tool: event.payload.tool,
           classification,
           detail,
           knownCause: classification === "error" && isKnownToolFailure(detail),
+          verification,
         });
         if (classification === "ok") {
           this.lastSuccessfulTool = event.payload.tool;
@@ -134,6 +151,26 @@ export class TaskReceiptBuilder {
             label: `${displayTool(event.payload.tool)} ${classification === "error" ? "failed" : "was uncertain"}`,
             detail: detail ?? "No additional detail was recorded.",
             strength: "observed",
+          });
+        }
+        if (verification) {
+          if (verification.state === "verified") this.lastVerifiedEvidence = verification;
+          if (verification.state === "contradicted") {
+            this.firstContradiction ??= verification;
+            this.firstProblem ??= verification.summary;
+          }
+          this.addEvidence({
+            kind: "verification",
+            label: verification.state === "verified"
+              ? `${displayTool(event.payload.tool)} independently verified`
+              : verification.state === "contradicted"
+                ? `${displayTool(event.payload.tool)} verification contradicted the result`
+                : `${displayTool(event.payload.tool)} verification ${verification.state.replaceAll("_", " ")}`,
+            detail: verification.summary,
+            strength: verification.state === "verified" || verification.state === "contradicted"
+              ? "verified"
+              : "observed",
+            method: verification.method,
           });
         }
         return;
@@ -226,6 +263,9 @@ export class TaskReceiptBuilder {
       lifecycle: state.lifecycle,
       outcome: state.outcome,
       verificationScope: state.verificationScope,
+      verificationMethod: this.firstContradiction?.method ?? this.lastVerifiedEvidence?.method ?? null,
+      verificationObservedAt:
+        this.firstContradiction?.observedAt ?? this.lastVerifiedEvidence?.observedAt ?? null,
       lastVerifiedStage: this.lastVerifiedStage(state.outcome),
       observationPoint,
       rootCause: this.rootCause(state.lifecycle, state.outcome),
@@ -258,6 +298,9 @@ export class TaskReceiptBuilder {
     if (this.pendingApproval) return { lifecycle: "awaiting_approval", outcome: "unverified", verificationScope: "none" };
     if (!this.doneSeen) return { lifecycle: "running", outcome: "unverified", verificationScope: "none" };
     if (!this.finalSeen) return { lifecycle: "failed", outcome: "failed", verificationScope: "none" };
+    if (this.firstContradiction) {
+      return { lifecycle: "finished", outcome: "contradicted", verificationScope: "task_outcome" };
+    }
     if (counts.failures > 0) {
       return {
         lifecycle: "finished",
@@ -266,6 +309,13 @@ export class TaskReceiptBuilder {
       };
     }
     if (counts.uncertain > 0) {
+      return { lifecycle: "finished", outcome: "partial", verificationScope: "operational_steps" };
+    }
+    if (this.tools.some((tool) =>
+      tool.verification?.state === "verified" && tool.verification.scope === "task_outcome")) {
+      return { lifecycle: "finished", outcome: "verified", verificationScope: "task_outcome" };
+    }
+    if (this.tools.some((tool) => tool.verification?.state === "verified")) {
       return { lifecycle: "finished", outcome: "partial", verificationScope: "operational_steps" };
     }
     if (this.input.mode === "conversation" && this.toolCalls === 0) {
@@ -297,6 +347,9 @@ export class TaskReceiptBuilder {
     if (outcome === "verified" && this.input.mode === "conversation") {
       return "AVA delivered the requested conversational response; no external action was claimed.";
     }
+    if (outcome === "contradicted") {
+      return "AVA returned a response, but post-action verification contradicted the reported result.";
+    }
     if (this.toolCalls === 0) {
       return "AVA delivered a response, but no external action or independently verified task outcome was observed.";
     }
@@ -307,12 +360,14 @@ export class TaskReceiptBuilder {
   }
 
   private lastVerifiedStage(outcome: TaskReceiptOutcome): string {
+    if (this.lastVerifiedEvidence) return this.lastVerifiedEvidence.summary;
     if (this.finalSeen && this.toolCalls === 0) return "The final response reached this conversation.";
     if (this.lastSuccessfulTool) return `${displayTool(this.lastSuccessfulTool)} returned a successful operational result.`;
     return "AVA accepted the request and created the task run.";
   }
 
   private observationPoint(outcome: TaskReceiptOutcome): string | null {
+    if (this.firstContradiction) return this.firstContradiction.summary;
     if (this.pendingApproval) return `Execution paused at the approval boundary for ${displayTool(this.pendingApproval.tool)}.`;
     if (this.firstProblem) return this.firstProblem;
     if (outcome === "unverified" && this.toolCalls > 0) {
@@ -323,6 +378,7 @@ export class TaskReceiptBuilder {
   }
 
   private rootCause(lifecycle: TaskReceiptLifecycle, outcome: TaskReceiptOutcome): TaskReceiptRootCause {
+    if (outcome === "contradicted") return "known";
     if (this.deniedApproval || this.pendingApproval || this.killedReason === "manual") return "known";
     const failedTools = this.tools.filter((tool) => tool.classification === "error");
     if (failedTools.length > 0 && failedTools.every((tool) => tool.knownCause)) return "known";
@@ -338,6 +394,7 @@ export class TaskReceiptBuilder {
     if (lifecycle === "cancelled") return "Send the request again or ask AVA to continue from the last proven stage.";
     if (lifecycle === "failed") return "Retry once; if it repeats, open the diagnostic receipt and share the task ID.";
     if (outcome === "partial") return "Retry the failed or uncertain stage, then verify the requested outcome.";
+    if (outcome === "contradicted") return "Do not rely on the reported result. Inspect the contradicted stage before retrying.";
     if (outcome === "unverified") return "Check the real result before relying on it, or ask AVA to verify it explicitly.";
     return null;
   }

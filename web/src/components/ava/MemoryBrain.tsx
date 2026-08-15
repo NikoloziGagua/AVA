@@ -302,7 +302,9 @@ function buildGraph(memory: MemoryView, extras: BrainExtras): { nodes: GraphNode
   {
     const hub = getHub("skills");
     extras.playbooks.forEach((b, i) => {
-      const record = `used ${b.uses}×${b.succ || b.fail ? `, ${b.succ}W/${b.fail}L` : ""}${b.avg_secs ? `, ~${b.avg_secs}s` : ""}`;
+      const verified = Number(b.learning?.verified) || 0;
+      const contradicted = Number(b.learning?.contradicted) || 0;
+      const record = `used ${b.uses}×, ${verified} verified${contradicted ? `, ${contradicted} contradicted` : ""}${verified > 0 && b.avg_secs ? `, ~${b.avg_secs}s verified avg` : ""}`;
       hub.leaves.push({
         id: `pb:${b.slug}`,
         kind: "playbook" as const,

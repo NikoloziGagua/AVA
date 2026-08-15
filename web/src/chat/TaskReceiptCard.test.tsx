@@ -76,4 +76,27 @@ describe("TaskReceiptCard", () => {
     expect(screen.getByText("Response delivered")).toBeTruthy();
     expect(screen.queryByText("Verified")).toBeNull();
   });
+
+  it("shows contradiction and its verification method explicitly", () => {
+    render(<TaskReceiptCard receipt={{
+      ...base,
+      schemaVersion: 2,
+      outcome: "contradicted",
+      verificationScope: "task_outcome",
+      verificationMethod: "fs_readback",
+      actual: "Post-action verification contradicted the executor report.",
+      observationPoint: "The bytes read back did not match.",
+      rootCause: "known",
+      evidence: [{
+        kind: "verification",
+        label: "fs write verification contradicted the result",
+        detail: "The bytes read back did not match.",
+        strength: "verified",
+        method: "fs_readback",
+      }],
+    }} />);
+    expect(screen.getByText("Contradicted")).toBeTruthy();
+    fireEvent.click(screen.getByText("Task receipt"));
+    expect(screen.getByText(/fs_readback/)).toBeTruthy();
+  });
 });

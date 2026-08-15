@@ -598,19 +598,24 @@ export type ExplorerLearnedWorkflow = {
   lessons: string[];
   metrics: {
     recalls: number;
-    successfulRecalledRuns: number;
-    failedRecalledRuns: number;
-    observedOutcomes: number;
-    successRate: number | null;
-    averageSuccessfulDurationMs: number | null;
+    verifiedRuns: number;
+    partiallyVerifiedRuns: number;
+    unverifiedRuns: number;
+    contradictedRuns: number;
+    failedRuns: number;
+    evidenceOutcomes: number;
+    verificationRate: number | null;
+    averageVerifiedDurationMs: number | null;
+    legacyReportedFinals: number;
+    legacyRuntimeFailures: number;
   };
-  evidenceState: "observed_outcomes" | "definition_only";
+  evidenceState: "verified_outcomes" | "legacy_reports" | "definition_only";
   provenance: {
     source: "procedural_memory_playbook";
     sourceId: string;
     storedDefinition: true;
     creationMethod: "not_recorded";
-    metricsSource: "playbook_recall_counters";
+    metricsSource: "verified_learning_gate";
     note: string;
   };
   capabilityMapping: {
@@ -632,8 +637,13 @@ export type ExplorerLearnedWorkflowsResponse = {
     withObservedOutcomes: number;
     definitionOnly: number;
     totalRecalls: number;
-    successfulRecalledRuns: number;
-    failedRecalledRuns: number;
+    verifiedRuns: number;
+    partiallyVerifiedRuns: number;
+    unverifiedRuns: number;
+    contradictedRuns: number;
+    failedRuns: number;
+    legacyReportedFinals: number;
+    legacyRuntimeFailures: number;
   };
   source: {
     id: "procedural_memory_playbooks";
@@ -725,6 +735,18 @@ export type PlaybookRow = {
   fail: number;
   avg_secs: number;
   lessons: string[];
+  learning?: {
+    verified: number;
+    partially_verified: number;
+    unverified: number;
+    contradicted: number;
+    failed: number;
+    not_applicable: number;
+    last_task_id: string;
+    last_method: string;
+    last_evidence_at: number;
+    recent_task_ids: string[];
+  };
 };
 
 export async function fetchPlaybooks(): Promise<PlaybookRow[]> {

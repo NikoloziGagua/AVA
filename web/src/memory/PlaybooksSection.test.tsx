@@ -26,6 +26,11 @@ const pb = (over: Partial<PlaybookRow> = {}): PlaybookRow => ({
   fail: 2,
   avg_secs: 42.4,
   lessons: ["skip the ads tab — it stalls the scrape"],
+  learning: {
+    verified: 10, partially_verified: 1, unverified: 2, contradicted: 0,
+    failed: 0, not_applicable: 0, last_task_id: "task-1",
+    last_method: "file_readback", last_evidence_at: 123, recent_task_ids: ["task-1"],
+  },
   ...over,
 });
 
@@ -46,6 +51,11 @@ describe("PlaybooksSection", () => {
         trigger: "deploy the site",
         stakes: "consequential",
         uses: 1, version: 1, succ: 1, fail: 0, avg_secs: 8,
+        learning: {
+          verified: 1, partially_verified: 0, unverified: 0, contradicted: 0,
+          failed: 0, not_applicable: 0, last_task_id: "task-2",
+          last_method: "dom_confirmation", last_evidence_at: 124, recent_task_ids: ["task-2"],
+        },
         lessons: [],
       }),
     ]);
@@ -53,12 +63,12 @@ describe("PlaybooksSection", () => {
 
     expect(await screen.findByText("compile the morning brief")).toBeTruthy();
     expect(screen.getByText("deploy the site")).toBeTruthy();
-    // Stat rows: v{version} · used {uses}× · {succ}W/{fail}L · ~{avg_secs}s
-    expect(screen.getByText("v3 · used 12× · 10W/2L · ~42s")).toBeTruthy();
-    expect(screen.getByText("v1 · used 1× · 1W/0L · ~8s")).toBeTruthy();
+    expect(screen.getByText("v3 · used 12× · 10 verified · 1 partial · 2 unverified · ~42s verified avg")).toBeTruthy();
+    expect(screen.getByText("v1 · used 1× · 1 verified · ~8s verified avg")).toBeTruthy();
     // Stakes chips: consequential = warning chip; routine = quiet label.
     expect(screen.getByText("CONSEQUENTIAL")).toBeTruthy();
     expect(screen.getByText("routine")).toBeTruthy();
+    expect(screen.getAllByText("VERIFIED LEARNING")).toHaveLength(2);
 
     // Collapsed by default — steps hidden until the row is expanded.
     expect(screen.queryByText("open the dashboard")).toBeNull();
@@ -71,7 +81,7 @@ describe("PlaybooksSection", () => {
   it("shows the empty state when nothing has been learned yet", async () => {
     fetchPlaybooks.mockResolvedValue([]);
     render(<PlaybooksSection />);
-    expect(await screen.findByText(/Nothing learned yet/)).toBeTruthy();
+    expect(await screen.findByText(/Nothing verified yet/)).toBeTruthy();
   });
 
   it("surfaces a fetch error", async () => {
@@ -81,7 +91,7 @@ describe("PlaybooksSection", () => {
   });
 
   it("playbookStatLine formats the vitals and defaults missing fields", () => {
-    expect(playbookStatLine(pb())).toBe("v3 · used 12× · 10W/2L · ~42s");
-    expect(playbookStatLine({} as PlaybookRow)).toBe("v1 · used 0× · 0W/0L · ~0s");
+    expect(playbookStatLine(pb())).toBe("v3 · used 12× · 10 verified · 1 partial · 2 unverified · ~42s verified avg");
+    expect(playbookStatLine({} as PlaybookRow)).toBe("v1 · used 0× · evidence pending");
   });
 });

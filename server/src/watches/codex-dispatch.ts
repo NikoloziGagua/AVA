@@ -41,7 +41,7 @@ export type CodexDispatchResult =
   | { status: "delivered"; detail: string; marker: string; turnId: string | null; dispatchOffset: number; pid: number | null }
   | { status: "already_delivered"; detail: string; marker: string; turnId: string | null; dispatchOffset: number }
   | { status: "pending"; detail: string; marker: string; dispatchOffset: number; pid: number | null }
-  | { status: "error"; detail: string };
+  | { status: "error"; detail: string; retryable: boolean };
 
 type SpawnCodex = (input: {
   command: string;
@@ -297,10 +297,11 @@ export function buildCodexDispatcher(options: {
         return {
           status: "error",
           detail: "the Codex delivery process ended before the instruction appeared; no duplicate was launched",
+          retryable: false,
         };
       }
       if (before.state === "busy") return { status: "busy", detail: before.reason };
-      if (before.state !== "idle") return { status: "error", detail: before.reason };
+      if (before.state !== "idle") return { status: "error", detail: before.reason, retryable: true };
 
       const dispatchOffset = before.fileSize;
       const prompt =
@@ -319,7 +320,11 @@ export function buildCodexDispatcher(options: {
           logFile: join(options.logsDir, `codex-watch-${request.watchId}.jsonl`),
         });
       } catch (error) {
-        return { status: "error", detail: error instanceof Error ? error.message : String(error) };
+        return {
+          status: "error",
+          detail: error instanceof Error ? error.message : String(error),
+          retryable: true,
+        };
       }
 
       const deadline = Date.now() + verifyMs;

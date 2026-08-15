@@ -161,6 +161,11 @@ async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
     }
     if (result.status === "error") {
       recordWatchRun(deps.db, w.id, { status: "error", result: result.detail });
+      // A persisted dispatch whose process died before its marker appeared can
+      // never be retried safely: blindly resuming again could duplicate a
+      // consequential task whose session write was merely delayed. Keep the
+      // failure evidence, but stop scheduling the same terminal error forever.
+      if (!result.retryable) setWatchEnabled(deps.db, w.id, false);
       return;
     }
     recordCodexDispatch(deps.db, w.id, {

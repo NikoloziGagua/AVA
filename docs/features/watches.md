@@ -214,6 +214,11 @@ any watch is deletable, so a given row won't necessarily still be present later.
   session offset, and process ID before advancing. It never blindly launches a
   second agent into the same thread after a slow or lost dispatch; it reports the
   existing process as pending or the stopped process as a visible error.
+- **Lost dispatches fail closed once.** If a persisted Codex delivery process
+  exits before its marker appears, the failure is terminal for that watch. AVA
+  preserves the error and disables the watch instead of repeating the same
+  error forever or risking a duplicate resume. Busy and temporarily unknown
+  target states remain retryable.
 - **In-process scheduler, not an external cron.** Keeping it inside the Node
   process means zero extra infrastructure and it shares the DB/browser directly;
   the accepted trade-off is that watches only run while Ava is running (documented

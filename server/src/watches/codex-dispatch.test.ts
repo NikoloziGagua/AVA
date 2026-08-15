@@ -164,7 +164,7 @@ describe("Codex watcher delivery", () => {
       dispatchOffset: "dispatchOffset" in first ? first.dispatchOffset : 0,
       dispatchPid: 43,
     });
-    expect(second).toMatchObject({ status: "error" });
+    expect(second).toMatchObject({ status: "error", retryable: false });
     expect(spawnCodex).toHaveBeenCalledOnce();
   });
 });

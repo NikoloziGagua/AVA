@@ -163,6 +163,36 @@ describe("pinned Codex delivery (watches v3)", () => {
     expect(getWatch(db, w.id)).toMatchObject({ enabled: 1, last_status: "busy", delivered_at: null });
   });
 
+  it("disables an irrecoverable lost delivery instead of retrying forever", async () => {
+    const db = openInMemoryDb();
+    const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 1, target });
+    const dispatchCodex = vi.fn(async () => ({
+      status: "error" as const,
+      detail: "the delivery process ended before its marker appeared",
+      retryable: false,
+    }));
+
+    await tickOnce(deps(db, { dispatchCodex, inspectCodex: vi.fn() }));
+    await tickOnce(deps(db, { dispatchCodex, inspectCodex: vi.fn() }));
+
+    expect(dispatchCodex).toHaveBeenCalledOnce();
+    expect(getWatch(db, w.id)).toMatchObject({
+      enabled: 0,
+      last_status: "error",
+      last_result: "the delivery process ended before its marker appeared",
+    });
+  });
+
+  it("keeps retryable dispatcher errors enabled", async () => {
+    const db = openInMemoryDb();
+    const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 1, target });
+    await tickOnce(deps(db, {
+      dispatchCodex: async () => ({ status: "error", detail: "session file is temporarily unavailable", retryable: true }),
+      inspectCodex: vi.fn(),
+    }));
+    expect(getWatch(db, w.id)).toMatchObject({ enabled: 1, last_status: "error" });
+  });
+
   it("keeps a scheduled Codex one-shot due through its multi-phase delivery", async () => {
     const db = openInMemoryDb();
     const at = Date.now() - 1_000;

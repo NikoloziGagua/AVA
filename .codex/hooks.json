@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/codex-watch-stop-hook.mjs server/data/codex-watch-inbox",
+            "timeout": 420,
+            "statusMessage": "Checking for an AVA watcher handoff"
+          }
+        ]
+      }
+    ]
+  }
+}

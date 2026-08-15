@@ -201,6 +201,14 @@ describe("pinned Codex delivery (watches v3)", () => {
     expect(dueWatches(db).map((item) => item.id)).toContain(w.id);
   });
 
+  it("inspects a staged Codex handoff on every tick instead of waiting another interval", () => {
+    const db = openInMemoryDb();
+    const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 60, target });
+    db.prepare(`UPDATE watches SET delivery_marker = ?, dispatch_offset = 10, last_run_at = ? WHERE id = ?`)
+      .run(`[AVA-WATCH:${w.id}]`, Date.now(), w.id);
+    expect(dueWatches(db, Date.now() + 1_000).map((item) => item.id)).toContain(w.id);
+  });
+
   it("persists verified delivery and later observes completion", async () => {
     const db = openInMemoryDb();
     const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 1, target });

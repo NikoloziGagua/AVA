@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -75,9 +75,55 @@ describe("Codex thread evidence", () => {
       turnId: "turn-watch",
     });
   });
+
+  it("recognizes a Stop-hook continuation marker without pretending it was a user message", () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-hook", cwd: "C:/repo/AVA", state: "busy" });
+    const offset = inspectCodexThread(target).fileSize;
+    appendFileSync(target.sessionFile, `${event("response_item", { role: "user", content: "[AVA-WATCH:hook-1] build" })}\n`);
+    expect(inspectCodexThread(target, "[AVA-WATCH:hook-1]", offset)).toMatchObject({
+      markerSeen: true,
+      markerTurnCompleted: false,
+    });
+  });
 });
 
 describe("Codex watcher delivery", () => {
+  it("stages for the in-thread Stop hook while the pinned writer is busy", async () => {
+    const root = tempRoot();
+    const inbox = join(root, "inbox");
+    const target = makeSession(root, { id: "thread-hook", cwd: "C:/repo/AVA", state: "busy" });
+    const spawnCodex = vi.fn(() => ({ pid: 1 }));
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      handoffDir: inbox,
+      spawnCodex,
+    });
+
+    const result = await dispatcher.dispatch({
+      watchId: "hook-1",
+      prompt: "build notes",
+      target,
+      continueCycle: true,
+    });
+    expect(result).toMatchObject({ status: "pending", pid: null });
+    expect(readFileSync(join(inbox, "pending", "hook-1.json"), "utf8")).toContain("[AVA-WATCH:hook-1]");
+    expect(spawnCodex).not.toHaveBeenCalled();
+
+    const replay = await dispatcher.dispatch({
+      watchId: "hook-1",
+      prompt: "build notes",
+      target,
+      marker: "[AVA-WATCH:hook-1]",
+      dispatchOffset: "dispatchOffset" in result ? result.dispatchOffset : 0,
+      continueCycle: true,
+    });
+    expect(replay).toMatchObject({ status: "pending" });
+    expect(spawnCodex).not.toHaveBeenCalled();
+  });
+
   it("does not dispatch while the pinned thread is busy", async () => {
     const root = tempRoot();
     const target = makeSession(root, { id: "thread-busy", cwd: "C:/repo/AVA", state: "busy" });

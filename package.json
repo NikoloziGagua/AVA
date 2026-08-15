@@ -16,6 +16,7 @@
     "server:test": "npm -w server run test",
     "web:dev": "npm -w web run dev",
     "web:build": "npm -w web run build",
+    "codex:trust-watch": "node scripts/trust-codex-watch-hook.mjs",
     "test:explorer-contract": "npm -w server run build && node node_modules/typescript/bin/tsc -b web/tsconfig.json --pretty false && node scripts/validate-explorer-contract.mjs && node scripts/explorer-reality-check.mjs --emit",
     "test": "npm -w server run test && npm -w web run test",
     "test:e2e": "vitest run --root . --config vitest.config.ts"

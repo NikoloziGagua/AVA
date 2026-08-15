@@ -106,7 +106,11 @@ const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
 let voiceInternalToken = "";
 let watchInternalToken = "";
-const codexDispatcher = buildCodexDispatcher({ repoRoot: cfg.repoRoot, logsDir: cfg.logsDir });
+const codexDispatcher = buildCodexDispatcher({
+  repoRoot: cfg.repoRoot,
+  logsDir: cfg.logsDir,
+  handoffDir: join(cfg.dataDir, "codex-watch-inbox"),
+});
 const observability = new ObservabilityService(db);
 const strategyStore = new StrategyRoomStore(db);
 const interruptedStrategyRooms = strategyStore.failInterruptedRooms();

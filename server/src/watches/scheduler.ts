@@ -154,6 +154,8 @@ async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
       marker: w.delivery_marker,
       dispatchOffset: w.dispatch_offset,
       dispatchPid: w.dispatch_pid,
+      parentWatchId: w.parent_watch_id,
+      continueCycle: Boolean(w.continue_cycle),
     });
     if (result.status === "busy") {
       recordWatchRun(deps.db, w.id, { status: "busy", result: result.detail });

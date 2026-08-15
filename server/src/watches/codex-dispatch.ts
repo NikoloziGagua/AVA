@@ -11,6 +11,12 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve } from "node:path";
+import {
+  hasCodexHandoff,
+  readCodexHandoffCompletion,
+  stageCodexHandoff,
+  watchIdFromMarker,
+} from "./codex-handoff.js";
 
 export type CodexWatchTarget = {
   threadId: string;
@@ -34,6 +40,8 @@ export type CodexDispatchRequest = {
   marker?: string | null;
   dispatchOffset?: number | null;
   dispatchPid?: number | null;
+  parentWatchId?: string | null;
+  continueCycle?: boolean;
 };
 
 export type CodexDispatchResult =
@@ -184,7 +192,10 @@ export function inspectCodexThread(
         const record = JSON.parse(line) as { type?: string; payload?: { type?: string; turn_id?: string } };
         const payload = record.payload;
         if (payload?.type === "task_started" && markerIndex < 0) turnId = payload.turn_id ?? turnId;
-        if (payload?.type === "user_message" && payloadContainsMarker(payload, marker)) {
+        // A Stop-hook continuation is persisted as a hook prompt response item,
+        // not a user_message. The unique post-offset marker is the evidence;
+        // requiring a specific transport record would hide valid delivery.
+        if (payloadContainsMarker(payload, marker)) {
           markerSeen = true;
           markerIndex = index;
         }
@@ -256,6 +267,8 @@ export function buildCodexDispatcher(options: {
   pollMs?: number;
   spawnCodex?: SpawnCodex;
   isProcessRunning?: IsProcessRunning;
+  /** When present, pinned TUI delivery is staged for the in-writer Stop hook. */
+  handoffDir?: string | null;
 }): CodexDispatcher {
   const spawnCodex = options.spawnCodex ?? productionSpawn;
   const verifyMs = options.verifyMs ?? DEFAULT_VERIFY_MS;
@@ -263,8 +276,21 @@ export function buildCodexDispatcher(options: {
   const command = options.codexCommand ?? defaultCodexCommand();
   const isProcessRunning = options.isProcessRunning ?? productionIsProcessRunning;
   const resolveTarget = () => resolveLatestCodexTarget(options.repoRoot, options.codexHome);
-  const inspect = (target: CodexWatchTarget, marker?: string | null, offset?: number | null) =>
-    inspectCodexThread(target, marker, offset);
+  const inspect = (target: CodexWatchTarget, marker?: string | null, offset?: number | null) => {
+    const snapshot = inspectCodexThread(target, marker, offset);
+    const watchId = watchIdFromMarker(marker);
+    const completion = options.handoffDir && watchId
+      ? readCodexHandoffCompletion(options.handoffDir, watchId)
+      : null;
+    if (!completion || completion.threadId !== target.threadId) return snapshot;
+    return {
+      ...snapshot,
+      markerSeen: true,
+      markerTurnCompleted: true,
+      turnId: completion.turnId || snapshot.turnId,
+      reason: "the in-thread Codex handoff reached a Stop-hook task boundary",
+    };
+  };
 
   return {
     resolveTarget,
@@ -280,6 +306,69 @@ export function buildCodexDispatcher(options: {
           turnId: before.turnId,
           dispatchOffset: request.dispatchOffset ?? before.fileSize,
         };
+      }
+      if (options.handoffDir) {
+        // Preserve the legacy dispatch ambiguity boundary. A watch that already
+        // launched an external resume cannot be silently restaged through the
+        // hook because the old process may have performed work before losing
+        // its rollout evidence.
+        if (request.marker && request.dispatchPid != null && !hasCodexHandoff(options.handoffDir, request.watchId)) {
+          return request.dispatchPid && isProcessRunning(request.dispatchPid)
+            ? {
+                status: "pending",
+                detail: "the legacy Codex delivery process is still running; no hook duplicate was staged",
+                marker,
+                dispatchOffset: request.dispatchOffset ?? before.fileSize,
+                pid: request.dispatchPid,
+              }
+            : {
+                status: "error",
+                detail: "the legacy Codex delivery process ended before the instruction appeared; no hook duplicate was staged",
+                retryable: false,
+              };
+        }
+        if (request.marker && hasCodexHandoff(options.handoffDir, request.watchId)) {
+          return {
+            status: "pending",
+            detail: "the instruction is staged for the pinned Codex thread's next clean task boundary",
+            marker,
+            dispatchOffset: request.dispatchOffset ?? before.fileSize,
+            pid: null,
+          };
+        }
+        if (before.state === "unknown") return { status: "error", detail: before.reason, retryable: true };
+
+        const dispatchOffset = before.fileSize;
+        const prompt = formatCodexWatchPrompt(marker, request.prompt);
+        try {
+          const staged = stageCodexHandoff(options.handoffDir, {
+            watchId: request.watchId,
+            parentWatchId: request.parentWatchId ?? null,
+            threadId: request.target.threadId,
+            cwd: request.target.cwd,
+            marker,
+            dispatchOffset,
+            continueCycle: request.continueCycle === true,
+            prompt,
+          });
+          return {
+            status: "pending",
+            detail: staged.existing
+              ? "the existing in-thread Codex handoff remains staged; no duplicate was created"
+              : before.state === "busy"
+                ? "instruction staged for the current Codex turn's clean task boundary"
+                : "instruction staged for the pinned Codex thread's next clean task boundary",
+            marker,
+            dispatchOffset,
+            pid: null,
+          };
+        } catch (error) {
+          return {
+            status: "error",
+            detail: error instanceof Error ? error.message : String(error),
+            retryable: true,
+          };
+        }
       }
       // A prior spawn has already been recorded but its JSONL user-message has
       // not become visible yet. Never launch a second writer into the same TUI
@@ -304,12 +393,7 @@ export function buildCodexDispatcher(options: {
       if (before.state !== "idle") return { status: "error", detail: before.reason, retryable: true };
 
       const dispatchOffset = before.fileSize;
-      const prompt =
-        `${marker}\n` +
-        `AVA delivered this scheduled instruction into the pinned Codex session. Treat it as Niko-authorized AVA repository work.\n\n` +
-        `${request.prompt.trim()}\n\n` +
-        `Do not ask Niko routine questions. Implement, test, commit, and keep coord/BOARD.md current. ` +
-        `When complete, leave the thread at a clean task boundary so AVA can select the next instruction.`;
+      const prompt = formatCodexWatchPrompt(marker, request.prompt);
       let spawned: { pid: number | null };
       try {
         spawned = spawnCodex({
@@ -351,4 +435,14 @@ export function buildCodexDispatcher(options: {
       };
     },
   };
+}
+
+export function formatCodexWatchPrompt(marker: string, prompt: string): string {
+  return (
+    `${marker}\n` +
+    `AVA delivered this scheduled instruction into the pinned Codex session. Treat it as Niko-authorized AVA repository work.\n\n` +
+    `${prompt.trim()}\n\n` +
+    `Do not ask Niko routine questions. Implement, test, commit, and keep coord/BOARD.md current. ` +
+    `When complete, leave the thread at a clean task boundary so AVA can select the next instruction.`
+  );
 }

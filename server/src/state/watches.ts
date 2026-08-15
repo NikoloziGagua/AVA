@@ -109,7 +109,7 @@ export function recordCodexDispatch(db: Db, id: string, input: {
     input.marker, input.offset, input.turnId ?? null, input.pid ?? null,
     input.delivered ? 1 : 0, now, now,
     input.delivered ? "delivered" : "dispatching",
-    input.delivered ? "instruction verified in pinned Codex thread" : "Codex process started; awaiting thread evidence",
+    input.delivered ? "instruction verified in pinned Codex thread" : "instruction staged; awaiting pinned-thread evidence",
     id,
   );
 }
@@ -140,6 +140,10 @@ export function todaysOccurrence(dailyAt: string, now: number): number {
 export function dueWatches(db: Db, now: number = Date.now()): Watch[] {
   return (db.prepare("SELECT * FROM watches WHERE enabled = 1").all() as Watch[])
     .filter((w) => {
+      // Codex delivery is a state machine, not a periodic condition check.
+      // Once staged it must be inspected on every scheduler tick so a Stop
+      // hook waiting at the clean boundary can receive its planned successor.
+      if (w.kind === "codex" && w.delivery_marker !== null) return true;
       // Ordinary one-shots run once. A targeted delivery is multi-phase
       // (wait -> dispatch -> verify -> complete), so it remains due after its
       // start time until the scheduler explicitly completes/disables it.

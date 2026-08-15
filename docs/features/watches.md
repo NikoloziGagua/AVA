@@ -59,9 +59,12 @@ Two halves: **tools** (Ava registers/lists/deletes watches during a turn) and a
   This is the general path for scheduled Instagram, browser, web, Claude, file,
   and other AVA work.
 - **reminder** — the prompt is the notification; no model call is made.
-- **codex** — the adapter pins the exact repository TUI thread, waits for a clean
-  task boundary, resumes that thread, and verifies a unique instruction marker
-  in its immutable JSONL session record. The adapter contract is deliberately
+- **codex** — the adapter pins the exact repository TUI thread and atomically
+  stages one sanitized instruction. A trusted project Stop hook consumes it
+  inside the TUI's existing writer at a clean task boundary, avoiding the
+  active-writer conflict caused by starting a second `codex exec resume`.
+  AVA verifies the unique marker in the immutable JSONL session record. The
+  adapter contract is deliberately
   isolated so another session target, such as Claude Code, can implement the
   same resolve/dispatch/inspect boundary without changing ordinary watches.
 
@@ -126,6 +129,7 @@ audit. It is the same trick the voice pipeline uses for `do_on_computer`.
 | Tools (Ava) | `server/src/tools/watches-mcp.ts` | `watch_create` / `watch_list` / `watch_delete` — action mode only. |
 | HTTP API | `server/src/routes/watches.ts` | `GET /` · `POST /` · `POST /:id/enabled` · `DELETE /:id` (token-auth'd). |
 | Target adapter | `server/src/watches/codex-dispatch.ts` | Exact Codex target resolution, lifecycle inspection, idempotent dispatch, and delivery evidence. |
+| In-thread handoff | `server/src/watches/codex-handoff.ts`, `scripts/codex-watch-stop-hook.mjs`, `.codex/hooks.json` | Sanitized atomic inbox, same-writer Stop-hook delivery, completion receipt, and bounded successor wait. |
 | Boot singleton | `server/src/process/server-lock.ts` | Atomic process ownership claim in AVA's data root, acquired before shared boot state can change. |
 | UI | `web/src/memory/WatchesSection.tsx` | Read/manage surface with ordinary and targeted lifecycle visibility. |
 | Boot wiring | `server/src/index.ts` | Scheduler and internal credentials start **only after this process owns the port** and only when an LLM provider exists. |
@@ -145,6 +149,19 @@ HTTP route caps it at 24 h.
   (`unref`'d so it never keeps the process alive). If the PC is asleep or the Ava
   server is down, **no checks happen** and none are back-filled — the next check is
   simply the next tick after the server is up. This is not a cloud cron.
+- **The project Stop hook must be trusted by Codex.** Codex hashes unmanaged
+  hooks and will not run a new or changed definition until that exact hash is
+  trusted. Run `npm run codex:trust-watch` after installing or changing
+  `.codex/hooks.json`; the helper uses Codex's typed `hooks/list` and
+  `config/batchWrite` APIs, then verifies the resulting trusted hash. A staged instruction stays
+  pending safely while the hook is unavailable; AVA does not fall back to a
+  competing writer.
+- **Delivery occurs at a clean task boundary.** A watch staged while Codex is
+  working is injected when that turn would otherwise finish. If Codex was
+  already completely idle before AVA staged it, it is delivered at the end of
+  the next turn. For `continue_cycle`, the Stop hook records completion and
+  waits up to six minutes for AVA to plan and stage exactly one child; a planner
+  outage ends the turn honestly rather than waiting forever.
 - **Disabled without an LLM provider.** If no provider is configured at boot, the
   scheduler logs `watch scheduler disabled — no LLM provider` and never starts
   (`index.ts`). Checks are agent runs; no brain, no checks.
@@ -210,10 +227,16 @@ any watch is deletable, so a given row won't necessarily still be present later.
   claims an atomic PID/instance lock before opening shared runtime state. A
   duplicate boot exits before it can touch either internal credential; a stale
   lock is recovered only after its recorded PID is no longer alive.
-- **Target delivery is idempotent.** The scheduler persists a unique marker,
-  session offset, and process ID before advancing. It never blindly launches a
-  second agent into the same thread after a slow or lost dispatch; it reports the
-  existing process as pending or the stopped process as a visible error.
+- **Target delivery is idempotent.** The scheduler persists a unique marker and
+  session offset before advancing. The handoff uses atomic pending → claimed →
+  completed files keyed by watch ID; replay cannot claim or execute the same
+  instruction twice. The unique marker plus post-stage session offset remains
+  the user-visible delivery evidence.
+- **The TUI remains the only active writer.** The earlier adapter launched
+  `codex exec resume`, which fails when an open Codex window owns the thread's
+  writer lock. Active-thread delivery now crosses a bounded file handoff and is
+  consumed by the existing writer's Stop hook. No approval bypass or second
+  writer is used.
 - **Lost dispatches fail closed once.** If a persisted Codex delivery process
   exits before its marker appears, the failure is terminal for that watch. AVA
   preserves the error and disables the watch instead of repeating the same

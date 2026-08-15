@@ -17,7 +17,10 @@ import {
   stageCodexHandoff,
   watchIdFromMarker,
 } from "./codex-handoff.js";
-import { hasCodexQueueReceipt, stageCodexQueue } from "./codex-queue.js";
+import {
+  injectCodexConsoleHandoff,
+  type CodexConsoleInjectionResult,
+} from "./codex-console.js";
 
 export type CodexWatchTarget = {
   threadId: string;
@@ -61,6 +64,12 @@ type SpawnCodex = (input: {
 }) => { pid: number | null };
 
 type IsProcessRunning = (pid: number) => boolean;
+type InjectCodexConsole = (input: {
+  inboxDir: string;
+  scriptPath: string;
+  watchId: string;
+  threadId: string;
+}) => CodexConsoleInjectionResult;
 
 export type CodexDispatcher = {
   resolveTarget: () => CodexWatchTarget | null;
@@ -288,14 +297,16 @@ export function buildCodexDispatcher(options: {
   isProcessRunning?: IsProcessRunning;
   /** When present, pinned TUI delivery is staged for the in-writer Stop hook. */
   handoffDir?: string | null;
-  /** Codex's durable queue; used only while the pinned TUI writer is busy. */
-  queueDbPath?: string | null;
+  /** Windows same-writer input adapter for an already-running standalone TUI. */
+  consoleInjectorScript?: string | null;
+  injectConsole?: InjectCodexConsole;
 }): CodexDispatcher {
   const spawnCodex = options.spawnCodex ?? productionSpawn;
   const verifyMs = options.verifyMs ?? DEFAULT_VERIFY_MS;
   const pollMs = options.pollMs ?? 250;
   const command = options.codexCommand ?? defaultCodexCommand();
   const isProcessRunning = options.isProcessRunning ?? productionIsProcessRunning;
+  const injectConsole = options.injectConsole ?? injectCodexConsoleHandoff;
   const resolveTarget = () => resolveLatestCodexTarget(options.repoRoot, options.codexHome);
   const inspect = (target: CodexWatchTarget, marker?: string | null, offset?: number | null) => {
     const snapshot = inspectCodexThread(target, marker, offset);
@@ -349,6 +360,28 @@ export function buildCodexDispatcher(options: {
               };
         }
         if (request.marker && hasCodexHandoff(options.handoffDir, request.watchId)) {
+          if (options.consoleInjectorScript) {
+            const injected = injectConsole({
+              inboxDir: options.handoffDir,
+              scriptPath: options.consoleInjectorScript,
+              watchId: request.watchId,
+              threadId: request.target.threadId,
+            });
+            if (injected.status === "ambiguous") {
+              return { status: "error", detail: injected.detail, retryable: false };
+            }
+            if (injected.status === "injected" || injected.status === "already_injected") {
+              return {
+                status: "pending",
+                detail: injected.status === "injected"
+                  ? "instruction entered the standalone Codex TUI and is awaiting rollout evidence"
+                  : injected.detail,
+                marker,
+                dispatchOffset: request.dispatchOffset ?? before.fileSize,
+                pid: injected.processId,
+              };
+            }
+          }
           return {
             status: "pending",
             detail: "the instruction is staged for the pinned Codex thread's next clean task boundary",
@@ -361,49 +394,6 @@ export function buildCodexDispatcher(options: {
 
         const dispatchOffset = before.fileSize;
         const prompt = formatCodexWatchPrompt(marker, request.prompt);
-        // A busy pinned TUI already owns the rollout. Codex's durable queue is
-        // the authoritative cross-process boundary: the live writer consumes
-        // this typed user turn when it becomes idle. This also works for a TUI
-        // session that was loaded before AVA's Stop hook was installed.
-        if (before.state === "busy" && options.queueDbPath) {
-          try {
-            const staged = stageCodexQueue({
-              queueDbPath: options.queueDbPath,
-              receiptRoot: options.handoffDir,
-              watchId: request.watchId,
-              threadId: request.target.threadId,
-              prompt,
-            });
-            return {
-              status: "pending",
-              detail: staged.existing
-                ? "the existing durable Codex queue handoff remains staged; no duplicate was created"
-                : "instruction queued for the active Codex thread's next clean task boundary",
-              marker,
-              dispatchOffset,
-              pid: null,
-            };
-          } catch (error) {
-            // A receipt proves a prior successful stage even if Codex already
-            // consumed the queue row. Never enqueue the consequential task a
-            // second time while its rollout evidence is still catching up.
-            if (hasCodexQueueReceipt(options.handoffDir, request.watchId, request.target.threadId)) {
-              return {
-                status: "pending",
-                detail: "the durable Codex queue handoff is already recorded; no duplicate was created",
-                marker,
-                dispatchOffset,
-                pid: null,
-              };
-            }
-            // Older Codex builds have no supported queue. Only that narrow
-            // compatibility case falls through to the trusted Stop hook.
-            const detail = error instanceof Error ? error.message : String(error);
-            if (!/database is unavailable|schema is unavailable|schema is incompatible/.test(detail)) {
-              return { status: "error", detail, retryable: true };
-            }
-          }
-        }
         try {
           const staged = stageCodexHandoff(options.handoffDir, {
             watchId: request.watchId,
@@ -415,6 +405,28 @@ export function buildCodexDispatcher(options: {
             continueCycle: request.continueCycle === true,
             prompt,
           });
+          if (options.consoleInjectorScript) {
+            const injected = injectConsole({
+              inboxDir: options.handoffDir,
+              scriptPath: options.consoleInjectorScript,
+              watchId: request.watchId,
+              threadId: request.target.threadId,
+            });
+            if (injected.status === "ambiguous") {
+              return { status: "error", detail: injected.detail, retryable: false };
+            }
+            if (injected.status === "injected" || injected.status === "already_injected") {
+              return {
+                status: "pending",
+                detail: injected.status === "injected"
+                  ? "instruction entered the standalone Codex TUI and is awaiting rollout evidence"
+                  : injected.detail,
+                marker,
+                dispatchOffset,
+                pid: injected.processId,
+              };
+            }
+          }
           return {
             status: "pending",
             detail: staged.existing

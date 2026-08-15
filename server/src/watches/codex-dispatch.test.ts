@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import Database from "better-sqlite3";
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -37,19 +36,6 @@ function hookPrompt(marker: string) {
       content: [{ type: "input_text", text: `<hook_prompt hook_run_id="hook-1">${marker} build</hook_prompt>` }],
     },
   });
-}
-
-function createCodexQueue(path: string) {
-  const db = new Database(path);
-  db.exec(`CREATE TABLE queued_items (
-    id TEXT PRIMARY KEY,
-    thread_id TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    queue_order INTEGER NOT NULL,
-    created_at_ms INTEGER NOT NULL,
-    updated_at_ms INTEGER NOT NULL
-  )`);
-  db.close();
 }
 
 function makeSession(root: string, input: { id: string; cwd: string; state: "idle" | "busy"; mtimeHint?: number }): CodexWatchTarget {
@@ -131,51 +117,41 @@ describe("Codex thread evidence", () => {
 });
 
 describe("Codex watcher delivery", () => {
-  it("uses Codex's durable queue for an active pinned thread", async () => {
+  it("uses the standalone TUI input boundary for an active pinned thread", async () => {
     const root = tempRoot();
     const inbox = join(root, "inbox");
-    const queueDbPath = join(root, "queue_1.sqlite");
-    createCodexQueue(queueDbPath);
-    const target = makeSession(root, { id: "thread-queue", cwd: "C:/repo/AVA", state: "busy" });
+    const target = makeSession(root, { id: "thread-console", cwd: "C:/repo/AVA", state: "busy" });
     const spawnCodex = vi.fn(() => ({ pid: 1 }));
+    const injectConsole = vi.fn(() => ({ status: "injected" as const, detail: "queued", processId: 42 }));
     const dispatcher = buildCodexDispatcher({
       repoRoot: target.cwd,
       logsDir: root,
       codexHome: root,
       handoffDir: inbox,
-      queueDbPath,
+      consoleInjectorScript: "inject.ps1",
+      injectConsole,
       spawnCodex,
     });
 
     const first = await dispatcher.dispatch({
-      watchId: "queue-1",
+      watchId: "console-1",
       prompt: "build safely",
       target,
     });
-    expect(first).toMatchObject({ status: "pending", pid: null });
+    expect(first).toMatchObject({ status: "pending", pid: 42 });
     expect(spawnCodex).not.toHaveBeenCalled();
-    expect(readFileSync(join(inbox, "queued", "queue-1.json"), "utf8")).not.toContain("build safely");
-    expect(() => readFileSync(join(inbox, "pending", "queue-1.json"), "utf8")).toThrow();
-
-    const db = new Database(queueDbPath);
-    const row = db.prepare("SELECT thread_id, payload_json FROM queued_items WHERE id = ?")
-      .get("ava-watch:queue-1") as { thread_id: string; payload_json: string };
-    expect(row.thread_id).toBe(target.threadId);
-    expect(row.payload_json).toContain("[AVA-WATCH:queue-1]");
-    db.prepare("DELETE FROM queued_items WHERE id = ?").run("ava-watch:queue-1");
-    db.close();
+    expect(readFileSync(join(inbox, "pending", "console-1.json"), "utf8")).toContain("[AVA-WATCH:console-1]");
+    expect(injectConsole).toHaveBeenCalledOnce();
 
     const replay = await dispatcher.dispatch({
-      watchId: "queue-1",
+      watchId: "console-1",
       prompt: "build safely",
       target,
-      marker: "[AVA-WATCH:queue-1]",
+      marker: "[AVA-WATCH:console-1]",
       dispatchOffset: "dispatchOffset" in first ? first.dispatchOffset : 0,
     });
     expect(replay).toMatchObject({ status: "pending" });
-    const verify = new Database(queueDbPath, { readonly: true });
-    expect(verify.prepare("SELECT COUNT(*) AS count FROM queued_items").get()).toEqual({ count: 0 });
-    verify.close();
+    expect(injectConsole).toHaveBeenCalledTimes(2);
   });
 
   it("stages for the in-thread Stop hook while the pinned writer is busy", async () => {

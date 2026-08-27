@@ -214,6 +214,18 @@ describe("ChatScreen send failure", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
   });
 
+  it("passes the server-assigned new-chat session to voice", async () => {
+    const onEnterVoice = vi.fn();
+    sendMessage.mockResolvedValue({ sessionId: "created-session", taskId: "task-1" });
+    render(<ChatScreen sessionId={null} {...noNav} onEnterVoice={onEnterVoice} />);
+
+    await typeAndSend("remember this brief");
+    await waitFor(() => expect(sendMessage).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "voice" }));
+
+    expect(onEnterVoice).toHaveBeenCalledWith("created-session");
+  });
+
   it("explains when the server has no LLM provider configured", async () => {
     sendMessage.mockRejectedValue(new ApiError(503, "no_llm_provider"));
     render(<ChatScreen sessionId={null} {...noNav} />);

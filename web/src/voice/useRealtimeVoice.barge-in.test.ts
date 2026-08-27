@@ -227,6 +227,15 @@ describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
     expect(hook.result.current.state).toBe("listening");
   });
 
+  it("closes the realtime socket when voice unmounts for keyboard/chat mode", async () => {
+    const { hook, ws } = await bootHybrid();
+    expect(ws.readyState).toBe(FakeWebSocket.OPEN);
+
+    act(() => hook.unmount());
+
+    expect(ws.readyState).toBe(FakeWebSocket.CLOSED);
+  });
+
   it("keeps ava.step and ava.result visual-only so hybrid uses exactly one voice", async () => {
     const { hook, ws } = await bootHybrid();
     const node = FakeAudioWorkletNode.last!;

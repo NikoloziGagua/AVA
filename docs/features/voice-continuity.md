@@ -46,7 +46,7 @@ flowchart TD
 
 ## Edge cases & limitations
 
-- **"Most recent" = the top of `listSessions`.** If Sir wants a different older conversation, he must open it explicitly; voice only auto-resumes the single latest.
+- **Automatic resume uses actual activity order.** `getMostRecentSession` ignores pins; opening an explicit chat ID remains the authoritative way to continue a particular older conversation.
 - **Seeding is bounded by `REALTIME_SEED_TURNS` (default 12).** Older turns beyond that window aren't seeded into the model on connect (though they remain in the DB). The bound exists because each seeded turn is per-connect OpenAI cost.
 - **Persisted turns avoid double-counting.** In hybrid/voice mode the spoken user turn and the action result are each stored exactly once; the internal `/api/chat` run that executes tools persists nothing (`persist:false`), so resumed history isn't duplicated. A **spoken chit-chat reply** is also stored as exactly **one** row even though the model emits it as several transcript segments — the proxy buffers the segments and flushes once on turn-end (`flushAssistantTurn`, `voice-realtime.ts:822` OpenAI / `:1123` Hume). This matters here because that one clean row is what gets **re-seeded** as recollection on the next connect; the older per-segment writes seeded clause-fragments. See `docs/features/voice-message-coalescing.md`.
 
@@ -55,3 +55,28 @@ flowchart TD
 - **Resume by default, "+new" to opt out (commit a3f6886).** The old behaviour minted a fresh session on every orb entry, breaking voice↔chat memory. Defaulting to resume makes them one continuous conversation; the explicit "+new" control preserves the ability to start clean.
 - **Seed history rather than rely on a shared id alone.** A shared session id isn't enough — the realtime model needs the prior turns in-context to actually recall them, so they're seeded on connect (provider-appropriately).
 - **`output_text` for assistant seeds (commit 9cc9b73).** Fixes the GA realtime rejection that only surfaced once resume started seeding assistant turns.
+
+## Canonical mode handoff and live refresh (2026-08-27)
+
+Voice and typed chat are two input modes over one canonical session transcript:
+
+- `ChatScreen` passes its own current `sessionId` to `App` when the mic is tapped.
+  This is important for a new chat: the server-assigned ID exists inside
+  `ChatScreen`, while the route value in `App` can still be `null`.
+- Voice Exit and Keyboard retire the microphone, audio graph, agent stream and
+  WebSocket before navigating. Hook unmount performs the same cleanup as a safety
+  net, so an old realtime connection cannot retain stale context or overlap a new
+  voice connection.
+- Home-orb fallback uses `getMostRecentSession`, which orders by actual activity.
+  `listSessions` remains pin-first for display only; pinning an old chat no longer
+  makes voice resume it.
+- Both providers receive the durable earlier-conversation summary used by typed
+  chat plus the recent raw turns. OpenAI additionally tracks a persisted message
+  high-water and imports typed rows written by another client at the ordered
+  speech-start/push-to-talk-commit boundary before the next spoken item.
+- `?new=1` now reaches Hume as well as OpenAI.
+
+The reconnect seed remains bounded by `REALTIME_SEED_TURNS` (default 12) for
+cost. Hume refreshes concurrent cross-window typed changes on reconnect because
+this bridge has no proven ordered live item-insertion contract for Hume. Normal
+in-app keyboard/voice switching reconnects by design.

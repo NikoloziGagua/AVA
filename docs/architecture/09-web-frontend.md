@@ -447,8 +447,17 @@ A small shadcn-style kit — `button`, `card`, `textarea`, `badge`, `dialog` (Ra
 
 ## Unresolved questions / notes for follow-up
 
-1. **`view.sessionId` vs. `ChatScreen.sessionId` divergence.** As detailed in §2, opening a brand-new chat and then going to voice passes `null` (App never learns the id `ChatScreen` created). Voice has to create/adopt its own session. Is that intended, or should `ChatScreen` lift the new id back up to `App` so chat→voice always continues the same thread? (I documented it as a known edge, not a bug, but it's worth a decision.)
+1. **Resolved: `view.sessionId` vs. `ChatScreen.sessionId`.** Chat keeps its server-assigned ID locally to avoid a keyed remount, but the mic callback now passes that exact local ID to voice. A new typed chat therefore continues in the same session when its input mode changes.
 2. **`VoiceScreen` is out of this doc's scope** but is a first-class node in the navigation state machine (it owns the `from`/`sessionId` return logic). A dedicated voice-frontend doc should cover the realtime WS, mic amplitude → orb, and the `openai`/`hume` engine handling.
 3. **Like/Dislike are client-only.** `MessageActions` toggles reaction state locally but no feedback endpoint is called. If this is meant to train/inform Ava, the wiring is missing.
 4. **`SessionsScreen.tsx` is dead code.** Recommend deleting it (or noting it as deprecated) to avoid confusion, since `ChatListScreen` fully replaces it.
 5. **Reasoning `supported` flag.** The Rules UI degrades gracefully when `supported:false`, but the exact set of models that report `false` isn't visible from the client; that lives server-side (`/api/reasoning`).
+
+### Voice/chat handoff correction (2026-08-27)
+
+The former `view.sessionId` / `ChatScreen.sessionId` divergence is no longer a
+voice continuity edge. `ChatScreen` now invokes `onEnterVoice` with its canonical
+local session ID, so a freshly created chat never hands the stale route-level
+`null` to voice. Voice also closes its socket and media resources on explicit
+navigation and unmount. `App` still avoids lifting the new ID during a running
+chat because doing so would change the keyed view and remount the live stream.

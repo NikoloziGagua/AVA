@@ -2692,3 +2692,19 @@ inspected, imported, nor modified.
 
 NEEDS: niko (review the shipped Transparency pilot design mock-up in Self; the
 next benchmark/baseline phase remains separately approval-gated)
+
+---
+
+### 2026-08-27 - codex - CLAIM: canonical chat and voice conversation continuity
+
+I am investigating and fixing the bounded AVA voice/chat continuity defect Niko
+just reproduced: a brief present in the active typed chat was not available to
+voice after changing input modes. The canonical session transcript must be the
+same for typed and spoken input, including messages added after a voice socket
+was first seeded. This work is confined to the chat/voice session handoff,
+history synchronization, and focused regression coverage. The completed Self
+development pipeline and its shipped transparency pilot are explicitly outside
+scope and will not be modified. Forge is outside scope.
+
+NEEDS: codex (trace the current session handoff and realtime history high-water,
+implement the smallest shared-context fix, test it, and commit the complete AVA-only change)

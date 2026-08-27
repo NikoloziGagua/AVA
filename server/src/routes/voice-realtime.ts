@@ -3,8 +3,8 @@ import { nanoid } from "nanoid";
 import type { Db } from "../state/db.js";
 import { buildSystemPrompt } from "../orchestrator/system-prompt.js";
 import { validateToken } from "../auth/tokens.js";
-import { createSession, touchSession, listSessions } from "../state/sessions.js";
-import { appendMessage, listMessages } from "../state/messages.js";
+import { createSession, getMostRecentSession, getSessionFull, touchSession } from "../state/sessions.js";
+import { appendMessage, listMessages, listMessagesAfterId, type Message } from "../state/messages.js";
 import { readDevLog, type DevLogEntry } from "../self/dev-log.js";
 import { dirname } from "node:path";
 import {
@@ -644,6 +644,32 @@ export function seedContentType(role: string): "input_text" | "output_text" {
   return role === "assistant" ? "output_text" : "input_text";
 }
 
+/** OpenAI conversation items for persisted chat/voice turns. Kept pure so the
+ * shared-context contract is testable without a live Realtime connection. */
+export function openAiHistoryFrames(
+  messages: Array<Pick<Message, "role" | "content">>,
+): string[] {
+  return messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => JSON.stringify({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: message.role,
+        content: [{ type: seedContentType(message.role), text: message.content }],
+      },
+    }));
+}
+
+/** The typed agent already receives this durable summary before its unsummarised
+ * rows. Voice receives the same earlier-conversation anchor, while recent rows
+ * remain normal conversation items. */
+export function buildVoiceConversationSummary(summary: string | null | undefined): string {
+  const text = summary?.trim();
+  if (!text) return "";
+  return `\n\n[CONVERSATION SUMMARY OF EARLIER MESSAGES]\n${text.slice(0, 4_000)}\n`;
+}
+
 /** Sent (hybrid) when do_on_computer starts so the UI shows progress, not dead air. */
 export function actionStartedFrame(task: string): string {
   return JSON.stringify({ type: "ava.action", task });
@@ -892,7 +918,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // a secret key is set, else the raw api_key. Done before the session Promise
       // so the executor stays synchronous.
       const humeUrl = await resolveHumeWsUrl(providerConfig.hume);
-      const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume, humeUrl, pushToTalk);
+      const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume, humeUrl, pushToTalk, wantNew);
       if (opened) return;
       log.warn("realtime: hume upstream did not establish — falling back to OpenAI");
     }
@@ -1035,6 +1061,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     let cancelResponseOnCreate = false;
     let suppressCurrentResponse = false;
     let responseAfterCancellation = false;
+    // Highest stored message already represented upstream. Voice can remain
+    // connected while another client writes typed turns; this high-water makes
+    // importing those turns before the next utterance deterministic/idempotent.
+    let persistedHistoryHighWater = 0;
     const recordObservedTurn = (
       turn: ActiveVoiceTurn,
       input: Parameters<ObservabilityService["record"]>[1],
@@ -1209,10 +1239,21 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       const text = assistantTurnBuf.trim();
       assistantTurnBuf = "";
       if (hybrid && sessionId && text) {
-        appendMessage(deps.db, { sessionId, role: "assistant", content: text });
+        const stored = appendMessage(deps.db, { sessionId, role: "assistant", content: text });
+        persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
         touchSession(deps.db, sessionId);
       }
       return text;
+    };
+    const syncTypedHistoryIntoRealtime = () => {
+      if (!hybrid || !sessionId || !upstreamReady) return;
+      const pending = listMessagesAfterId(deps.db, sessionId, persistedHistoryHighWater);
+      for (const message of pending) {
+        for (const frame of openAiHistoryFrames([message])) upstream.send(frame);
+        // System notices are not valid Realtime roles, but still advance the
+        // cursor so a later sync cannot repeatedly inspect the same row.
+        persistedHistoryHighWater = message.id;
+      }
     };
     const pendingFromClient: Array<{ data: RawData; isBinary: boolean }> = [];
     log.info(
@@ -1235,6 +1276,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         `realtime: upstream open, sending ${hybrid ? "hybrid (speak+tool)" : "transcribe-only"} ` +
         `session.update (${pushToTalk ? "push-to-talk, VAD off" : `${vad.mode ?? "semantic_vad"} eagerness=${vad.semanticEagerness ?? "low"}`})`,
       );
+      // Resolve the canonical conversation before constructing instructions.
+      // Pins affect chat-list presentation, not which conversation was active.
+      if (hybrid && !sessionId) {
+        const { resumeId } = chooseResumeOrNew(wantNew, getMostRecentSession(deps.db)?.id ?? null);
+        sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
+      }
       // Configure the realtime session on connect.
       const system = buildSystemPrompt({
         memoryDir: deps.memoryDir,
@@ -1243,9 +1290,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // Ava's real changelog so "what's your latest update?" isn't confabulated.
       // (Recent conversation history is seeded below as conversation items.)
       const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
+      const conversationSummary = hybrid && sessionId
+        ? buildVoiceConversationSummary(getSessionFull(deps.db, sessionId)?.summary)
+        : "";
       const sessionUpdate = hybrid
         ? buildHybridSessionUpdate(
-            system + VOICE_PERSONA_INSTRUCTIONS + updates,
+            system + VOICE_PERSONA_INSTRUCTIONS + updates + conversationSummary,
             vad,
             deps.voice ?? DEFAULT_VOICE,
             { pushToTalk },
@@ -1260,10 +1310,6 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // a fresh session). `?new=1` (the client's "+new" control) forces a fresh
       // one. The hello below sends whichever id we land on; the client latches
       // `ava.session` and adopts it.
-      if (hybrid && !sessionId) {
-        const { resumeId } = chooseResumeOrNew(wantNew, listSessions(deps.db)[0]?.id ?? null);
-        sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
-      }
       if (voiceSessionObserved && deps.observability) {
         try {
           deps.observability.updateRunContext(voiceSessionRunId, { sessionId });
@@ -1287,7 +1333,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // item is OpenAI cost per connect, so the default stays small.
       if (hybrid && sessionId) {
         const N = Number(process.env.REALTIME_SEED_TURNS ?? 12);
-        for (const m of listMessages(deps.db, sessionId).slice(-N)) {
+        const stored = listMessages(deps.db, sessionId);
+        for (const m of stored.slice(-N)) {
           if (m.role !== "user" && m.role !== "assistant") continue;
           upstream.send(JSON.stringify({
             type: "conversation.item.create",
@@ -1302,6 +1349,9 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             },
           }));
         }
+        // Older rows outside the bounded recent seed are represented by the
+        // durable summary and must not later look like newly typed turns.
+        persistedHistoryHighWater = stored.at(-1)?.id ?? 0;
       }
       // Echo the client's current session id back, and tell it the proxy mode so
       // it knows whether to play audio (hybrid) or own the reply (transcribe).
@@ -1323,6 +1373,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       if (!isBinary) {
         try {
           const event = JSON.parse(data.toString("utf8")) as { type?: string };
+          // With VAD disabled, this commit is the ordering boundary immediately
+          // before OpenAI creates the spoken user item. Import typed turns first.
+          if (event.type === "input_audio_buffer.commit") {
+            syncTypedHistoryIntoRealtime();
+          }
           if (event.type === "response.cancel") {
             // This frame is also AVA's general Stop signal. During a computer
             // action there is usually no active OpenAI response to cancel, so
@@ -1400,6 +1455,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // Track VAD timing + surface lifecycle/errors. Never throw out of here.
       if (evt) {
         if (evt.type === "input_audio_buffer.speech_started") {
+          // WebSocket events are ordered on one channel. VAD has detected the
+          // next utterance but has not committed its conversation item yet, so
+          // this is the safe point to insert typed turns ahead of that question.
+          syncTypedHistoryIntoRealtime();
           speechStartMs = typeof evt.audio_start_ms === "number" ? evt.audio_start_ms : 0;
           speechEndMs = null;
           // Do not cancel on raw energy onset. Speaker echo/background noise used
@@ -1599,6 +1658,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               try { client.send(actionResultFrame(formatSpeechText(result))); } catch { /* */ }
               responseRequested = true;
               actionRuns.finish(action.id);
+              // A typed turn may have landed while the delegated action was
+              // running. Give it to the same realtime conversation before the
+              // tool result asks the model to speak.
+              syncTypedHistoryIntoRealtime();
               for (const frame of toolResultFrames(call.callId, result)) upstream.send(frame);
             } catch (e) {
               if (!actionRuns.isCurrent(action.id) || action.signal.aborted) {
@@ -1801,7 +1864,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         // an action. HYBRID only: transcribe-only persists via /api/chat, so
         // storing here too would double the user turn.
         if (hybrid && sessionId) {
-          appendMessage(deps.db, { sessionId, role: "user", content: acceptedText });
+          const stored = appendMessage(deps.db, { sessionId, role: "user", content: acceptedText });
+          persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
           touchSession(deps.db, sessionId);
         }
         // Send the caption first. Because upstream and browser are different
@@ -1926,6 +1990,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     hume: HumeProviderConfig,
     wsUrl: string,
     pushToTalk = false,
+    wantNew = false,
   ): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const hybrid = !!deps.runAction;
@@ -1964,7 +2029,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         // can seed its recent history into Hume's prompt. Without this Hume starts
         // blank on every connect — no recollection of prior voice/chat turns.
         if (hybrid && !sessionId) {
-          const { resumeId } = chooseResumeOrNew(false, listSessions(deps.db)[0]?.id ?? null);
+          const { resumeId } = chooseResumeOrNew(wantNew, getMostRecentSession(deps.db)?.id ?? null);
           sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
         }
         // Hume truncates the prompt at ~12k, so build it COMPACT + identity-first
@@ -1976,7 +2041,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         // (now-surviving) prompt is the guaranteed channel.
         const compactBase = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation", compact: true });
         const seedN = Number(process.env.REALTIME_SEED_TURNS ?? 12);
-        const history = hybrid && sessionId ? buildHumeHistoryBlock(listMessages(deps.db, sessionId), seedN) : "";
+        const summary = hybrid && sessionId
+          ? buildVoiceConversationSummary(getSessionFull(deps.db, sessionId)?.summary)
+          : "";
+        const history = hybrid && sessionId
+          ? summary + buildHumeHistoryBlock(listMessages(deps.db, sessionId), seedN)
+          : "";
         const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
         const humePrompt = buildHumeVoicePrompt({ voicePersona: VOICE_PERSONA_INSTRUCTIONS, updates, history, base: compactBase });
         const contextText = (updates + history).trim();

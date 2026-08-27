@@ -22,6 +22,8 @@ import {
   shouldForwardResponseCancel,
   chooseResumeOrNew,
   seedContentType,
+  openAiHistoryFrames,
+  buildVoiceConversationSummary,
   buildHumeSessionSettings,
   buildHumeHistoryBlock,
   buildHumeVoicePrompt,
@@ -277,6 +279,32 @@ describe("seedContentType — GA realtime content-part type for seeded turns", (
   it("uses input_text for user and system turns", () => {
     expect(seedContentType("user")).toBe("input_text");
     expect(seedContentType("system")).toBe("input_text");
+  });
+});
+
+describe("voice/chat shared context", () => {
+  it("serializes typed user and assistant turns into valid realtime history items", () => {
+    const frames = openAiHistoryFrames([
+      { role: "user", content: "the discussion brief" },
+      { role: "assistant", content: "I have it" },
+      { role: "system", content: "not a conversational turn" },
+    ]).map((frame) => JSON.parse(frame));
+
+    expect(frames).toHaveLength(2);
+    expect(frames[0]).toMatchObject({
+      type: "conversation.item.create",
+      item: { role: "user", content: [{ type: "input_text", text: "the discussion brief" }] },
+    });
+    expect(frames[1]).toMatchObject({
+      type: "conversation.item.create",
+      item: { role: "assistant", content: [{ type: "output_text", text: "I have it" }] },
+    });
+  });
+
+  it("gives voice the same durable earlier-conversation summary as typed chat", () => {
+    expect(buildVoiceConversationSummary(null)).toBe("");
+    expect(buildVoiceConversationSummary(" earlier decisions ")).toContain("earlier decisions");
+    expect(buildVoiceConversationSummary("x".repeat(5_000)).length).toBeLessThan(4_100);
   });
 });
 

@@ -34,6 +34,14 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
   const ptt = v.inputMode === "enter_push_to_talk";
   const capturing = v.capturing;
   const showStop = shouldShowVoiceStop(v.state, v.actionPending);
+  const leaveVoice = (destination: "exit" | "keyboard") => {
+    const sessionId = v.sessionId;
+    // Release the mic/socket immediately. The hook's unmount cleanup is a
+    // second safety net for navigation paths outside these two buttons.
+    v.stop();
+    if (destination === "keyboard") onSwitchToKeyboard(sessionId);
+    else onExit(sessionId);
+  };
 
   // Slowly rotate the living-chrome conic angle on the RESTING CTA (idle mic disc /
   // inactive push-to-talk). One transform-free CSS-var tween over the whole control
@@ -136,7 +144,7 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
         <MessageSquarePlus size={14} />
       </button>
       <button
-        onClick={() => onExit(v.sessionId)}
+        onClick={() => leaveVoice("exit")}
         aria-label="exit"
         className="absolute right-5 top-5 z-30 flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white/70"
       >
@@ -325,7 +333,7 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
           )}
           <button
             aria-label="keyboard"
-            onClick={() => onSwitchToKeyboard(v.sessionId)}
+            onClick={() => leaveVoice("keyboard")}
             className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white transition-all active:scale-95"
           >
             <Keyboard size={18} />

@@ -35,13 +35,18 @@ vi.mock("./splash/Splash.js", () => ({ Splash: () => <div>Splash</div> }));
 vi.mock("./chat/ChatScreen.js", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatScreen: ({ onOpenStrategy, onOpenVisual }: { onOpenStrategy?: (sessionId: string) => void; onOpenVisual?: (visualId: string) => void }) => {
+    ChatScreen: ({ onOpenStrategy, onOpenVisual, onEnterVoice }: {
+      onOpenStrategy?: (sessionId: string) => void;
+      onOpenVisual?: (visualId: string) => void;
+      onEnterVoice?: (sessionId: string) => void;
+    }) => {
       const mount = React.useRef(++state.nextChatMount);
       return (
         <div data-testid="mock-chat">
           chat-{mount.current}
           <button onClick={() => onOpenStrategy?.("internal-chat-17")}>mock take to room</button>
           <button onClick={() => onOpenVisual?.("visual_abcdefgh")}>mock open visual</button>
+          <button onClick={() => onEnterVoice?.("internal-chat-17")}>mock enter voice</button>
         </div>
       );
     },
@@ -53,7 +58,11 @@ vi.mock("./memory/MemoryScreen.js", () => ({ MemoryScreen: () => null }));
 vi.mock("./self/SelfScreen.js", () => ({ SelfScreen: () => null }));
 vi.mock("./orbit/OrbitScreen.js", () => ({ OrbitScreen: () => null }));
 vi.mock("./orbit/ChatListScreen.js", () => ({ ChatListScreen: () => null }));
-vi.mock("./voice/VoiceScreen.js", () => ({ VoiceScreen: () => null }));
+vi.mock("./voice/VoiceScreen.js", () => ({
+  VoiceScreen: ({ initialSessionId }: { initialSessionId: string | null }) => (
+    <div>voice-session-{initialSessionId ?? "none"}</div>
+  ),
+}));
 vi.mock("./explorer/ExplorerScreen.js", () => ({ ExplorerScreen: () => null }));
 vi.mock("./mission-control/MissionControlScreen.js", () => ({ MissionControlScreen: () => null }));
 vi.mock("./strategy/StrategyRoomScreen.js", () => ({
@@ -100,5 +109,12 @@ describe("App New-chat navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "New" }));
     fireEvent.click(screen.getByRole("button", { name: "mock open visual" }));
     expect(screen.getByText("visual-id-visual_abcdefgh")).toBeTruthy();
+  });
+
+  it("hands voice the session ChatScreen actually created, not the stale null route value", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
+    expect(screen.getByText("voice-session-internal-chat-17")).toBeTruthy();
   });
 });

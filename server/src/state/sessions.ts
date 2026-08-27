@@ -54,6 +54,19 @@ export function listSessions(db: Db): Session[] {
   return db.prepare("SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY pinned DESC, updated_at DESC").all() as Session[];
 }
 
+/**
+ * The conversation most recently used, independent of the chat-list pin order.
+ * Pins are a presentation preference; using them as a recency signal made voice
+ * silently resume an older pinned chat instead of the conversation Niko had just
+ * been using.
+ */
+export function getMostRecentSession(db: Db): Session | null {
+  const row = db.prepare(
+    "SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY updated_at DESC, rowid DESC LIMIT 1",
+  ).get() as Session | undefined;
+  return row ?? null;
+}
+
 export function touchSession(db: Db, id: string): void {
   db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(Date.now(), id);
 }

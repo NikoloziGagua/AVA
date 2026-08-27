@@ -850,3 +850,18 @@ assume `/api/speak` can produce the cloned voice.
 - **OpenAI seed cost.** Every seeded turn is OpenAI cost per connect. The default
   (`REALTIME_SEED_TURNS = 12`) is a deliberate small cap; raising it for better
   recall trades tokens on each voice connect.
+
+## 2026-08-27 continuity hardening
+
+- Chat-to-voice uses the actual `ChatScreen.sessionId`, including the ID returned
+  by the first send in a new chat.
+- Automatic resume uses `getMostRecentSession` (activity order), not the pin-first
+  `listSessions` projection.
+- OpenAI instructions include the durable earlier-conversation summary and the
+  socket keeps a message-ID high-water. Typed rows that arrive while it is open
+  are inserted at the ordered VAD speech-start or push-to-talk commit boundary,
+  before the next spoken item and without replay duplicates.
+- Leaving voice immediately closes capture/playback/WebSocket resources; unmount
+  repeats the cleanup defensively. This prevents stale history snapshots and
+  overlapping realtime speakers.
+- Hume receives the same summary on connect and honors the same `?new=1` choice.

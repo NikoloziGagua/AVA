@@ -23,7 +23,8 @@ export interface ChatScreenProps {
   onOpenRules: () => void;
   onOpenMemory: () => void;
   onOpenList?: () => void;
-  onEnterVoice?: () => void;
+  /** Continue this exact canonical conversation using speech input. */
+  onEnterVoice?: (sessionId: string | null) => void;
   onOpenStrategy?: (sessionId: string) => void;
   onOpenVisual?: (visualId: string) => void;
 }
@@ -519,7 +520,7 @@ export function ChatScreen({
           <Composer
             onSend={(text) => { void send(text); }}
             onKill={kill}
-            onMicTap={() => onEnterVoice?.()}
+            onMicTap={() => onEnterVoice?.(sessionId)}
             busy={busy}
             seed={seed}
           />

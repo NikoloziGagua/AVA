@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
-import { createSession, getSession, getSessionFull, listByStatus, listSessions, purgeDeletedSessions, setPinned, setStatus, softDeleteSession, touchSession, updateSummary, updateTitle } from "./sessions.js";
+import { createSession, getMostRecentSession, getSession, getSessionFull, listByStatus, listSessions, purgeDeletedSessions, setPinned, setStatus, softDeleteSession, touchSession, updateSummary, updateTitle } from "./sessions.js";
 
 describe("sessions repo", () => {
   let db: Db;
@@ -117,6 +117,17 @@ describe("sessions repo", () => {
     const all = listSessions(db);
     expect(all[0]?.id).toBe(older.id);
     expect(all[1]?.id).toBe(newer.id);
+  });
+
+  it("gets the actually most-recent session without treating a pin as activity", () => {
+    const pinnedOlder = createSession(db, { title: "pinned older" });
+    const recent = createSession(db, { title: "recent" });
+    db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(100, pinnedOlder.id);
+    db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(200, recent.id);
+    setPinned(db, pinnedOlder.id, true);
+
+    expect(listSessions(db)[0]?.id).toBe(pinnedOlder.id);
+    expect(getMostRecentSession(db)?.id).toBe(recent.id);
   });
 });
 

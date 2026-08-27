@@ -1218,6 +1218,15 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     setHint(null);
   }, [cleanup]);
 
+  // Navigation can remove VoiceScreen without going through one of its buttons
+  // (for example a parent view replacement or a browser history transition).
+  // Always retire capture, playback and the WebSocket on unmount so a stale
+  // realtime model cannot keep an old context alive or speak over a new session.
+  useEffect(() => () => {
+    intentionalStopRef.current = true;
+    cleanup();
+  }, [cleanup]);
+
   // "+new conversation": drop the current session and reconnect forcing a fresh
   // one (?new=1). Same teardown→reconnect dance as the engine-change effect, so
   // it reuses the proven reconnect path rather than inventing a new one.

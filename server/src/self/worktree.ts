@@ -110,10 +110,39 @@ function normalizeLf(value: string): string {
   return value.replace(/\r\n/g, "\n");
 }
 
-/** Merge the one repository file whose contract is explicitly append-only.
- * Both sides must be literal extensions of the candidate commit's parent;
+/** Return the lines added at each boundary in `base`, but only when `derived`
+ * retains every base line in order. This is a conservative proof that the
+ * board change adds history/table rows without deleting or rewriting history. */
+function addOnlySlots(base: string, derived: string): string[][] | null {
+  const baseLines = normalizeLf(base).split("\n");
+  const derivedLines = normalizeLf(derived).split("\n");
+  const slots = Array.from({ length: baseLines.length + 1 }, () => [] as string[]);
+  let cursor = 0;
+  for (let i = 0; i < baseLines.length; i++) {
+    const match = derivedLines.indexOf(baseLines[i]!, cursor);
+    if (match < 0) return null;
+    slots[i]!.push(...derivedLines.slice(cursor, match));
+    cursor = match + 1;
+  }
+  slots[baseLines.length]!.push(...derivedLines.slice(cursor));
+  return slots;
+}
+
+function includesBlock(haystack: string[], needle: string[]): boolean {
+  if (needle.length === 0) return true;
+  outer: for (let i = 0; i <= haystack.length - needle.length; i++) {
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+/** Merge the one repository file whose contract permits only added rows and
+ * appended thread entries. Both sides must preserve every parent line in order;
  * otherwise we fail closed like every other conflict. */
-function resolveAppendOnlyBoard(cwd: string, commit: string, boardBefore: string): boolean {
+function resolveAddOnlyBoard(cwd: string, commit: string, boardBefore: string): boolean {
   const boardPath = "coord/BOARD.md";
   let parentBoard: string;
   let candidateBoard: string;
@@ -123,16 +152,21 @@ function resolveAppendOnlyBoard(cwd: string, commit: string, boardBefore: string
   } catch {
     return false;
   }
-  // `git show` returns canonical LF content while a Windows checkout may use
-  // CRLF. Compare normalized text so line-ending conversion cannot turn a
-  // provably append-only history into a false conflict.
   const parent = normalizeLf(parentBoard);
-  const current = normalizeLf(boardBefore);
-  const candidate = normalizeLf(candidateBoard);
-  if (!candidate.startsWith(parent) || !current.startsWith(parent)) return false;
-  const candidateAppend = candidate.slice(parent.length);
-  const separator = current.endsWith("\n") || candidateAppend.startsWith("\n") ? "" : "\n";
-  writeFileSync(join(cwd, boardPath), current + separator + candidateAppend, "utf8");
+  const currentSlots = addOnlySlots(parent, boardBefore);
+  const candidateSlots = addOnlySlots(parent, candidateBoard);
+  if (!currentSlots || !candidateSlots) return false;
+
+  const baseLines = parent.split("\n");
+  const merged: string[] = [];
+  for (let i = 0; i <= baseLines.length; i++) {
+    const current = currentSlots[i]!;
+    const candidate = candidateSlots[i]!;
+    merged.push(...current);
+    if (!includesBlock(current, candidate)) merged.push(...candidate);
+    if (i < baseLines.length) merged.push(baseLines[i]!);
+  }
+  writeFileSync(join(cwd, boardPath), merged.join("\n"), "utf8");
   execFileSync("git", ["add", "--", boardPath], { cwd });
   try {
     execFileSync("git", ["-c", "core.editor=true", "cherry-pick", "--continue"], {
@@ -172,7 +206,7 @@ export function reconcileCandidate(
     } catch (error) {
       const conflicts = conflictedPaths(cwd);
       if (conflicts.length === 1 && conflicts[0] === "coord/BOARD.md"
-        && resolveAppendOnlyBoard(cwd, commit, boardBefore)) {
+        && resolveAddOnlyBoard(cwd, commit, boardBefore)) {
         continue;
       }
       try { execFileSync("git", ["cherry-pick", "--abort"], { cwd }); } catch { /* isolated worktree is discarded */ }

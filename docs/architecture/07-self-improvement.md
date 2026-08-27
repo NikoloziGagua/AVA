@@ -456,8 +456,9 @@ after the temporary worktree is removed or AVA restarts. `POST
 HEAD displayed by Self. If HEAD advanced, AVA creates a fresh recovery worktree,
 replays the approved candidate, reruns the complete verification gate, and only
 then attempts installation. Ordinary content conflicts remain blocked. The sole
-automatic conflict rule is an append-only union for `coord/BOARD.md`, and it is
-accepted only when both histories are literal extensions of the same parent.
+automatic conflict rule is an add-only union for `coord/BOARD.md`, accepted only
+when both histories retain every parent line in order. Added ownership rows and
+thread entries are kept; deleting or rewriting prior board content fails closed.
 
 ### Reverting (`swap.ts:32-53`)
 

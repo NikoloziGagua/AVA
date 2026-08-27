@@ -52,7 +52,7 @@ flowchart TD
 - `swapTo` checks ancestry and installs only with `git merge --ff-only`; it never resets or stashes the live tree. Disjoint tracked edits are preserved. If a candidate touches the same tracked path, or Git refuses because an untracked path would be overwritten, installation stops safely.
 - A verified but un-installable candidate is kept reachable at `refs/ava/self-candidates/<intent-id>` and the durable intent becomes `blocked`, not `failed`. The temporary worktree may then be removed without losing the candidate.
 - `POST /api/self/:id/resume-swap` requires the candidate SHA and current HEAD shown to the user. If either changed, it returns a typed conflict and refreshes the UI rather than acting on stale state.
-- If HEAD advanced, AVA replays the already-approved candidate commits in a fresh isolated recovery worktree and runs the complete verify/build/boot gate again. Ordinary conflicts fail closed. `coord/BOARD.md` is the one exception, and only when both versions are provable append-only extensions of the exact same parent; both append histories are retained.
+- If HEAD advanced, AVA replays the already-approved candidate commits in a fresh isolated recovery worktree and runs the complete verify/build/boot gate again. Ordinary conflicts fail closed. `coord/BOARD.md` is the one exception, and only when both versions provably retain every parent line and add rows/thread history without rewriting it; both add-only histories are retained.
 - A restart while `recovering` returns the row to `blocked`, preserving the candidate. Older dirty-tree failures with a verified candidate are migrated to the same retry boundary on boot.
 - The watchdog rollback (`revertTo`, `:39`) is intentionally *backward* (it undoes a bad swap) so it does **not** enforce fast-forward — but it's guarded by `expectedHead`: if HEAD moved on since the swap, the rollback is **skipped** rather than resetting over newer work.
 
@@ -73,7 +73,7 @@ flowchart TD
 
 ## Edge cases & limitations
 
-- **Recovery does not silently resolve product-code conflicts.** A newer non-conflicting HEAD is replayed and re-verified, but any ordinary content conflict remains blocked for human review. Only the repository's explicitly append-only coordination board has a mechanically proven union rule.
+- **Recovery does not silently resolve product-code conflicts.** A newer non-conflicting HEAD is replayed and re-verified, but any ordinary content conflict remains blocked for human review. Only the coordination board has a mechanically proven add-only union rule; deleting or rewriting any prior line fails closed.
 - **Retry is explicit.** AVA does not continuously retry a blocked install and never replays consequential runtime actions. The already-produced code candidate is the only thing reconciled.
 - **The safety regex is path-based.** It blocks by *filename pattern*, so it's conservative — it may refuse a benign edit that merely lives under `security/` etc. That's the intended bias (refuse rather than risk weakening a guardrail).
 - **Pruning only touches `self/*` branches.** It never deletes a branch backing a live worktree; a non-`self/` leaked branch isn't its concern.

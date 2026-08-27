@@ -103,6 +103,36 @@ describe("worktree", () => {
     expect(board).toContain("candidate evidence");
   });
 
+  it("retains independently added ownership rows and thread entries without rewriting the board", () => {
+    mkdirSync(join(repo, "coord"));
+    const baseBoard = "# Board\n\n| Area | Owner |\n| --- | --- |\n| core | ava |\n\n---\n\nbase thread\n";
+    writeFileSync(join(repo, "coord", "BOARD.md"), baseBoard);
+    execFileSync("git", ["add", "coord/BOARD.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "board base"], { cwd: repo });
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo }).toString().trim();
+
+    const candidateWt = addWorktree(repo, "candidate-board-row");
+    writeFileSync(join(candidateWt.path, "coord", "BOARD.md"), baseBoard
+      .replace("| core | ava |", "| core | ava |\n| ufo | codex |")
+      + "\ncandidate thread\n");
+    const candidate = commitWorktreeChanges(candidateWt.path, "candidate board row", candidateWt.baseSha);
+    removeWorktree(repo, candidateWt);
+
+    writeFileSync(join(repo, "coord", "BOARD.md"), baseBoard
+      .replace("| core | ava |", "| core | ava |\n| voice | codex |")
+      + "\ncurrent thread\n");
+    execFileSync("git", ["commit", "-qam", "current board row"], { cwd: repo });
+
+    wt = addWorktree(repo, "recovery-board-row");
+    reconcileCandidate(wt.path, base, candidate);
+    const board = readFileSync(join(wt.path, "coord", "BOARD.md"), "utf8");
+    expect(board).toContain("| core | ava |");
+    expect(board).toContain("| voice | codex |");
+    expect(board).toContain("| ufo | codex |");
+    expect(board).toContain("current thread");
+    expect(board).toContain("candidate thread");
+  });
+
   it("fails closed on an ordinary content conflict", () => {
     const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo }).toString().trim();
     const candidateWt = addWorktree(repo, "candidate-conflict");

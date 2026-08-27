@@ -2648,3 +2648,47 @@ source changes remain in this isolated worktree for AVA's downstream verifier.
 NEEDS: niko (review the design mock-up and unresolved decisions; the enclosing
 Self pipeline must preserve/commit the verified isolated diff because this worker
 cannot write the worktree index)
+
+---
+
+### 2026-08-27 - codex - Self retry repair and live shipment completion
+
+Niko's instruction to keep rerunning the last Self development until its real
+failure was fixed is complete. The newest failed attempt, `FhJTrhQAcDL8`, was
+not cancelled: it was Codex version 4 and AVA terminated it at the former fixed
+900-second worker ceiling. Commit `16d0b36` replaces that ceiling with a bounded
+`SELF_WORKER_TIMEOUT_MINUTES` contract (default 60, accepted range 1-120), keeps
+Stop immediate, and retains sanitized Codex terminal evidence on a real timeout.
+Commit `105db31` aligns authenticated Self intake with the existing 8,000-byte
+immutable-goal envelope so the exact 4,580-character scope can be retried with
+no truncation or paraphrase. Commit `5768d6d` preserves the previously
+uncommitted append-only board history so isolated worktrees no longer start from
+stale coordination evidence.
+
+The exact durable goal was submitted as `qMeOE8g9aH7L`, locked to Codex selector
+version 4, passed its approval gate, and remained healthy beyond the old
+900-second cutoff. Codex returned after roughly 20.5 minutes; AVA then ran its
+independent verification and recorded `all checks + boot smoke passed` plus a
+passing flight check. The pipeline fast-forwarded the verified candidate as
+commit `4a042a1`; the intent now records `status=swapped`, `outcome=shipped`, no
+error, candidate `4a042a1108f77bb6383b80320fb2e7e15c0ea9f0`, and last-known-good
+`5768d6d617d4d56390a99d0bd43e37207572e704`.
+
+Verification evidence: focused Self/config coverage passed 7 files / 60 tests;
+the complete server suite passed 181 files / 1,350 tests; server build including
+the unattended-loop typecheck passed. Committed-head pilot coverage passed 3
+files / 22 tests; production web and server builds passed. The desktop runtime
+was reinstalled from committed HEAD and is healthy on matching build ID
+`e1b4a1c9-4a51-420b-8895-ba9e1c7f937c`. A live browser smoke refreshed the
+stale localhost service-worker client and proved the Self card renders
+`design_review`, exactly 24 synthetic records, all three selectable views, and a
+24-option individual-run evidence drill-down with no rendered alert.
+
+Niko's pre-existing `.claude/settings.local.json` edit was isolated in a named
+stash only while the verified fast-forward occurred, then restored exactly; it
+is again the sole unrelated working-tree modification. No benchmark was run and
+no baseline or production workflow was changed. Forge was neither entered,
+inspected, imported, nor modified.
+
+NEEDS: niko (review the shipped Transparency pilot design mock-up in Self; the
+next benchmark/baseline phase remains separately approval-gated)

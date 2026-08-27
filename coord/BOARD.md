@@ -2882,3 +2882,54 @@ denied`). No index or commit was changed; the complete proposal and append-only
 board updates remain in this isolated worktree for AVA's downstream verifier.
 
 NEEDS: enclosing Self verifier (preserve and commit the scoped isolated diff)
+
+---
+
+### 2026-08-27 - codex - resumable Self swap-collision recovery completed
+
+Commits `65212c6` and `ba832a0` replace the destructive all-or-nothing final
+swap boundary with a durable, truthful recovery path. A fully verified candidate
+that cannot be installed safely is now `blocked` rather than misreported as an
+implementation failure. AVA preserves it at
+`refs/ava/self-candidates/<intent-id>`, exposes the exact collision in Self, and
+offers **Retry safe installation** with candidate-SHA and repository-HEAD stale
+guards. The status tool also distinguishes this state from a failed worker.
+
+Installation now uses `git merge --ff-only`, never `reset --hard` or an automatic
+stash. Disjoint tracked edits remain untouched; overlapping tracked paths and
+Git-protected untracked collisions block. When HEAD advanced, retry replays the
+already-approved candidate in a fresh worktree and reruns the complete test,
+build, and boot gate before installation. Ordinary conflicts fail closed. The
+coordination board has one narrow add-only merge: both sides must retain every
+parent line in order, so added ownership rows and thread entries are preserved
+while any rewrite/deletion is rejected. Recovery interruption returns to
+`blocked` on boot, old verified dirty-tree failures are migrated, and candidate
+refs are restored before orphan worktrees are pruned.
+
+The historical UFO run `-Nb9YsN1KWjQ` proved the live path. Boot migrated its old
+false `failed` row to `blocked` and preserved original candidate `9d7fcb6`. The
+first retry correctly stopped when its board delta included both an ownership
+row and appended history outside the initial suffix-only proof. After the
+generalized add-only proof and regression test landed, a second explicit retry
+reconciled onto `ba832a0`, reran the full gate, and safely fast-forwarded master
+to reconciled candidate `58f3669`. Durable status is now `swapped`, outcome
+`shipped`, error `null`, LKG `ba832a0`; verification records `all checks + boot
+smoke passed` and a passing report-only flightcheck. The obsolete internal
+candidate ref was released.
+
+Verification: focused recovery server tests passed 5 files / 65 tests; focused
+Self web tests passed 2 files / 23 tests; the full server suite passed 181 files /
+1,370 tests before the additional add-only-board regression, which passed in a
+focused 15/15 run; the real resumed Self verifier then reran the repository-wide
+test/build/boot gate successfully on the final reconciled candidate. The full
+web suite passed 89 files / 394 tests. Server and web typechecks passed; server
+and production web builds passed; `git diff --check` passed with only normal
+CRLF notices; the committed build's isolated `/api/health` boot smoke returned
+healthy. AVA was relaunched on the new server build and its live health endpoint
+is ready.
+
+Niko's unrelated `.claude/settings.local.json` edit and untracked persona
+research document remain untouched. Forge was neither inspected nor modified.
+
+NEEDS: niko (reload Self and confirm the recovered UFO evaluation shows shipped;
+review `docs/self/proposals/microsoft-ufo-evaluation.md` when ready)

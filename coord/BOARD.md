@@ -47,7 +47,7 @@ scheduler and pokes whoever is up.
 | Playbook verified-learning gate | codex | claimed; replacing final-reply wins with evidence-aware learning outcomes | 2026-08-15 |
 | Self-improvement worker selector | codex | active; provider-neutral Claude Code/Codex selector behind existing approval and release gates | 2026-08-15 |
 | Microsoft UFO design-only evaluation | codex | complete in isolated Self worktree; design-only proposal and evidence audit | 2026-08-27 |
-| Persona v2 and consistency evaluation | codex | active; compact identity, contextual registers, shared chat/voice behavior and deterministic lab | 2026-08-27 |
+| Persona v2 and consistency evaluation | unclaimed | complete in `8d5f2ae`; available for reviewed follow-up | 2026-08-28 |
 
 ---
 
@@ -2977,3 +2977,48 @@ research document, will be preserved. Forge is outside scope and will not be
 inspected or modified.
 
 NEEDS: codex (implement, test, commit, and return verification evidence)
+
+---
+
+### 2026-08-28 - codex - Persona v2 shipped
+
+Commit `8d5f2ae` implements the approved AVA Persona v2 without changing AVA's
+tool, approval, privacy, verification, memory, or safety authority. The old
+all-in-one persona is now a compact stable identity; collaboration behavior and
+five closed contextual delivery registers (`casual`, `execution`,
+`brainstorming`, `repair`, `high_stakes`) live in a separate provider-neutral
+runtime contract. Typed chat selects a register from the literal current turn
+without copying raw user text into system instructions. Realtime voice uses the
+same AVA identity and shared collaboration rules with only spoken-delivery
+guidance, replacing the competing "sharp friend" character. Tool failures
+reinforce calm, factual repair at the authoritative result boundary.
+
+The new Persona Consistency Lab freezes 50 deterministic chat/voice scenarios,
+ten per register, and checks register routing plus bounded failures including
+canned filler, over-address, verbosity, unsafe humor, fabricated familiarity,
+unqualified agreement, and defensive repair. The lab reports honestly that it
+is contract coverage rather than a live-model preference score. Memory's API
+and List -> Personality surface expose Persona v2, all register summaries, lab
+validity, scenario count, and the limitation. The canonical seed and Niko's
+current ignored live `server/data/memory/personality.md` both contain Persona
+v2; deliberate owner edits remain protected by bootstrap's no-overwrite rule.
+
+Documentation is in `docs/features/persona-v2.md`, with memory and voice
+architecture references updated. Focused server verification passed 7 files /
+116 tests; focused web verification passed 3 files / 3 tests. The full server
+suite passed 183 files / 1,386 tests and the full web suite passed 90 files /
+395 tests. Server and production web builds passed. `git diff --check` passed
+with only the repository's normal CRLF notices. A committed-HEAD server rebuild
+and isolated scratch-data boot smoke returned `{ "ok": true, "log":
+"healthy" }`. Existing ES2024 target and large-bundle notices remain warnings,
+not failures.
+
+Known limitation: deterministic checks guard routing and obvious anti-patterns;
+they do not prove subjective live-model quality. Real conversation review is
+still required, and the deliberately conservative lexical selector will need
+new frozen scenarios when reviewed edge cases appear. Niko's unrelated
+`.claude/settings.local.json` modification and untracked persona research
+document were preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (restart or reload AVA, inspect Memory -> List -> Personality, and
+try the manual chat/voice checks in `docs/features/persona-v2.md`)

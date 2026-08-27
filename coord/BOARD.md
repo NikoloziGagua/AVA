@@ -47,6 +47,7 @@ scheduler and pokes whoever is up.
 | Playbook verified-learning gate | codex | claimed; replacing final-reply wins with evidence-aware learning outcomes | 2026-08-15 |
 | Self-improvement worker selector | codex | active; provider-neutral Claude Code/Codex selector behind existing approval and release gates | 2026-08-15 |
 | Microsoft UFO design-only evaluation | codex | complete in isolated Self worktree; design-only proposal and evidence audit | 2026-08-27 |
+| Persona v2 and consistency evaluation | codex | active; compact identity, contextual registers, shared chat/voice behavior and deterministic lab | 2026-08-27 |
 
 ---
 
@@ -2933,3 +2934,46 @@ research document remain untouched. Forge was neither inspected nor modified.
 
 NEEDS: niko (reload Self and confirm the recovered UFO evaluation shows shipped;
 review `docs/self/proposals/microsoft-ufo-evaluation.md` when ready)
+
+---
+
+### 2026-08-27 - codex - AVA personality research review
+
+Completed a read-only review of AVA's current persona specification, voice
+persona overlay, existing open-source persona-framework research, and current
+primary research on human-AI interaction. No product code, runtime behavior, or
+Forge content was changed. The recommended direction is a compact AVA Persona
+v2 that separates stable identity from collaboration policy, uses explicit
+context modes (casual, execution, brainstorming, failure, high-stakes), and
+expresses warmth through attention, continuity, candid help, and graceful
+repair rather than flattery or constant humor. A frozen chat/voice evaluation
+suite should gate any live replacement, including checks for fabricated
+familiarity, sycophancy, contextual humor, persona consistency, and truthful
+failure handling.
+
+The existing `docs/reviews/2026-08-27-persona-framework-repository-research.md`
+remains an unrelated untracked document and was not modified or committed in
+this read-only turn.
+
+NEEDS: niko (review the proposed Persona v2 direction and authorize a bounded
+design/evaluation or implementation pass if desired)
+
+---
+
+### 2026-08-27 - codex - Persona v2 implementation claim
+
+Niko approved implementation of the personality direction from the immediately
+preceding research review. I am claiming the AVA-only persona and evaluation
+surface: a compact stable identity separated from collaboration behavior,
+explicit context registers shared by typed chat and voice, and a deterministic
+Persona Consistency Lab covering warmth, competence, candor, restrained humor,
+failure repair, fabricated familiarity, sycophancy and cross-modal consistency.
+
+The change will preserve AVA's existing tool, approval, verification, memory,
+privacy and safety authorities. Personality will not gain permission to rewrite
+those contracts or silently learn durable traits. Existing unrelated local
+changes, especially `.claude/settings.local.json` and the untracked persona
+research document, will be preserved. Forge is outside scope and will not be
+inspected or modified.
+
+NEEDS: codex (implement, test, commit, and return verification evidence)

@@ -19,6 +19,7 @@ import {
   buildConsistencyReminder,
   type ActionResultClass,
 } from "./tool-result-consistency.js";
+import type { PersonaChannel } from "../persona/runtime.js";
 
 export type AgentEvent =
   | { kind: "thought"; payload: { text: string } }
@@ -83,6 +84,8 @@ export type RunOpts = {
   reasoningEffort?: ReasoningEffort;
   /** Provider-reported usage is accounting data, not conversational output. */
   recordUsage?: (usage: ProviderUsage) => void;
+  /** Literal current turn used only to select a closed delivery register. */
+  personaContext?: { userText: string; channel: PersonaChannel };
 };
 
 export async function runAgent(opts: RunOpts): Promise<void> {
@@ -131,6 +134,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     projectContext: initialProjectContext,
     mode,
     fsRoots: deps.fsRoots,
+    personaContext: opts.personaContext,
   });
   let loadedProjectSlug: string | null = initialProject?.slug ?? null;
   // Pass the run's abort signal into every tool's ctx so the red Stop button

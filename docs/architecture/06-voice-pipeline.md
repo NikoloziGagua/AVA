@@ -434,7 +434,10 @@ On connect the proxy seeds the realtime session with:
 
 1. **The base system prompt** in *conversation* mode (`buildSystemPrompt`,
    tools rubric omitted since tools aren't exposed to the realtime model
-   directly), plus the spoken-conversation persona (`VOICE_PERSONA_INSTRUCTIONS`).
+   directly), plus Persona v2 spoken-delivery guidance
+   (`VOICE_PERSONA_INSTRUCTIONS`). Voice is not a separate character: it shares
+   AVA's identity and collaboration contract, then adds shorter clauses, measured
+   warmth, clean interruption behavior, and restrained use of "Sir".
    For **Hume** this base is built **compact** (`buildSystemPrompt({ compact: true })`,
    `voice-realtime.ts:1120`): the ~4.4k capability/tool map and the memory index
    are dropped, because Hume EVI is given no tools and can't act on a tool map

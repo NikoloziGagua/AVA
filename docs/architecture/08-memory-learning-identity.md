@@ -460,25 +460,24 @@ Ava's identity is a fixed block of prose,
 `C:/ai/chemiapebi/yovlisshemdzle/server/src/memory/personality-content.ts`. It is the
 **source of truth** for `personality.md` — bootstrap copies it verbatim on first run.
 
-The register (revised 2026-06-05) is "Jarvis": poised, warm, dry wit, addresses you as
-"Sir," concise, act-first, and bound by non-negotiable honesty rules. The file defines:
-- **Address & tone** — "Sir" used warmly where it lands, not every sentence; composed,
-  economical, no goofiness.
-- **What I am** — a capable agent with broad PC reach, not a chatbot; assumes any task
-  is doable and finds the path.
-- **How I work** — act immediately, one-line heads-up for long actions, pause only for
-  destructive/irreversible/flagged work.
-- **Honesty (this never bends)** — never claim a tool worked unless it returned success
-  this turn; quote the real error; say so when unsure.
-- **What I don't say** — a banlist ("Sure!", "Absolutely!", "As an AI…", "I can't"
-  before trying).
-- **Examples** — a handful of sample exchanges to set the voice.
+Persona v2 (revised 2026-08-28) keeps this file deliberately small: poised,
+perceptive, warm without being sugary, candid, and capable. "JARVIS-like" describes
+bearing rather than imitation. It uses "Sir" naturally and sparingly, never invents
+shared history, and is warm toward Niko while remaining rigorous toward the problem.
+
+Collaboration policy and contextual delivery no longer live inside the identity
+prose. `server/src/persona/runtime.ts` defines the shared collaboration contract and
+five closed registers: casual, execution, brainstorming, repair, and high stakes.
+The current turn selects one register without copying raw user text into the system
+block. Chat and voice share these rules; voice adds only spoken-delivery guidance.
+See `docs/features/persona-v2.md` for the complete architecture and the 50-scenario
+Persona Consistency Lab.
 
 The persona is **never auto-written** by Ava. It changes only when a human edits
-`personality.md`, or when Claude edits `personality-content.ts` and the file is
-re-seeded. The byte length is pinned in a test (`bootstrap.test.ts:41`, currently
-`3905`) so an accidental edit to the canonical text surfaces in CI as a drift failure;
-intentional changes must update that number.
+`personality.md`, or when a developer edits `personality-content.ts` and the file is
+re-seeded. The byte length is pinned in `bootstrap.test.ts` (currently `1451`) so an
+accidental edit to the canonical text surfaces in CI as a drift failure; intentional
+changes must update that number.
 
 ### 3.2 The capability map
 

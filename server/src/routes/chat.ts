@@ -818,6 +818,10 @@ export function chatRoutes(
         }
         await impl({
           prompt: promptForAgent,
+          personaContext: {
+            userText: parsed.data.text,
+            channel: parsed.data.voice ? "voice" : "chat",
+          },
           priorMessages,
           abort,
           emit,

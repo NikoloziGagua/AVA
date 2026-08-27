@@ -671,6 +671,19 @@ export async function fetchExplorerLearnedWorkflows(): Promise<ExplorerLearnedWo
 
 export type MemoryView = {
   personality: string;
+  personaProfile: {
+    version: string;
+    architecture: "identity + collaboration + context registers";
+    registers: Array<{ id: string; label: string; summary: string }>;
+    lab: {
+      kind: "deterministic_contract";
+      scenarioCount: number;
+      coverage: Record<"casual" | "execution" | "brainstorming" | "repair" | "high_stakes", number>;
+      channels: Array<"chat" | "voice">;
+      valid: boolean;
+      caveat: string;
+    };
+  };
   memoryIndex: string;
   preferences: { lines: string[] };
   observations: {

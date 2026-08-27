@@ -34,10 +34,8 @@ describe("bootstrapMemoryDir", () => {
 
   it("PERSONALITY_MD byte length is pinned (drift detection)", () => {
     const bytes = Buffer.byteLength(PERSONALITY_MD, "utf8");
-    // The canonical persona text is from spec §3.9, revised 2026-06-05 to a
-    // Jarvis register: warm + dry wit, friendly "Sir", concise (act-first +
-    // honesty intact). This assertion pins the byte length so accidental edits
-    // surface in CI; intentional changes require updating this number.
-    expect(bytes).toBe(3905);
+    // Persona v2 is intentionally compact: identity only. Collaboration,
+    // contextual delivery and tool authority are separate prompt layers.
+    expect(bytes).toBe(1451);
   });
 });

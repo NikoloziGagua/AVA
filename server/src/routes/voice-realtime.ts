@@ -18,6 +18,7 @@ import { getVoiceEngine } from "../state/voice-engine-pref.js";
 import { formatSpeechText } from "../voice/speechText.js";
 import { DEFAULT_REALTIME_SPEECH_RATE } from "../voice/voiceConfig.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
+import { VOICE_DELIVERY_GUIDANCE } from "../persona/runtime.js";
 import { VoiceActionCoordinator } from "../voice/action-coordinator.js";
 import { VoiceTurnAccumulator } from "../voice/turn-policy.js";
 import type { ObservabilityService } from "../observability/store.js";
@@ -230,11 +231,10 @@ export function buildRealtimeSessionUpdate(
  * smoothly as part of the phrase rather than as a dramatic, comma-walled aside.
  */
 export const VOICE_PERSONA_INSTRUCTIONS =
-  "\n\n[VOICE] You're speaking aloud in a live conversation. Be warm, curious, and natural — " +
-  "like a sharp friend, not a formal assistant. Keep replies short and conversational, and keep " +
+  "\n\n[VOICE] You're speaking aloud in a live conversation. " + VOICE_DELIVERY_GUIDANCE + " " +
+  "Keep replies short and conversational, and keep " +
   "your pacing quick: start talking right away, don't leave long pauses before or after you speak. " +
-  "Say \"Sir\" naturally, woven smoothly into the phrase without a comma pause or dramatic emphasis " +
-  "around it (\"Yes Sir\", not \"Yes, Sir,\"). When the owner asks you to DO something on the " +
+  "When the owner asks you to DO something on the " +
   "computer (open/find files, run commands, browse, control apps, remember something), CALL " +
   "do_on_computer with a clear, complete task. Never invent a destination or action from an unfinished " +
   "utterance; if the request still trails off or lacks its target, wait for the rest or ask one short " +

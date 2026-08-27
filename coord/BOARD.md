@@ -2793,3 +2793,23 @@ inspected or modified.
 NEEDS: niko (decide whether Codex should recover the verified UFO proposal and
 change Self's dirty-tree collision from terminal failure into a resumable
 blocked state)
+
+---
+
+### 2026-08-27 - codex - CLAIM: resumable Self swap-collision recovery
+
+Niko authorized implementation of the diagnosed final-swap defect. I am
+claiming the existing Codex-owned Self completion boundary for one bounded
+reliability increment: preserve a fully verified candidate when concurrent
+tracked edits prevent installation, classify it as a truthful blocked state,
+and expose an explicit version-guarded resume action that can safely reconcile
+the candidate with the current committed HEAD before re-verification and swap.
+
+The implementation will never auto-stash, reset, overwrite, or discard local
+work; a still-dirty tree remains blocked. It must not treat old verification as
+sufficient after rebasing, and it must retain approval, worker ownership,
+expected-HEAD, safety, verification, boot-smoke, swap, watchdog, rollback,
+cancellation, privacy, and evidence gates. Recovery of historical UFO candidate
+`9d7fcb6` is in scope only through this proven safe path. Forge is outside scope.
+
+NEEDS: codex (implement, test, commit, and prove the recovery boundary)

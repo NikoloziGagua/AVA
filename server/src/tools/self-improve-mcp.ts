@@ -42,8 +42,10 @@ export function buildSelfImproveStatusTool(deps: { list: () => IntentStatusSumma
       description:
         "Report my self-improvement tasks and explain what each one involved. States: " +
         "queued, reflecting, awaiting_approval (=plan drafted, waiting for Sir to approve " +
-        "it before any code is written), implementing, verifying, swapped (=shipped/live), " +
-        "failed, rolled_back. Use when Sir asks what self-development is running, pending, or " +
+        "it before any code is written), implementing, verifying, recovering, " +
+        "blocked (=verified candidate preserved, waiting for safe installation), " +
+        "swapped (=shipped/live), failed, rolled_back. Use when Sir asks what " +
+        "self-development is running, pending, or " +
         "finished, what I changed, or to recap improvements he missed while away. Pass " +
         "{ id } for the full detail of one task (what it changed + the commit).",
       inputSchema: {
@@ -65,7 +67,9 @@ export function buildSelfImproveStatusTool(deps: { list: () => IntentStatusSumma
         out.push(`Worker: ${r.worker ?? "claude"}`);
         if (r.detail) out.push(`What it involves: ${r.detail}`);
         if (r.commit) out.push(`Commit: ${r.commit.slice(0, 8)}`);
-        if (r.status === "failed" && r.error) out.push(`Failed: ${r.error.slice(0, 200)}`);
+        if ((r.status === "failed" || r.status === "blocked") && r.error) {
+          out.push(`${r.status === "blocked" ? "Installation blocked" : "Failed"}: ${r.error.slice(0, 200)}`);
+        }
         return { ok: true, text: out.join("\n") };
       }
 
@@ -74,7 +78,7 @@ export function buildSelfImproveStatusTool(deps: { list: () => IntentStatusSumma
       const rows = all.slice(0, 12);
       const line = (r: IntentStatusSummary) => {
         const tail =
-          r.status === "failed" && r.error ? ` — ${r.error.slice(0, 120)}`
+          (r.status === "failed" || r.status === "blocked") && r.error ? ` — ${r.error.slice(0, 120)}`
             : r.status === "swapped" ? " — shipped (live)"
               : "";
         return `• ${r.id} [${r.status}] (${r.worker ?? "claude"}) ${r.goal}${tail}`;

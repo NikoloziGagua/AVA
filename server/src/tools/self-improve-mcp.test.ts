@@ -25,6 +25,7 @@ describe("self_improve_status tool", () => {
     { id: "imp-1", goal: "add screenshots", status: "implementing", trigger: "explicit", error: null, outcome: null, created_at: 2, detail: "CHANGE: add a screenshot tool", commit: null },
     { id: "imp-2", goal: "be faster", status: "swapped", trigger: "explicit", error: null, outcome: "shipped", created_at: 1, detail: "CHANGE: cache the thing", commit: "abcdef1234567" },
     { id: "imp-3", goal: "bad idea", status: "failed", trigger: "explicit", error: "tests failed: boom", outcome: null, created_at: 0, detail: null, commit: null },
+    { id: "imp-4", goal: "verified update", status: "blocked", trigger: "explicit", error: "swap blocked: overlapping edits", outcome: "verified candidate preserved", created_at: -1, detail: "CHANGE: verified work", commit: "f".repeat(40) },
   ];
 
   it("lists every task with its state", async () => {
@@ -41,6 +42,14 @@ describe("self_improve_status tool", () => {
     const t = buildSelfImproveStatusTool({ list: () => rows });
     const r = await t.run({}, { runId: "r" });
     expect(r.text).toContain("tests failed: boom");
+  });
+
+  it("reports a blocked candidate as pending installation instead of failed", async () => {
+    const t = buildSelfImproveStatusTool({ list: () => rows });
+    const r = await t.run({ id: "imp-4" }, { runId: "r" });
+    expect(r.text).toContain("Installation blocked");
+    expect(r.text).toContain("overlapping edits");
+    expect(r.text).toContain("verified update");
   });
 
   it("filters to a single task by id", async () => {

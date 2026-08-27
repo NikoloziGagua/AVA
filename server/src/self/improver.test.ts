@@ -3,8 +3,17 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
-import { createIntent, getIntent } from "./intents.js";
-import { runImprovement, cancelImprovement, cancelAllImprovements, approveImprovement, rejectImprovement } from "./improver.js";
+import { createIntent, getIntent, updateIntent, type IntentStatus } from "./intents.js";
+import {
+  runImprovement,
+  resumeBlockedImprovement,
+  cancelImprovement,
+  cancelAllImprovements,
+  approveImprovement,
+  rejectImprovement,
+} from "./improver.js";
+import { SwapBlockedError } from "./swap.js";
+import { CandidateReconcileError } from "./worktree.js";
 
 function db() { return openDb(join(mkdtempSync(join(tmpdir(), "ava-imp-")), "x.db")); }
 const deps = (over: Partial<any> = {}) => ({
@@ -14,6 +23,29 @@ const deps = (over: Partial<any> = {}) => ({
   headSha: () => "good", commitWorktree: () => "cand", swapTo: () => {}, revertTo: () => {},
   restart: async () => {}, watch: async () => {}, emit: () => {}, ...over,
 });
+
+function updateIntentForRecovery(d: ReturnType<typeof db>, id: string, base: string, candidate: string): void {
+  updateIntent(d, id, {
+    status: "blocked",
+    last_known_good: base,
+    commit_sha: candidate,
+    verify_log: "all checks + boot smoke passed",
+    outcome: "verified candidate preserved",
+  });
+}
+
+async function waitForStatus(
+  d: ReturnType<typeof db>,
+  id: string,
+  status: IntentStatus,
+): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (getIntent(d, id)?.status === status) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`timed out waiting for ${status}`);
+}
 
 describe("runImprovement", () => {
   const worker = (provider: "claude" | "codex", version = 1) => ({
@@ -213,6 +245,115 @@ describe("runImprovement", () => {
     await run;
     expect(wasImplemented()).toBe(true);
     expect(getIntent(d, id)!.status).toBe("swapped");
+  });
+
+  it("preserves a verified candidate and reports blocked when installation collides", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    const preserved: string[] = [];
+    const released: string[] = [];
+    await runImprovement(d, id, deps({
+      commitWorktree: () => "c".repeat(40),
+      preserveCandidate: (_id: string, sha: string) => preserved.push(sha),
+      releaseCandidate: (candidateId: string) => released.push(candidateId),
+      swapTo: () => { throw new SwapBlockedError("overlapping_edits", "swap blocked: overlaps voice.ts", ["voice.ts"]); },
+    }));
+    expect(getIntent(d, id)).toMatchObject({
+      status: "blocked",
+      outcome: "verified candidate preserved",
+      commit_sha: "c".repeat(40),
+      error: "swap blocked: overlaps voice.ts",
+    });
+    expect(preserved).toEqual(["c".repeat(40)]);
+    expect(released).toEqual([]);
+  });
+
+  it("resumes a blocked candidate at the same HEAD without rerunning the worker", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    const head = "a".repeat(40);
+    const candidate = "b".repeat(40);
+    updateIntentForRecovery(d, id, head, candidate);
+    const swapped: string[] = [];
+    let implemented = false;
+    const result = resumeBlockedImprovement(d, id, deps({
+      headSha: () => head,
+      implement: async () => { implemented = true; return { ok: true, output: "unexpected" }; },
+      swapTo: (sha: string) => swapped.push(sha),
+    }), { candidateSha: candidate, headSha: head });
+    expect(result).toEqual({ ok: true, status: "started" });
+    await waitForStatus(d, id, "swapped");
+    expect(implemented).toBe(false);
+    expect(swapped).toEqual([candidate]);
+  });
+
+  it("reconciles and re-verifies when HEAD advanced before installing", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    const oldHead = "a".repeat(40);
+    const candidate = "b".repeat(40);
+    const currentHead = "c".repeat(40);
+    const recovered = "d".repeat(40);
+    updateIntentForRecovery(d, id, oldHead, candidate);
+    const seen: string[] = [];
+    const result = resumeBlockedImprovement(d, id, deps({
+      headSha: () => currentHead,
+      addWorktree: () => ({ path: "RECOVERY", branch: "self/recovery", baseSha: currentHead }),
+      reconcileCandidate: (cwd: string, base: string, sha: string) => {
+        seen.push(`reconcile:${cwd}:${base}:${sha}`);
+        return recovered;
+      },
+      verify: async () => { seen.push("verify"); return { ok: true, log: "reverified" }; },
+      swapTo: (sha: string, base: string) => seen.push(`swap:${sha}:${base}`),
+    }), { candidateSha: candidate, headSha: currentHead });
+    expect(result.ok).toBe(true);
+    await waitForStatus(d, id, "swapped");
+    expect(seen).toEqual([
+      `reconcile:RECOVERY:${oldHead}:${candidate}`,
+      "verify",
+      `swap:${recovered}:${currentHead}`,
+    ]);
+    expect(getIntent(d, id)).toMatchObject({
+      commit_sha: recovered,
+      last_known_good: currentHead,
+      verify_log: "reverified",
+      outcome: "shipped",
+    });
+  });
+
+  it("keeps a candidate blocked when reconciliation conflicts", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    const oldHead = "a".repeat(40);
+    const candidate = "b".repeat(40);
+    const currentHead = "c".repeat(40);
+    updateIntentForRecovery(d, id, oldHead, candidate);
+    resumeBlockedImprovement(d, id, deps({
+      headSha: () => currentHead,
+      addWorktree: () => ({ path: "RECOVERY", branch: "self/recovery", baseSha: currentHead }),
+      reconcileCandidate: () => { throw new CandidateReconcileError("candidate conflicts with current HEAD", ["feature.ts"]); },
+    }), { candidateSha: candidate, headSha: currentHead });
+    await waitForStatus(d, id, "blocked");
+    expect(getIntent(d, id)).toMatchObject({
+      commit_sha: candidate,
+      outcome: "verified candidate preserved",
+      error: "candidate conflicts with current HEAD",
+    });
+  });
+
+  it("rejects stale candidate and repository versions before recovery starts", () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g" });
+    const head = "a".repeat(40);
+    const candidate = "b".repeat(40);
+    updateIntentForRecovery(d, id, head, candidate);
+    expect(resumeBlockedImprovement(d, id, deps({ headSha: () => head }), {
+      candidateSha: "c".repeat(40), headSha: head,
+    })).toMatchObject({ ok: false, error: "stale_candidate" });
+    expect(resumeBlockedImprovement(d, id, deps({ headSha: () => "d".repeat(40) }), {
+      candidateSha: candidate, headSha: head,
+    })).toMatchObject({ ok: false, error: "stale_head" });
+    expect(getIntent(d, id)!.status).toBe("blocked");
   });
 
   it("locks the current Codex selection at approval even when the intent began with Claude", async () => {

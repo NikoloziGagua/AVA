@@ -7,6 +7,8 @@ import {
 } from "./intents.js";
 import type { SelfWorkerProvider, SelfWorkerSelection } from "./worker-selection.js";
 import { buildSelfWorkerExecutionPrompt, sanitizeWorkerEvidence } from "./workers.js";
+import { SwapBlockedError } from "./swap.js";
+import { CandidateReconcileError } from "./worktree.js";
 
 export type ImproverDeps = {
   reflect: (goal: string, failureLog: string | null, signal?: AbortSignal) => Promise<string>;
@@ -23,6 +25,11 @@ export type ImproverDeps = {
   verify: (cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; log: string }>;
   headSha: () => string;
   commitWorktree: (cwd: string, msg: string, baseSha: string) => string;
+  /** Reapply an approved candidate onto a recovery worktree created from the
+   * current HEAD. Required only when HEAD advanced after original verification. */
+  reconcileCandidate?: (cwd: string, originalBaseSha: string, candidateSha: string) => string;
+  preserveCandidate?: (id: string, sha: string) => void;
+  releaseCandidate?: (id: string) => void;
   /** Move the live tree to the verified commit. `lastKnownGood` is the pre-swap
    *  HEAD; the binding uses it to refuse a swap whose diff touches
    *  safety-critical code (Ava must not hot-swap a weakening of its guardrails). */
@@ -64,6 +71,10 @@ type PlanDecision =
   | { approved: true; worker: SelfWorkerSelection }
   | { approved: false };
 const planDecisions = new Map<string, (decision: PlanDecision) => void>();
+
+export type ResumeBlockedResult =
+  | { ok: true; status: "started" }
+  | { ok: false; error: "not_found" | "not_blocked" | "candidate_missing" | "stale_candidate" | "stale_head" | "busy"; currentHead?: string; currentCandidate?: string | null; status?: string };
 
 /** True if any self-improvement is running or queued. */
 export function hasActiveImprovement(): boolean {
@@ -144,6 +155,124 @@ export function cancelAllImprovements(
     n++;
   }
   return n;
+}
+
+function drainNext(db: Db, deps: ImproverDeps): void {
+  const next = pending.shift();
+  if (next) void runImprovement(db, next, deps);
+}
+
+/** Claim and asynchronously resume installation of one preserved, verified
+ * candidate. Candidate SHA and repository HEAD are explicit stale guards from
+ * the Self UI; no provider is re-run and no approval boundary is reopened. */
+export function resumeBlockedImprovement(
+  db: Db,
+  id: string,
+  deps: ImproverDeps,
+  expected: { candidateSha: string; headSha: string },
+): ResumeBlockedResult {
+  const intent = getIntent(db, id);
+  if (!intent) return { ok: false, error: "not_found" };
+  if (intent.status !== "blocked") {
+    return { ok: false, error: "not_blocked", status: intent.status };
+  }
+  if (!intent.commit_sha || !intent.last_known_good) {
+    return { ok: false, error: "candidate_missing", currentCandidate: intent.commit_sha };
+  }
+  if (intent.commit_sha !== expected.candidateSha) {
+    return { ok: false, error: "stale_candidate", currentCandidate: intent.commit_sha };
+  }
+  const currentHead = deps.headSha();
+  if (currentHead !== expected.headSha) {
+    return { ok: false, error: "stale_head", currentHead };
+  }
+  if (inFlight || pending.length > 0) return { ok: false, error: "busy" };
+
+  inFlight = true;
+  const ac = new AbortController();
+  controllers.set(id, ac);
+  updateIntent(db, id, { status: "recovering", error: null, cancellation_source: null });
+  deps.emit({ intentId: id, step: "recovering", provider: intent.worker_provider });
+  void runBlockedRecovery(db, intent, currentHead, deps, ac).catch(() => { /* state is settled inside */ });
+  return { ok: true, status: "started" };
+}
+
+async function runBlockedRecovery(
+  db: Db,
+  original: Intent,
+  knownGood: string,
+  deps: ImproverDeps,
+  ac: AbortController,
+): Promise<void> {
+  const { id } = original;
+  const signal = ac.signal;
+  let wt: { path: string; branch: string; baseSha?: string } | null = null;
+  let candidate = original.commit_sha!;
+  try {
+    deps.preserveCandidate?.(id, candidate);
+    if (knownGood !== original.last_known_good) {
+      if (!deps.reconcileCandidate) throw new Error("candidate recovery is unavailable in this runtime");
+      wt = deps.addWorktree(`${id}-recovery`);
+      if (wt.baseSha !== knownGood) {
+        throw new SwapBlockedError("stale_head", "swap blocked: repository HEAD changed while recovery worktree was created");
+      }
+      candidate = deps.reconcileCandidate(wt.path, original.last_known_good!, candidate);
+      if (signal.aborted) throw new Error("cancelled");
+      updateIntent(db, id, { status: "verifying", branch: wt.branch });
+      deps.emit({ intentId: id, step: "verifying", provider: original.worker_provider });
+      const verification = await deps.verify(wt.path, signal);
+      updateIntent(db, id, { verify_log: verification.log });
+      if (!verification.ok) throw new Error(verification.log);
+      if (signal.aborted) throw new Error("cancelled");
+      updateIntent(db, id, {
+        status: "recovering",
+        commit_sha: candidate,
+        last_known_good: knownGood,
+        branch: wt.branch,
+        outcome: "reconciled and re-verified; installation pending",
+      });
+      deps.preserveCandidate?.(id, candidate);
+    }
+
+    deps.swapTo(candidate, knownGood);
+    deps.emit({ intentId: id, step: "swapped", ok: true });
+    updateIntent(db, id, { status: "swapped", outcome: "shipped", error: null });
+    deps.releaseCandidate?.(id);
+    const shipped = getIntent(db, id) ?? original;
+    try { deps.onSwapped?.(shipped, candidate); } catch { /* changelog is best-effort */ }
+    void deps.watch(knownGood, candidate);
+    await deps.restart();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (signal.aborted) {
+      const source = cancellationSources.get(id) ?? "system_abort";
+      updateIntent(db, id, {
+        status: "blocked",
+        outcome: "verified candidate preserved",
+        cancellation_source: source,
+        error: `${cancellationText(source)} during safe installation; candidate preserved`,
+      });
+      deps.emit({ intentId: id, step: "blocked", ok: false });
+    } else if (error instanceof SwapBlockedError || error instanceof CandidateReconcileError) {
+      updateIntent(db, id, {
+        status: "blocked",
+        outcome: "verified candidate preserved",
+        error: message,
+      });
+      deps.emit({ intentId: id, step: "blocked", ok: false });
+    } else {
+      updateIntent(db, id, { status: "failed", error: message });
+      deps.releaseCandidate?.(id);
+      deps.emit({ intentId: id, step: "failed", ok: false });
+      try { deps.onFailed?.(original, message); } catch { /* ledger is best-effort */ }
+    }
+  } finally {
+    controllers.delete(id);
+    cancellationSources.delete(id);
+    if (wt) deps.removeWorktree(wt);
+    inFlight = false;
+    drainNext(db, deps);
+  }
 }
 
 export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Promise<void> {
@@ -236,9 +365,11 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     const knownGood = deps.headSha();
     const sha = deps.commitWorktree(wt.path, `self: ${intent.goal}`, wt.baseSha ?? knownGood);
     updateIntent(db, id, { last_known_good: knownGood, commit_sha: sha, branch: wt.branch });
+    deps.preserveCandidate?.(id, sha);
     deps.swapTo(sha, knownGood);
     deps.emit({ intentId: id, step: "swapped", ok: true });
     updateIntent(db, id, { status: "swapped", outcome: "shipped" });
+    deps.releaseCandidate?.(id);
     try { deps.onSwapped?.(intent, sha); } catch { /* changelog is best-effort */ }
 
     void deps.watch(knownGood, sha); // transient watchdog; rolls back if unhealthy (skips if newer work landed)
@@ -256,8 +387,16 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
         error: cancellationText(cancellationSource),
       });
       deps.emit({ intentId: id, step: "cancelled", ok: false });
+    } else if (err instanceof SwapBlockedError) {
+      updateIntent(db, id, {
+        status: "blocked",
+        outcome: "verified candidate preserved",
+        error: msg,
+      });
+      deps.emit({ intentId: id, step: "blocked", ok: false });
     } else {
       updateIntent(db, id, { status: "failed", error: msg });
+      deps.releaseCandidate?.(id);
       deps.emit({ intentId: id, step: "failed", ok: false });
       try { deps.onFailed?.(intent, msg); } catch { /* ledger is best-effort */ }
     }
@@ -267,7 +406,6 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     if (wt) deps.removeWorktree(wt);
     inFlight = false;
     // Hand the slot to the next waiting intent, if any.
-    const next = pending.shift();
-    if (next) void runImprovement(db, next, deps);
+    drainNext(db, deps);
   }
 }

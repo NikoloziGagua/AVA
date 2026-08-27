@@ -211,4 +211,62 @@ describe("useSelfJournal", () => {
     expect(init.body).toBe(JSON.stringify({ paused: true }));
     unmount();
   });
+
+  it("resumes a preserved candidate with explicit candidate and HEAD guards", async () => {
+    const candidate = "a".repeat(40);
+    const head = "b".repeat(40);
+    const fn = mockFetch({
+      "/api/self": () => ({
+        status: 200,
+        body: {
+          improvements: [{ id: "blocked-1", goal: "g", status: "blocked", commit_sha: candidate }],
+          paused: false,
+          repositoryHead: head,
+        },
+      }),
+      "/api/self/blocked-1/resume-swap": (init) => {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedCandidateSha: candidate,
+          expectedHead: head,
+        });
+        return { status: 202, body: { ok: true, status: "started" } };
+      },
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.repositoryHead).toBe(head));
+    await act(async () => {
+      await result.current.resumeSwap(result.current.intents[0]!);
+    });
+    const call = fn.mock.calls.find(([url]) => String(url).includes("resume-swap"));
+    expect((call?.[1] as RequestInit).headers).toMatchObject({ authorization: "Bearer test-token" });
+    expect(result.current.recoveryError).toBeNull();
+    unmount();
+  });
+
+  it("surfaces a stale recovery guard and refreshes current repository state", async () => {
+    const candidate = "a".repeat(40);
+    let reads = 0;
+    mockFetch({
+      "/api/self": () => ({
+        status: 200,
+        body: {
+          improvements: [{ id: "blocked-1", goal: "g", status: "blocked", commit_sha: candidate }],
+          paused: false,
+          repositoryHead: reads++ === 0 ? "b".repeat(40) : "c".repeat(40),
+        },
+      }),
+      "/api/self/blocked-1/resume-swap": () => ({
+        status: 409,
+        body: { error: "stale_head", currentHead: "c".repeat(40) },
+      }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.repositoryHead).toBe("b".repeat(40)));
+    await act(async () => {
+      await result.current.resumeSwap(result.current.intents[0]!);
+    });
+    expect(result.current.recoveryError).toMatch(/repository or candidate changed/i);
+    await waitFor(() => expect(result.current.repositoryHead).toBe("c".repeat(40)));
+    unmount();
+  });
 });

@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, lstatSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync, lstatSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   addWorktree, commitWorktreeChanges, removeWorktree, pruneOrphanWorktrees,
+  reconcileCandidate, preserveCandidateRef, releaseCandidateRef, CandidateReconcileError,
   type BasedWorktree,
 } from "./worktree.js";
 
@@ -50,6 +51,71 @@ describe("worktree", () => {
     wt = addWorktree(repo, "imp-noop");
     expect(() => commitWorktreeChanges(wt!.path, "self: no-op", wt!.baseSha))
       .toThrow("implement produced no changes");
+  });
+
+  it("preserves a candidate ref after its temporary branch is removed", () => {
+    wt = addWorktree(repo, "preserved-1");
+    writeFileSync(join(wt.path, "f.txt"), "candidate");
+    const sha = commitWorktreeChanges(wt.path, "candidate", wt.baseSha);
+    preserveCandidateRef(repo, "preserved-1", sha);
+    removeWorktree(repo, wt); wt = null;
+    expect(execFileSync("git", ["rev-parse", "refs/ava/self-candidates/preserved-1"], { cwd: repo }).toString().trim()).toBe(sha);
+    releaseCandidateRef(repo, "preserved-1");
+    expect(() => execFileSync("git", ["rev-parse", "--verify", "refs/ava/self-candidates/preserved-1"], { cwd: repo, stdio: "ignore" })).toThrow();
+  });
+
+  it("replays a verified candidate onto a newer non-conflicting HEAD", () => {
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo }).toString().trim();
+    const candidateWt = addWorktree(repo, "candidate-a");
+    writeFileSync(join(candidateWt.path, "candidate.txt"), "candidate result");
+    const candidate = commitWorktreeChanges(candidateWt.path, "candidate", candidateWt.baseSha);
+    preserveCandidateRef(repo, "candidate-a", candidate);
+    removeWorktree(repo, candidateWt);
+    writeFileSync(join(repo, "current.txt"), "newer live work");
+    execFileSync("git", ["add", "current.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "advance live"], { cwd: repo });
+
+    wt = addWorktree(repo, "recovery-a");
+    const recovered = reconcileCandidate(wt.path, base, candidate);
+    expect(recovered).not.toBe(candidate);
+    expect(readFileSync(join(wt.path, "candidate.txt"), "utf8")).toBe("candidate result");
+    expect(readFileSync(join(wt.path, "current.txt"), "utf8")).toBe("newer live work");
+  });
+
+  it("retains both independently appended BOARD histories during recovery", () => {
+    mkdirSync(join(repo, "coord"));
+    writeFileSync(join(repo, "coord", "BOARD.md"), "# Board\n\nbase\n");
+    execFileSync("git", ["add", "coord/BOARD.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "board base"], { cwd: repo });
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo }).toString().trim();
+    const candidateWt = addWorktree(repo, "candidate-board");
+    writeFileSync(join(candidateWt.path, "coord", "BOARD.md"), "# Board\n\nbase\n\ncandidate evidence\n");
+    const candidate = commitWorktreeChanges(candidateWt.path, "candidate board", candidateWt.baseSha);
+    preserveCandidateRef(repo, "candidate-board", candidate);
+    removeWorktree(repo, candidateWt);
+    writeFileSync(join(repo, "coord", "BOARD.md"), "# Board\n\nbase\n\ncurrent evidence\n");
+    execFileSync("git", ["commit", "-qam", "current board"], { cwd: repo });
+
+    wt = addWorktree(repo, "recovery-board");
+    reconcileCandidate(wt.path, base, candidate);
+    const board = readFileSync(join(wt.path, "coord", "BOARD.md"), "utf8");
+    expect(board).toContain("current evidence");
+    expect(board).toContain("candidate evidence");
+  });
+
+  it("fails closed on an ordinary content conflict", () => {
+    const base = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo }).toString().trim();
+    const candidateWt = addWorktree(repo, "candidate-conflict");
+    writeFileSync(join(candidateWt.path, "f.txt"), "candidate edit");
+    const candidate = commitWorktreeChanges(candidateWt.path, "candidate edit", candidateWt.baseSha);
+    preserveCandidateRef(repo, "candidate-conflict", candidate);
+    removeWorktree(repo, candidateWt);
+    writeFileSync(join(repo, "f.txt"), "current edit");
+    execFileSync("git", ["commit", "-qam", "current edit"], { cwd: repo });
+
+    wt = addWorktree(repo, "recovery-conflict");
+    expect(() => reconcileCandidate(wt!.path, base, candidate)).toThrow(CandidateReconcileError);
+    expect(readFileSync(join(repo, "f.txt"), "utf8")).toBe("current edit");
   });
 
   it("junctions the repo's node_modules into the worktree so verify can resolve deps", () => {

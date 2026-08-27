@@ -5,7 +5,7 @@ import { getSelfWorkerSelection, type SelfWorkerProvider, type SelfWorkerSelecti
 export type IntentTrigger = "explicit" | "failure" | "friction" | "schedule";
 export type IntentStatus =
   | "queued" | "reflecting" | "awaiting_approval" | "implementing" | "verifying"
-  | "swapped" | "failed" | "rolled_back";
+  | "recovering" | "blocked" | "swapped" | "failed" | "rolled_back";
 export type ImprovementCancellationSource = "self_stop" | "global_stop" | "system_abort";
 
 export type Intent = {
@@ -46,13 +46,28 @@ export function listIntents(db: Db): Intent[] {
  * self_improve_status. Returns how many were reconciled.
  */
 export function failStaleIntents(db: Db): number {
-  const r = db
-    .prepare(
+  const reconcile = db.transaction(() => {
+    // A restart during recovery does not invalidate the preserved, previously
+    // approved candidate. Return it to the explicit retry boundary.
+    const recovering = db.prepare(
+      "UPDATE self_improvements SET status = 'blocked', outcome = 'verified candidate preserved', " +
+        "error = 'Recovery was interrupted by a server restart; retry safe installation.' " +
+        "WHERE status = 'recovering' AND commit_sha IS NOT NULL",
+    ).run().changes;
+    const active = db.prepare(
       "UPDATE self_improvements SET status = 'failed', error = COALESCE(error, 'interrupted by a server restart') " +
         "WHERE status IN ('queued','reflecting','awaiting_approval','implementing','verifying')",
-    )
-    .run();
-  return r.changes;
+    ).run().changes;
+    // Compatibility for verified candidates created by the old build, which
+    // misclassified a dirty-tree installation refusal as terminal failure.
+    const legacyBlocked = db.prepare(
+      "UPDATE self_improvements SET status = 'blocked', outcome = 'verified candidate preserved' " +
+        "WHERE status = 'failed' AND commit_sha IS NOT NULL AND verify_log IS NOT NULL " +
+        "AND (error LIKE 'refusing swap:%' OR error LIKE 'refusing non-fast-forward swap:%')",
+    ).run().changes;
+    return recovering + active + legacyBlocked;
+  });
+  return reconcile();
 }
 
 export function updateIntent(db: Db, id: string, patch: Partial<Omit<Intent, "id" | "created_at">>): void {

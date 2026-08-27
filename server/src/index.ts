@@ -65,14 +65,30 @@ import { bootstrapMemoryDir } from "./memory/bootstrap.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
 import { loadSelfKnowledge } from "./self/identity.js";
-import { addWorktree, commitWorktreeChanges, removeWorktree, pruneOrphanWorktrees } from "./self/worktree.js";
+import {
+  addWorktree,
+  commitWorktreeChanges,
+  reconcileCandidate,
+  preserveCandidateRef,
+  releaseCandidateRef,
+  removeWorktree,
+  pruneOrphanWorktrees,
+} from "./self/worktree.js";
 import { headSha, swapTo, revertTo } from "./self/swap.js";
 import { assertSwapSafe } from "./self/safety-guard.js";
 import { verify } from "./self/verify.js";
 import { flightcheck } from "./self/flightcheck.js";
 import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
-import { runImprovement, cancelImprovement, approveImprovement, rejectImprovement, improvementsPaused, type ImproverDeps } from "./self/improver.js";
+import {
+  runImprovement,
+  resumeBlockedImprovement,
+  cancelImprovement,
+  approveImprovement,
+  rejectImprovement,
+  improvementsPaused,
+  type ImproverDeps,
+} from "./self/improver.js";
 import { appendChangelog } from "./self/changelog.js";
 import { recordMistake } from "./self/friction.js";
 import { createIntent, getIntent, listIntents, failStaleIntents } from "./self/intents.js";
@@ -158,7 +174,16 @@ if (interruptedExplorerTasks > 0) {
 // doesn't report as forever-"implementing".
 {
   const reconciled = failStaleIntents(db);
-  if (reconciled > 0) log.info({ reconciled }, "self: failed stale intents orphaned by restart");
+  if (reconciled > 0) log.info({ reconciled }, "self: reconciled stale intents orphaned by restart");
+  for (const intent of listIntents(db).filter((row) => row.status === "blocked" && row.commit_sha)) {
+    try { preserveCandidateRef(cfg.repoRoot, intent.id, intent.commit_sha!); }
+    catch (error) {
+      log.warn(
+        { id: intent.id, err: error instanceof Error ? error.message : String(error) },
+        "self: could not preserve blocked candidate ref",
+      );
+    }
+  }
 }
 // Prune git worktrees/branches leaked by a crash mid-improvement (failStaleIntents
 // only reconciles DB rows; the temp worktree dir + self/<id> branch are left
@@ -446,6 +471,9 @@ function buildImproverDeps(): ImproverDeps {
     },
     headSha: () => headSha(cfg.repoRoot),
     commitWorktree: commitWorktreeChanges,
+    reconcileCandidate,
+    preserveCandidate: (id, sha) => preserveCandidateRef(cfg.repoRoot, id, sha),
+    releaseCandidate: (id) => releaseCandidateRef(cfg.repoRoot, id),
     swapTo: (sha, lastKnownGood) => {
       // HARD GUARD: never hot-swap a change that touches safety-critical code
       // (security/policy/auth, self-improve machinery, approval flow, path
@@ -638,6 +666,8 @@ app.use("/api/self", selfRoutes(db, requireToken(db), {
   cancel: (id) => cancelImprovement(db, id),
   approve: (id, worker) => approveImprovement(id, worker),
   reject: (id) => rejectImprovement(id),
+  headSha: () => headSha(cfg.repoRoot),
+  resumeSwap: (id, expected) => resumeBlockedImprovement(db, id, buildImproverDeps(), expected),
   workers: selfWorkers,
 }));
 

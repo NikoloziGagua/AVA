@@ -24,6 +24,10 @@ const WorkerBody = z.object({
 const ApproveBody = z.object({
   expectedWorkerVersion: z.number().int().positive().optional(),
 });
+const ResumeSwapBody = z.object({
+  expectedCandidateSha: z.string().regex(/^[a-f0-9]{40}$/i),
+  expectedHead: z.string().regex(/^[a-f0-9]{40}$/i),
+});
 
 export type SelfRouteDeps = {
   startImprovement: (id: string) => void;
@@ -34,6 +38,11 @@ export type SelfRouteDeps = {
   approve: (id: string, worker: ReturnType<typeof getSelfWorkerSelection>) => boolean;
   /** Reject a plan parked at awaiting_approval → it stops without writing code. */
   reject: (id: string) => boolean;
+  headSha: () => string;
+  resumeSwap: (
+    id: string,
+    expected: { candidateSha: string; headSha: string },
+  ) => { ok: boolean; status?: string; error?: string; currentHead?: string; currentCandidate?: string | null };
   workers: SelfWorkerRegistry;
 };
 
@@ -59,6 +68,7 @@ export function selfRoutes(db: Db, auth: RequestHandler, deps: SelfRouteDeps): R
     res.json({
       intents: listIntents(db),
       paused: improvementsPaused(),
+      repositoryHead: deps.headSha(),
       worker: { ...selected, options },
     });
   });
@@ -147,6 +157,21 @@ export function selfRoutes(db: Db, auth: RequestHandler, deps: SelfRouteDeps): R
     if (typeof id !== "string") { res.status(400).json({ error: "bad_request" }); return; }
     const rejected = deps.reject(id);
     res.json({ ok: true, rejected });
+  });
+  r.post("/:id/resume-swap", auth, (req, res) => {
+    const id = req.params.id;
+    if (typeof id !== "string") { res.status(400).json({ error: "bad_request" }); return; }
+    const parsed = ResumeSwapBody.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: "bad_request" }); return; }
+    const result = deps.resumeSwap(id, {
+      candidateSha: parsed.data.expectedCandidateSha,
+      headSha: parsed.data.expectedHead,
+    });
+    if (!result.ok) {
+      res.status(result.error === "not_found" ? 404 : 409).json(result);
+      return;
+    }
+    res.status(202).json(result);
   });
   r.post("/:id/revert", auth, (req, res) => {
     const id = req.params.id;

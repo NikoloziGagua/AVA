@@ -10,6 +10,7 @@ import { TransparencyPilotMockup } from "./transparency-pilot/TransparencyPilotM
 function statusLook(status: string): { spine: string; chip: string } {
   if (isRunningStatus(status)) return { spine: "var(--ac-exec)", chip: "chip-exec" };
   if (status === "swapped") return { spine: "var(--ac-live)", chip: "chip-live" };
+  if (status === "blocked") return { spine: "var(--ac)", chip: "chip-ac" };
   if (status === "failed" || status === "cancelled") return { spine: "var(--ac-stop)", chip: "chip-stop" };
   if (status === "awaiting_approval") return { spine: "var(--ac)", chip: "chip-ac" };
   return { spine: "rgba(255,255,255,.18)", chip: "chip-ac" };
@@ -18,7 +19,7 @@ function statusLook(status: string): { spine: string; chip: string } {
 export function SelfScreen(_props: { onClose?: () => void }) {
   const {
     intents, paused, setPaused, improve, revertLast, cancel, approve, reject,
-    worker, workerError, selectingWorker, selectWorker,
+    worker, workerError, selectingWorker, selectWorker, recoveryError, resumeSwap,
   } =
     useSelfJournal();
   const canRevert = intents.some((i) => i.status === "swapped");
@@ -30,6 +31,7 @@ export function SelfScreen(_props: { onClose?: () => void }) {
   // tall void beside the full-height Journal on desktop.
   const runningCount = intents.filter((i) => isRunningStatus(i.status)).length;
   const awaitingCount = intents.filter((i) => i.status === "awaiting_approval").length;
+  const blockedCount = intents.filter((i) => i.status === "blocked").length;
   const appliedCount = intents.filter((i) => i.status === "swapped").length;
 
   // Initiator: a user-written goal Ava should self-improve toward.
@@ -145,6 +147,7 @@ export function SelfScreen(_props: { onClose?: () => void }) {
               Account sign-in is verified when the approved worker starts. There is no silent fallback.
             </div>
             {workerError && <div role="alert" className="mt-2 text-[10px] text-[var(--ac-stop)]">{workerError}</div>}
+            {recoveryError && <div role="alert" className="mt-2 text-[10px] text-[var(--ac-stop)]">{recoveryError}</div>}
           </div>
           <form aria-label="Start a self-improvement" onSubmit={onImprove} className="mt-4 flex gap-2">
             <input
@@ -220,6 +223,14 @@ export function SelfScreen(_props: { onClose?: () => void }) {
                 </span>
               </div>
             )}
+            {blockedCount > 0 && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-[rgba(92,242,255,0.25)] bg-[rgba(92,242,255,0.05)] px-3 py-2">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ac)]" />
+                <span className="text-[11px] text-white/70">
+                  {blockedCount} verified {blockedCount === 1 ? "update" : "updates"} waiting for safe installation
+                </span>
+              </div>
+            )}
           </div>
         </PanelSection>
 
@@ -258,6 +269,7 @@ export function SelfScreen(_props: { onClose?: () => void }) {
                   approvalWorker={worker}
                   approvalWorkerReady={selectedWorkerReady}
                   selectingWorker={selectingWorker}
+                  resumeSwap={resumeSwap}
                 />
               ))}
             </ul>
@@ -298,6 +310,7 @@ function JournalEntry({
   approvalWorker,
   approvalWorkerReady,
   selectingWorker,
+  resumeSwap,
 }: {
   intent: Intent;
   reduced: boolean;
@@ -311,6 +324,7 @@ function JournalEntry({
   approvalWorker: ReturnType<typeof useSelfJournal>["worker"];
   approvalWorkerReady: boolean;
   selectingWorker: boolean;
+  resumeSwap: (intent: Intent) => Promise<void>;
 }) {
   const running = isRunningStatus(i.status);
   const look = statusLook(i.status);
@@ -351,7 +365,11 @@ function JournalEntry({
 
       <div className="mt-2 flex items-center gap-2">
         <span className={`chip ${look.chip}`}>
-          {i.status === "awaiting_approval" ? "awaiting your approval" : i.status}
+          {i.status === "awaiting_approval"
+            ? "awaiting your approval"
+            : i.status === "blocked"
+              ? "blocked — candidate preserved"
+              : i.status}
         </span>
         {i.outcome ? (
           <span className="hud text-[10px] tracking-[0.16em] text-white/40">· {i.outcome}</span>
@@ -366,6 +384,28 @@ function JournalEntry({
       {i.status === "failed" && i.error ? (
         <div role="status" className="mt-2 text-[11px] leading-relaxed text-[var(--ac-stop)]">
           {i.error}
+        </div>
+      ) : null}
+
+      {i.status === "blocked" ? (
+        <div className="mt-3 rounded-xl border border-[rgba(92,242,255,0.24)] bg-[rgba(92,242,255,0.05)] px-4 py-3">
+          <div className="hud text-[10px] tracking-[0.18em] text-white/60">VERIFIED UPDATE NOT YET INSTALLED</div>
+          <p className="mt-2 text-[11px] leading-relaxed text-white/65">
+            AVA preserved this candidate because installing it could have collided with newer or uncommitted work.
+            Safe retry reconciles it with the current code, reruns verification and never discards local edits.
+          </p>
+          {i.error ? <div role="status" className="mt-2 text-[11px] leading-relaxed text-[var(--ac)]">{i.error}</div> : null}
+          <button
+            type="button"
+            onClick={() => void resumeSwap(i)}
+            disabled={!i.commit_sha}
+            onPointerDown={onDown}
+            onPointerUp={onUp}
+            onPointerLeave={onUp}
+            className="btn-deck btn-primary mt-3 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            Retry safe installation
+          </button>
         </div>
       ) : null}
 

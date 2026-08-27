@@ -44,4 +44,46 @@ describe("self_improvements store", () => {
 
     expect(failStaleIntents(d)).toBe(0); // idempotent — nothing left to reconcile
   });
+
+  it("returns an interrupted recovery to blocked with its verified candidate intact", () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "recover me" });
+    updateIntent(d, id, {
+      status: "recovering",
+      commit_sha: "a".repeat(40),
+      last_known_good: "b".repeat(40),
+      verify_log: "verification passed",
+    });
+
+    expect(failStaleIntents(d)).toBe(1);
+    expect(getIntent(d, id)).toMatchObject({
+      status: "blocked",
+      commit_sha: "a".repeat(40),
+      last_known_good: "b".repeat(40),
+      outcome: "verified candidate preserved",
+    });
+    expect(getIntent(d, id)!.error).toMatch(/restart.*retry/i);
+    expect(failStaleIntents(d)).toBe(0);
+  });
+
+  it("migrates legacy dirty-tree swap failures to the resumable blocked state", () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "legacy candidate" });
+    updateIntent(d, id, {
+      status: "failed",
+      commit_sha: "c".repeat(40),
+      last_known_good: "d".repeat(40),
+      verify_log: "all checks passed",
+      error: "refusing swap: working tree has uncommitted changes",
+    });
+
+    expect(failStaleIntents(d)).toBe(1);
+    expect(getIntent(d, id)).toMatchObject({
+      status: "blocked",
+      commit_sha: "c".repeat(40),
+      verify_log: "all checks passed",
+      outcome: "verified candidate preserved",
+    });
+    expect(failStaleIntents(d)).toBe(0);
+  });
 });

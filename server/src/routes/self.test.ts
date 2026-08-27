@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
 import { createIntent, updateIntent } from "../self/intents.js";
-import { selfRoutes } from "./self.js";
+import { selfRoutes, type SelfRouteDeps } from "./self.js";
 import type { SelfWorkerAdapter } from "../self/workers.js";
 import { buildSelfWorkerRegistry } from "../self/workers.js";
 import { setSelfWorkerSelection } from "../self/worker-selection.js";
@@ -18,6 +18,9 @@ function setup(options: { codexAvailable?: boolean } = {}) {
   const cancel = vi.fn((_id: string) => true);
   const approve = vi.fn((_id: string) => true);
   const reject = vi.fn((_id: string) => true);
+  const resumeSwap = vi.fn<SelfRouteDeps["resumeSwap"]>(
+    (_id: string, _expected: { candidateSha: string; headSha: string }) => ({ ok: true, status: "started" }),
+  );
   const adapter = (provider: "claude" | "codex", available = true): SelfWorkerAdapter => ({
     provider,
     label: provider === "claude" ? "Claude Code" : "Codex",
@@ -30,8 +33,17 @@ function setup(options: { codexAvailable?: boolean } = {}) {
   });
   const workers = buildSelfWorkerRegistry([adapter("claude"), adapter("codex", options.codexAvailable !== false)]);
   const app = express(); app.use(express.json());
-  app.use("/api/self", selfRoutes(db, (_q, _s, n) => n(), { startImprovement: start, revert, cancel, approve, reject, workers }));
-  return { app, db, start, revert, cancel, approve, reject };
+  app.use("/api/self", selfRoutes(db, (_q, _s, n) => n(), {
+    startImprovement: start,
+    revert,
+    cancel,
+    approve,
+    reject,
+    headSha: () => "a".repeat(40),
+    resumeSwap,
+    workers,
+  }));
+  return { app, db, start, revert, cancel, approve, reject, resumeSwap };
 }
 
 describe("/api/self", () => {
@@ -48,6 +60,7 @@ describe("/api/self", () => {
     const res = await request(app).get("/api/self").expect(200);
     expect(res.body.intents.length).toBe(1);
     expect(res.body.worker).toMatchObject({ provider: "claude", version: 1 });
+    expect(res.body.repositoryHead).toBe("a".repeat(40));
     expect(res.body.worker.options).toHaveLength(2);
   });
 
@@ -167,5 +180,39 @@ describe("/api/self", () => {
     const res = await request(app).post("/api/self/some-id/reject").expect(200);
     expect(reject).toHaveBeenCalledWith("some-id");
     expect(res.body).toEqual({ ok: true, rejected: true });
+  });
+
+  it("POST /:id/resume-swap uses candidate and HEAD stale guards", async () => {
+    const { app, db, resumeSwap } = setup();
+    const id = createIntent(db, { trigger: "explicit", goal: "g" });
+    const candidate = "b".repeat(40);
+    updateIntent(db, id, {
+      status: "blocked",
+      commit_sha: candidate,
+      last_known_good: "c".repeat(40),
+    });
+    const response = await request(app).post(`/api/self/${id}/resume-swap`).send({
+      expectedCandidateSha: candidate,
+      expectedHead: "a".repeat(40),
+    }).expect(202);
+    expect(response.body).toEqual({ ok: true, status: "started" });
+    expect(resumeSwap).toHaveBeenCalledWith(id, {
+      candidateSha: candidate,
+      headSha: "a".repeat(40),
+    });
+  });
+
+  it("POST /:id/resume-swap rejects malformed and stale requests", async () => {
+    const { app, resumeSwap } = setup();
+    await request(app).post("/api/self/x/resume-swap").send({
+      expectedCandidateSha: "short",
+      expectedHead: "a".repeat(40),
+    }).expect(400);
+    resumeSwap.mockReturnValueOnce({ ok: false, error: "stale_head", currentHead: "d".repeat(40) });
+    const stale = await request(app).post("/api/self/x/resume-swap").send({
+      expectedCandidateSha: "b".repeat(40),
+      expectedHead: "a".repeat(40),
+    }).expect(409);
+    expect(stale.body).toMatchObject({ ok: false, error: "stale_head" });
   });
 });

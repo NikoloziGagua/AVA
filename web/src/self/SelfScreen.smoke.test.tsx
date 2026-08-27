@@ -9,6 +9,7 @@ afterEach(() => {
   hooked.improve.mockClear();
   hooked.setPaused.mockClear();
   hooked.selectWorker.mockClear();
+  hooked.resumeSwap.mockClear();
   hooked.codexAvailable = false;
 });
 
@@ -17,6 +18,7 @@ const hooked = vi.hoisted(() => ({
   improve: vi.fn(async (_goal: string) => ({ ok: true as boolean, error: undefined as string | undefined })),
   setPaused: vi.fn(),
   selectWorker: vi.fn(),
+  resumeSwap: vi.fn(),
   codexAvailable: false,
 }));
 
@@ -27,6 +29,7 @@ vi.mock("./useSelfJournal.js", () => ({
       { id: "i2", goal: "in progress thing", status: "implementing" },
       { id: "i3", goal: "gated thing", status: "awaiting_approval", diff_summary: "PLAN:\nCHANGE: edit foo.ts" },
       { id: "i4", goal: "stopped thing", status: "failed", outcome: "cancelled", error: "cancelled by global Stop", cancellation_source: "global_stop" },
+      { id: "i5", goal: "verified update", status: "blocked", outcome: "verified candidate preserved", error: "swap blocked: overlapping edits", commit_sha: "a".repeat(40), last_known_good: "b".repeat(40) },
     ],
     paused: hooked.paused,
     setPaused: hooked.setPaused,
@@ -43,6 +46,9 @@ vi.mock("./useSelfJournal.js", () => ({
     workerError: null,
     selectingWorker: false,
     selectWorker: hooked.selectWorker,
+    repositoryHead: "c".repeat(40),
+    recoveryError: null,
+    resumeSwap: hooked.resumeSwap,
   }),
   isRunningStatus: (s: string) => ["queued", "reflecting", "implementing", "verifying"].includes(s),
   planText: (s: string | null | undefined) => (s ?? "").replace(/^PLAN:\s*/, "").trim(),
@@ -88,6 +94,18 @@ describe("SelfScreen", () => {
   it("shows the real cancellation source in the journal", () => {
     render(<SelfScreen onClose={() => {}} />);
     expect(screen.getByText("cancelled by global Stop")).toBeTruthy();
+  });
+
+  it("shows preserved verified candidates and retries with explicit stale guards", () => {
+    render(<SelfScreen onClose={() => {}} />);
+    expect(screen.getByText(/verified update waiting for safe installation/i)).toBeTruthy();
+    expect(screen.getByText(/verified update not yet installed/i)).toBeTruthy();
+    expect(screen.getByText(/never discards local edits/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /retry safe installation/i }));
+    expect(hooked.resumeSwap).toHaveBeenCalledWith(expect.objectContaining({
+      id: "i5",
+      commit_sha: "a".repeat(40),
+    }));
   });
 
   it("renders the improvement initiator and calls improve on submit, clearing the input", async () => {

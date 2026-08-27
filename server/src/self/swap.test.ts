@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { headSha, swapTo, revertTo } from "./swap.js";
+import { headSha, swapTo, revertTo, SwapBlockedError } from "./swap.js";
 
 function tmpRepo(): { dir: string; initBranch: string } {
   const dir = mkdtempSync(join(tmpdir(), "ava-swap-"));
@@ -63,10 +63,47 @@ describe("swap", () => {
     execFileSync("git", ["commit", "-qam", "v2"], { cwd: repo });
     const liveHead = headSha(repo);
 
-    expect(() => swapTo(repo, candSha)).toThrow(/non-fast-forward/i);
+    let error: unknown;
+    try { swapTo(repo, candSha); } catch (caught) { error = caught; }
+    expect(error).toBeInstanceOf(SwapBlockedError);
+    expect((error as SwapBlockedError).code).toBe("stale_head");
     // Live tree + HEAD untouched — v2 survives.
     expect(headSha(repo)).toBe(liveHead);
     expect(readFileSync(join(repo, "f.txt"), "utf8")).toBe("v2");
+  });
+
+  it("blocks overlapping uncommitted edits and preserves them", () => {
+    execFileSync("git", ["checkout", "-qb", "cand"], { cwd: repo });
+    writeFileSync(join(repo, "f.txt"), "candidate");
+    execFileSync("git", ["commit", "-qam", "candidate"], { cwd: repo });
+    const candidate = headSha(repo);
+    execFileSync("git", ["checkout", "-q", initBranch], { cwd: repo });
+    writeFileSync(join(repo, "f.txt"), "local edit");
+
+    let error: unknown;
+    try { swapTo(repo, candidate); } catch (caught) { error = caught; }
+    expect(error).toBeInstanceOf(SwapBlockedError);
+    expect((error as SwapBlockedError).code).toBe("overlapping_edits");
+    expect((error as SwapBlockedError).blockers).toEqual(["f.txt"]);
+    expect(readFileSync(join(repo, "f.txt"), "utf8")).toBe("local edit");
+  });
+
+  it("fast-forwards while preserving unrelated uncommitted edits", () => {
+    writeFileSync(join(repo, "local.txt"), "base");
+    execFileSync("git", ["add", "local.txt"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "add local"], { cwd: repo });
+    execFileSync("git", ["checkout", "-qb", "cand"], { cwd: repo });
+    writeFileSync(join(repo, "f.txt"), "candidate");
+    execFileSync("git", ["commit", "-qam", "candidate"], { cwd: repo });
+    const candidate = headSha(repo);
+    execFileSync("git", ["checkout", "-q", initBranch], { cwd: repo });
+    writeFileSync(join(repo, "local.txt"), "Niko's local preference");
+
+    swapTo(repo, candidate);
+
+    expect(headSha(repo)).toBe(candidate);
+    expect(readFileSync(join(repo, "f.txt"), "utf8")).toBe("candidate");
+    expect(readFileSync(join(repo, "local.txt"), "utf8")).toBe("Niko's local preference");
   });
 
   // ── Item 2: revertTo must not clobber work committed after the swap ───────

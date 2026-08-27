@@ -83,8 +83,12 @@ stateDiagram-v2
 
     state swap_guard <<choice>>
     verifying --> swap_guard : commit candidate, capture lastKnownGood
-    swap_guard --> swapped : assertSwapSafe OK + fast-forward OK → git reset --hard
-    swap_guard --> failed : touches safety-critical code, OR non-fast-forward
+    swap_guard --> swapped : assertSwapSafe OK + non-destructive fast-forward
+    swap_guard --> blocked : verified candidate preserved; install is unsafe now
+    blocked --> recovering : explicit version-guarded retry
+    recovering --> verifying : HEAD advanced; reconcile in fresh worktree
+    recovering --> swapped : same HEAD; safe fast-forward succeeds
+    recovering --> blocked : overlap, conflict, stale boundary, or restart
 
     swapped --> watchdog : detached watchdog spawned; server restarts onto new code
 
@@ -108,9 +112,12 @@ stateDiagram-v2
     rolled_back_manual --> [*]
 ```
 
-> **Note on status vocabulary.** The DB/state machine persists eight
-> statuses (`intents.ts:5-7`): `queued`, `reflecting`, `awaiting_approval`,
-> `implementing`, `verifying`, `swapped`, `failed`, `rolled_back`. The boxes above
+> **Note on status vocabulary.** The DB/state machine persists ten statuses:
+> `queued`, `reflecting`, `awaiting_approval`, `implementing`, `verifying`,
+> `recovering`, `blocked`, `swapped`, `failed`, and `rolled_back`. `blocked`
+> means implementation and verification produced a candidate but live installation
+> is unsafe right now; it is deliberately not a terminal implementation failure.
+> The boxes above
 > named `swap_guard`, `watchdog`, `committed`, and `rolled_back_auto` are *moments
 > in the runtime*, not stored statuses — a successful run simply stays at `swapped`,
 > and an automatic watchdog rollback rewrites git but does **not** currently write
@@ -143,7 +150,9 @@ implementations of `implement`, `restart`, `watch`, etc.
 | `verify(cwd, signal?)` | tests + build + boot-smoke (+ report-only flightcheck) | `verify` (+ `flightcheck`) | `verify` (no flightcheck) |
 | `headSha()` | current live HEAD | `swap.headSha` | same |
 | `commitWorktree(cwd,msg)` | `git add -A` + commit; throws if no changes | inline | inline |
-| `swapTo(sha, lastKnownGood)` | **safety-guard** then fast-forward `git reset --hard` | `assertSwapSafe`+`swapTo` | same |
+| `swapTo(sha, lastKnownGood)` | **safety-guard** then non-destructive `git merge --ff-only` | `assertSwapSafe`+`swapTo` | same |
+| `preserveCandidate(id, sha)` / `releaseCandidate(id)` | keep or remove `refs/ava/self-candidates/<id>` | `worktree.ts` | same |
+| `reconcileCandidate(cwd, base, sha)` | replay an approved candidate onto newer HEAD before full re-verification | `worktree.ts` | same |
 | `revertTo(sha)` | hard reset back | `swap.revertTo` | `swap.revertTo` |
 | `restart()` | restart the live server | no-op (tsx watch reloads) | no-op |
 | `watch(knownGood, swapped)` | spawn detached watchdog | spawns `watchdog-main.ts` | same |
@@ -406,8 +415,8 @@ into a real gate later; today it only informs.
 
 ## 7. The swap and its guardrails (`swap.ts` + `safety-guard.ts`)
 
-Shipping = moving the **live** working tree onto the verified commit. Two
-independent guards stand in front of the `git reset --hard`.
+Shipping = moving the **live** branch onto the verified commit. The installation
+path never resets or stashes concurrent work.
 
 ### Guard 1 — the safety-guard (`safety-guard.ts`)
 
@@ -433,15 +442,22 @@ marked `failed` rather than the weakened guardrail going live.
 > That's a cheap early filter; `assertSwapSafe` on the actual diff is the real
 > enforcement.
 
-### Guard 2 — fast-forward only (`swap.ts:15-30`)
+### Guard 2 — non-destructive fast-forward and resumable recovery (`swap.ts`, `worktree.ts`)
 
-`swapTo(repoRoot, sha)` refuses any swap that is **not a pure fast-forward**. If
-HEAD is not an ancestor of the candidate (`merge-base --is-ancestor`,
-`swap.ts:9-13`), it means commits landed on the live branch *after* the worktree
-was created — the owner editing, a concurrent session, another improvement.
-Resetting onto the candidate would silently **drop** those in-between commits, so
-it throws instead (recoverable only via reflog otherwise). Only on a clean
-fast-forward does it run `git reset --hard <sha>` to move the live branch.
+`swapTo(repoRoot, sha)` installs only a pure fast-forward using
+`git merge --ff-only`. Disjoint tracked edits remain untouched; overlapping
+tracked paths block before Git is called, and Git safely refuses untracked-file
+collisions. The code never uses `reset --hard` or an automatic stash to install.
+
+After verification, a durable internal ref keeps the candidate reachable. A
+blocked installation therefore records `status="blocked"` and remains resumable
+after the temporary worktree is removed or AVA restarts. `POST
+/api/self/:id/resume-swap` is guarded by the exact candidate SHA and repository
+HEAD displayed by Self. If HEAD advanced, AVA creates a fresh recovery worktree,
+replays the approved candidate, reruns the complete verification gate, and only
+then attempts installation. Ordinary content conflicts remain blocked. The sole
+automatic conflict rule is an append-only union for `coord/BOARD.md`, and it is
+accepted only when both histories are literal extensions of the same parent.
 
 ### Reverting (`swap.ts:32-53`)
 
@@ -458,12 +474,15 @@ passes `expectedHead`; the manual revert route does **not** (see §9).
 
 ### 8a. Live / interactive (`server/src/index.ts`)
 
-- Boot reconciliation (`index.ts:62-83`): `failStaleIntents(db)` marks any intent
-  left non-terminal by a previous restart as `failed` — and that set now includes
+- Boot reconciliation: `failStaleIntents(db)` marks ordinary work left
+  non-terminal by a previous restart as `failed` — and that set includes
   `awaiting_approval` (`intents.ts:42`), so a plan left waiting for approval when
   the process died is reconciled rather than left forever-pending; the in-flight
   lock and the parked-plan resolver are in-memory, so at boot nothing is genuinely
-  running. `pruneOrphanWorktrees` cleans the leaked git state; `failStaleDiscussions`
+  running. A `recovering` row with a candidate returns to `blocked` instead, and
+  legacy verified dirty-tree swap failures are migrated to that resumable state.
+  Candidate refs are restored before orphan branches are pruned.
+  `pruneOrphanWorktrees` cleans the leaked git state; `failStaleDiscussions`
   does the same for background consults.
 - `buildImproverDeps()` (`index.ts:150-227`) wires the live deps. Notable: it sets
   `requireApproval = (intent) => intent.trigger === "explicit"` and an
@@ -474,9 +493,10 @@ passes `expectedHead`; the manual revert route does **not** (see §9).
   fresh worktree fails — `index.ts:165-173`); `verify` appends the report-only
   flightcheck; `restart` is a no-op because `tsx watch` reloads when `swapTo`
   rewrites the working tree (pm2/prod restart is noted as a follow-up).
-- Self-route control wiring (`index.ts:323-329`): `cancel → cancelImprovement`,
+- Self-route control wiring includes `cancel → cancelImprovement`,
   `approve → approveImprovement`, `reject → rejectImprovement` are passed into
-  `selfRoutes` alongside `startImprovement` and `revert`.
+  `selfRoutes` alongside `startImprovement`, `revert`, repository-HEAD reporting,
+  and the version-guarded `resumeSwap` boundary.
 - Entry points: `queueSelfImprove(goal)` (`index.ts:226`) used by the
   `self_improve` tool, and `startImprovement(id)` (`index.ts:221`) used by the
   HTTP route. Both call `runImprovement` fire-and-forget, wrapped so a thrown
@@ -596,7 +616,7 @@ repo is actually laid out.
   `POST /api/self/improve` (create + start, `trigger:"explicit"`; now returns
   **409 `paused`** if self-improvement is paused),
   `GET /api/self` (list all intents plus `paused`, the selected worker version,
-  and honest Claude/Codex CLI availability),
+  honest Claude/Codex CLI availability, and the current repository HEAD),
   `POST /api/self/worker` (select the worker for future intents using
   `expectedVersion`; stale or unavailable selections return 409),
   `POST /api/self/pause` (**new**: set the server-side pause gate via
@@ -606,6 +626,8 @@ repo is actually laid out.
   `POST /api/self/:id/approve` and `POST /api/self/:id/reject` (settle a plan
   parked at `awaiting_approval` → `approveImprovement`/`rejectImprovement`,
   `self.ts:35-46`),
+  `POST /api/self/:id/resume-swap` (retry installation of a preserved verified
+  candidate with required candidate-SHA and repository-HEAD stale guards),
   `POST /api/self/:id/revert` (revert one intent to its `last_known_good`, set
   `status="rolled_back"`).
 - **`useSelfJournal.ts`** polls `GET /api/self` every 4 s and exposes
@@ -614,7 +636,9 @@ repo is actually laid out.
   refreshes), and — new tonight — **`improve(goal)`** (POSTs the initiator goal,
   surfacing a 409 as *"self-improvement is paused"*) and **`setPaused(next)`**
   (optimistically flips the UI, POSTs `/api/self/pause`, reconciles from the
-  response and the next poll). It also reads the server's `paused` flag back and
+  response and the next poll). `resumeSwap(intent)` submits the displayed
+  candidate and repository revisions, surfaces stale/busy failures, and refreshes
+  the journal boundary. It also reads the server's `paused` flag back and
   tolerates three response shapes (`improvements`/`intents`/bare array) so the UI
   never breaks mid-deploy. Two helpers: `isRunningStatus(status)` gates the Stop
   button; `planText(diffSummary)` strips the `PLAN:` prefix. The polled `Intent`
@@ -629,6 +653,8 @@ repo is actually laid out.
   - a **Revert last** button, a red **Stop** button on any running intent, and for
     an `awaiting_approval` intent a *"Plan — review before it runs"* panel rendering
     the parked plan with **Approve & run** / **Reject** buttons.
+  - a prominent **verified update not yet installed** card for `blocked` intents,
+    with the recorded failure boundary and **Retry safe installation**.
 
 > **UI honesty caveats:**
 > - **"Pause" is now real (fixed tonight).** Tapping Pause POSTs `/api/self/pause`,
@@ -690,8 +716,11 @@ doing X"):
    `self: X` → `sha`. Persist `last_known_good`, `commit_sha`, `branch`.
 8. **Safety guard.** `assertSwapSafe(repoRoot, knownGood, sha)` — if the diff
    touches any safety-critical file, throw → intent `failed`.
-9. **Fast-forward swap.** `swapTo(repoRoot, sha)` — if not a clean fast-forward,
-   throw → intent `failed`; else `git reset --hard sha` moves the live tree.
+9. **Safe install.** Preserve the verified candidate ref, then call `swapTo`.
+   A clean path uses `git merge --ff-only`. An overlap, stale HEAD, or Git refusal
+   leaves the intent `blocked` with the candidate intact. An explicit retry uses
+   stale guards; if HEAD advanced, it replays the candidate in a fresh worktree
+   and reruns the full verification gate before trying again.
 10. **Ship + watch.** `status=swapped`, `outcome="shipped"`. Spawn the detached
     watchdog `(knownGood, sha, 45s)`. `restart()` (no-op; tsx watch reloads onto
     the new code).
@@ -751,16 +780,17 @@ These are real, current limitations — documented because precise > flattering.
    unattended overnight loop is intentionally **not** gated. See §13.7 below and the
    feature doc.
 
-2. **Boot reconciliation fails *stale* intents — including ones that may have
-   actually shipped.** `failStaleIntents` (`intents.ts:38-46`) marks **every**
+2. **Boot reconciliation fails ordinary stale work but preserves verified
+   recovery candidates.** `failStaleIntents` marks
    intent left in `queued/reflecting/awaiting_approval/implementing/verifying` as
    `failed` on boot, on the assumption that the in-memory lock means nothing was
    truly running. That is correct for genuinely-orphaned intents (including a plan
    left parked at `awaiting_approval`, whose in-memory resolver is gone after a
    restart), but it is a blunt instrument: an intent that was mid-`verifying` when
    the process died is marked `failed` even if a partial effect occurred, and the
-   error is a generic "interrupted by a server restart". It only reconciles the five
-   non-terminal states — an intent already at `swapped` is left as-is. (Also note:
+   error is a generic "interrupted by a server restart". A `recovering` row with
+   a candidate instead returns to `blocked`, and candidate refs are recreated at
+   boot. An intent already at `swapped` is left as-is. (Also note:
    if a restart happens *during* the watchdog window, reconciliation does not re-arm
    a watchdog — the detached watchdog process is the only thing tracking that swap.)
 

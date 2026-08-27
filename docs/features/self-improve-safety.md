@@ -10,13 +10,13 @@ Self-improvement is powerful and runs partly unsupervised (an overnight loop). W
 
 Terms:
 - **Worktree** — a second checkout of the repo (a temp dir + a `self/<id>` branch) where a candidate change is built and verified in isolation.
-- **Swap** — moving the live branch/working tree to the verified candidate commit (`git reset --hard`).
+- **Swap** — safely fast-forwarding the live branch to the verified candidate commit (`git merge --ff-only`).
 - **Fast-forward** — moving forward to a commit that *contains* the current HEAD as an ancestor (so no commits are dropped).
 - **LKG** — last-known-good commit, the rollback target.
 
 ## How Sir interacts
 
-Mostly invisible — these guards protect the autonomous pipeline. Sir sees them only as: a self-improvement that *refuses to swap* (logged reason: non-fast-forward, or touches safety-critical code), a destructive approval that *expires as denied* rather than running if he doesn't respond, or boot log lines about pruned `self/*` branches.
+Mostly invisible — these guards protect the autonomous pipeline. When a verified update cannot be installed without colliding with concurrent work, Sir sees a **blocked — candidate preserved** card in Self with the exact boundary and a **Retry safe installation** action. The retry carries both candidate and repository-HEAD stale guards. Safety-critical candidates still fail closed, and destructive approvals still expire as denied.
 
 ## How it works
 
@@ -26,8 +26,15 @@ flowchart TD
     S0[candidate sha verified in worktree] --> S1{assertSwapSafe:<br/>diff touches SAFETY_RE files?}
     S1 -- yes --> RF1[refuse: mark intent failed]
     S1 -- no --> S2{swapTo: HEAD ancestor of sha?<br/>fast-forward only}
-    S2 -- no --> RF2[refuse non-fast-forward swap]
-    S2 -- yes --> SW[git reset --hard sha]
+    S2 -- no --> BL[preserve candidate; status blocked]
+    S2 -- yes --> S3{candidate overlaps<br/>tracked local edits?}
+    S3 -- yes --> BL
+    S3 -- no --> SW[git merge --ff-only sha]
+    BL --> R{Sir retries with<br/>candidate + HEAD guards}
+    R -- HEAD advanced --> RW[replay in fresh worktree<br/>and fully re-verify]
+    R -- same HEAD --> SW
+    RW -- clean --> SW
+    RW -- conflict --> BL
   end
   subgraph Approval veto
     A0[destructive tool needs approval] --> A1[15s veto window]
@@ -41,8 +48,12 @@ flowchart TD
   end
 ```
 
-**1. Fast-forward-only swap (`server/src/self/swap.ts:15` `swapTo`)**
-- Before `git reset --hard sha`, checks `isAncestor(HEAD, sha)`. If commits landed on the live branch *after* the worktree was created (Sir editing, a concurrent session, another improvement), HEAD is **not** an ancestor of the candidate, so resetting would **silently drop** them. The swap throws `refusing non-fast-forward swap`; `runImprovement`'s try/catch then marks the intent failed instead of clobbering work.
+**1. Non-destructive swap and resumable collision recovery (`server/src/self/swap.ts`, `worktree.ts`, `improver.ts`)**
+- `swapTo` checks ancestry and installs only with `git merge --ff-only`; it never resets or stashes the live tree. Disjoint tracked edits are preserved. If a candidate touches the same tracked path, or Git refuses because an untracked path would be overwritten, installation stops safely.
+- A verified but un-installable candidate is kept reachable at `refs/ava/self-candidates/<intent-id>` and the durable intent becomes `blocked`, not `failed`. The temporary worktree may then be removed without losing the candidate.
+- `POST /api/self/:id/resume-swap` requires the candidate SHA and current HEAD shown to the user. If either changed, it returns a typed conflict and refreshes the UI rather than acting on stale state.
+- If HEAD advanced, AVA replays the already-approved candidate commits in a fresh isolated recovery worktree and runs the complete verify/build/boot gate again. Ordinary conflicts fail closed. `coord/BOARD.md` is the one exception, and only when both versions are provable append-only extensions of the exact same parent; both append histories are retained.
+- A restart while `recovering` returns the row to `blocked`, preserving the candidate. Older dirty-tree failures with a verified candidate are migrated to the same retry boundary on boot.
 - The watchdog rollback (`revertTo`, `:39`) is intentionally *backward* (it undoes a bad swap) so it does **not** enforce fast-forward — but it's guarded by `expectedHead`: if HEAD moved on since the swap, the rollback is **skipped** rather than resetting over newer work.
 
 **2. Safety-code gate (`server/src/self/safety-guard.ts:9` `SAFETY_RE` + `assertSwapSafe`)**
@@ -62,7 +73,8 @@ flowchart TD
 
 ## Edge cases & limitations
 
-- **Fast-forward refusal fails the improvement, it doesn't merge.** If the live branch advanced, the candidate is abandoned (recoverable via reflog only if needed) rather than rebased — a deliberate "fail safe, don't get clever" choice.
+- **Recovery does not silently resolve product-code conflicts.** A newer non-conflicting HEAD is replayed and re-verified, but any ordinary content conflict remains blocked for human review. Only the repository's explicitly append-only coordination board has a mechanically proven union rule.
+- **Retry is explicit.** AVA does not continuously retry a blocked install and never replays consequential runtime actions. The already-produced code candidate is the only thing reconciled.
 - **The safety regex is path-based.** It blocks by *filename pattern*, so it's conservative — it may refuse a benign edit that merely lives under `security/` etc. That's the intended bias (refuse rather than risk weakening a guardrail).
 - **Pruning only touches `self/*` branches.** It never deletes a branch backing a live worktree; a non-`self/` leaked branch isn't its concern.
 - **Verify timeout is fixed at 10 min** (constructor-overridable in tests). A legitimately longer build would be cut off — 10 min is set comfortably above a real full build+test on this repo.
@@ -75,3 +87,4 @@ flowchart TD
 - **One shared `SAFETY_RE`.** The interactive path and the overnight loop import the same regex, so there's exactly one definition of "safety-critical" and it can't drift.
 - **Watchdog revert is guarded but not fast-forward-only.** It's a deliberate backward move to undo a bad swap; the `expectedHead` guard prevents it from clobbering work committed after the swap.
 - **Tree-kill on verify timeout.** Consistent with the Stop tree-kill principle (see `stop-tree-kill.md`): kill the whole subtree so no orphaned `node` survives.
+- **Blocked is distinct from failed.** Verification succeeded; only installation is pending. Candidate refs, version guards, re-verification after reconciliation, and fail-closed conflict handling preserve that distinction without risking concurrent edits.

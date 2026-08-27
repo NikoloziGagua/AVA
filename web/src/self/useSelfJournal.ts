@@ -9,6 +9,8 @@ export type Intent = {
   /** While awaiting_approval this holds the drafted plan (prefixed "PLAN:"). */
   diff_summary?: string | null;
   worker_provider?: "claude" | "codex";
+  commit_sha?: string | null;
+  last_known_good?: string | null;
   error?: string | null;
   cancellation_source?: "self_stop" | "global_stop" | "system_abort" | null;
 };
@@ -47,14 +49,19 @@ function jsonAuthHeaders(): HeadersInit {
  * array) to `{improvements, paused}`. Parse all three shapes so the UI never breaks
  * mid-deploy; a shape with no `paused` field means the server can't pause → false.
  */
-async function getSelf(): Promise<{ intents: Intent[]; paused: boolean; worker: WorkerState | null } | null> {
+async function getSelf(): Promise<{ intents: Intent[]; paused: boolean; worker: WorkerState | null; repositoryHead: string | null } | null> {
   const r = await fetch("/api/self", { headers: authHeaders() });
   if (!r.ok) return null;
   const j: unknown = await r.json();
-  if (Array.isArray(j)) return { intents: j as Intent[], paused: false, worker: null };
+  if (Array.isArray(j)) return { intents: j as Intent[], paused: false, worker: null, repositoryHead: null };
   if (j && typeof j === "object") {
-    const o = j as { improvements?: Intent[]; intents?: Intent[]; paused?: boolean; worker?: WorkerState };
-    return { intents: o.improvements ?? o.intents ?? [], paused: o.paused === true, worker: o.worker ?? null };
+    const o = j as { improvements?: Intent[]; intents?: Intent[]; paused?: boolean; worker?: WorkerState; repositoryHead?: string };
+    return {
+      intents: o.improvements ?? o.intents ?? [],
+      paused: o.paused === true,
+      worker: o.worker ?? null,
+      repositoryHead: typeof o.repositoryHead === "string" ? o.repositoryHead : null,
+    };
   }
   return null;
 }
@@ -65,6 +72,8 @@ export function useSelfJournal() {
   const [worker, setWorkerState] = useState<WorkerState | null>(null);
   const [workerError, setWorkerError] = useState<string | null>(null);
   const [selectingWorker, setSelectingWorker] = useState(false);
+  const [repositoryHead, setRepositoryHead] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const intentsRef = useRef<Intent[]>([]);
   intentsRef.current = intents;
 
@@ -75,6 +84,7 @@ export function useSelfJournal() {
       setIntents(s.intents);
       setPausedState(s.paused);
       setWorkerState(s.worker);
+      setRepositoryHead(s.repositoryHead);
     } catch {
       /* best-effort polling */
     }
@@ -150,6 +160,36 @@ export function useSelfJournal() {
   }, [refresh, worker]);
   // Reject does not need a worker lock because no provider is launched.
   const reject = useCallback((id: string) => act(id, "reject"), [act]);
+
+  const resumeSwap = useCallback(async (intent: Intent) => {
+    if (!intent.commit_sha || !repositoryHead) {
+      setRecoveryError("AVA cannot identify the preserved candidate or current repository version.");
+      return;
+    }
+    setRecoveryError(null);
+    try {
+      const response = await fetch(`/api/self/${intent.id}/resume-swap`, {
+        method: "POST",
+        headers: jsonAuthHeaders(),
+        body: JSON.stringify({
+          expectedCandidateSha: intent.commit_sha,
+          expectedHead: repositoryHead,
+        }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        const stale = body.error === "stale_head" || body.error === "stale_candidate";
+        setRecoveryError(stale
+          ? "The repository or candidate changed. AVA refreshed the safe retry boundary."
+          : body.error === "busy"
+            ? "Another Self task is active. Retry after it reaches a clean boundary."
+            : "AVA could not start safe installation recovery.");
+      }
+    } catch {
+      setRecoveryError("Couldn't reach AVA to resume safe installation.");
+    }
+    await refresh();
+  }, [refresh, repositoryHead]);
 
   // Ask Ava to start a self-improvement from a user-written goal. Unlike the journal
   // actions this surfaces failure to the caller — the initiator input needs to tell
@@ -236,12 +276,14 @@ export function useSelfJournal() {
   return {
     intents, paused, setPaused, improve, revertLast, cancel, approve, reject,
     worker, workerError, selectingWorker, selectWorker,
+    repositoryHead, recoveryError, resumeSwap,
   };
 }
 
 /** A self-improvement is still in flight (cancellable) in these states. */
 export function isRunningStatus(status: string): boolean {
-  return status === "queued" || status === "reflecting" || status === "implementing" || status === "verifying";
+  return status === "queued" || status === "reflecting" || status === "implementing"
+    || status === "verifying" || status === "recovering";
 }
 
 /** Strip the "PLAN:" prefix off the parked plan for display. */

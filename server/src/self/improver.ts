@@ -6,7 +6,7 @@ import {
   type Intent,
 } from "./intents.js";
 import type { SelfWorkerProvider, SelfWorkerSelection } from "./worker-selection.js";
-import { sanitizeWorkerEvidence } from "./workers.js";
+import { buildSelfWorkerExecutionPrompt, sanitizeWorkerEvidence } from "./workers.js";
 
 export type ImproverDeps = {
   reflect: (goal: string, failureLog: string | null, signal?: AbortSignal) => Promise<string>;
@@ -17,12 +17,12 @@ export type ImproverDeps = {
   /** Fired when an improvement parks at awaiting_approval — used to push the user so
    *  they know a plan is waiting for review. `plan` is the drafted change brief. */
   onAwaitingApproval?: (id: string, plan: string) => void;
-  addWorktree: (id: string) => { path: string; branch: string };
-  removeWorktree: (wt: { path: string; branch: string }) => void;
+  addWorktree: (id: string) => { path: string; branch: string; baseSha?: string };
+  removeWorktree: (wt: { path: string; branch: string; baseSha?: string }) => void;
   implement: (provider: SelfWorkerProvider, brief: string, cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; output: string }>;
   verify: (cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; log: string }>;
   headSha: () => string;
-  commitWorktree: (cwd: string, msg: string) => string;
+  commitWorktree: (cwd: string, msg: string, baseSha: string) => string;
   /** Move the live tree to the verified commit. `lastKnownGood` is the pre-swap
    *  HEAD; the binding uses it to refuse a swap whose diff touches
    *  safety-critical code (Ava must not hot-swap a weakening of its guardrails). */
@@ -161,17 +161,18 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
   const signal = ac.signal;
   const throwIfAborted = () => { if (signal.aborted) throw new Error("cancelled"); };
   let intent = getIntent(db, id)!;
-  let wt: { path: string; branch: string } | null = null;
+  let wt: { path: string; branch: string; baseSha?: string } | null = null;
   try {
     throwIfAborted();
     updateIntent(db, id, { status: "reflecting" }); deps.emit({ intentId: id, step: "reflecting" });
     const brief = await deps.reflect(intent.goal, null, signal);
     throwIfAborted();
+    const approvalRequired = deps.requireApproval?.(intent) ?? false;
 
     // PLAN GATE: user-triggered improvements show the drafted plan and wait for the
     // user to approve it BEFORE any code is written — so nothing runs away unseen.
     // (The unattended overnight loop sets requireApproval=false and skips this.)
-    if (deps.requireApproval?.(intent)) {
+    if (approvalRequired) {
       const safePlan = sanitizeWorkerEvidence(brief, 3_990);
       updateIntent(db, id, { status: "awaiting_approval", diff_summary: `PLAN:\n${safePlan}`.slice(0, 4000) });
       deps.emit({ intentId: id, step: "awaiting_approval", provider: intent.worker_provider });
@@ -204,14 +205,25 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
       intent = getIntent(db, id)!;
     }
 
+    const execution = buildSelfWorkerExecutionPrompt({
+      intentId: id,
+      approvedGoal: intent.goal,
+      approvedPlan: brief,
+      authorization: approvalRequired
+        ? "explicit_user_approval"
+        : "owner_configured_unattended_policy",
+    });
+    const safeBrief = sanitizeWorkerEvidence(brief, 2_000);
+    updateIntent(db, id, {
+      diff_summary: `APPROVED SCOPE SHA-256: ${execution.scopeSha256}\n\nBRIEF:\n${safeBrief}`.slice(0, 4000),
+    });
     updateIntent(db, id, { status: "implementing" }); deps.emit({ intentId: id, step: "implementing", provider: intent.worker_provider });
     wt = deps.addWorktree(id);
-    const impl = await deps.implement(intent.worker_provider, brief, wt.path, signal);
+    const impl = await deps.implement(intent.worker_provider, execution.prompt, wt.path, signal);
     // Record what the worker was told and what it produced, so a no-op or a bad
     // edit is diagnosable from the intent instead of vanishing.
-    const safeBrief = sanitizeWorkerEvidence(brief, 2_000);
     const safeOutput = sanitizeWorkerEvidence(impl.output ?? "", 1_900);
-    updateIntent(db, id, { diff_summary: `BRIEF:\n${safeBrief}\n\nWORKER (${intent.worker_provider}):\n${safeOutput}`.slice(0, 4000) });
+    updateIntent(db, id, { diff_summary: `APPROVED SCOPE SHA-256: ${execution.scopeSha256}\n\nBRIEF:\n${safeBrief}\n\nWORKER (${intent.worker_provider}):\n${safeOutput}`.slice(0, 4000) });
     if (!impl.ok) throw new Error(`implement failed: ${impl.output.slice(0, 500)}`);
     throwIfAborted();
 
@@ -222,7 +234,7 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     throwIfAborted();
 
     const knownGood = deps.headSha();
-    const sha = deps.commitWorktree(wt.path, `self: ${intent.goal}`);
+    const sha = deps.commitWorktree(wt.path, `self: ${intent.goal}`, wt.baseSha ?? knownGood);
     updateIntent(db, id, { last_known_good: knownGood, commit_sha: sha, branch: wt.branch });
     deps.swapTo(sha, knownGood);
     deps.emit({ intentId: id, step: "swapped", ok: true });

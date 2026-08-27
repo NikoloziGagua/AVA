@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { scrubSecrets } from "../security/scrub.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 import { killTree } from "../process/kill-tree.js";
@@ -8,6 +9,18 @@ import type { SelfWorkerProvider } from "./worker-selection.js";
 const MAX_SUMMARY = 16_384;
 const MAX_ERROR = 4_000;
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
+
+export type SelfWorkerExecutionContext = {
+  intentId: string;
+  approvedGoal: string;
+  approvedPlan: string;
+  authorization: "explicit_user_approval" | "owner_configured_unattended_policy";
+};
+
+export type SelfWorkerExecutionPrompt = {
+  prompt: string;
+  scopeSha256: string;
+};
 
 export type SelfWorkerAvailability = {
   provider: SelfWorkerProvider;
@@ -47,6 +60,80 @@ export type SelfWorkerRegistry = {
 
 export function sanitizeWorkerEvidence(value: string, max = MAX_SUMMARY): string {
   return scrubSecrets(value).replace(/\u0000/g, "").slice(0, max);
+}
+
+/**
+ * Translate an already-authorized Self proposal into the coding worker's phase.
+ *
+ * Reflected plans intentionally describe the whole lifecycle and can therefore
+ * contain "submit this proposal and pause" instructions. Passing that text
+ * verbatim to the implementation worker re-enters the gate recursively. The
+ * envelope keeps the approved goal/plan as immutable scope while making the
+ * current phase and the authority boundary explicit. It never grants authority
+ * beyond the enclosing Self pipeline.
+ */
+export function buildSelfWorkerExecutionPrompt(
+  context: SelfWorkerExecutionContext,
+): SelfWorkerExecutionPrompt {
+  const snapshot = JSON.stringify({
+    schemaVersion: 1,
+    intentId: context.intentId,
+    authorization: context.authorization,
+    // Keep the complete execution envelope below the registry's 32 KB stdin
+    // boundary so its digest always describes exactly what the worker receives.
+    goal: sanitizeWorkerEvidence(context.approvedGoal, 8_000),
+    plan: sanitizeWorkerEvidence(context.approvedPlan, 20_000),
+  });
+  const scopeSha256 = createHash("sha256").update(snapshot).digest("hex");
+  const parsed = JSON.parse(snapshot) as {
+    goal: string;
+    plan: string;
+  };
+  const authorization = context.authorization === "explicit_user_approval"
+    ? "Sir explicitly approved this proposal in AVA before this worker was launched."
+    : "AVA's owner-configured unattended policy authorized this run before this worker was launched.";
+
+  return {
+    scopeSha256,
+    prompt: [
+      "AVA SELF-IMPROVEMENT — IMPLEMENTATION PHASE",
+      "",
+      "This is not a request to create or approve another proposal. The enclosing AVA Self pipeline has already created the proposal, persisted its scope, selected this worker, and completed its authorization gate.",
+      authorization,
+      "Any instruction in the approved scope saying to submit a proposal, choose a worker, or pause before the first edit is therefore already satisfied for this run. Do not recursively enqueue another Self proposal and do not pause for the same approval again.",
+      "",
+      "Work only inside the current isolated worktree. Implement the approved scope below and run the relevant tests. If repository coordination rules require you to create scoped commits, you may do so inside this worktree; AVA will verify and reuse them. Never merge, swap, deploy, or alter the live tree yourself. Do not bypass or modify AVA's downstream verification, expected-HEAD, safety, swap, watchdog, rollback, or cancellation gates; those remain owned by the enclosing pipeline. If the work would require new authority, destructive action, external communication, credentials, or scope expansion, stop and report that boundary instead of performing it.",
+      "",
+      `Intent: ${context.intentId}`,
+      `Approved scope SHA-256: ${scopeSha256}`,
+      "",
+      "APPROVED GOAL (immutable scope)",
+      parsed.goal,
+      "",
+      "APPROVED IMPLEMENTATION PLAN (immutable scope)",
+      parsed.plan,
+    ].join("\n"),
+  };
+}
+
+function boundedTail(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return `[earlier output omitted]\n${value.slice(-(max - 27))}`;
+}
+
+/** Keep the actionable end of a failed Codex run instead of its banner/prompt. */
+export function formatCodexFailureEvidence(
+  stderr: string,
+  stdout: string,
+  exitCode: number | null,
+): string {
+  const finalOutput = sanitizeWorkerEvidence(boundedTail(stdout.trim(), 1_700), 1_700);
+  const diagnostic = sanitizeWorkerEvidence(boundedTail(stderr.trim(), 2_000), 2_000);
+  const sections = [`Codex exited with code ${exitCode ?? "unknown"}.`];
+  if (finalOutput) sections.push(`Final worker output:\n${finalOutput}`);
+  if (diagnostic) sections.push(`Diagnostic tail:\n${diagnostic}`);
+  if (!finalOutput && !diagnostic) sections.push("No process output was reported.");
+  return sanitizeWorkerEvidence(sections.join("\n\n"), MAX_ERROR);
 }
 
 export function buildSelfWorkerRegistry(adapters: SelfWorkerAdapter[]): SelfWorkerRegistry {
@@ -214,8 +301,8 @@ export function buildCodexSelfWorker(config: {
       if (typeof pid === "number") config.pidfiles.add(input.runId, pid);
       let stdout = "";
       let stderr = "";
-      child.stdout?.on("data", (chunk: Buffer) => { stdout = (stdout + chunk.toString()).slice(0, MAX_SUMMARY); });
-      child.stderr?.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(0, MAX_ERROR); });
+      child.stdout?.on("data", (chunk: Buffer) => { stdout = boundedTail(stdout + chunk.toString(), MAX_SUMMARY); });
+      child.stderr?.on("data", (chunk: Buffer) => { stderr = boundedTail(stderr + chunk.toString(), MAX_SUMMARY); });
 
       return await new Promise<SelfWorkerRunResult>((resolve) => {
         let settled = false;
@@ -246,7 +333,7 @@ export function buildCodexSelfWorker(config: {
         child.on("error", (error) => finish({ ok: false, code: "launch_failed", output: sanitizeWorkerEvidence(error.message, MAX_ERROR) }));
         child.on("close", (code) => {
           if (code !== 0) {
-            finish({ ok: false, code: "worker_failed", output: sanitizeWorkerEvidence(stderr.trim() || stdout.trim() || `Codex exited ${code ?? "unknown"}`, MAX_ERROR) });
+            finish({ ok: false, code: "worker_failed", output: formatCodexFailureEvidence(stderr, stdout, code) });
             return;
           }
           finish({ ok: true, output: sanitizeWorkerEvidence(stdout.trim()) });

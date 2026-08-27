@@ -1,7 +1,7 @@
 import "./net-tuning.js"; // MUST be first: happy-eyeballs for IPv6-only/NAT64 networks
 import express from "express";
 import { fileURLToPath } from "node:url";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
@@ -65,7 +65,7 @@ import { bootstrapMemoryDir } from "./memory/bootstrap.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
 import { loadSelfKnowledge } from "./self/identity.js";
-import { addWorktree, removeWorktree, pruneOrphanWorktrees } from "./self/worktree.js";
+import { addWorktree, commitWorktreeChanges, removeWorktree, pruneOrphanWorktrees } from "./self/worktree.js";
 import { headSha, swapTo, revertTo } from "./self/swap.js";
 import { assertSwapSafe } from "./self/safety-guard.js";
 import { verify } from "./self/verify.js";
@@ -445,20 +445,7 @@ function buildImproverDeps(): ImproverDeps {
       return { ok: v.ok, log: v.log + fcLine };   // v.ok UNCHANGED — flightcheck NEVER gates the swap
     },
     headSha: () => headSha(cfg.repoRoot),
-    commitWorktree: (cwd, msg) => {
-      execFileSync("git", ["add", "-A"], { cwd });
-      // A no-op implement (the worker reported success but changed nothing) leaves
-      // an empty index — surface that plainly instead of a cryptic git failure.
-      const staged = execFileSync("git", ["status", "--porcelain"], { cwd }).toString().trim();
-      if (!staged) throw new Error("implement produced no changes — the worker reported success but edited nothing");
-      try {
-        execFileSync("git", ["commit", "-m", msg], { cwd, stdio: ["ignore", "pipe", "pipe"] });
-      } catch (e) {
-        const stderr = (e as { stderr?: Buffer }).stderr?.toString().trim();
-        throw new Error(`git commit failed: ${stderr || (e instanceof Error ? e.message : String(e))}`);
-      }
-      return execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
-    },
+    commitWorktree: commitWorktreeChanges,
     swapTo: (sha, lastKnownGood) => {
       // HARD GUARD: never hot-swap a change that touches safety-critical code
       // (security/policy/auth, self-improve machinery, approval flow, path

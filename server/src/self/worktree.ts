@@ -5,7 +5,8 @@ import {
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 
-export type Worktree = { path: string; branch: string };
+export type Worktree = { path: string; branch: string; baseSha?: string };
+export type BasedWorktree = Worktree & { baseSha: string };
 
 // A fresh `git worktree add` checks out source but NOT node_modules (gitignored),
 // so verify's `npm test` can't resolve vitest/etc. We junction the repo's existing
@@ -25,10 +26,11 @@ function nodeModulesRels(repoRoot: string): string[] {
   return rels;
 }
 
-export function addWorktree(repoRoot: string, id: string): Worktree {
+export function addWorktree(repoRoot: string, id: string): BasedWorktree {
   const path = mkdtempSync(join(tmpdir(), "ava-imp-"));
   const branch = `self/${id}`;
-  execFileSync("git", ["worktree", "add", "-B", branch, path], { cwd: repoRoot });
+  const baseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).toString().trim();
+  execFileSync("git", ["worktree", "add", "-B", branch, path, baseSha], { cwd: repoRoot });
   for (const rel of nodeModulesRels(repoRoot)) {
     const target = join(repoRoot, rel);
     const link = join(path, rel);
@@ -38,7 +40,32 @@ export function addWorktree(repoRoot: string, id: string): Worktree {
     if (!existsSync(dirname(link))) continue;
     try { symlinkSync(target, link, "junction"); } catch { /* leave it to verify */ }
   }
-  return { path, branch };
+  return { path, branch, baseSha };
+}
+
+/**
+ * Finalize a verified candidate. Coding workers may leave ordinary edits or
+ * create their own scoped commits (Codex repository instructions require the
+ * latter). A clean worktree is therefore a no-op only when HEAD is still the
+ * exact commit from which the worktree was created.
+ */
+export function commitWorktreeChanges(cwd: string, msg: string, baseSha: string): string {
+  execFileSync("git", ["add", "-A"], { cwd });
+  const dirty = execFileSync("git", ["status", "--porcelain"], { cwd }).toString().trim();
+  const before = execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
+  if (!dirty) {
+    if (before === baseSha) {
+      throw new Error("implement produced no changes — the worker reported success but edited nothing");
+    }
+    return before;
+  }
+  try {
+    execFileSync("git", ["commit", "-m", msg], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+  } catch (error) {
+    const stderr = (error as { stderr?: Buffer }).stderr?.toString().trim();
+    throw new Error(`git commit failed: ${stderr || (error instanceof Error ? error.message : String(error))}`);
+  }
+  return execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
 }
 
 /** Branches currently checked out by a live worktree (refs/heads/<short>). */

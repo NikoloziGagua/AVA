@@ -10,7 +10,7 @@ import { createIntent, getIntent } from "../src/self/intents.js";
 import { runImprovement, type ImproverDeps } from "../src/self/improver.js";
 import { reflect } from "../src/self/reflect.js";
 import { loadSelfKnowledge } from "../src/self/identity.js";
-import { addWorktree, removeWorktree } from "../src/self/worktree.js";
+import { addWorktree, commitWorktreeChanges, removeWorktree } from "../src/self/worktree.js";
 import { headSha, swapTo, revertTo } from "../src/self/swap.js";
 import { SAFETY_RE, assertSwapSafe } from "../src/self/safety-guard.js";
 import { verify } from "../src/self/verify.js";
@@ -22,6 +22,7 @@ import { getClaudeSession, markClaudeSessionStarted } from "../src/self/claude-s
 import { suggestImprovement } from "../src/self/suggest.js";
 import { appendChangelog } from "../src/self/changelog.js";
 import { recordMistake, listOpenMistakes, mistakeToGoal, resolveMistake } from "../src/self/friction.js";
+import { buildClaudeSelfWorker, buildCodexSelfWorker, buildSelfWorkerRegistry } from "../src/self/workers.js";
 
 // Ava's overnight autonomous self-improvement loop. Ava suggests its own ideas
 // via its persistent Claude chat, then runs the gated pipeline (reflect ->
@@ -58,6 +59,10 @@ const selfClaudeCode = buildClaudeCode({
   pidfiles: noopPidfiles,
   check: (p) => (p.startsWith(tmpdir()) ? { ok: true } : { ok: false, reason: "self-improve cwd must be a worktree" }),
 });
+const selfWorkers = buildSelfWorkerRegistry([
+  buildClaudeSelfWorker({ claude: selfClaudeCode }),
+  buildCodexSelfWorker({ pidfiles: noopPidfiles }),
+]);
 // Advisor worker (self-suggest): runs in the stable repo dir so the persistent
 // session resumes correctly.
 const advisor = buildClaudeCode({
@@ -73,19 +78,11 @@ const deps: ImproverDeps = {
       : Promise.resolve("CHANGE: (no provider)"),
   addWorktree: (id) => addWorktree(cfg.repoRoot, id),
   removeWorktree: (wt) => removeWorktree(cfg.repoRoot, wt),
-  implement: async (brief, cwd, signal) => {
-    const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12), signal });
-    return r.ok ? { ok: true, output: r.output } : { ok: false, output: r.reason };
-  },
+  implement: (workerProvider, brief, cwd, signal) =>
+    selfWorkers.run(workerProvider, { brief, cwd, runId: `self-${nanoid(12)}`, signal }),
   verify: (cwd, signal) => verify({ cwd, run: selfRunner, bootSmoke, signal }),
   headSha: () => headSha(cfg.repoRoot),
-  commitWorktree: (cwd, msg) => {
-    execFileSync("git", ["add", "-A"], { cwd });
-    const staged = execFileSync("git", ["status", "--porcelain"], { cwd }).toString().trim();
-    if (!staged) throw new Error("implement produced no changes");
-    execFileSync("git", ["commit", "-m", msg], { cwd, stdio: ["ignore", "pipe", "pipe"] });
-    return execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
-  },
+  commitWorktree: commitWorktreeChanges,
   swapTo: (sha, lastKnownGood) => {
     // HARD GUARD: never ship a change that touches safety-critical code.
     // Diff the candidate against last-known-good (shared guard, single source).

@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildClaudeSelfWorker,
   buildCodexSelfWorker,
+  buildSelfWorkerExecutionPrompt,
   buildSelfWorkerRegistry,
   codexSelfWorkerArgs,
+  formatCodexFailureEvidence,
   sanitizeWorkerEvidence,
   type SelfWorkerAdapter,
 } from "./workers.js";
@@ -66,6 +68,51 @@ describe("provider-neutral self worker registry", () => {
     const redacted = sanitizeWorkerEvidence("authorization: Bearer abcdefghijklmnopqrstuvwxyz");
     expect(redacted).not.toContain("abcdefghijklmnopqrstuvwxyz");
     expect(redacted).toContain("***");
+  });
+
+  it("turns an approved proposal into an implementation-phase prompt without reopening its gate", () => {
+    const result = buildSelfWorkerExecutionPrompt({
+      intentId: "intent-1",
+      approvedGoal: "build receipts",
+      approvedPlan: "Before any code edit, submit this proposal and pause for Sir's approval. Then implement receipts.",
+      authorization: "explicit_user_approval",
+    });
+    expect(result.scopeSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.prompt).toContain("IMPLEMENTATION PHASE");
+    expect(result.prompt).toContain("explicitly approved this proposal");
+    expect(result.prompt).toContain("already satisfied for this run");
+    expect(result.prompt).toContain("APPROVED GOAL (immutable scope)");
+    expect(result.prompt).toContain("implement receipts");
+    expect(result.prompt).toContain("you may do so inside this worktree");
+    expect(result.prompt.length).toBeLessThan(32_000);
+  });
+
+  it("sanitizes the immutable scope before hashing or sending it to a worker", () => {
+    const first = buildSelfWorkerExecutionPrompt({
+      intentId: "intent-secret",
+      approvedGoal: "use authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+      approvedPlan: "implement safely",
+      authorization: "owner_configured_unattended_policy",
+    });
+    const second = buildSelfWorkerExecutionPrompt({
+      intentId: "intent-secret",
+      approvedGoal: "use authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+      approvedPlan: "implement safely",
+      authorization: "owner_configured_unattended_policy",
+    });
+    expect(first.prompt).not.toContain("abcdefghijklmnopqrstuvwxyz");
+    expect(first.prompt).toContain("***");
+    expect(first.scopeSha256).toBe(second.scopeSha256);
+  });
+
+  it("keeps the real Codex failure tail and final output instead of a leading banner", () => {
+    const stderr = `OpenAI Codex banner\n${"echoed approved prompt ".repeat(300)}\nERROR: repository write was denied`;
+    const output = formatCodexFailureEvidence(stderr, "I stopped because the worktree was unavailable.", 1);
+    expect(output).toContain("Codex exited with code 1");
+    expect(output).toContain("I stopped because the worktree was unavailable");
+    expect(output).toContain("ERROR: repository write was denied");
+    expect(output).not.toContain("OpenAI Codex banner");
+    expect(output.length).toBeLessThanOrEqual(4_000);
   });
 
   it("normalizes a non-zero Claude Code exit as a worker failure", async () => {

@@ -49,6 +49,30 @@ describe("runImprovement", () => {
     expect(ds).toContain("edited index.ts");
   });
 
+  it("hands the worker an approved execution envelope while preserving the original plan evidence", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "build the approved feature" });
+    let workerPrompt = "";
+    const { deps: gd, parked } = gatedDeps({
+      reflect: async () => "Before any code edit, submit this proposal and pause. Then edit feature.ts.",
+      implement: async (_provider: string, prompt: string) => {
+        workerPrompt = prompt;
+        return { ok: true, output: "edited feature.ts" };
+      },
+    });
+    const run = runImprovement(d, id, gd);
+    await parked;
+    expect(approveImprovement(id, worker("codex", 7))).toBe(true);
+    await run;
+
+    expect(workerPrompt).toContain("IMPLEMENTATION PHASE");
+    expect(workerPrompt).toContain("already satisfied for this run");
+    expect(workerPrompt).toContain("APPROVED GOAL (immutable scope)");
+    expect(workerPrompt).toContain("edit feature.ts");
+    expect(getIntent(d, id)!.diff_summary).toMatch(/APPROVED SCOPE SHA-256: [a-f0-9]{64}/);
+    expect(getIntent(d, id)!.diff_summary).toContain("Before any code edit");
+  });
+
   it("dispatches the snapshotted Codex provider through the identical verification gate", async () => {
     const d = db();
     const id = createIntent(d, {

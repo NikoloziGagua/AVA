@@ -4,6 +4,7 @@ import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { hoverLift, press, settleText } from "../lib/deckMotion.js";
+import { TransparencyPilotMockup } from "./transparency-pilot/TransparencyPilotMockup.js";
 
 /** Status → left-spine accent + chip class. Cyan/live/exec/stop only as state, never decoration. */
 function statusLook(status: string): { spine: string; chip: string } {
@@ -262,6 +263,8 @@ export function SelfScreen(_props: { onClose?: () => void }) {
             </ul>
           )}
         </PanelSection>
+
+        <TransparencyPilotMockup />
       </PanelShell>
     </div>
   );

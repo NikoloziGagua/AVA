@@ -182,6 +182,27 @@ NEEDS: codex
 
 ---
 
+### 2026-08-27 - codex - measurement-first transparency pilot design claim
+
+Self intent `qMeOE8g9aH7L` arrived through the already-approved implementation
+envelope with scope digest
+`9358a434f1831ef0c41ac1ed2a2e6628c3f4df633f35f53e36b88a0d1715f3ea`.
+I am claiming the bounded AVA-only design slice: the frozen six-task experiment
+specification, typed structured-record contract, synthetic mock records, and
+three connected read-only Self-screen views with deterministic validation and
+UI coverage.
+
+This phase will create no benchmark or baseline data, execute no experimental
+run, modify or swap no workflow, and provide no adoption control. All displayed
+results will be visibly synthetic. The later baseline, controlled-change,
+comparison, and adoption stages remain documented only behind separate approval.
+External projects named in the approved scope remain references only. Forge is
+outside scope and will not be inspected, modified, imported, or integrated.
+
+NEEDS: codex
+
+---
+
 ### 2026-08-27 - codex - Self worker execution-contract repair completion
 
 Commit `e08cd3e` (`fix(self): execute approved Codex plans reliably`) repairs
@@ -2567,3 +2588,63 @@ watchdog, rollback, cancellation, and privacy gates remain unchanged. Forge is
 outside scope and will not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-08-27 - codex - transparency pilot claim physical-tail confirmation
+
+The complete measurement-first transparency-pilot design claim was accidentally
+appended after an older matching `NEEDS: codex` marker at line 185. It remains
+untouched because this board is append-only. This physical-tail entry confirms
+the active bounded claim for Self intent `qMeOE8g9aH7L`: specification, typed
+structured synthetic records, and three connected read-only record-backed mock
+views only. No benchmark, baseline, workflow modification/swap, adoption action,
+external-project integration, or Forge inspection is in scope.
+
+NEEDS: codex
+
+---
+
+### 2026-08-27 - codex - measurement-first transparency pilot design completed
+
+Self intent `qMeOE8g9aH7L` is implemented within its approved design-only
+boundary. `docs/transparency-pilot/experiment-spec.md` freezes exactly T01-T06,
+their prompts/input packets/evidence obligations/rationales, the 6 x 2 x 2 = 24
+run matrix, randomized blinded five-dimension review, all automatic measurements,
+the structured audit/provenance contract, provisional adoption/rollback rules,
+all seven undecided design questions, and the later separately gated course.
+
+`web/src/self/transparency-pilot/` adds the typed contract and validator, exactly
+24 explicitly synthetic mock records, model/UI tests, and three connected
+read-only projections: `DecisionScorecardView`, `WorkflowComparisonView`, and
+`RunEvidenceView`. `TransparencyPilotMockup` links them by task/run ID and is
+integrated below the existing Self journal in `SelfScreen.tsx`. The executive
+view displays absolute values and all individual-run variation; workflow steps
+are projected from structured agent/tool/decision/output records; drill-down
+shows sources, claims, failures, interventions, uncertainty, timings, approvals,
+and metric derivations. No operational run/adopt/swap control exists.
+
+Verification passed: `npm test` exited 0 (web 89 files / 388 tests; the server
+suite also completed before the web suite); `npx tsc -b web --pretty false`,
+`npm -w web run build`, and `npm -w server run build` passed. The compiled
+validator accepted 24 records / six tasks and its negative tests reject an
+incomplete matrix, configuration drift, broken source links, and broken metric
+provenance. A jsdom smoke crossed decision -> exact run evidence -> workflow
+provenance. An isolated built-server/PWA smoke used a temporary data directory,
+blank provider credentials, and port 8897: health returned `ok=true`, `/` returned
+200, and the served production bundle contained the transparency-pilot,
+synthetic-data, executive-view, and no-adoption labels. `ready=false` was expected
+because both provider credentials were deliberately blank. Temporary artifacts
+were removed; `git diff --check` passed aside from normal CRLF notices.
+
+No benchmark was executed, no baseline captured, no workflow changed or swapped,
+no measured-improvement claim made, and no external reference project was
+integrated. Forge was neither entered, inspected, modified, imported, nor
+included. A scoped commit could not be created: this isolated worker has read-only
+access to the parent repository worktree metadata, and `git add` failed creating
+`.git/worktrees/ava-imp-GUFQs7/index.lock` with `Permission denied`. All complete
+source changes remain in this isolated worktree for AVA's downstream verifier.
+
+NEEDS: niko (review the design mock-up and unresolved decisions; the enclosing
+Self pipeline must preserve/commit the verified isolated diff because this worker
+cannot write the worktree index)

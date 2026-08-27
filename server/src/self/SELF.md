@@ -34,6 +34,7 @@ Monorepo (npm workspaces).
 - Secrets are scrubbed at the memory store layer and in logs (`security/scrub.ts`).
 
 ## Self-improvement workers
-- New improvement intents snapshot the versioned Self-screen choice: `claude` or `codex`.
+- Explicit improvement intents lock the versioned Self-screen choice (`claude`
+  or `codex`) when their plan is approved; unattended intents snapshot it at intake.
 - Both workers edit only an isolated git worktree and enter the identical approval, verify, safety, swap, watchdog, and rollback gates.
 - Missing or unauthenticated CLIs fail closed; there is no silent provider fallback.

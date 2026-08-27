@@ -9,9 +9,18 @@ It does not change the approval, verification, or release policy.
 - `self_worker_settings` stores one versioned global selection. Writes to
   `POST /api/self/worker` include `expectedVersion`; a stale write returns
   `409 stale_version` with current state.
-- Every new `self_improvements` row snapshots `worker_provider` and
-  `worker_selection_version`. Switching the global choice never changes queued,
-  awaiting-approval, running, or historical intents.
+- Every new `self_improvements` row records the selection visible at intake.
+  For an explicit, approval-gated request, **Approve & run** atomically locks the
+  then-current `worker_provider` and `worker_selection_version` before AVA creates
+  a worktree or launches a provider. This lets Niko choose Codex while AVA is
+  still drafting the plan and see exactly what approval will launch. Once an
+  intent leaves `awaiting_approval`, switching the global choice never changes
+  that running or historical intent. Scheduled ungated intents keep their
+  intake-time snapshot.
+- Approval sends `expectedWorkerVersion`. A stale display returns `409
+  stale_version`; AVA refreshes and requires another explicit approval. The
+  server also rechecks availability and the selection version after the async
+  probe, so a concurrent change cannot silently launch a different worker.
 - `GET /api/self` returns the selection and both CLI availability records.
   `installed` means the executable answered `--version`. Configuration is
   reported as `not_checked` because an availability probe does not spend a model
@@ -52,6 +61,7 @@ worker that actually owned the edit.
   records that provider-specific failure and does not fall back.
 - Availability is cached for 30 seconds to keep the four-second Self-screen poll
   inexpensive.
-- The selector controls new implementation intents only. Reflection still uses
-  AVA's configured orchestration model, and the approval/release gates remain
+- The selector controls implementation. Reflection still uses AVA's configured
+  orchestration model. For explicit requests the choice locks on approval; for
+  unattended requests it locks at intake. All downstream gates remain
   provider-independent.

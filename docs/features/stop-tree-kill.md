@@ -10,7 +10,7 @@ Earlier, Stop aborted the model read-loop and signalled in-flight tools, but onl
 
 ## How Sir interacts
 
-Sir presses the Stop button in the UI, which hits `POST /api/chat/:sessionId/kill`. Nothing else changes — but now the kill reaches the whole subtree. Best-effort: a dead or already-exited PID never fails the request.
+Sir presses the red Stop button in chat, which hits `POST /api/chat/:sessionId/kill-all`; voice interruption uses the session-only `/kill` sibling. Both routes reach the active session's whole process subtree. Best-effort: a dead or already-exited PID never fails the request.
 
 ## How it works
 

@@ -1,6 +1,11 @@
 import type { Db } from "../state/db.js";
-import { getIntent, updateIntent, type Intent } from "./intents.js";
-import type { SelfWorkerProvider } from "./worker-selection.js";
+import {
+  getIntent,
+  updateIntent,
+  type ImprovementCancellationSource,
+  type Intent,
+} from "./intents.js";
+import type { SelfWorkerProvider, SelfWorkerSelection } from "./worker-selection.js";
 import { sanitizeWorkerEvidence } from "./workers.js";
 
 export type ImproverDeps = {
@@ -52,9 +57,13 @@ const pending: string[] = []; // intents waiting their turn (FIFO), drained on c
 // Stop). A pending (not-yet-running) improvement has no controller — it's cancelled
 // by removing it from `pending`.
 const controllers = new Map<string, AbortController>();
+const cancellationSources = new Map<string, ImprovementCancellationSource>();
 // Resolver per improvement currently parked at awaiting_approval. approve/reject (or
 // a cancel via the abort signal) settles the promise the run is blocked on.
-const planDecisions = new Map<string, (approved: boolean) => void>();
+type PlanDecision =
+  | { approved: true; worker: SelfWorkerSelection }
+  | { approved: false };
+const planDecisions = new Map<string, (decision: PlanDecision) => void>();
 
 /** True if any self-improvement is running or queued. */
 export function hasActiveImprovement(): boolean {
@@ -63,10 +72,10 @@ export function hasActiveImprovement(): boolean {
 
 /** Approve a plan parked at awaiting_approval → the run proceeds to implement.
  *  Returns true if an improvement was actually waiting for this id. */
-export function approveImprovement(id: string): boolean {
+export function approveImprovement(id: string, worker: SelfWorkerSelection): boolean {
   const decide = planDecisions.get(id);
   if (!decide) return false;
-  decide(true);
+  decide({ approved: true, worker });
   return true;
 }
 
@@ -74,20 +83,39 @@ export function approveImprovement(id: string): boolean {
 export function rejectImprovement(id: string): boolean {
   const decide = planDecisions.get(id);
   if (!decide) return false;
-  decide(false);
+  decide({ approved: false });
   return true;
+}
+
+function cancellationText(source: ImprovementCancellationSource): string {
+  if (source === "self_stop") return "cancelled from Self";
+  if (source === "global_stop") return "cancelled by global Stop";
+  return "cancelled by the system";
 }
 
 /** Cancel one self-improvement by id — whether it's the running one (abort its
  *  signal, which propagates into reflect/implement/verify) or a queued one (drop
  *  it from the FIFO). Returns true if something was cancelled. */
-export function cancelImprovement(db: Db, id: string): boolean {
+export function cancelImprovement(
+  db: Db,
+  id: string,
+  source: ImprovementCancellationSource = "self_stop",
+): boolean {
   const ac = controllers.get(id);
-  if (ac) { try { ac.abort(); } catch { /* */ } return true; }
+  if (ac) {
+    cancellationSources.set(id, source);
+    try { ac.abort(); } catch { /* */ }
+    return true;
+  }
   const i = pending.indexOf(id);
   if (i >= 0) {
     pending.splice(i, 1);
-    updateIntent(db, id, { status: "failed", outcome: "cancelled", error: "cancelled before it started" });
+    updateIntent(db, id, {
+      status: "failed",
+      outcome: "cancelled",
+      cancellation_source: source,
+      error: `${cancellationText(source)} before it started`,
+    });
     return true;
   }
   return false;
@@ -95,12 +123,24 @@ export function cancelImprovement(db: Db, id: string): boolean {
 
 /** Cancel EVERY running and queued self-improvement (the global Stop — what the red
  *  button reaches for). Returns how many were cancelled. */
-export function cancelAllImprovements(db: Db): number {
+export function cancelAllImprovements(
+  db: Db,
+  source: ImprovementCancellationSource = "global_stop",
+): number {
   let n = 0;
-  for (const ac of controllers.values()) { try { ac.abort(); } catch { /* */ } n++; }
+  for (const [id, ac] of controllers) {
+    cancellationSources.set(id, source);
+    try { ac.abort(); } catch { /* */ }
+    n++;
+  }
   while (pending.length) {
     const id = pending.shift()!;
-    updateIntent(db, id, { status: "failed", outcome: "cancelled", error: "cancelled" });
+    updateIntent(db, id, {
+      status: "failed",
+      outcome: "cancelled",
+      cancellation_source: source,
+      error: cancellationText(source),
+    });
     n++;
   }
   return n;
@@ -120,7 +160,7 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
   controllers.set(id, ac);
   const signal = ac.signal;
   const throwIfAborted = () => { if (signal.aborted) throw new Error("cancelled"); };
-  const intent = getIntent(db, id)!;
+  let intent = getIntent(db, id)!;
   let wt: { path: string; branch: string } | null = null;
   try {
     throwIfAborted();
@@ -136,22 +176,32 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
       updateIntent(db, id, { status: "awaiting_approval", diff_summary: `PLAN:\n${safePlan}`.slice(0, 4000) });
       deps.emit({ intentId: id, step: "awaiting_approval", provider: intent.worker_provider });
       deps.onAwaitingApproval?.(id, safePlan);
-      const approved = await new Promise<boolean>((resolve) => {
+      const decision = await new Promise<PlanDecision>((resolve) => {
         planDecisions.set(id, resolve);
         // A cancel (abort) while parked counts as "do not proceed".
-        signal.addEventListener("abort", () => resolve(false), { once: true });
+        signal.addEventListener("abort", () => resolve({ approved: false }), { once: true });
       });
       planDecisions.delete(id);
-      if (!approved) {
+      if (!decision.approved) {
         const cancelled = signal.aborted;
+        const cancellationSource = cancellationSources.get(id) ?? "system_abort";
         updateIntent(db, id, {
           status: "failed",
           outcome: cancelled ? "cancelled" : "rejected",
-          error: cancelled ? "cancelled by user" : "plan rejected by user",
+          cancellation_source: cancelled ? cancellationSource : null,
+          error: cancelled ? cancellationText(cancellationSource) : "plan rejected by user",
         });
         deps.emit({ intentId: id, step: cancelled ? "cancelled" : "rejected", ok: false });
         return; // no worktree created yet; finally just frees the slot
       }
+      // Approval is the authoritative worker lock. The user can change the
+      // selector while AVA drafts the plan; the exact approved provider/version
+      // is persisted before any worktree or provider process exists.
+      updateIntent(db, id, {
+        worker_provider: decision.worker.provider,
+        worker_selection_version: decision.worker.version,
+      });
+      intent = getIntent(db, id)!;
     }
 
     updateIntent(db, id, { status: "implementing" }); deps.emit({ intentId: id, step: "implementing", provider: intent.worker_provider });
@@ -186,7 +236,13 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     // A cancel surfaces here (either the throwIfAborted, or a worker/subprocess that
     // was killed by the signal). Record it as cancelled, not a failure.
     if (signal.aborted) {
-      updateIntent(db, id, { status: "failed", outcome: "cancelled", error: "cancelled by user" });
+      const cancellationSource = cancellationSources.get(id) ?? "system_abort";
+      updateIntent(db, id, {
+        status: "failed",
+        outcome: "cancelled",
+        cancellation_source: cancellationSource,
+        error: cancellationText(cancellationSource),
+      });
       deps.emit({ intentId: id, step: "cancelled", ok: false });
     } else {
       updateIntent(db, id, { status: "failed", error: msg });
@@ -195,6 +251,7 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     }
   } finally {
     controllers.delete(id);
+    cancellationSources.delete(id);
     if (wt) deps.removeWorktree(wt);
     inFlight = false;
     // Hand the slot to the next waiting intent, if any.

@@ -312,7 +312,8 @@ CREATE TABLE IF NOT EXISTS self_improvements (
   outcome TEXT,
   error TEXT,
   worker_provider TEXT NOT NULL DEFAULT 'claude',
-  worker_selection_version INTEGER NOT NULL DEFAULT 1
+  worker_selection_version INTEGER NOT NULL DEFAULT 1,
+  cancellation_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS self_worker_settings (

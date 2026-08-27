@@ -17,6 +17,9 @@ const WorkerBody = z.object({
   provider: z.enum(SELF_WORKER_PROVIDERS),
   expectedVersion: z.number().int().positive(),
 });
+const ApproveBody = z.object({
+  expectedWorkerVersion: z.number().int().positive().optional(),
+});
 
 export type SelfRouteDeps = {
   startImprovement: (id: string) => void;
@@ -24,7 +27,7 @@ export type SelfRouteDeps = {
   /** Cancel a running/queued self-improvement. Returns true if one was cancelled. */
   cancel: (id: string) => boolean;
   /** Approve a plan parked at awaiting_approval → it proceeds to implement. */
-  approve: (id: string) => boolean;
+  approve: (id: string, worker: ReturnType<typeof getSelfWorkerSelection>) => boolean;
   /** Reject a plan parked at awaiting_approval → it stops without writing code. */
   reject: (id: string) => boolean;
   workers: SelfWorkerRegistry;
@@ -93,11 +96,47 @@ export function selfRoutes(db: Db, auth: RequestHandler, deps: SelfRouteDeps): R
     const cancelled = deps.cancel(id);
     res.json({ ok: true, cancelled });
   });
-  r.post("/:id/approve", auth, (req, res) => {
+  r.post("/:id/approve", auth, async (req, res) => {
     const id = req.params.id;
     if (typeof id !== "string") { res.status(400).json({ error: "bad_request" }); return; }
-    const approved = deps.approve(id);
-    res.json({ ok: true, approved });
+    const parsed = ApproveBody.safeParse(req.body ?? {});
+    if (!parsed.success) { res.status(400).json({ error: "bad_request" }); return; }
+    const intent = getIntent(db, id);
+    if (!intent) { res.status(404).json({ error: "not_found" }); return; }
+    if (intent.status !== "awaiting_approval") {
+      res.status(409).json({ error: "not_awaiting_approval", status: intent.status });
+      return;
+    }
+    const selected = getSelfWorkerSelection(db);
+    if (
+      parsed.data.expectedWorkerVersion !== undefined &&
+      parsed.data.expectedWorkerVersion !== selected.version
+    ) {
+      res.status(409).json({ error: "stale_version", worker: selected });
+      return;
+    }
+    const availability = await deps.workers.availability(selected.provider);
+    if (!availability.available) {
+      res.status(409).json({
+        error: "worker_unavailable",
+        provider: selected.provider,
+        reason: availability.reason,
+      });
+      return;
+    }
+    // Availability probing is asynchronous. Re-read the version before locking
+    // the plan so a concurrent selector write cannot alter what was approved.
+    const current = getSelfWorkerSelection(db);
+    if (current.version !== selected.version || current.provider !== selected.provider) {
+      res.status(409).json({ error: "stale_version", worker: current });
+      return;
+    }
+    const approved = deps.approve(id, current);
+    if (!approved) {
+      res.status(409).json({ error: "approval_not_ready" });
+      return;
+    }
+    res.json({ ok: true, approved, worker: current });
   });
   r.post("/:id/reject", auth, (req, res) => {
     const id = req.params.id;

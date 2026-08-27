@@ -649,7 +649,7 @@ app.use("/api/self", selfRoutes(db, requireToken(db), {
   startImprovement,
   revert: (id) => { const row = getIntent(db, id); if (row?.last_known_good) revertTo(cfg.repoRoot, row.last_known_good); },
   cancel: (id) => cancelImprovement(db, id),
-  approve: (id) => approveImprovement(id),
+  approve: (id, worker) => approveImprovement(id, worker),
   reject: (id) => rejectImprovement(id),
   workers: selfWorkers,
 }));

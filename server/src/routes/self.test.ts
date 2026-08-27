@@ -113,11 +113,39 @@ describe("/api/self", () => {
     expect(res.body).toEqual({ ok: true, cancelled: true });
   });
 
-  it("POST /:id/approve calls approve", async () => {
-    const { app, approve } = setup();
-    const res = await request(app).post("/api/self/some-id/approve").expect(200);
-    expect(approve).toHaveBeenCalledWith("some-id");
-    expect(res.body).toEqual({ ok: true, approved: true });
+  it("POST /:id/approve locks the current worker, including a post-intake Codex switch", async () => {
+    const { app, approve, db } = setup();
+    const id = createIntent(db, { trigger: "explicit", goal: "g" });
+    updateIntent(db, id, { status: "awaiting_approval" });
+    await request(app).post("/api/self/worker")
+      .send({ provider: "codex", expectedVersion: 1 }).expect(200);
+    const res = await request(app).post(`/api/self/${id}/approve`)
+      .send({ expectedWorkerVersion: 2 }).expect(200);
+    expect(approve).toHaveBeenCalledWith(id, expect.objectContaining({ provider: "codex", version: 2 }));
+    expect(res.body).toMatchObject({ ok: true, approved: true, worker: { provider: "codex", version: 2 } });
+  });
+
+  it("POST /:id/approve rejects a stale displayed worker version", async () => {
+    const { app, approve, db } = setup();
+    const id = createIntent(db, { trigger: "explicit", goal: "g" });
+    updateIntent(db, id, { status: "awaiting_approval" });
+    await request(app).post("/api/self/worker")
+      .send({ provider: "codex", expectedVersion: 1 }).expect(200);
+    const res = await request(app).post(`/api/self/${id}/approve`)
+      .send({ expectedWorkerVersion: 1 }).expect(409);
+    expect(res.body).toMatchObject({ error: "stale_version", worker: { provider: "codex", version: 2 } });
+    expect(approve).not.toHaveBeenCalled();
+  });
+
+  it("POST /:id/approve fails closed if the selected worker is unavailable", async () => {
+    const { app, approve, db } = setup({ codexAvailable: false });
+    const id = createIntent(db, { trigger: "explicit", goal: "g" });
+    updateIntent(db, id, { status: "awaiting_approval" });
+    setSelfWorkerSelection(db, "codex", 1);
+    const res = await request(app).post(`/api/self/${id}/approve`)
+      .send({ expectedWorkerVersion: 2 }).expect(409);
+    expect(res.body).toMatchObject({ error: "worker_unavailable", provider: "codex" });
+    expect(approve).not.toHaveBeenCalled();
   });
 
   it("POST /:id/reject calls reject", async () => {

@@ -9,6 +9,8 @@ export type Intent = {
   /** While awaiting_approval this holds the drafted plan (prefixed "PLAN:"). */
   diff_summary?: string | null;
   worker_provider?: "claude" | "codex";
+  error?: string | null;
+  cancellation_source?: "self_stop" | "global_stop" | "system_abort" | null;
 };
 
 export type WorkerOption = {
@@ -112,8 +114,41 @@ export function useSelfJournal() {
   // Cancel a running/queued self-improvement (the Stop for self-dev). The server
   // aborts the worker + verify subprocess; refresh reflects the cancelled state.
   const cancel = useCallback((id: string) => act(id, "cancel"), [act]);
-  // Approve / reject a plan parked at awaiting_approval.
-  const approve = useCallback((id: string) => act(id, "approve"), [act]);
+  // Approval locks the currently displayed worker/version. If another client
+  // changes the selector first, the server refuses the stale approval instead
+  // of silently running a different provider.
+  const approve = useCallback(async (id: string) => {
+    const selected = worker;
+    if (!selected) {
+      setWorkerError("AVA has not loaded the implementation worker yet.");
+      return;
+    }
+    setWorkerError(null);
+    try {
+      const response = await fetch(`/api/self/${id}/approve`, {
+        method: "POST",
+        headers: jsonAuthHeaders(),
+        body: JSON.stringify({ expectedWorkerVersion: selected.version }),
+      });
+      const body = await response.json().catch(() => ({})) as {
+        error?: string;
+        reason?: string;
+      };
+      if (!response.ok) {
+        if (body.error === "stale_version") {
+          setWorkerError("The worker choice changed elsewhere. Review it and approve again.");
+        } else if (body.error === "worker_unavailable") {
+          setWorkerError(body.reason ?? "The selected worker is unavailable.");
+        } else {
+          setWorkerError("AVA could not approve this plan. Refresh and try again.");
+        }
+      }
+    } catch {
+      setWorkerError("Couldn't approve the plan. Check AVA's connection and try again.");
+    }
+    await refresh();
+  }, [refresh, worker]);
+  // Reject does not need a worker lock because no provider is launched.
   const reject = useCallback((id: string) => act(id, "reject"), [act]);
 
   // Ask Ava to start a self-improvement from a user-written goal. Unlike the journal

@@ -430,7 +430,7 @@ sequenceDiagram
 
 ### Step-by-step
 
-1. **You press Stop.** The UI `POST`s `/api/chat/:sessionId/kill` (`routes/chat.ts:494-516`).
+1. **You press the red global Stop.** The chat UI `POST`s `/api/chat/:sessionId/kill-all`; voice barge-in uses the session-only `/kill` sibling.
 2. **Grab the `runId` *before* unregistering** (`:501`). Order matters — once the slot is freed, the registry can't tell you which PIDs belonged to it.
 3. **Abort the run** (`:504`): `runs.abort(sessionId)` fires the run's `AbortController`. This reaches **two** places at once:
    - **The model read-loop** — the provider's stream sees `signal.aborted` and ends; the next turn-top check in `runAgent` (`agent.ts:152` / `:182-187`) emits `killed` and breaks.

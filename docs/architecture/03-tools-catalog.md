@@ -135,7 +135,7 @@ Several tools spawn OS processes (`shell` → `powershell.exe`; `control_app` �
 
 ### How Stop reaches running work
 
-When the user presses Stop, `POST /api/chat/:sessionId/kill` (`chat.ts:494–516`) does three things in order:
+When the user presses the red global Stop, `POST /api/chat/:sessionId/kill-all` does three things in order. Voice barge-in calls the session-only `/kill` sibling, which deliberately omits detached self-development cancellation:
 
 1. **Abort the model loop** (`runs.abort` → `AbortController.abort()`), which also fires the `signal` inside any in-flight tool.
 2. **Tree-kill the run's PID subtree**: `for (pid of pidfiles.listForRun(runId)) killTree(pid)` — so `claude_code`'s `claude -p` child, `shell`'s `powershell.exe` subtree, and `control_app`'s PowerShell subtree all die, not just the next model turn.
@@ -432,7 +432,7 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 
 **Purpose.** `self_improve` queues an autonomous change to **Ava's own codebase**; `self_improve_status` reports where each such task is.
 
-**`self_improve`** `{ goal }` → `deps.queue(goal)` returns an intent id; tool replies `queued self-improvement <id>: <goal>`. The heavy lifting happens out-of-band: the queued intent snapshots the Self screen's **Claude Code or Codex** selection, waits for explicit plan approval, runs that worker in an isolated git worktree, verifies (tests + build + boot-smoke), and hot-swaps — auto-reverted if it fails verification or breaks at boot. Both adapters enter the identical downstream gates, and an unavailable selected worker fails closed without fallback.
+**`self_improve`** `{ goal }` → `deps.queue(goal)` returns an intent id; tool replies `queued self-improvement <id>: <goal>`. The heavy lifting happens out-of-band: an explicit intent waits for plan approval and locks the Self screen's current **Claude Code or Codex** selection at that approval boundary, runs that worker in an isolated git worktree, verifies (tests + build + boot-smoke), and hot-swaps — auto-reverted if it fails verification or breaks at boot. Both adapters enter the identical downstream gates, and an unavailable or stale selected worker fails closed without fallback.
 
 **`self_improve_status`** `{ id? }` → list of tasks (id, status, goal) or, with an id, full detail (what it changed, commit sha, failure reason). States: `queued → reflecting → implementing → verifying → swapped (=shipped/live) → failed | rolled_back`. Concurrent requests queue and run one at a time.
 

@@ -6,6 +6,7 @@ export type IntentTrigger = "explicit" | "failure" | "friction" | "schedule";
 export type IntentStatus =
   | "queued" | "reflecting" | "awaiting_approval" | "implementing" | "verifying"
   | "swapped" | "failed" | "rolled_back";
+export type ImprovementCancellationSource = "self_stop" | "global_stop" | "system_abort";
 
 export type Intent = {
   id: string; created_at: number; trigger: IntentTrigger; goal: string;
@@ -13,6 +14,7 @@ export type Intent = {
   last_known_good: string | null; diff_summary: string | null;
   verify_log: string | null; outcome: string | null; error: string | null;
   worker_provider: SelfWorkerProvider; worker_selection_version: number;
+  cancellation_source: ImprovementCancellationSource | null;
 };
 
 export function createIntent(

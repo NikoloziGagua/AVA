@@ -995,7 +995,7 @@ export function chatRoutes(
     req.on("close", () => clearInterval(interval));
   });
 
-  r.post("/:sessionId/kill", auth, async (req, res) => {
+  const stopSession = (includeSelfImprovements: boolean): RequestHandler => async (req, res) => {
     const sessionId = req.params.sessionId;
     if (typeof sessionId !== "string") {
       res.status(400).json({ error: "bad_request" });
@@ -1025,12 +1025,18 @@ export function chatRoutes(
       }
     }
     runs.unregister(sessionId); // free the slot immediately so a new turn can start (preempt)
-    // 3. Stop ALSO halts any background self-improvement — a self-improvement isn't
-    //    a session run (it runs detached in a worktree), so without this the red
-    //    button couldn't reach a runaway self-edit. Cancel them all here.
-    const cancelledImprovements = cancelAllImprovements(db);
+    // 3. The deliberate global Stop also halts detached self-development. A
+    //    session-only interrupt (including voice barge-in) leaves it alone.
+    const cancelledImprovements = includeSelfImprovements
+      ? cancelAllImprovements(db, "global_stop")
+      : 0;
     res.json({ aborted: ok, cancelledImprovements });
-  });
+  };
+
+  // Voice barge-in/new-turn cancellation is session-scoped. The explicit red
+  // Stop uses kill-all so it can still halt detached self-development.
+  r.post("/:sessionId/kill", auth, stopSession(false));
+  r.post("/:sessionId/kill-all", auth, stopSession(true));
 
   return r;
 }

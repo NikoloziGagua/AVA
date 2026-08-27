@@ -671,7 +671,7 @@ doing X"):
    `outcome="cancelled"`. (The overnight/`schedule` path skips this step.)
 4. **Worktree.** `status=implementing`. A temp worktree on branch `self/<id>` is
    created and `node_modules` junctioned in.
-5. **Implement.** The intent's snapshotted **Claude Code or Codex worker** edits
+5. **Implement.** The intent's approval-locked **Claude Code or Codex worker** edits
    that worktree through the provider-neutral adapter boundary. Claude uses
    non-interactive print mode with `acceptEdits`; Codex uses non-interactive
    `codex exec` with `workspace-write` and receives the brief on stdin. Brief +
@@ -700,7 +700,7 @@ doing X"):
 
 > **Stopping at any point.** During reflect/awaiting_approval/implement/verify
 > (steps 3–6), pressing **Stop** — the per-intent Stop button (`/cancel`) or the
-> red global Stop button (`/kill` → `cancelAllImprovements`) — aborts the run: the
+> red global Stop button (`/kill-all` → `cancelAllImprovements`) — aborts the run: the
 > reflect LLM call is cancelled, the Claude worker and the verify subprocess are
 > tree-killed, and the intent ends `status="failed"`, `outcome="cancelled"`. A
 > *queued* (not-yet-running) improvement is simply dropped from `pending` and
@@ -725,7 +725,7 @@ These are real, current limitations — documented because precise > flattering.
      worker editing code — **can** be interrupted; the verify subprocess is
      tree-killed on abort (`verify-runner.ts:43`); and `reflect` forwards the signal
      to `provider.stream` instead of a throwaway (`reflect.ts:21`).
-   - The red Stop button reaches it: `POST /api/chat/:sessionId/kill` now calls
+   - The red Stop button reaches it: `POST /api/chat/:sessionId/kill-all` calls
      `cancelAllImprovements(db)` (`routes/chat.ts:519`), aborting every running
      improvement and clearing the queue. There is also a per-intent cancel route
      `POST /api/self/:id/cancel` (`routes/self.ts:29-34`) wired to

@@ -128,7 +128,9 @@ export const api = {
       body: JSON.stringify({ sessionId, text, voice: opts?.voice, visualContext: opts?.visualContext }),
     }),
   kill: (sessionId: string) =>
-    request<{ aborted: boolean }>(`/api/chat/${sessionId}/kill`, { method: "POST" }),
+    request<{ aborted: boolean; cancelledImprovements: number }>(`/api/chat/${sessionId}/kill`, { method: "POST" }),
+  killAll: (sessionId: string) =>
+    request<{ aborted: boolean; cancelledImprovements: number }>(`/api/chat/${sessionId}/kill-all`, { method: "POST" }),
   deleteSession: (sessionId: string) =>
     request<void>(`/api/sessions/${sessionId}`, { method: "DELETE" }),
   setSessionPinned: (sessionId: string, pinned: boolean) =>

@@ -388,7 +388,7 @@ export function ChatScreen({
 
   async function kill() {
     if (!sessionId) return;
-    await api.kill(sessionId);
+    await api.killAll(sessionId);
   }
 
   return (

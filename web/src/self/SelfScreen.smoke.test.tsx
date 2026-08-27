@@ -26,6 +26,7 @@ vi.mock("./useSelfJournal.js", () => ({
       { id: "i1", goal: "be faster", status: "swapped", outcome: "shipped", worker_provider: "claude" },
       { id: "i2", goal: "in progress thing", status: "implementing" },
       { id: "i3", goal: "gated thing", status: "awaiting_approval", diff_summary: "PLAN:\nCHANGE: edit foo.ts" },
+      { id: "i4", goal: "stopped thing", status: "failed", outcome: "cancelled", error: "cancelled by global Stop", cancellation_source: "global_stop" },
     ],
     paused: hooked.paused,
     setPaused: hooked.setPaused,
@@ -78,8 +79,15 @@ describe("SelfScreen", () => {
   it("shows the plan and Approve/Reject on an awaiting_approval improvement", () => {
     render(<SelfScreen onClose={() => {}} />);
     expect(screen.getByText(/CHANGE: edit foo\.ts/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /approve & run/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /approve & run with claude code/i })).toBeTruthy();
+    expect(screen.getByText(/will lock claude code on approval/i)).toBeTruthy();
+    expect(screen.getByText(/locks when you approve/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /reject/i })).toBeTruthy();
+  });
+
+  it("shows the real cancellation source in the journal", () => {
+    render(<SelfScreen onClose={() => {}} />);
+    expect(screen.getByText("cancelled by global Stop")).toBeTruthy();
   });
 
   it("renders the improvement initiator and calls improve on submit, clearing the input", async () => {

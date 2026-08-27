@@ -107,7 +107,7 @@ export function SelfScreen(_props: { onClose?: () => void }) {
           <div className="mt-4 rounded-xl border border-white/[0.08] bg-black/20 p-3">
             <div className="mb-2 flex items-center justify-between gap-3">
               <span className="hud text-[10px] tracking-[0.18em] text-white/55">IMPLEMENTATION WORKER</span>
-              {worker && <span className="text-[10px] text-white/35">new requests only</span>}
+              {worker && <span className="text-[10px] text-white/35">locks when you approve</span>}
             </div>
             {worker ? (
               <div role="radiogroup" aria-label="Self-improvement implementation worker" className="grid grid-cols-2 gap-2">
@@ -254,6 +254,9 @@ export function SelfScreen(_props: { onClose?: () => void }) {
                   cancel={cancel}
                   approve={approve}
                   reject={reject}
+                  approvalWorker={worker}
+                  approvalWorkerReady={selectedWorkerReady}
+                  selectingWorker={selectingWorker}
                 />
               ))}
             </ul>
@@ -289,6 +292,9 @@ function JournalEntry({
   cancel,
   approve,
   reject,
+  approvalWorker,
+  approvalWorkerReady,
+  selectingWorker,
 }: {
   intent: Intent;
   reduced: boolean;
@@ -299,9 +305,16 @@ function JournalEntry({
   cancel: (id: string) => void;
   approve: (id: string) => void;
   reject: (id: string) => void;
+  approvalWorker: ReturnType<typeof useSelfJournal>["worker"];
+  approvalWorkerReady: boolean;
+  selectingWorker: boolean;
 }) {
   const running = isRunningStatus(i.status);
   const look = statusLook(i.status);
+  const displayedWorker = i.status === "awaiting_approval"
+    ? approvalWorker?.provider ?? i.worker_provider
+    : i.worker_provider;
+  const workerLabel = displayedWorker === "claude" ? "Claude Code" : "Codex";
 
   return (
     <li
@@ -340,12 +353,18 @@ function JournalEntry({
         {i.outcome ? (
           <span className="hud text-[10px] tracking-[0.16em] text-white/40">· {i.outcome}</span>
         ) : null}
-        {i.worker_provider ? (
+        {displayedWorker ? (
           <span className="hud text-[9px] uppercase tracking-[0.14em] text-white/35">
-            · {i.worker_provider === "claude" ? "Claude Code" : "Codex"}
+            · {i.status === "awaiting_approval" ? `will lock ${workerLabel} on approval` : workerLabel}
           </span>
         ) : null}
       </div>
+
+      {i.status === "failed" && i.error ? (
+        <div role="status" className="mt-2 text-[11px] leading-relaxed text-[var(--ac-stop)]">
+          {i.error}
+        </div>
+      ) : null}
 
       {i.status === "awaiting_approval" && (
         <div className="lg-slab lg-rim-mercury mt-3 rounded-xl px-4 py-3">
@@ -368,12 +387,13 @@ function JournalEntry({
           <div className="mt-3 flex gap-2">
             <button
               onClick={() => approve(i.id)}
+              disabled={!approvalWorker || !approvalWorkerReady || selectingWorker}
               onPointerDown={onDown}
               onPointerUp={onUp}
               onPointerLeave={onUp}
-              className="btn-deck btn-primary"
+              className="btn-deck btn-primary disabled:cursor-not-allowed disabled:opacity-45"
             >
-              Approve & run
+              {approvalWorker ? `Approve & run with ${workerLabel}` : "Loading worker…"}
             </button>
             <button
               onClick={() => reject(i.id)}

@@ -28,7 +28,7 @@ vi.mock("../api.js", () => {
     denyApproval: () => Promise.resolve(),
     api: {
       sendMessage: (...a: unknown[]) => sendMessage(...a),
-      kill: (...a: unknown[]) => kill(...a),
+      killAll: (...a: unknown[]) => kill(...a),
     },
   };
 });

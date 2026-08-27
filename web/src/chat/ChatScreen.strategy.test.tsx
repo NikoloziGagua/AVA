@@ -14,7 +14,7 @@ vi.mock("../api.js", () => ({
   ApiError: class ApiError extends Error {
     status = 500;
   },
-  api: { sendMessage: mocks.sendMessage, kill: mocks.kill },
+  api: { sendMessage: mocks.sendMessage, killAll: mocks.kill },
   fetchSession: mocks.fetchSession,
 }));
 vi.mock("./useChatStream.js", () => ({ useChatStream: () => ({ events: mocks.events }) }));

@@ -16,6 +16,9 @@ const deps = (over: Partial<any> = {}) => ({
 });
 
 describe("runImprovement", () => {
+  const worker = (provider: "claude" | "codex", version = 1) => ({
+    provider, version, updatedAt: Date.now(),
+  });
   it("happy path: verified change is swapped and marked swapped", async () => {
     const d = db();
     const id = createIntent(d, { trigger: "explicit", goal: "g" });
@@ -131,6 +134,8 @@ describe("runImprovement", () => {
     expect(swapped).toBe(false);
     expect(getIntent(d, id)!.status).toBe("failed");
     expect(getIntent(d, id)!.outcome).toBe("cancelled");
+    expect(getIntent(d, id)!.cancellation_source).toBe("self_stop");
+    expect(getIntent(d, id)!.error).toBe("cancelled from Self");
   });
 
   it("cancelAllImprovements stops the running one (the red-button path)", async () => {
@@ -142,6 +147,8 @@ describe("runImprovement", () => {
     expect(cancelAllImprovements(d)).toBe(1);
     await run;
     expect(getIntent(d, id)!.outcome).toBe("cancelled");
+    expect(getIntent(d, id)!.cancellation_source).toBe("global_stop");
+    expect(getIntent(d, id)!.error).toBe("cancelled by global Stop");
   });
 
   it("cancelImprovement on an unknown id returns false", () => {
@@ -178,10 +185,32 @@ describe("runImprovement", () => {
     expect(getIntent(d, id)!.status).toBe("awaiting_approval");
     expect(getIntent(d, id)!.diff_summary).toContain("PLAN");
     expect(wasImplemented()).toBe(false); // nothing written before approval
-    expect(approveImprovement(id)).toBe(true);
+    expect(approveImprovement(id, worker("claude"))).toBe(true);
     await run;
     expect(wasImplemented()).toBe(true);
     expect(getIntent(d, id)!.status).toBe("swapped");
+  });
+
+  it("locks the current Codex selection at approval even when the intent began with Claude", async () => {
+    const d = db();
+    const id = createIntent(d, { trigger: "explicit", goal: "g", worker: worker("claude", 3) });
+    const seen: string[] = [];
+    const { deps: gd, parked } = gatedDeps({
+      implement: async (provider: string) => {
+        seen.push(provider);
+        return { ok: true, output: "changed" };
+      },
+    });
+    const run = runImprovement(d, id, gd);
+    await parked;
+    expect(approveImprovement(id, worker("codex", 4))).toBe(true);
+    await run;
+    expect(seen).toEqual(["codex"]);
+    expect(getIntent(d, id)).toMatchObject({
+      worker_provider: "codex",
+      worker_selection_version: 4,
+      status: "swapped",
+    });
   });
 
   it("reject stops a gated improvement before any code is written", async () => {
@@ -217,7 +246,7 @@ describe("runImprovement", () => {
   });
 
   it("approve/reject on an id that isn't waiting returns false", () => {
-    expect(approveImprovement("nope")).toBe(false);
+    expect(approveImprovement("nope", worker("codex", 2))).toBe(false);
     expect(rejectImprovement("nope")).toBe(false);
   });
 });

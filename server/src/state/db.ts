@@ -16,10 +16,11 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "sessions", "deleted_at", "INTEGER");
   tryAddColumn(db, "sessions", "pinned", "INTEGER NOT NULL DEFAULT 0");
   tryAddColumn(db, "messages", "metadata", "TEXT NOT NULL DEFAULT '{}'");
-  // Self worker selector: existing intents remain pinned to the historical
-  // Claude worker. New intents snapshot the versioned global selection.
+  // Self worker selector: new intents record the selection visible at intake;
+  // approval-gated intents lock the then-current selection when approved.
   tryAddColumn(db, "self_improvements", "worker_provider", "TEXT NOT NULL DEFAULT 'claude'");
   tryAddColumn(db, "self_improvements", "worker_selection_version", "INTEGER NOT NULL DEFAULT 1");
+  tryAddColumn(db, "self_improvements", "cancellation_source", "TEXT");
   db.prepare(`
     INSERT OR IGNORE INTO self_worker_settings (scope_id, provider, version, updated_at)
     VALUES ('global', 'claude', 1, ?)

@@ -134,4 +134,29 @@ describe("provider-neutral self worker registry", () => {
     const result = await worker.run({ brief: "x", cwd: process.cwd(), runId: "r", timeoutMs: 10_000 });
     expect(result).toMatchObject({ ok: false, code: "worker_failed" });
   });
+
+  it("honors a configured timeout longer than the former fifteen-minute ceiling", async () => {
+    const claude = { run: vi.fn(async (input: { timeoutMs?: number }) => ({
+      ok: false as const,
+      reason: `timed out after ${input.timeoutMs}ms`,
+    })) };
+    const worker = buildClaudeSelfWorker({
+      binary: process.execPath,
+      claude,
+      timeoutMs: 45 * 60_000,
+    });
+    await worker.run({ brief: "x", cwd: ".", runId: "r" });
+    expect(claude.run).toHaveBeenCalledWith(expect.objectContaining({
+      timeoutMs: 45 * 60_000,
+    }));
+  });
+
+  it("allows a per-run timeout override while retaining a two-hour safety cap", async () => {
+    const claude = { run: vi.fn(async () => ({ ok: false as const, reason: "fixture" })) };
+    const worker = buildClaudeSelfWorker({ claude, binary: process.execPath });
+    await worker.run({ brief: "x", cwd: ".", runId: "r", timeoutMs: 3 * 60 * 60_000 });
+    expect(claude.run).toHaveBeenCalledWith(expect.objectContaining({
+      timeoutMs: 120 * 60_000,
+    }));
+  });
 });

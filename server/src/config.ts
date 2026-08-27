@@ -26,6 +26,8 @@ export type Config = {
   dbPath: string;
   logLevel: "debug" | "info" | "warn" | "error";
   pairingTtlMs: number;
+  /** Hard upper bound for one approved Claude Code/Codex implementation run. */
+  selfWorkerTimeoutMs: number;
   chromeProfileDir: string;
   chromeExecutablePath: string | null;
   chromeCdpUrl: string | null;
@@ -73,6 +75,16 @@ function parsePairingTtlMs(raw: string | undefined): number {
   return seconds * 1000;
 }
 
+export function parseSelfWorkerTimeoutMs(raw: string | undefined): number {
+  const minutes = Number(raw ?? 60);
+  if (!Number.isFinite(minutes) || minutes < 1 || minutes > 120) {
+    throw new Error(
+      `invalid SELF_WORKER_TIMEOUT_MINUTES: ${raw} (expected a number from 1 to 120)`,
+    );
+  }
+  return Math.round(minutes * 60_000);
+}
+
 function resolveFromServer(raw: string): string {
   return isAbsolute(raw) ? resolve(raw) : resolve(serverDir, raw);
 }
@@ -111,6 +123,7 @@ export function loadConfig(): Config {
     dbPath: join(dataDir, "state.db"),
     logLevel: parseLogLevel(process.env.LOG_LEVEL),
     pairingTtlMs: parsePairingTtlMs(process.env.AUTH_PAIRING_TTL_SECONDS),
+    selfWorkerTimeoutMs: parseSelfWorkerTimeoutMs(process.env.SELF_WORKER_TIMEOUT_MINUTES),
     chromeProfileDir,
     chromeExecutablePath: process.env.CHROME_EXECUTABLE_PATH
       ? resolveFromServer(process.env.CHROME_EXECUTABLE_PATH)

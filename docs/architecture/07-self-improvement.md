@@ -678,6 +678,10 @@ doing X"):
    sanitized bounded worker evidence are saved to `diff_summary`. A missing CLI,
    login/provider failure, no-op, or worker error fails the intent here without
    silently falling back.
+   The worker has a configurable hard execution budget
+   (`SELF_WORKER_TIMEOUT_MINUTES`, default 60, range 1-120). A timeout tree-kills
+   the worker, records sanitized terminal evidence, and cannot advance to
+   verification. Stop remains independently immediate.
 6. **Verify.** `status=verifying`. `npm test` → `web build` → `server build` →
    boot-smoke, each capped at 10 min and tree-killed **on timeout or a Stop**.
    Output saved to `verify_log`. (flightcheck also runs, report-only, appended to

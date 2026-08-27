@@ -8,7 +8,9 @@ import type { SelfWorkerProvider } from "./worker-selection.js";
 
 const MAX_SUMMARY = 16_384;
 const MAX_ERROR = 4_000;
-const DEFAULT_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_TIMEOUT_MS = 60 * 60_000;
+const MIN_TIMEOUT_MS = 5_000;
+const MAX_TIMEOUT_MS = 120 * 60_000;
 
 export type SelfWorkerExecutionContext = {
   intentId: string;
@@ -239,8 +241,10 @@ function codexWorkerEnv(parent: NodeJS.ProcessEnv = process.env): NodeJS.Process
 export function buildClaudeSelfWorker(config: {
   claude: ClaudeCode;
   binary?: string;
+  timeoutMs?: number;
 }): SelfWorkerAdapter {
   const binary = config.binary ?? process.env.CLAUDE_BINARY ?? "claude";
+  const defaultTimeoutMs = boundedWorkerTimeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const probe = cachedAvailability(async () => availability("claude", "Claude Code", await probeCli(binary, claudeWorkerEnv())));
   return {
     provider: "claude",
@@ -253,7 +257,7 @@ export function buildClaudeSelfWorker(config: {
         cwd: input.cwd,
         runId: input.runId,
         signal: input.signal,
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        timeoutMs: boundedWorkerTimeout(input.timeoutMs ?? defaultTimeoutMs),
       });
       if (!result.ok) {
         const reason = sanitizeWorkerEvidence(result.reason, MAX_ERROR);
@@ -276,8 +280,10 @@ export function codexSelfWorkerArgs(): string[] {
 export function buildCodexSelfWorker(config: {
   pidfiles: PidfileRegistry;
   binary?: string;
+  timeoutMs?: number;
 }): SelfWorkerAdapter {
   const binary = config.binary ?? process.env.CODEX_BINARY ?? "codex";
+  const defaultTimeoutMs = boundedWorkerTimeout(config.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const env = codexWorkerEnv();
   const probe = cachedAvailability(async () => availability("codex", "Codex", await probeCli(binary, env)));
   return {
@@ -307,7 +313,7 @@ export function buildCodexSelfWorker(config: {
       return await new Promise<SelfWorkerRunResult>((resolve) => {
         let settled = false;
         let killTimer: NodeJS.Timeout | null = null;
-        const timeoutMs = Math.max(5_000, Math.min(DEFAULT_TIMEOUT_MS, input.timeoutMs ?? DEFAULT_TIMEOUT_MS));
+        const timeoutMs = boundedWorkerTimeout(input.timeoutMs ?? defaultTimeoutMs);
         const finish = (result: SelfWorkerRunResult) => {
           if (settled) return;
           settled = true;
@@ -327,7 +333,15 @@ export function buildCodexSelfWorker(config: {
         input.signal?.addEventListener("abort", onAbort, { once: true });
         const timer = setTimeout(() => {
           stop();
-          finish({ ok: false, code: "timeout", output: `Codex timed out after ${Math.round(timeoutMs / 1000)}s` });
+          const evidence = formatCodexFailureEvidence(stderr, stdout, null);
+          finish({
+            ok: false,
+            code: "timeout",
+            output: sanitizeWorkerEvidence(
+              `Codex timed out after ${Math.round(timeoutMs / 1000)}s.\n\n${evidence}`,
+              MAX_ERROR,
+            ),
+          });
         }, timeoutMs);
         timer.unref?.();
         child.on("error", (error) => finish({ ok: false, code: "launch_failed", output: sanitizeWorkerEvidence(error.message, MAX_ERROR) }));
@@ -343,4 +357,9 @@ export function buildCodexSelfWorker(config: {
       }).finally(() => { try { child.stdin?.destroy(); } catch { /* closed */ } });
     },
   };
+}
+
+function boundedWorkerTimeout(timeoutMs: number): number {
+  if (!Number.isFinite(timeoutMs)) return DEFAULT_TIMEOUT_MS;
+  return Math.max(MIN_TIMEOUT_MS, Math.min(MAX_TIMEOUT_MS, Math.round(timeoutMs)));
 }

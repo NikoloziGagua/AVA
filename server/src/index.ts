@@ -407,8 +407,8 @@ const selfClaudeCode = buildClaudeCode({
   check: (p) => p.startsWith(tmpdir()) ? { ok: true } : { ok: false, reason: "self-improve cwd must be a worktree" },
 });
 const selfWorkers = buildSelfWorkerRegistry([
-  buildClaudeSelfWorker({ claude: selfClaudeCode }),
-  buildCodexSelfWorker({ pidfiles }),
+  buildClaudeSelfWorker({ claude: selfClaudeCode, timeoutMs: cfg.selfWorkerTimeoutMs }),
+  buildCodexSelfWorker({ pidfiles, timeoutMs: cfg.selfWorkerTimeoutMs }),
 ]);
 const selfRunner = buildRunner();
 

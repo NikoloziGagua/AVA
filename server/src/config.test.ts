@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.js";
+import { loadConfig, parseSelfWorkerTimeoutMs } from "./config.js";
 
 const originalCwd = process.cwd();
 const ENV_KEYS = [
@@ -14,6 +14,7 @@ const ENV_KEYS = [
   "CHROME_EXECUTABLE_PATH",
   "CHROME_CDP_URL",
   "AVA_REPO_ROOT",
+  "SELF_WORKER_TIMEOUT_MINUTES",
 ] as const;
 const originalEnv = Object.fromEntries(
   ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -61,5 +62,21 @@ describe("loadConfig path stability", () => {
 
     expect(cfg.dataDir).toBe(join(serverRoot, "data"));
     expect(cfg.memoryDir).toBe(join(serverRoot, "relative-memory"));
+  });
+
+  it("uses a bounded one-hour Self worker budget by default", () => {
+    clearPathEnv();
+    expect(loadConfig().selfWorkerTimeoutMs).toBe(60 * 60_000);
+  });
+});
+
+describe("Self worker execution budget", () => {
+  it("accepts a bounded configurable minute value", () => {
+    expect(parseSelfWorkerTimeoutMs("25")).toBe(25 * 60_000);
+    expect(parseSelfWorkerTimeoutMs("1.5")).toBe(90_000);
+  });
+
+  it.each(["0", "121", "not-a-number"])("rejects unsafe value %s", (value) => {
+    expect(() => parseSelfWorkerTimeoutMs(value)).toThrow(/SELF_WORKER_TIMEOUT_MINUTES/);
   });
 });

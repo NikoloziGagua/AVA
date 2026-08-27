@@ -60,8 +60,8 @@ const selfClaudeCode = buildClaudeCode({
   check: (p) => (p.startsWith(tmpdir()) ? { ok: true } : { ok: false, reason: "self-improve cwd must be a worktree" }),
 });
 const selfWorkers = buildSelfWorkerRegistry([
-  buildClaudeSelfWorker({ claude: selfClaudeCode }),
-  buildCodexSelfWorker({ pidfiles: noopPidfiles }),
+  buildClaudeSelfWorker({ claude: selfClaudeCode, timeoutMs: cfg.selfWorkerTimeoutMs }),
+  buildCodexSelfWorker({ pidfiles: noopPidfiles, timeoutMs: cfg.selfWorkerTimeoutMs }),
 ]);
 // Advisor worker (self-suggest): runs in the stable repo dir so the persistent
 // session resumes correctly.

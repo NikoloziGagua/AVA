@@ -47,6 +47,14 @@ brief on stdin so it is absent from the process command line. Both use the
 owner's saved CLI login; repository API-key overrides are removed from the child
 environment.
 
+An approved implementation has a bounded execution budget configured by
+`SELF_WORKER_TIMEOUT_MINUTES` (default 60, accepted range 1-120). This replaces
+the former fixed 15-minute ceiling, which terminated valid substantial Codex
+work before it could return. The budget does not weaken Stop: an explicit
+per-intent or global cancellation still aborts and tree-kills the worker
+immediately. A genuine timeout is recorded as a timeout, with only scrubbed,
+bounded terminal evidence retained.
+
 ### Approved scope becomes an implementation envelope
 
 The reflected plan describes the whole Self lifecycle, so it may itself say
@@ -93,6 +101,9 @@ bounded summary is persisted.
   records that provider-specific failure and does not fall back.
 - Availability is cached for 30 seconds to keep the four-second Self-screen poll
   inexpensive.
+- Implementation time remains bounded. Work exceeding the configured budget
+  fails without verification or swap; AVA never treats the timeout as a user
+  cancellation or a successful outcome.
 - The selector controls implementation. Reflection still uses AVA's configured
   orchestration model. For explicit requests the choice locks on approval; for
   unattended requests it locks at intake. All downstream gates remain

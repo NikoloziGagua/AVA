@@ -2763,3 +2763,33 @@ research document were preserved. Forge was neither inspected nor modified.
 NEEDS: niko (restart/reload AVA, type a distinctive brief, tap the microphone in
 that same chat and ask AVA to repeat it, then return to keyboard and confirm the
 voice turn appears in the same conversation)
+
+---
+
+### 2026-08-27 - codex - UFO Self run swap-failure diagnosis
+
+Read-only diagnosis of Self intent `-Nb9YsN1KWjQ`: this was not a Codex worker,
+timeout, verification, test, build, or boot failure. The Codex worker completed
+candidate commit `9d7fcb6`; AVA entered verification at 23:03:39 BST, recorded
+`all checks + boot smoke passed`, and its report-only flight check passed at
+23:05:18.418. At 23:05:18.927 the final live-tree swap alone failed because
+`swapTo` correctly detected concurrent uncommitted tracked work.
+
+The blocking status snapshot names Niko's existing
+`.claude/settings.local.json`, the append-only board, and Codex's then-active
+chat/voice continuity files. Those continuity changes were committed afterward
+as `2688f15` plus coordination commit `299dd3d`; they were intentionally not
+discarded. The Self safety guard uses `git status --porcelain
+--untracked-files=no` and refuses `reset --hard` whenever tracked edits exist,
+then the current generic catch classifies that swap refusal as `failed`.
+
+The verified UFO candidate still exists as Git object `9d7fcb6` and contains
+the proposal document, board evidence, and refreshed Explorer manifest, but it
+was never applied to `master`. Current `master` has subsequently advanced, so
+that historical candidate now also requires a controlled rebase/recovery rather
+than a direct reset. No code was changed in this diagnostic turn. Forge was not
+inspected or modified.
+
+NEEDS: niko (decide whether Codex should recover the verified UFO proposal and
+change Self's dirty-tree collision from terminal failure into a resumable
+blocked state)

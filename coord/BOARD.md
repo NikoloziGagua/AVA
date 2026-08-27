@@ -46,6 +46,7 @@ scheduler and pokes whoever is up.
 | Watcher-to-Codex task delivery | codex | claimed; must prove delivery into this exact session before Notes resumes | 2026-08-04 |
 | Playbook verified-learning gate | codex | claimed; replacing final-reply wins with evidence-aware learning outcomes | 2026-08-15 |
 | Self-improvement worker selector | codex | active; provider-neutral Claude Code/Codex selector behind existing approval and release gates | 2026-08-15 |
+| Microsoft UFO design-only evaluation | codex | complete in isolated Self worktree; design-only proposal and evidence audit | 2026-08-27 |
 
 ---
 
@@ -2813,3 +2814,71 @@ cancellation, privacy, and evidence gates. Recovery of historical UFO candidate
 `9d7fcb6` is in scope only through this proven safe path. Forge is outside scope.
 
 NEEDS: codex (implement, test, commit, and prove the recovery boundary)
+
+---
+
+### 2026-08-27 - codex - Microsoft UFO design-only evaluation claim
+
+Self intent `-Nb9YsN1KWjQ` arrived through the already-approved implementation
+envelope with scope digest
+`aab588082709b78ea5aa6f31185c778e3be3837ac9a0012145d5f85188150020`.
+I am claiming only `docs/self/proposals/microsoft-ufo-evaluation.md`: a
+read-only, canonical-source assessment against the latest Strategy Room UFO
+brief. The superseded 10-15-repository research phase is excluded.
+
+This run will not install, execute, import, integrate, benchmark, or grant UFO
+access to AVA or Niko's normal environment. It will not select a fallback. The
+document will make unknown or unmediated consequential-action and outbound-data
+channels blockers, choose exactly one permitted evidence-derived finding, and
+retain Niko's separate approval gates for every later empirical or environment-
+access step.
+
+NEEDS: codex
+
+---
+
+### 2026-08-27 - codex - Microsoft UFO design-only evaluation complete
+
+Self intent `-Nb9YsN1KWjQ` is implemented at
+`docs/self/proposals/microsoft-ufo-evaluation.md` within its approved scope. The
+proposal uses canonical Microsoft UFO and checked-in AVA sources, explicitly
+excludes the superseded 10-15-repository phase, and performs no UFO acquisition,
+installation, execution, import, integration, benchmark, environment access,
+production change, or fallback advancement.
+
+The document maps architecture, Windows/dependency/provider requirements,
+privileges, UI/screenshot/data/network behavior, every identified consequential
+action and outbound channel, logs/retention/residue, supply-chain and security
+health, latency/cost scenarios, and collision with AVA controls. It separates
+verified evidence, assumptions, unresolved blockers, and permanent-rejection
+conditions; specifies disposable-VM through AVA-owned mediation containment,
+frozen allowlists, synthetic-only data, confirmations, receipts, kill/rollback,
+acceptance criteria, adversarial tests, and automatic stops; and retains every
+required Niko gate.
+
+Document verification found 21 registered canonical/local sources, 106 anchored
+evidence references, 13 valid local links, zero dangling source anchors, zero
+broken local links, and exactly one permitted substantive-finding phrase.
+`git diff --check` reported no content errors (only the existing CRLF notice for
+this board). Root `npm test` was attempted unchanged, but no test file loaded:
+Vite/esbuild failed at startup with sandbox `spawn EPERM`. Pointing Vite at the
+same existing esbuild binary copied temporarily inside this worktree produced
+the same piped-child-process denial; the temporary binary and directory were
+removed. This is an execution-policy blocker, not a test assertion failure.
+
+NEEDS: niko and the enclosing Self verifier (review the evidence-derived finding;
+rerun unchanged `npm test` where esbuild service subprocesses are permitted, and
+preserve/commit the scoped isolated diff if this worker cannot write the worktree
+index)
+
+---
+
+### 2026-08-27 - codex - Microsoft UFO evaluation commit handoff
+
+The required scoped commit was attempted after the completion entry. Both
+`git add` and `git commit` were denied because this isolated worker cannot create
+`C:/Users/nikug/ai/AVA/.git/worktrees/ava-imp-0WiVEr/index.lock` (`Permission
+denied`). No index or commit was changed; the complete proposal and append-only
+board updates remain in this isolated worktree for AVA's downstream verifier.
+
+NEEDS: enclosing Self verifier (preserve and commit the scoped isolated diff)

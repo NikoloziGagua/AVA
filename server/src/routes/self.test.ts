@@ -92,6 +92,20 @@ describe("/api/self", () => {
     await request(app).post("/api/self/improve").send({ goal: "" }).expect(400);
   });
 
+  it("preserves a substantial approved goal and rejects input beyond the worker envelope", async () => {
+    const { app, db } = setup();
+    const goal = `authoritative scope\n${"evidence-backed requirement\n".repeat(180)}`;
+    expect(goal.length).toBeGreaterThan(2_000);
+    expect(goal.length).toBeLessThan(8_000);
+
+    const accepted = await request(app).post("/api/self/improve").send({ goal }).expect(200);
+    const stored = db.prepare("SELECT goal FROM self_improvements WHERE id = ?")
+      .get(accepted.body.id) as { goal: string };
+    expect(stored.goal).toBe(goal);
+
+    await request(app).post("/api/self/improve").send({ goal: "x".repeat(8_001) }).expect(400);
+  });
+
   it("POST /:id/revert calls revert when there is a known-good", async () => {
     const { app, db, revert } = setup();
     const id = createIntent(db, { trigger: "explicit", goal: "g" });

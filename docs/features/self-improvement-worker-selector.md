@@ -28,6 +28,9 @@ It does not change the approval, verification, or release policy.
   run starts.
 - Selecting or starting with an unavailable worker fails closed. AVA never
   silently falls back to the other provider.
+- Authenticated Self intake accepts an immutable goal up to 8,000 characters,
+  matching the worker execution envelope. Oversized goals fail explicitly;
+  approved scope is never silently truncated or paraphrased at intake.
 
 ## Identical safety pipeline
 

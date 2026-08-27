@@ -11,7 +11,11 @@ import {
 } from "../self/worker-selection.js";
 import type { SelfWorkerRegistry } from "../self/workers.js";
 
-const Body = z.object({ goal: z.string().min(1).max(2000) });
+// Match the immutable goal budget in buildSelfWorkerExecutionPrompt. The old
+// 2,000-character route cap made substantial approved goals impossible to retry
+// through the Self screen even though chat-created intents already supported
+// them. Reject beyond the worker envelope rather than truncating or paraphrasing.
+const Body = z.object({ goal: z.string().min(1).max(8_000) });
 const PauseBody = z.object({ paused: z.boolean() });
 const WorkerBody = z.object({
   provider: z.enum(SELF_WORKER_PROVIDERS),

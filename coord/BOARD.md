@@ -2708,3 +2708,58 @@ scope and will not be modified. Forge is outside scope.
 
 NEEDS: codex (trace the current session handoff and realtime history high-water,
 implement the smallest shared-context fix, test it, and commit the complete AVA-only change)
+
+---
+
+### 2026-08-27 - codex - canonical chat and voice continuity completed
+
+Commit `2688f15` fixes the reproduced mode-switch continuity defect without
+changing Self. Repository/runtime evidence showed the typed Strategy Room brief
+was stored in canonical session `cLbTVdJLvA19` at 21:44:59, while an older
+OpenAI voice socket for that same session remained alive from 21:32:34 through
+21:46:17 and overlapped a second voice socket opened at 21:45:26. The old socket
+had taken its one-time context snapshot before the brief. The UI also handed the
+microphone App's stale/null route session instead of ChatScreen's canonical
+session, voice teardown was absent on unmount/navigation, and server fallback
+mistook pin order for actual session recency.
+
+The completed vertical fix makes ChatScreen pass its real persisted session ID
+into VoiceScreen, stops capture/playback/socket/action streams whenever voice is
+left or unmounted, resolves fallback by true `updated_at` recency rather than
+pin order, and gives OpenAI Realtime the same durable earlier-conversation
+summary used by typed chat. While an OpenAI voice connection remains open,
+typed user/assistant rows are imported exactly once at ordered pre-utterance
+boundaries using a persisted-message high-water cursor; delegated-action
+completion also refreshes typed rows before the model speaks. Hume now respects
+explicit new-conversation selection and receives the same summary plus recent
+canonical rows on connect. The existing bounded recent-turn seed remains in
+place.
+
+Changed areas: `server/src/routes/voice-realtime.ts` and focused tests;
+`server/src/state/sessions.ts` and recency tests; chat/App/VoiceScreen session
+handoff; realtime-hook teardown and regression coverage; and the three existing
+voice/frontend architecture documents. No file under `server/src/self/` or any
+Self UI/runtime/schema was modified.
+
+Verification: focused server tests passed 2 files / 95 tests; focused web tests
+passed 3 files / 39 tests; the complete web suite passed 89 files / 391 tests;
+the complete server suite passed on clean rerun at 181 files / 1,354 tests. The
+first highly parallel server run exposed three timing-only failures in logger,
+browser-click, and Codex handoff tests; each passed in isolation and the entire
+suite then passed. Server build, web typecheck, production web build, and
+`git diff --check` passed (only normal CRLF notices). The freshly built server
+passed its isolated scratch-data `/api/health` boot smoke (`ok=true`).
+
+Known limitation: OpenAI supports live typed-turn refresh on an already-open
+voice socket. Hume receives the canonical transcript on connection, so the
+normal chat-to-voice switch is continuous, but a typed turn created elsewhere
+while one Hume socket remains continuously open requires reconnect. Raw recent
+history is intentionally bounded (default 12 turns); older context is supplied
+through the durable session summary.
+
+Niko's unrelated `.claude/settings.local.json` edit and untracked persona
+research document were preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (restart/reload AVA, type a distinctive brief, tap the microphone in
+that same chat and ask AVA to repeat it, then return to keyboard and confirm the
+voice turn appears in the same conversation)

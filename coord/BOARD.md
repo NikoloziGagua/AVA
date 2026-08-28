@@ -4178,3 +4178,64 @@ audit honest.
 
 NEEDS: codex (relaunch and live-check improvement indexing first, then implement
 and verify this separate Explorer truth repair)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: live improvement recall and truthful Microsoft UFO Explorer capability
+
+The live-recall defect found after the original improvement-index commit was
+fixed in `d7d9945` (`fix(memory): recall specific committed updates`). A
+specific committed improvement with at least two shared query terms can now
+pass the bounded improvement-only lexical gate at 0.24 while retaining exact
+reachable-source verification, privacy scope, latest-lineage selection and all
+other retrieval gates. The real AVA database now has 469 improvement records
+and 469 active improvement index entries. The newest record is exact commit
+`345ba56daed24dbc51c4fb42ce1151f96b98ffda`, titled `Surface bounded Microsoft
+UFO runtime`; this proves the improvement completed in this entry was itself
+automatically indexed at the next boot rather than manually documented only.
+
+Shipped the separate Explorer repair in `345ba56` (`feat(explorer): surface
+bounded Microsoft UFO runtime`). The existing authenticated capability snapshot
+now includes the non-secret UFO health contract. The runtime Explorer registry
+projects one `ufo` capability, and the detailed Atlas maps all four real tools
+to `desktop.microsoft-ufo`. Its workflow branches between disabled, synthetic
+observe-only, synthetic action with approval, genuine fixed Notepad execution,
+independent UI Automation verification, and fail-closed stop paths. The Atlas
+explicitly says synthetic counter success is not Microsoft UFO success and that
+the genuine integration is one fixed proof rather than general computer use.
+It adds no action UI, mutation route, fallback, or parallel control plane.
+
+Changed areas for the Explorer repair: `server/src/{index.ts,explorer/registry.ts,
+routes/capabilities.ts}` and focused tests; `web/src/{api.ts,capabilities/
+catalog.test.ts,explorer/{registry.ts,registry.test.ts,runtime.ts,runtime.test.ts,
+verified-manifest.json}}`; and
+`docs/features/microsoft-ufo-experiment.md`.
+
+Verification: focused UFO/capability/Explorer coverage passed 40 server tests
+and 33 web tests, followed by the complete server suite (194 files / 1,488
+tests) and complete web suite (91 files / 411 tests). Server build and production
+web/PWA build passed. The final Explorer contract/reality audit reports 34
+capabilities, 70/70 real tools declared, 29/29 routes present, 115 verified
+source references, and zero broken references. `git diff --check` and the
+bounded diff secret scan passed. The committed-HEAD boot smoke returned
+`{"ok":true,"log":"healthy"}`.
+
+AVA was rebuilt and relaunched from the committed product HEAD as PID 21904,
+build ID `5d26cae1-89ac-4439-821a-c3d71d00627f`. The live health projection says
+the experiment is enabled in genuine `ufo` mode, uses
+`local-windows-user-session`, has adapter `microsoft_ufo`, dependency
+`available`, pinned release `v3.0.8` / commit
+`96983c73ed09e884a5f1d7ff8936c953b234b684`, and actions remain
+approval-required. No UFO action or external communication was run for this
+registry-only repair. Niko's unrelated `.claude/settings.local.json` edit and
+untracked persona research document were preserved. Forge was neither
+inspected nor modified.
+
+Known boundary: Explorer reports current health and existing Mission Control
+evidence, but it does not turn this bounded fixture into a general desktop
+agent. A reachable indexed commit proves an immutable shipped-change source;
+runtime health and task evidence remain separate proof of present behaviour.
+
+NEEDS: niko (open Explore, search `Microsoft UFO`, inspect its workflow and
+current health; open Memory -> Index and filter `Improvements` to see shipped
+updates with exact Git provenance)

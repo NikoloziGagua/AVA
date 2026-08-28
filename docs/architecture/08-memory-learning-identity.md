@@ -450,6 +450,15 @@ Realtime and Hume, so provenance records whether the source was typed or spoken.
 Assistant-message keyed claim rows make replay and concurrent delivery
 idempotent without storing another transcript copy.
 
+Meaningfully developed Ideas use immutable checkpoint lineage. The first entry
+starts a thread. A later material decision, conclusion, topic shift, open question,
+next step or substantive revision appends a child with the same thread ID, a parent
+ID, a monotonic sequence and a sanitized change reason. The child carries a
+standalone compact current-state snapshot and an expanding verified source range;
+earlier entries remain unchanged. Parent-version and latest-thread guards prevent
+concurrent completions from forking. A broader later completion may subsume an
+older late result, which is recorded as skipped rather than rewriting history.
+
 The runtime tools are:
 
 - `memory_index_capture` selects a bounded range (maximum 80 messages), sanitizes
@@ -477,9 +486,9 @@ remain authoritative; vectors are replaceable discovery data. See
 [`docs/features/semantic-memory-index.md`](../features/semantic-memory-index.md)
 for the contract, limitations and test procedure.
 
-Automatic capture now covers completed research and the first mature checkpoint
-of a meaningfully developed idea. Linked revisions/topic-change checkpoints and
-automatic retrieval injection remain deferred; explicit capture/search/open/
+Automatic capture now covers completed research, the first mature checkpoint of
+a meaningfully developed Idea and material linked checkpoints as the Idea evolves.
+Automatic retrieval injection remains deferred; explicit capture/search/open/
 forget continue to use the same canonical records and evidence boundary.
 
 ### 2.11 Auto-learning from corrections

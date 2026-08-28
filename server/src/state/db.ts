@@ -20,6 +20,16 @@ export function openDb(path: string): Db {
   // explicit; automatic capture is an additive, inspectable origin.
   tryAddColumn(db, "memory_index_entries", "capture_mode", "TEXT NOT NULL DEFAULT 'explicit'");
   tryAddColumn(db, "memory_index_entries", "capture_reason", "TEXT");
+  // Semantic-memory Phase 3 immutable checkpoint lineage. Existing entries
+  // become one-checkpoint threads; later material refinements append children.
+  tryAddColumn(db, "memory_index_entries", "thread_id", "TEXT");
+  tryAddColumn(db, "memory_index_entries", "parent_entry_id", "TEXT REFERENCES memory_index_entries(id) ON DELETE SET NULL");
+  tryAddColumn(db, "memory_index_entries", "checkpoint_sequence", "INTEGER NOT NULL DEFAULT 1");
+  tryAddColumn(db, "memory_index_entries", "checkpoint_kind", "TEXT NOT NULL DEFAULT 'initial'");
+  tryAddColumn(db, "memory_index_entries", "checkpoint_reason", "TEXT");
+  db.prepare("UPDATE memory_index_entries SET thread_id = id WHERE thread_id IS NULL").run();
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_index_thread_sequence
+    ON memory_index_entries(thread_id, checkpoint_sequence) WHERE thread_id IS NOT NULL`);
   // Self worker selector: new intents record the selection visible at intake;
   // approval-gated intents lock the then-current selection when approved.
   tryAddColumn(db, "self_improvements", "worker_provider", "TEXT NOT NULL DEFAULT 'claude'");

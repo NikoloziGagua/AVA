@@ -147,6 +147,71 @@ describe("semantic memory index", () => {
     expect(count.count).toBe(1);
   });
 
+  it("appends immutable checkpoint lineage and rejects stale parent writes", async () => {
+    const source = conversation();
+    const service = new MemoryIndexService(source.db, null);
+    const initial = await capture(service, source, {
+      captureMode: "automatic",
+      checkpointReason: "The idea reached its first durable shape.",
+    });
+    const decisionUser = appendMessage(source.db, {
+      sessionId: source.session.id,
+      role: "user",
+      content: "Decision: use immutable linked checkpoints.",
+    });
+    const decisionAssistant = appendMessage(source.db, {
+      sessionId: source.session.id,
+      role: "assistant",
+      content: "Each material change appends a child and preserves the prior compact state.",
+    });
+    const decision = await service.capture({
+      sessionId: source.session.id,
+      fromMessageId: source.first.id,
+      throughMessageId: decisionAssistant.id,
+      kind: "idea",
+      title: "Durable memory retrieval",
+      summary: "The current design adds immutable linked checkpoints to source-verified memory retrieval.",
+      parentEntryId: initial.result.entry.id,
+      expectedParentVersion: initial.result.entry.version,
+      checkpointKind: "decision",
+      checkpointReason: "The group chose append-only checkpoint history.",
+      captureMode: "automatic",
+    });
+
+    expect(decision.result).toMatchObject({
+      entry: {
+        threadId: initial.result.entry.id,
+        parentEntryId: initial.result.entry.id,
+        checkpointSequence: 2,
+        checkpointKind: "decision",
+        checkpointReason: "The group chose append-only checkpoint history.",
+      },
+      lineage: { totalCheckpoints: 2, isLatest: true },
+      source: { fromMessageId: source.first.id, throughMessageId: decisionAssistant.id },
+    });
+    expect(service.get(initial.result.entry.id)).toMatchObject({
+      entry: { summary: initial.result.entry.summary, checkpointSequence: 1 },
+      lineage: { totalCheckpoints: 2, isLatest: false },
+    });
+
+    const nextUser = appendMessage(source.db, { sessionId: source.session.id, role: "user", content: "Next step: test stale writes." });
+    const nextAssistant = appendMessage(source.db, { sessionId: source.session.id, role: "assistant", content: "A stale parent must fail closed." });
+    await expect(service.capture({
+      sessionId: source.session.id,
+      fromMessageId: source.first.id,
+      throughMessageId: nextAssistant.id,
+      kind: "idea",
+      title: "Stale checkpoint",
+      summary: "This write deliberately targets the old initial parent and must be rejected.",
+      parentEntryId: initial.result.entry.id,
+      expectedParentVersion: initial.result.entry.version,
+      checkpointKind: "next_step",
+      checkpointReason: "Stale fixture.",
+    })).rejects.toThrow(/parent is stale/i);
+    expect(source.db.prepare("SELECT COUNT(*) AS count FROM memory_index_entries").get()).toEqual({ count: 2 });
+    expect(decisionUser.id).toBeLessThan(nextUser.id);
+  });
+
   it("marks a changed or deleted authoritative source unusable", async () => {
     const changed = conversation();
     const changedService = new MemoryIndexService(changed.db, null);

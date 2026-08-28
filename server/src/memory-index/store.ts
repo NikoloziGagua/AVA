@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 import { nanoid } from "nanoid";
 import type { Db } from "../state/db.js";
 import { scrubSecrets } from "../security/scrub.js";
+import { MEMORY_CHECKPOINT_KINDS } from "./types.js";
 import type {
   CaptureMemoryInput,
   CaptureMemoryResult,
   MemoryEmbedder,
   MemoryEmbedding,
+  MemoryCheckpointKind,
   MemoryIndexEntry,
   MemoryIndexKind,
   MemoryIndexResult,
@@ -34,6 +36,11 @@ type EntryRow = {
   privacy_level: string;
   capture_mode: string;
   capture_reason: string | null;
+  thread_id: string | null;
+  parent_entry_id: string | null;
+  checkpoint_sequence: number;
+  checkpoint_kind: string;
+  checkpoint_reason: string | null;
   status: string;
   embedding_status: string;
   source_fingerprint: string;
@@ -124,6 +131,11 @@ function entryFromRow(row: EntryRow): MemoryIndexEntry {
     privacyLevel: row.privacy_level as MemoryPrivacyLevel,
     captureMode: row.capture_mode === "automatic" ? "automatic" : "explicit",
     captureReason: row.capture_reason ? scrubSecrets(row.capture_reason) : null,
+    threadId: row.thread_id ?? row.id,
+    parentEntryId: row.parent_entry_id,
+    checkpointSequence: row.checkpoint_sequence || 1,
+    checkpointKind: (row.checkpoint_kind || "initial") as MemoryCheckpointKind,
+    checkpointReason: row.checkpoint_reason ? scrubSecrets(row.checkpoint_reason) : null,
     embeddingStatus: row.embedding_status as MemoryIndexEntry["embeddingStatus"],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -289,7 +301,28 @@ export class MemoryIndexService {
     now = Date.now(),
   ): MemoryIndexResult {
     const source = this.verifySource(row.id, now);
-    return { entry: entryFromRow(row), source, match, usable: source.status === "verified" };
+    const threadId = row.thread_id ?? row.id;
+    const aggregate = this.db.prepare(`
+      SELECT COUNT(*) AS total, MAX(checkpoint_sequence) AS latest
+      FROM memory_index_entries
+      WHERE status = 'active' AND COALESCE(thread_id, id) = ?
+    `).get(threadId) as { total: number; latest: number | null };
+    const entry = entryFromRow(row);
+    return {
+      entry,
+      source,
+      match,
+      lineage: {
+        threadId,
+        parentEntryId: entry.parentEntryId,
+        sequence: entry.checkpointSequence,
+        kind: entry.checkpointKind,
+        reason: entry.checkpointReason,
+        totalCheckpoints: aggregate.total,
+        isLatest: entry.checkpointSequence === (aggregate.latest ?? entry.checkpointSequence),
+      },
+      usable: source.status === "verified",
+    };
   }
 
   private async storeEmbedding(entry: MemoryIndexEntry): Promise<void> {
@@ -341,6 +374,7 @@ export class MemoryIndexService {
     const privacyLevel = input.privacyLevel ?? "personal";
     const captureMode = input.captureMode === "automatic" ? "automatic" : "explicit";
     const captureReason = cleanInline(input.captureReason, 280) || null;
+    const checkpointReason = cleanInline(input.checkpointReason, 280) || null;
     const project = projectKey(input.project);
     if (privacyLevel === "project" && !project.key) throw new Error("project privacy requires a project");
     const conclusions = cleanList(input.conclusions, 12, 600);
@@ -371,21 +405,63 @@ export class MemoryIndexService {
       const now = Date.now();
       const sourceLabel = cleanInline(session.title || "AVA conversation", 160);
       const embeddingStatus = this.embedder ? "pending" : "unavailable";
+      let threadId = id;
+      let parentEntryId: string | null = null;
+      let checkpointSequence = 1;
+      let checkpointKind: MemoryCheckpointKind = "initial";
+      if (input.parentEntryId) {
+        const parent = this.entryRow(input.parentEntryId);
+        if (!parent || parent.kind !== "idea" || input.kind !== "idea") {
+          throw new Error("memory checkpoint parent is unavailable or incompatible");
+        }
+        if (input.expectedParentVersion !== parent.version) {
+          throw new Error("memory checkpoint parent version is stale");
+        }
+        const parentSource = this.sourceRow(parent.id);
+        if (!parentSource || parentSource.session_id !== input.sessionId) {
+          throw new Error("memory checkpoint parent belongs to a different source conversation");
+        }
+        const parentThreadId = parent.thread_id ?? parent.id;
+        const latest = this.db.prepare(`
+          SELECT id, checkpoint_sequence
+          FROM memory_index_entries
+          WHERE status = 'active' AND COALESCE(thread_id, id) = ?
+          ORDER BY checkpoint_sequence DESC, created_at DESC, id ASC
+          LIMIT 1
+        `).get(parentThreadId) as { id: string; checkpoint_sequence: number } | undefined;
+        if (!latest || latest.id !== parent.id) throw new Error("memory checkpoint parent is stale");
+        if (parentSource.through_message_id >= input.throughMessageId) {
+          throw new Error("memory checkpoint does not extend its parent source");
+        }
+        threadId = parentThreadId;
+        parentEntryId = parent.id;
+        checkpointSequence = (parent.checkpoint_sequence || 1) + 1;
+        checkpointKind = input.checkpointKind
+          && (MEMORY_CHECKPOINT_KINDS as readonly string[]).includes(input.checkpointKind)
+          && input.checkpointKind !== "initial"
+          ? input.checkpointKind
+          : "revision";
+      }
       this.db.transaction(() => {
         this.db.prepare(`
           INSERT OR IGNORE INTO memory_index_entries (
             id, version, kind, title, summary, conclusions, open_questions,
             next_steps, tags, project, project_key, privacy_level, capture_mode,
-            capture_reason, status, embedding_status, source_fingerprint,
-            created_at, updated_at
-          ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+            capture_reason, thread_id, parent_entry_id, checkpoint_sequence,
+            checkpoint_kind, checkpoint_reason, status, embedding_status,
+            source_fingerprint, created_at, updated_at
+          ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            'active', ?, ?, ?, ?)
         `).run(
           id, input.kind, title, summary, JSON.stringify(conclusions), JSON.stringify(openQuestions),
           JSON.stringify(nextSteps), JSON.stringify(tags), project.display, project.key,
-          privacyLevel, captureMode, captureReason, embeddingStatus, fingerprint, now, now,
+          privacyLevel, captureMode, captureReason, threadId, parentEntryId,
+          checkpointSequence, checkpointKind, checkpointReason, embeddingStatus,
+          fingerprint, now, now,
         );
         const inserted = this.db.prepare("SELECT * FROM memory_index_entries WHERE source_fingerprint = ?")
-          .get(fingerprint) as EntryRow;
+          .get(fingerprint) as EntryRow | undefined;
+        if (!inserted) throw new Error("memory checkpoint sequence conflict");
         if (inserted.id === id) {
           this.db.prepare(`
             INSERT INTO memory_index_sources (

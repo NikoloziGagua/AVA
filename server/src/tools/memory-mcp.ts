@@ -314,7 +314,7 @@ export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
       tool: {
         name: "memory_index_search",
         description:
-          "Search AVA's compact cross-session index for prior research, developed ideas, decisions and remembered discussions. Use this before saying AVA cannot recall prior work. Only rely on results whose source status is verified; explain the match reason and any fallback notice.",
+          "Search AVA's compact cross-session index for prior research, developed ideas, decisions and remembered discussions. Use this before saying AVA cannot recall prior work. Related idea refinements share lineage; normally prefer lineage.isLatest=true, but preserve older checkpoints when Sir asks how the idea evolved. Only rely on results whose source status is verified; explain the match reason and any fallback notice.",
         inputSchema: {
           type: "object",
           properties: {
@@ -335,7 +335,7 @@ export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
             ok: true,
             text: JSON.stringify({
               ...found,
-              instruction: "Use only usable=true results. A match locates evidence; it does not replace the verified source.",
+              instruction: "Use only usable=true results. Group results with the same lineage.threadId and normally use the latest checkpoint; older checkpoints are immutable history. A match locates evidence; it does not replace the verified source.",
             }),
           };
         } catch (error) {

@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787883540258,
+  "generatedAt": 1787885095298,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [

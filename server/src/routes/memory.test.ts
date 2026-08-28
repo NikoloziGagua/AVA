@@ -126,7 +126,12 @@ describe("memory index routes", () => {
         tags: ["memory", "sqlite"],
       })
       .expect(201);
-    expect(created.body.result).toMatchObject({ usable: true, source: { status: "verified" } });
+    expect(created.body.result).toMatchObject({
+      usable: true,
+      source: { status: "verified" },
+      entry: { checkpointSequence: 1, checkpointKind: "initial", parentEntryId: null },
+      lineage: { sequence: 1, totalCheckpoints: 1, isLatest: true },
+    });
     const id = created.body.result.entry.id as string;
 
     const recent = await request(app).get("/api/memory/index")

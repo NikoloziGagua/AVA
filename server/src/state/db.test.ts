@@ -66,6 +66,44 @@ describe("openDb", () => {
     expect(indexes.some((index) => index.name === "idx_strategy_rooms_source_snapshot")).toBe(true);
     migrated.close();
   });
+
+  it("migrates a Phase 2 memory index before creating the checkpoint-sequence index", () => {
+    const legacy = new Database(TEST_DB);
+    legacy.exec(`
+      CREATE TABLE memory_index_entries (
+        id TEXT PRIMARY KEY, version INTEGER NOT NULL DEFAULT 1,
+        kind TEXT NOT NULL, title TEXT NOT NULL, summary TEXT NOT NULL,
+        conclusions TEXT NOT NULL DEFAULT '[]', open_questions TEXT NOT NULL DEFAULT '[]',
+        next_steps TEXT NOT NULL DEFAULT '[]', tags TEXT NOT NULL DEFAULT '[]',
+        project TEXT, project_key TEXT, privacy_level TEXT NOT NULL DEFAULT 'personal',
+        capture_mode TEXT NOT NULL DEFAULT 'explicit', capture_reason TEXT,
+        status TEXT NOT NULL DEFAULT 'active', embedding_status TEXT NOT NULL DEFAULT 'pending',
+        source_fingerprint TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL, forgotten_at INTEGER
+      );
+      INSERT INTO memory_index_entries (
+        id, kind, title, summary, status, embedding_status, source_fingerprint,
+        created_at, updated_at
+      ) VALUES ('legacy-memory', 'idea', 'Legacy', 'Legacy Phase 2 entry',
+        'active', 'unavailable', 'legacy-fingerprint', 1, 1);
+    `);
+    legacy.close();
+
+    const migrated = openDb(TEST_DB);
+    const entry = migrated.prepare(`
+      SELECT thread_id, parent_entry_id, checkpoint_sequence, checkpoint_kind
+      FROM memory_index_entries WHERE id = 'legacy-memory'
+    `).get();
+    expect(entry).toEqual({
+      thread_id: "legacy-memory",
+      parent_entry_id: null,
+      checkpoint_sequence: 1,
+      checkpoint_kind: "initial",
+    });
+    const indexes = migrated.prepare("PRAGMA index_list(memory_index_entries)").all() as Array<{ name: string }>;
+    expect(indexes.some((index) => index.name === "idx_memory_index_thread_sequence")).toBe(true);
+    migrated.close();
+  });
 });
 
 describe("db migrations: sessions.deleted_at", () => {
@@ -112,9 +150,16 @@ describe("db migrations: automatic semantic memory provenance", () => {
     expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
       "capture_mode",
       "capture_reason",
+      "thread_id",
+      "parent_entry_id",
+      "checkpoint_sequence",
+      "checkpoint_kind",
+      "checkpoint_reason",
     ]));
     const autoColumns = db.prepare("PRAGMA table_info(memory_index_auto_events)").all() as Array<{ name: string; pk: number }>;
     expect(autoColumns.find((column) => column.name === "assistant_message_id")?.pk).toBe(1);
+    const indexes = db.prepare("PRAGMA index_list(memory_index_entries)").all() as Array<{ name: string; unique: number }>;
+    expect(indexes).toContainEqual(expect.objectContaining({ name: "idx_memory_index_thread_sequence", unique: 1 }));
     db.close();
   });
 });

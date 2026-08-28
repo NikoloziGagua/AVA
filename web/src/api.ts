@@ -750,6 +750,11 @@ export type MemoryIndexEntry = {
   privacyLevel: "personal" | "project";
   captureMode: "explicit" | "automatic";
   captureReason: string | null;
+  threadId: string;
+  parentEntryId: string | null;
+  checkpointSequence: number;
+  checkpointKind: "initial" | "revision" | "decision" | "conclusion" | "topic_shift" | "open_question" | "next_step";
+  checkpointReason: string | null;
   embeddingStatus: "pending" | "ready" | "unavailable";
   createdAt: number;
   updatedAt: number;
@@ -774,6 +779,15 @@ export type MemoryIndexResult = {
     semanticScore: number | null;
     lexicalScore: number;
     sharedTerms: string[];
+  };
+  lineage: {
+    threadId: string;
+    parentEntryId: string | null;
+    sequence: number;
+    kind: MemoryIndexEntry["checkpointKind"];
+    reason: string | null;
+    totalCheckpoints: number;
+    isLatest: boolean;
   };
   usable: boolean;
 };

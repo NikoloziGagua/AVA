@@ -42,6 +42,11 @@ export function MemoryIndexCard({
             <span className={`rounded-full border px-2 py-0.5 text-[10px] ${entry.captureMode === "automatic" ? "border-violet-300/20 bg-violet-300/[0.07] text-violet-100/70" : "border-white/10 text-white/45"}`}>
               {entry.captureMode === "automatic" ? "captured automatically" : "saved by request"}
             </span>
+            {result.lineage.totalCheckpoints > 1 && (
+              <span className={`rounded-full border px-2 py-0.5 text-[10px] ${result.lineage.isLatest ? "border-cyan-300/25 bg-cyan-300/[0.07] text-cyan-100/75" : "border-white/10 text-white/40"}`}>
+                checkpoint {result.lineage.sequence} of {result.lineage.totalCheckpoints}{result.lineage.isLatest ? " / latest" : " / history"}
+              </span>
+            )}
             {entry.project && <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/45">{entry.project}</span>}
             <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/45">
               {result.match.mode === "hybrid"
@@ -89,6 +94,12 @@ export function MemoryIndexCard({
           </p>
           <p>Captured {new Date(entry.createdAt).toLocaleString()} / memory {entry.id}</p>
           {entry.captureReason && <p>Capture provenance: {entry.captureReason}</p>}
+          <p>
+            Lineage: {entry.checkpointKind.replace("_", " ")} checkpoint {result.lineage.sequence} of {result.lineage.totalCheckpoints}
+            {result.lineage.parentEntryId ? ` / follows ${result.lineage.parentEntryId}` : " / starts this thread"}
+          </p>
+          {result.lineage.reason && <p>Why this checkpoint exists: {result.lineage.reason}</p>}
+          <p>Thread: {result.lineage.threadId}{result.lineage.isLatest ? " / current checkpoint" : " / preserved history"}</p>
           {source.sessionId && result.usable && onOpenChat && (
             <button
               type="button"
@@ -144,7 +155,7 @@ export function MemoryIndexSection({ onOpenChat }: { onOpenChat?: (sessionId: st
               </div>
               <h2 id="memory-index-title" className="text-xl font-medium text-white/90">Research & idea index</h2>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-white/45">
-                Completed research and ideas you meaningfully develop with AVA are captured automatically. You can still say "remember this" for anything else. Search finds the compact summary, then AVA checks the original conversation before trusting it.
+                Completed research and ideas you meaningfully develop with AVA are captured automatically. Material decisions and refinements become linked, immutable checkpoints rather than overwriting earlier conclusions. You can still say "remember this" for anything else. Search finds the compact summary, then AVA checks the original conversation before trusting it.
               </p>
             </div>
             <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-[10px] text-white/45">

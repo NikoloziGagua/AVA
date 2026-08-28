@@ -30,6 +30,11 @@ const result: MemoryIndexResult = {
     privacyLevel: "personal",
     captureMode: "automatic",
     captureReason: "Automatically indexed a meaningfully developed idea from AVA chat.",
+    threadId: "memory_fixture",
+    parentEntryId: "memory_parent",
+    checkpointSequence: 2,
+    checkpointKind: "decision",
+    checkpointReason: "The group chose source verification before retrieval.",
     embeddingStatus: "ready",
     createdAt: Date.UTC(2026, 7, 28),
     updatedAt: Date.UTC(2026, 7, 28),
@@ -51,6 +56,15 @@ const result: MemoryIndexResult = {
     semanticScore: 0.91,
     lexicalScore: 0.5,
     sharedTerms: ["memory"],
+  },
+  lineage: {
+    threadId: "memory_fixture",
+    parentEntryId: "memory_parent",
+    sequence: 2,
+    kind: "decision",
+    reason: "The group chose source verification before retrieval.",
+    totalCheckpoints: 2,
+    isLatest: true,
   },
   usable: true,
 };
@@ -81,11 +95,14 @@ describe("MemoryIndexSection", () => {
     expect(await screen.findByText("Durable research recall")).toBeTruthy();
     expect(screen.getByText("source verified")).toBeTruthy();
     expect(screen.getByText("captured automatically")).toBeTruthy();
+    expect(screen.getByText("checkpoint 2 of 2 / latest")).toBeTruthy();
     expect(screen.getByText(/SQLite is canonical/)).toBeTruthy();
     fireEvent.click(screen.getByText("Why AVA found this"));
     expect(screen.getByText(/semantic similarity 91%/)).toBeTruthy();
     expect(screen.getByText(/messages 10/)).toBeTruthy();
     expect(screen.getByText(/meaningfully developed idea from AVA chat/)).toBeTruthy();
+    expect(screen.getByText(/follows memory_parent/)).toBeTruthy();
+    expect(screen.getByText(/source verification before retrieval/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open source chat" }));
     expect(openChat).toHaveBeenCalledWith("session-source");
   });

@@ -2,7 +2,8 @@
 
 ## Status
 
-Implemented as a conservative automatic-and-explicit beta. It is a retrieval
+Implemented as a conservative automatic-and-explicit beta with immutable linked
+Idea checkpoints. It is a retrieval
 layer for substantial research, developed ideas and decisions; it does not
 replace AVA's compact preference/observation memory or copy complete transcripts.
 
@@ -13,6 +14,9 @@ replace AVA's compact preference/observation memory or copy complete transcripts
    execution, incomplete work and ordinary conversation are rejected locally.
 2. A conservative side-model editor may produce a bounded compact record. It can
    decline the candidate; its failure never changes or delays chat/voice delivery.
+   After an Idea has a first checkpoint, only a deterministic change signal can
+   ask the editor for another. The editor must identify a material decision,
+   conclusion, topic shift, open question, next step or substantive revision.
 3. Sir can still say **"remember this"** or **"index this discussion"** for
    anything worth keeping outside the two automatic categories. AVA calls
    `memory_index_capture` with a bounded source range and a compact
@@ -28,14 +32,16 @@ replace AVA's compact preference/observation memory or copy complete transcripts
 
 The Memory screen's **Index** tab lists recent entries and supports query plus an
 optional project boundary. Each card shows the compact record, source health and
-an expandable **Why AVA found this** explanation.
+checkpoint position, plus an expandable **Why AVA found this** explanation with
+thread, parent, change type and plain-language checkpoint reason.
 
 ## Data model and authority
 
 SQLite remains canonical:
 
 - `memory_index_entries`: bounded sanitized title, summary, conclusions, open
-  questions, next steps, tags, scope, version and embedding state.
+  questions, next steps, tags, scope, version, embedding state, thread ID,
+  parent entry ID, sequence, checkpoint type and checkpoint reason.
 - `memory_index_sources`: source session, exact first/last message IDs, message
   count and SHA-256 content fingerprint.
 - `memory_index_embeddings`: replaceable float vector plus provider, model,
@@ -47,6 +53,13 @@ SQLite remains canonical:
 Each entry also records whether capture was `explicit` or `automatic` and a
 sanitized provenance reason. The source range remains the authority in either
 case.
+
+An initial record starts a thread whose ID is its own memory ID. A material later
+Idea refinement appends a new entry with the same thread ID, the prior entry as
+parent and a monotonic sequence. Entries are not edited into a new meaning.
+Continuation summaries are standalone current-state snapshots, while the
+expanding source range and previous checkpoint make their provenance inspectable.
+An unrelated Idea developed later in the same chat starts a different thread.
 
 The vector is a discovery aid. It is never canonical memory and never validates
 a claim. Each result rereads the referenced messages and recomputes the source
@@ -135,15 +148,23 @@ Soft-deleting the linked chat immediately makes its source unavailable even
 while AVA retains the underlying rows for the normal deletion-retention window.
 Automatic events use the persisted assistant message ID as a stable claim key,
 so replaying a response cannot call the memory editor twice or create another
-entry. A first developed-idea checkpoint suppresses overlapping automatic copies
-in this phase; linked revisions are the next phase.
+entry. Parent version and latest-thread checks prevent concurrent completions from
+forking a sequence. When a broader later checkpoint wins first, an older late
+completion is marked skipped and linked to the checkpoint that already covers it.
+Superficial turns never call the editor. Editor-declined change candidates produce
+only a content-free decision event.
+
+Current checkpoint routing deliberately follows the most recent verified
+automatic Idea thread in a source conversation. A sufficiently developed distinct
+Idea starts a new thread, but returning later to an older one of several Idea
+threads in the same chat is not yet semantically re-routed to that older thread.
+The authoritative checkpoint source range also remains capped at 80 messages.
 
 ## Deliberately deferred
 
-- automatic topic-change/decision checkpoints;
-- linked revisions and supersession for an idea that continues evolving;
 - automatic retrieval injection into ordinary turns (search remains an explicit
   AVA tool decision in this phase);
+- user-governed correction, pinning and supersession controls for checkpoints;
 - Mem0 or another second canonical memory store;
 - background re-embedding and embedding-model migration UI;
 - a large memory administration dashboard;
@@ -177,8 +198,10 @@ Manual acceptance:
 2. Send an ordinary greeting in a fresh disposable chat and confirm no memory is
    created.
 3. Develop an idea with AVA over at least two turns each and confirm exactly one
-   automatic idea card links the full range. Repeat through voice and confirm the
-   provenance says AVA voice.
+   automatic idea card links the full range. Make a material decision or add a
+   next step and confirm checkpoint 2 follows checkpoint 1. Send a superficial
+   thanks and confirm no new checkpoint appears. Repeat through voice and confirm
+   the provenance says AVA voice.
 4. Start another chat and ask for the idea using different wording.
 5. Confirm AVA reports what matched and grounds the answer only in a verified
    source. With no embedding provider, confirm it openly reports keyword fallback.

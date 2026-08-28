@@ -9,6 +9,17 @@ export type MemorySourceStatus = "verified" | "changed" | "unavailable";
 export type MemoryRetrievalMode = "recent" | "lexical" | "semantic" | "hybrid";
 export type MemoryCaptureMode = "explicit" | "automatic";
 
+export const MEMORY_CHECKPOINT_KINDS = [
+  "initial",
+  "revision",
+  "decision",
+  "conclusion",
+  "topic_shift",
+  "open_question",
+  "next_step",
+] as const;
+export type MemoryCheckpointKind = typeof MEMORY_CHECKPOINT_KINDS[number];
+
 export type MemoryIndexEntry = {
   id: string;
   version: number;
@@ -23,6 +34,11 @@ export type MemoryIndexEntry = {
   privacyLevel: MemoryPrivacyLevel;
   captureMode: MemoryCaptureMode;
   captureReason: string | null;
+  threadId: string;
+  parentEntryId: string | null;
+  checkpointSequence: number;
+  checkpointKind: MemoryCheckpointKind;
+  checkpointReason: string | null;
   embeddingStatus: MemoryEmbeddingStatus;
   createdAt: number;
   updatedAt: number;
@@ -52,6 +68,15 @@ export type MemoryIndexResult = {
   entry: MemoryIndexEntry;
   source: MemorySourceEvidence;
   match: MemoryMatchEvidence;
+  lineage: {
+    threadId: string;
+    parentEntryId: string | null;
+    sequence: number;
+    kind: MemoryCheckpointKind;
+    reason: string | null;
+    totalCheckpoints: number;
+    isLatest: boolean;
+  };
   usable: boolean;
 };
 
@@ -99,6 +124,11 @@ export type CaptureMemoryInput = {
   /** Internal provenance. Authenticated routes and agent tools always use explicit. */
   captureMode?: MemoryCaptureMode;
   captureReason?: string | null;
+  /** Internal immutable-lineage input. Explicit captures start a new thread. */
+  parentEntryId?: string | null;
+  expectedParentVersion?: number;
+  checkpointKind?: MemoryCheckpointKind;
+  checkpointReason?: string | null;
 };
 
 export type CaptureMemoryResult = {

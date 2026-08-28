@@ -1414,7 +1414,7 @@ const capabilities: ExplorerCapability[] = [
     domainId: "memory",
     name: "Source-linked research and idea recall",
     shortName: "Memory index",
-    description: "Captures compact research and idea summaries, finds them by meaning or keywords across chats, and re-verifies the original conversation range before AVA relies on them.",
+    description: "Captures compact research and Idea checkpoints, links material decisions and refinements without rewriting history, finds them across chats, and re-verifies the original conversation before AVA relies on them.",
     purpose: "Recover important developed work quickly without duplicating whole transcripts or treating vector similarity as truth.",
     stability: "beta",
     definition: {
@@ -1437,7 +1437,7 @@ const capabilities: ExplorerCapability[] = [
       { name: "retrieval scope", description: "Personal memory or one explicitly named project boundary.", required: false, sensitive: true },
     ],
     outputs: [
-      { name: "source-linked memory", description: "A versioned SQLite summary with a conversation fingerprint and replaceable embedding.", persistent: true },
+      { name: "source-linked memory", description: "A versioned SQLite checkpoint with immutable thread/parent lineage, a conversation fingerprint and replaceable embedding.", persistent: true },
       { name: "explained match", description: "Hybrid or fallback match evidence plus an independently rechecked source status." },
     ],
     dependencies: [
@@ -1447,9 +1447,9 @@ const capabilities: ExplorerCapability[] = [
     ],
     readiness: readiness(["defined", "configured", "available", "healthy", "tested"], { recentSuccess: true }),
     verification: verification(
-      ["Automatic capture is offered only after a completed research or meaningfully developed idea turn.", "Capture stores no transcript body and records one exact message-range fingerprint.", "Every returned result rechecks the original message range before it is marked usable.", "Repeated or concurrent capture of the same source range is idempotent."],
+      ["Automatic capture is offered only after completed research, a meaningfully developed Idea, or a material later Idea change.", "Material refinements append immutable thread/parent/sequence/type/reason lineage instead of rewriting older checkpoints.", "Capture stores no transcript body and records one exact message-range fingerprint.", "Every returned result rechecks the original message range before it is marked usable.", "Replay and concurrent completion cannot fork one checkpoint sequence."],
       ["api-response", "tool-result", "unit-test", "artifact"],
-      ["Automatic capture currently covers completed research and the first mature checkpoint of a multi-turn idea; linked revisions are deferred.", "A completed read-only research turn can retain an honest unverified-evidence limitation; failed or contradicted work is excluded.", "Automatic retrieval injection is not enabled yet; AVA searches through the existing tools.", "Embedding similarity helps locate evidence but never validates the remembered claim."],
+      ["A completed read-only research turn can retain an honest unverified-evidence limitation; failed or contradicted work is excluded.", "A checkpoint thread is capped by the same 80-message authoritative source-range limit.", "Automatic retrieval injection is not enabled yet; AVA searches through the existing tools.", "User correction, pin and supersession controls are deferred.", "Embedding similarity helps locate evidence but never validates the remembered claim."],
     ),
     safety: safety("low", "never", ["Persists compact personal or project context for later retrieval."], {
       sensitiveData: ["Conversation summaries", "Research conclusions", "Project decisions"],
@@ -2446,9 +2446,11 @@ const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
     [
       { key: "request", name: "Recognise capture or recall", description: "Distinguish an automatic post-turn candidate, an explicit remember-this request, search-prior-work and forget-one-entry requests.", kind: "decision" },
       { key: "auto-gate", parent: "request", name: "Gate completed research or ideas", description: "Offer only completed research or a sufficiently developed multi-turn idea to a conservative memory editor; routine, failed and interrupted work exits without persistence.", kind: "decision" },
+      { key: "change-gate", parent: "auto-gate", name: "Classify material Idea change", description: "For an existing Idea thread, require a decision, conclusion, topic shift, open question, next step or substantive revision; superficial turns exit without an editor call.", kind: "decision" },
       { key: "range", parent: "request", name: "Select bounded source range", description: "Resolve an exact persisted conversation segment, capped at 80 messages.", kind: "decision" },
       { key: "scrub", parent: "range", capabilityId: "security.secret-redaction", name: "Sanitise compact record", description: "Scrub the supplied summary, decisions, questions, steps, tags and project before persistence or embedding.", kind: "verification" },
       { key: "capture", parent: "scrub", name: "Capture idempotently", description: "Persist one canonical SQLite entry, source fingerprint and replaceable embedding without copying transcript bodies.", kind: "external-action", toolName: "memory_index_capture", producesEvidence: ["tool-result", "artifact"] },
+      { key: "lineage", parent: "capture", name: "Append immutable lineage", description: "A material later Idea checkpoint receives the stable thread ID, prior parent, next sequence, change type and reason; stale or late parents fail closed.", kind: "verification", producesEvidence: ["artifact", "tool-result"] },
       { key: "query", parent: "request", name: "Search within scope", description: "Combine semantic similarity with exact/keyword evidence, or fall back honestly when embeddings are unavailable.", kind: "operation", toolName: "memory_index_search", producesEvidence: ["tool-result"] },
       { key: "verify", parent: "query", name: "Re-verify source messages", description: "Recompute the referenced range fingerprint and mark changed or unavailable sources unusable.", kind: "verification", producesEvidence: ["artifact", "tool-result"] },
       { key: "open", parent: "verify", name: "Open authoritative source", description: "Load a bounded sanitized copy of the verified source range only when the answer needs detail beyond the locator summary.", kind: "operation", toolName: "memory_index_open", producesEvidence: ["tool-result"] },
@@ -2458,9 +2460,12 @@ const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
     [
       { from: "request", to: "range", kind: "branch", label: "capture" },
       { from: "request", to: "auto-gate", kind: "branch", label: "automatic candidate" },
-      { from: "auto-gate", to: "range", kind: "branch", label: "accepted" },
+      { from: "auto-gate", to: "change-gate", kind: "branch", label: "existing Idea" },
+      { from: "auto-gate", to: "range", kind: "branch", label: "new research / Idea" },
+      { from: "change-gate", to: "range", kind: "branch", label: "material" },
       { from: "range", to: "scrub" },
       { from: "scrub", to: "capture" },
+      { from: "capture", to: "lineage", kind: "verification", label: "later checkpoint" },
       { from: "request", to: "query", kind: "branch", label: "recall" },
       { from: "query", to: "verify", kind: "verification" },
       { from: "verify", to: "open", kind: "branch", label: "detail needed" },

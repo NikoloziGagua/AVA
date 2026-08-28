@@ -3367,3 +3367,52 @@ scope and will not be inspected or modified.
 NEEDS: codex (inspect the shipped index, implement the smallest complete
 automatic-capture phase, test it automatically and manually, commit, and ask
 AVA to queue the next continuation watcher)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: semantic memory Phase 2 automatic capture
+
+Shipped automatic, source-bounded indexing for completed user-requested
+research and meaningfully developed multi-turn Ideas in `93278f0`, followed by
+the successful-read evidence correction in `01ff0c0`. Chat, OpenAI realtime,
+and Hume now enter the same conservative post-turn capture coordinator. It
+stores one compact sanitized summary plus exact message-range provenance,
+labels automatic versus explicit capture in the Memory Index UI, suppresses
+overlapping Idea duplicates, and fails closed for memory while leaving the
+conversation unaffected. Failed, contradicted, cancelled, interrupted,
+disconnected, and non-persisted delegated turns remain ineligible. Completed
+read-only research may retain an honest unverified-executor limitation instead
+of being discarded merely because reading a page is not independent proof.
+
+Changed areas: `server/src/memory-index/{auto-capture.ts,auto-capture.test.ts,
+types.ts,store.ts,store.test.ts}`, the SQLite schema and migrations, chat and
+both realtime voice boundaries plus their tests, production composition in
+`server/src/index.ts`, Memory Index API/UI/types/tests, Explorer registry and
+verified manifest, and the semantic-memory/capability/architecture docs.
+
+Deterministic evidence: the focused memory/chat/voice/tool set passed 140 tests;
+the later read-evidence correction passed 17/17 focused tests; Memory Index web
+tests passed 3/3; the full root test command passed the server suite and all 91
+web files / 404 web tests; server and production web builds passed. Explorer's
+contract/reality audit passed with 33 capabilities, 62/62 tool mappings, 106
+verified source references, and 22/22 API routes. `git diff --check` passed.
+
+Black-box evidence against committed HEAD: ordinary chat created zero entries;
+research chat and a voice-marked research turn each created one automatic,
+verified-source research entry; a two-turn developed Idea created one entry and
+a third refinement remained deduplicated; a fresh chat invoked both
+`memory_index_search` and `memory_index_open` and recovered the correct Idea;
+all three automatic entries survived an AVA restart on a matching committed
+build ID; semantic search found the paraphrased Idea; Forget removed it from
+retrieval. The disposable entries, sessions, and acceptance device were then
+removed/revoked. AVA is running the committed build.
+
+Known boundary: Phase 2 intentionally creates only the first mature Idea
+checkpoint. Linked revisions/topic-boundary checkpoints are Phase 3, automatic
+cross-chat/voice context injection is Phase 4, and correction/pin/supersession
+governance is Phase 5. Niko's unrelated `.claude/settings.local.json` change and
+untracked persona research document were preserved. Forge was neither inspected
+nor modified.
+
+NEEDS: codex (continue with Phase 3 linked checkpoints, retain per-phase tests,
+and keep the exact-thread AVA watcher handoff alive)

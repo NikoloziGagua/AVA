@@ -333,23 +333,25 @@ export function deriveExplorerCapabilities(
       }
       case "ufo": {
         const state = snapshot.integrations.microsoftUfo;
-        const realReady = state.enabled
+        const realAvailable = state.enabled
           && state.mode === "ufo"
           && state.available
-          && state.actionsAvailable
           && state.runtime.adapter === "microsoft_ufo"
           && state.runtime.dependency === "available";
+        const realReady = realAvailable && state.actionsAvailable;
         const fixtureReady = state.enabled
           && state.mode === "fixture"
           && state.available
           && state.runtime.adapter === "synthetic_fixture";
         return {
           ...base,
-          readiness: realReady ? "ready" : fixtureReady ? "partially_ready" : state.enabled ? "setup_required" : "unavailable",
-          health: realReady || fixtureReady ? "healthy" : "unavailable",
+          readiness: realReady ? "ready" : realAvailable || fixtureReady ? "partially_ready" : state.enabled ? "setup_required" : "unavailable",
+          health: realAvailable || fixtureReady ? "healthy" : "unavailable",
           reason: realReady
             ? `Genuine Microsoft UFO ${state.runtime.release ?? "runtime"} is available only for the fixed disposable Notepad proof; actions require approval.`
-            : fixtureReady
+            : realAvailable
+              ? `Genuine Microsoft UFO ${state.runtime.release ?? "runtime"} passed the bounded runtime probe, but fixture actions are disabled by configuration.`
+              : fixtureReady
               ? state.observeOnly
                 ? "Only the synthetic observe-only counter fixture is available; this is not Microsoft UFO execution."
                 : "Synthetic counter actions are configured but remain approval-required; this is not Microsoft UFO execution."

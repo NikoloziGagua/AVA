@@ -282,8 +282,6 @@ describe("Explorer read API", () => {
     expect(deriveUfo().reason).toContain("credentials are missing");
 
     state.integrations.microsoftUfo.available = true;
-    state.integrations.microsoftUfo.observeOnly = false;
-    state.integrations.microsoftUfo.actionsAvailable = true;
     state.integrations.microsoftUfo.runtime = {
       ...state.integrations.microsoftUfo.runtime,
       dependency: "available",
@@ -291,6 +289,11 @@ describe("Explorer read API", () => {
       credentials: "configured",
       reason: "The exact pinned genuine runtime is available.",
     };
+    expect(deriveUfo()).toMatchObject({ readiness: "partially_ready", health: "healthy" });
+    expect(deriveUfo().reason).toContain("actions are disabled");
+
+    state.integrations.microsoftUfo.observeOnly = false;
+    state.integrations.microsoftUfo.actionsAvailable = true;
     expect(deriveUfo()).toMatchObject({ readiness: "ready", health: "healthy" });
     expect(deriveUfo().reason).toContain("fixed disposable Notepad proof");
 

@@ -4529,3 +4529,61 @@ remain untouched; Forge is outside scope.
 
 NEEDS: codex (inspect prerequisites/contracts, implement the bounded pilot,
 test automatically and through live AVA, commit, index and record evidence)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: verified Activepieces playbook pilot
+
+Implemented the first AVA-owned deterministic automation vertical slice in
+product commits `b593d74a8599dca211d4df5d23635a6035e486be` and
+`1e2e8429d2022174f3e2be4a609a51e7fc5ce1b8`. Chat and voice now receive
+`automation_system_report` plus truthful `automation_status` tools. The action
+can invoke only pinned `ava.system-report` schema/version 1 through a bounded
+synchronous webhook; arbitrary flow IDs, arbitrary inputs and HTTP mutation
+routes are absent.
+
+AVA owns the durable SQLite run, idempotent request identity, restart recovery,
+parent/child Mission Control trace, sanitized step evidence and terminal
+projection. Activepieces-reported success is not enough: AVA atomically writes
+the returned Markdown, reads it back, verifies SHA-256, creates an immutable
+artifact record, and only then reports a verified task outcome. The artifact
+becomes a new `artifact` memory-index entry whose source verifier checks both
+the immutable record fingerprint and current file hash before retrieval.
+Duplicate requests reuse one run/artifact/index entry; interrupted work fails
+after restart rather than being replayed. Usage and cost remain honestly
+`not_reported`.
+
+Product areas changed: `server/src/automations/*`,
+`server/src/tools/automations-mcp.ts`, chat/index/config/policy/timeout/rubric
+wiring, SQLite schema, semantic-index source verification, `.env.example`,
+`integrations/activepieces/ava-system-report-contract.json`,
+`docs/features/activepieces-automations.md`, and the Explorer registry/test/
+verified manifest. Explorer now exposes 35 capabilities and maps both real
+automation tools; it labels the local Activepieces runtime unconfigured rather
+than treating the deterministic fixture as provider success.
+
+Verification: automation/adapter/memory/policy focus passed 4 files / 49 tests;
+complete server passed 198 files / 1,537 tests; complete web passed 91 files /
+413 tests; server TypeScript build passed; production web/PWA build passed;
+committed-head boot smoke returned `healthy`; `git diff --check` passed; and
+Explorer reality audit passed at 35 capabilities, 75/75 tools, 29/29 routes,
+120 verified source references and zero broken references. Improvement-index
+smoke indexed 474 reachable updates, reused all 474 on restart, and failed zero
+(the later Explorer commit will join on the next ordinary boot reconciliation).
+
+Runtime evidence is intentionally not overstated. Docker Desktop binaries are
+installed, but Windows reports WSL is not installed and `com.docker.service` is
+stopped; the current shell cannot provide a working Docker Linux engine. No
+live Activepieces server or flow was therefore claimed. The test-only executor
+proved the complete AVA contract, storage, verification, observability,
+deduplication, restart and memory path but is never a production fallback. The
+remaining external prerequisite is an operational WSL2/Docker Linux engine,
+Activepieces Community Edition, and an imported pinned v1 contract flow; after
+that, set the documented environment values and run the same benign report.
+
+Unrelated `.claude/settings.local.json` and the untracked persona research
+document remain untouched. Forge was neither inspected nor modified.
+
+NEEDS: niko (enable/install WSL2 and restart Docker Desktop when convenient;
+then Codex can provision Activepieces Community Edition, import the pinned
+system-report flow, run a genuine smoke, and relaunch AVA with the webhook)

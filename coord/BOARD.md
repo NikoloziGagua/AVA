@@ -3873,3 +3873,80 @@ filesystem, browser, clipboard, network, secrets, or imply general computer use.
 
 NEEDS: codex (implement, verify, commit, relaunch only after all gates pass, and
 report the external isolation/artifact prerequisites honestly)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: isolated Microsoft UFO fixture adapter proof
+
+Shipped commit `e27d134` (`feat(ufo): add isolated fixture adapter proof`). This
+is intentionally not an operational UFO integration. AVA remains default-off;
+the checked host still has no UFO runtime, Docker, verified Windows disposable
+VM boundary, frozen UFO artifact/SBOM, or isolation manifest, and nothing was
+installed or enabled on Niko's normal desktop.
+
+The bounded proof adds a provider-neutral `UfoExperimentService`, synthetic
+`counter-v1` adapter, durable versioned fixture/request schema, authenticated
+read-only health/readback routes, and three typed AVA tools. Status and fixture
+observation remain available to explain fail-closed state. The action tool is
+not even advertised unless fixture actions are genuinely enabled. When enabled,
+it can only advance the counter by one version-guarded step and always uses the
+existing high-risk explicit approval journal; standing allow rules cannot bypass
+approval, standing deny rules still win, and approval timeout expires rather
+than auto-executing. The adapter has no host shell, filesystem, browser,
+clipboard, account, screenshot, COM, network, arbitrary-command, or secret
+surface.
+
+Requests have AVA-derived stable keys, input fingerprints, bounded time/step
+limits, optimistic versions, restart recovery and immutable terminal behavior.
+Replay returns the same result, stale keys/input are rejected, uncertain work is
+never replayed after timeout/cancellation/restart, and late completion cannot
+mutate the fixture or terminal projection. One correlated Mission Control child
+trace records sanitized boundary/lifecycle/evidence with honest
+`not_reported` usage/cost and `microsoftUfoRuntime=unavailable`. The parent tool
+call owns action accounting; the child is evidence-only, avoiding nested action
+double-counting. Existing task receipts receive typed local-operation evidence,
+not a false real-host outcome.
+
+Exact implementation areas: `.env.example`;
+`server/src/ufo/{experiment.ts,experiment.test.ts}`;
+`server/src/tools/{ufo-experiment-mcp.ts,ufo-experiment-mcp.test.ts}`;
+`server/src/routes/{ufo-experiment.ts,ufo-experiment.test.ts,chat.ts}`;
+`server/src/{index.ts,orchestrator/timeout.ts}`;
+`server/src/policy/{classify.ts,classify.test.ts,enforce.ts,runtime.test.ts}`;
+`server/src/state/{schema.sql,db.test.ts}`;
+`server/scripts/ufo-experiment-smoke.ts`; `server/package.json`;
+`server/tsconfig.scripts.json`; and
+`docs/features/{microsoft-ufo-experiment.md,mission-control.md}`.
+
+Verification: focused security/runtime/API/tool/schema coverage passed 6 files /
+72 tests. The final complete server suite passed 192 files / 1,472 tests; the
+complete web suite passed 91 files / 408 tests. Server TypeScript/schema/scripts
+build and production PWA build passed (2,412 modules, 8 precache entries);
+`git diff --check` passed with normal CRLF notices. The bounded production-file
+privacy scan found no process-launch or host-control import and only intentional
+deny-list wording; deliberate fake secrets appeared solely in the redaction
+test and were absent from SQLite/Mission Control evidence.
+
+The manual disposable-fixture smoke exercised explicit approval, observation,
+one action, replay idempotency, on-disk restart persistence and cleanup. It
+returned `finalValue=1`, `finalVersion=2`, `durableRequests=2`,
+`hostResourcesTouched=[]`, and `microsoftUfoRuntime=unavailable`. The exact
+committed HEAD boot smoke returned `{"ok":true,"log":"healthy"}`. AVA was
+rebuilt and relaunched from that commit; live health is `ok=true`, `ready=true`,
+provider `openai`, PID `24600`, build ID
+`965a764a-36d0-49db-a8f8-abaca77b8bd5`.
+
+Honest limitation and boundary: this proves only AVA's adapter contract,
+approval/policy integration, fixture isolation semantics, durability, task
+receipts and observability. A real UFO trial remains blocked pending a separately
+approved disposable Windows VM with no host sharing, frozen artifact and
+dependency lock/SBOM, verified egress/fixture allowlists, independent kill and
+rollback evidence, and adversarial escape tests. No successor watcher was
+scheduled because that is a new risk/installation decision, not an agreed
+incomplete phase. Niko's unrelated `.claude/settings.local.json` edit and
+untracked persona-research document were preserved. Forge was neither inspected
+nor modified.
+
+NEEDS: niko (decide whether to authorize and provision the separately isolated
+Windows VM/frozen-artifact prerequisite for any real Microsoft UFO trial; the
+safe fixture proof is complete and remains default-off)

@@ -130,7 +130,6 @@ const codexDispatcher = buildCodexDispatcher({
   repoRoot: cfg.repoRoot,
   logsDir: cfg.logsDir,
   handoffDir: join(cfg.dataDir, "codex-watch-inbox"),
-  consoleInjectorScript: join(cfg.repoRoot, "scripts", "send-codex-watch-console.ps1"),
 });
 const observability = new ObservabilityService(db);
 const strategyStore = new StrategyRoomStore(db);

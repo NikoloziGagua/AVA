@@ -117,44 +117,47 @@ describe("Codex thread evidence", () => {
 });
 
 describe("Codex watcher delivery", () => {
-  it("uses the standalone TUI input boundary for an active pinned thread", async () => {
+  it("uses Codex's acknowledged exact-thread queue even while the pinned thread is busy", async () => {
     const root = tempRoot();
     const inbox = join(root, "inbox");
-    const target = makeSession(root, { id: "thread-console", cwd: "C:/repo/AVA", state: "busy" });
+    const target = makeSession(root, { id: "thread-queue", cwd: "C:/repo/AVA", state: "busy" });
     const spawnCodex = vi.fn(() => ({ pid: 1 }));
-    const injectConsole = vi.fn(() => ({ status: "injected" as const, detail: "queued", processId: 42 }));
+    const submitQueue = vi.fn()
+      .mockReturnValueOnce({ status: "accepted" as const, detail: "acknowledged" })
+      .mockReturnValue({ status: "already_accepted" as const, detail: "no duplicate" });
     const dispatcher = buildCodexDispatcher({
       repoRoot: target.cwd,
       logsDir: root,
       codexHome: root,
       handoffDir: inbox,
-      consoleInjectorScript: "inject.ps1",
-      injectConsole,
+      submitQueue,
       spawnCodex,
     });
 
     const first = await dispatcher.dispatch({
-      watchId: "console-1",
+      watchId: "queue-1",
       prompt: "build safely",
       target,
     });
-    expect(first).toMatchObject({ status: "pending", pid: 42 });
+    expect(first).toMatchObject({ status: "pending", pid: null });
     expect(spawnCodex).not.toHaveBeenCalled();
-    expect(readFileSync(join(inbox, "pending", "console-1.json"), "utf8")).toContain("[AVA-WATCH:console-1]");
-    expect(injectConsole).toHaveBeenCalledOnce();
+    expect(submitQueue).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: "thread-queue",
+      prompt: expect.stringContaining("[AVA-WATCH:queue-1]"),
+    }));
 
     const replay = await dispatcher.dispatch({
-      watchId: "console-1",
+      watchId: "queue-1",
       prompt: "build safely",
       target,
-      marker: "[AVA-WATCH:console-1]",
+      marker: "[AVA-WATCH:queue-1]",
       dispatchOffset: "dispatchOffset" in first ? first.dispatchOffset : 0,
     });
     expect(replay).toMatchObject({ status: "pending" });
-    expect(injectConsole).toHaveBeenCalledTimes(2);
+    expect(submitQueue).toHaveBeenCalledTimes(2);
   });
 
-  it("stages for the in-thread Stop hook while the pinned writer is busy", async () => {
+  it("falls back to the trusted in-thread Stop hook for an older CLI while busy", async () => {
     const root = tempRoot();
     const inbox = join(root, "inbox");
     const target = makeSession(root, { id: "thread-hook", cwd: "C:/repo/AVA", state: "busy" });
@@ -164,6 +167,7 @@ describe("Codex watcher delivery", () => {
       logsDir: root,
       codexHome: root,
       handoffDir: inbox,
+      submitQueue: () => ({ status: "unavailable", detail: "queue unsupported", retryable: true }),
       spawnCodex,
     });
 
@@ -187,6 +191,44 @@ describe("Codex watcher delivery", () => {
     });
     expect(replay).toMatchObject({ status: "pending" });
     expect(spawnCodex).not.toHaveBeenCalled();
+  });
+
+  it("reports an unsupported exact-thread wake path honestly when the thread is idle", async () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-idle-old-cli", cwd: "C:/repo/AVA", state: "idle" });
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      handoffDir: join(root, "inbox"),
+      submitQueue: () => ({ status: "unavailable", detail: "queue unsupported", retryable: true }),
+    });
+
+    expect(await dispatcher.dispatch({ watchId: "old-cli", prompt: "probe", target })).toMatchObject({
+      status: "error",
+      retryable: true,
+      detail: expect.stringContaining("idle pinned thread cannot be woken"),
+    });
+  });
+
+  it("fails closed without a Stop-hook duplicate when queue acknowledgement is uncertain", async () => {
+    const root = tempRoot();
+    const inbox = join(root, "inbox");
+    const target = makeSession(root, { id: "thread-uncertain", cwd: "C:/repo/AVA", state: "busy" });
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      handoffDir: inbox,
+      submitQueue: () => ({ status: "ambiguous", detail: "acknowledgement lost" }),
+    });
+
+    expect(await dispatcher.dispatch({ watchId: "uncertain-1", prompt: "probe", target })).toEqual({
+      status: "error",
+      detail: "acknowledgement lost",
+      retryable: false,
+    });
+    expect(() => readFileSync(join(inbox, "pending", "uncertain-1.json"), "utf8")).toThrow();
   });
 
   it("does not dispatch while the pinned thread is busy", async () => {

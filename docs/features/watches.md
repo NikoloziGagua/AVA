@@ -59,13 +59,15 @@ Two halves: **tools** (Ava registers/lists/deletes watches during a turn) and a
   This is the general path for scheduled Instagram, browser, web, Claude, file,
   and other AVA work.
 - **reminder** — the prompt is the notification; no model call is made.
-- **codex** — the adapter pins the exact repository TUI thread and atomically
-  stages one sanitized instruction. On Windows, AVA accepts the live-console
-  path only when exactly one argument-free Codex TUI exists in the current
-  logon session, then submits the prompt through that TUI's own input buffer
-  using Codex's queue-follow-up key. A trusted project Stop hook remains the
-  same-writer fallback when live-console targeting is unavailable. Neither path
-  starts a competing `codex exec resume` writer.
+- **codex** — the adapter pins the exact repository TUI thread and submits one
+  sanitized instruction through Codex's supported
+  `codex queue --thread <exact-id> --message <text>` command. Codex's own queue
+  owns busy-versus-idle behavior: a busy turn receives a queued follow-up and an
+  idle thread is woken directly. AVA never guesses from window titles, process
+  counts, or simulated Tab/Enter keys. A trusted project Stop hook remains an
+  older-client same-writer fallback only when a busy Codex client does not
+  support the queue command. Neither path starts a competing
+  `codex exec resume` writer.
   AVA verifies the unique marker in the immutable JSONL session record. The
   adapter contract is deliberately
   isolated so another session target, such as Claude Code, can implement the
@@ -132,7 +134,7 @@ audit. It is the same trick the voice pipeline uses for `do_on_computer`.
 | Tools (Ava) | `server/src/tools/watches-mcp.ts` | `watch_create` / `watch_list` / `watch_delete` — action mode only. |
 | HTTP API | `server/src/routes/watches.ts` | `GET /` · `POST /` · `POST /:id/enabled` · `DELETE /:id` (token-auth'd). |
 | Target adapter | `server/src/watches/codex-dispatch.ts` | Exact Codex target resolution, lifecycle inspection, idempotent dispatch, and delivery evidence. |
-| Active-thread input | `server/src/watches/codex-console.ts`, `scripts/send-codex-watch-console.ps1` | Atomic claim, strict singleton TUI targeting, same-console queued input, and content-free prompt-hash receipts. |
+| Exact-thread queue | `server/src/watches/codex-queue.ts` | Supported Codex CLI queue acknowledgement, exact thread identity, content-free prompt-hash receipts, and fail-closed uncertainty. |
 | In-thread handoff | `server/src/watches/codex-handoff.ts`, `scripts/codex-watch-stop-hook.mjs`, `.codex/hooks.json` | Sanitized atomic inbox, same-writer Stop-hook delivery, completion receipt, and bounded successor wait. |
 | Boot singleton | `server/src/process/server-lock.ts` | Atomic process ownership claim in AVA's data root, acquired before shared boot state can change. |
 | UI | `web/src/memory/WatchesSection.tsx` | Read/manage surface with ordinary and targeted lifecycle visibility. |
@@ -153,25 +155,24 @@ HTTP route caps it at 24 h.
   (`unref`'d so it never keeps the process alive). If the PC is asleep or the Ava
   server is down, **no checks happen** and none are back-filled — the next check is
   simply the next tick after the server is up. This is not a cloud cron.
-- **The project Stop hook must be trusted by Codex for idle-thread wakeups.** Codex hashes unmanaged
+- **The project Stop hook must be trusted for the older-client busy fallback.** Codex hashes unmanaged
   hooks and will not run a new or changed definition until that exact hash is
   trusted. Run `npm run codex:trust-watch` after installing or changing
   `.codex/hooks.json`; the helper uses Codex's typed `hooks/list` and
   `config/batchWrite` APIs, then verifies the resulting trusted hash. A staged instruction stays
-  pending safely while the hook is unavailable; AVA does not fall back to a
-  competing writer.
-- **Live-console targeting is deliberately strict.** AVA refuses this transport
-  unless exactly one argument-free Codex TUI exists in the same Windows logon
-  session. It currently uses Codex's standard `Tab` follow-up binding; a custom
-  binding requires the Stop-hook fallback. The content-free injection receipt
-  proves only that input reached the console. The marker in Codex's immutable
-  rollout remains the delivery evidence.
-- **Delivery occurs at a clean task boundary.** A watch staged while Codex is
-  working is entered into the TUI's in-memory follow-up queue and begins when
-  that turn finishes. A content-free prompt-hash receipt prevents AVA from
-  entering it twice while rollout evidence catches up. If no single exact TUI
-  target can be selected, the record remains pending for the trusted Stop-hook
-  fallback rather than being typed into an arbitrary window. For
+  pending safely while the hook is unavailable; AVA never falls back to a
+  competing writer or raw terminal keystrokes.
+- **Codex queue acknowledgement is submission evidence, not task completion.**
+  Exit 0 from `codex queue` proves Codex accepted the exact-thread message. AVA
+  then requires the unique marker in Codex's immutable rollout before reporting
+  delivery, and the following task-complete event before reporting completion.
+  A content-free prompt-hash receipt prevents a scheduler retry from submitting
+  the message twice. A timeout or lost acknowledgement is terminally ambiguous
+  and is never replayed automatically.
+- **Delivery occurs at a clean task boundary.** Codex itself queues a message
+  received while work is active and begins it after that turn finishes. An idle
+  pinned thread starts directly. AVA no longer needs to infer whether the TUI is
+  accepting normal input or follow-up input. For
   `continue_cycle`, the Stop hook records completion and
   waits up to six minutes for AVA to plan and stage exactly one child; a planner
   outage ends the turn honestly rather than waiting forever.
@@ -241,16 +242,16 @@ any watch is deletable, so a given row won't necessarily still be present later.
   duplicate boot exits before it can touch either internal credential; a stale
   lock is recovered only after its recorded PID is no longer alive.
 - **Target delivery is idempotent.** The scheduler persists a unique marker and
-  session offset before advancing. Console-input prompt-hash receipts, plus the
+  session offset before advancing. Exact-thread queue prompt-hash receipts, plus the
   Stop hook's atomic pending → claimed → completed files, are keyed by
   watch ID; replay cannot claim or execute the same instruction twice. The
   unique marker plus post-stage session offset remains the user-visible
   delivery evidence.
-- **The TUI remains the only active writer.** The earlier adapter launched
+- **Codex's queue remains the active writer boundary.** The earlier adapter launched
   `codex exec resume`, which fails when an open Codex window owns the thread's
-  writer lock. Active-thread delivery now enters a queued submission through
-  the standalone TUI's own console; a file handoff can instead be consumed by
-  the existing writer's Stop hook.
+  writer lock. Current delivery asks the installed Codex runtime to queue an
+  exact-thread message through its supported command; a file handoff can still
+  be consumed by an older existing writer's Stop hook.
   Both transports use sanitized content and stable watcher identity. No
   approval bypass or second rollout writer is used.
 - **Lost dispatches fail closed once.** If a persisted Codex delivery process

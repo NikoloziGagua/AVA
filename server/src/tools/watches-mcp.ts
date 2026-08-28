@@ -23,9 +23,9 @@ export function buildWatchTools(o: { db: Db; resolveCodexTarget?: () => CodexWat
           "condition is met (price drops, site changes, news). prompt must be self-contained " +
           "(runs without conversation context). Be frugal: every check is a real agent run. " +
           "(3) DAILY: daily_at='HH:MM' runs the prompt once per day at that time (e.g. a morning briefing). " +
-          "(4) CODEX: kind='codex' pins the newest Codex TUI thread for AVA's repo, stages one sanitized " +
-          "instruction for its trusted in-thread Stop hook, and verifies the instruction appeared at a clean task " +
-          "boundary without starting a competing Codex writer. Set continue_cycle=true " +
+          "(4) CODEX: kind='codex' pins the newest Codex TUI thread for AVA's repo, submits one sanitized " +
+          "message through Codex's acknowledged exact-thread queue, and verifies the unique marker appeared and " +
+          "completed without terminal keystrokes or a competing Codex writer. Set continue_cycle=true " +
           "only when Sir explicitly authorized AVA to select a successor task. Args: { prompt, kind?: " +
           "'check'|'reminder'|'codex', interval_minutes?, run_in_minutes?, at_local?, daily_at?, once?, " +
           "continue_cycle?, parent_watch_id? }.",

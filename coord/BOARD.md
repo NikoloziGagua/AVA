@@ -4270,3 +4270,39 @@ semantic search and a project boundary, but no kind-only filter. Search
 improvement records and their exact Git source. A dedicated Improvements filter
 would be a separate small discoverability increment, not part of the indexing
 contract shipped here.
+
+---
+
+### 2026-08-28 - codex - CLAIM: provider-neutral computer execution router and Google fast path
+
+Niko approved continued functionality-first development after the genuine UFO
+Notepad proof and clarified the desired operating model: AVA should choose the
+fastest capable executor automatically rather than treating UFO as every task's
+default. Current repository evidence already provides persistent AVA Chrome,
+deterministic browser primitives, dedicated social workflows, native Windows
+control, a vision-driven computer-use fallback, and one genuine but deliberately
+fixed UFO Notepad workflow. No other agent owns this bounded routing increment.
+
+I am claiming the existing Codex-owned Windows desktop/browser runtime for the
+smallest complete slice: a provider-neutral execution decision contract plus a
+verified direct Google-search workflow. Natural requests such as `open Google
+and search for X` must use persistent AVA Chrome without unnecessary visual
+reasoning or UFO overhead, report the selected route and independent browser
+evidence, and remain idempotent and privacy-safe. Explicit UFO requests for web
+browsing must fail honestly because the current UFO adapter accepts only its
+fixed Notepad proof; it must never silently run that proof or pretend to provide
+general browser fallback. Existing task receipts, Mission Control, browser
+leases, redaction, policy, and verification contracts will be reused rather
+than duplicated.
+
+Acceptance includes deterministic routing, encoding, verification, failure,
+unsupported-UFO, idempotency, redaction, receipt/observability, and capability
+truth tests; complete relevant suites/builds; committed-HEAD boot smoke; and
+live black-box requests sent through AVA itself with disposable searches and
+cleanup. No message, post, purchase, or other communication to another person
+will be sent during testing. Existing unrelated settings and persona-research
+changes remain untouched. Forge is outside scope and will not be inspected or
+modified.
+
+NEEDS: codex (implement, stress-test automatically and through live AVA, commit,
+record exact evidence, and relaunch the verified build)

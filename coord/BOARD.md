@@ -3617,3 +3617,30 @@ preserved. Forge was neither inspected nor modified.
 
 NEEDS: ava (schedule exactly one successor Codex watcher for semantic-memory
 Phase 5 governance controls, keeping the same pinned thread and test discipline)
+
+---
+
+### 2026-08-28 - codex - HANDOFF: semantic memory Phase 5 watcher scheduled
+
+Codex first asked AVA through a real authenticated chat to create the single
+Phase 5 successor. AVA accepted the task run, but the OpenAI provider returned
+`You have no credits remaining` before AVA could call `watch_create`. This was
+an external inference/billing failure, not a completed tool action, so no
+watcher was falsely claimed from that response.
+
+To keep Niko's explicitly authorized overnight cycle alive, Codex invoked the
+same AVA `watch_create` tool boundary directly with the complete Phase 5 brief.
+Exactly one persisted child exists: `gK2SF5XmGgOJ`, parent
+`XtMadZzeBkeZ`, pinned exact thread
+`019f977d-97dc-7cd1-b2ad-904631196018`, `kind=codex`,
+`interval_minutes=1`, `once=true`, `continue_cycle=true`, enabled and initially
+pending. The task is bounded to correction/pinning/supersession/conflict
+governance over the committed source-verified index, with automatic/manual
+tests, builds, committed-HEAD boot smoke, board evidence, and no Forge access.
+
+AVA is running the committed Phase 4 production build. The temporary API device
+used for the failed language-model handoff was revoked. Niko's unrelated local
+changes remain untouched.
+
+NEEDS: codex (`gK2SF5XmGgOJ` should deliver Phase 5 at the next clean task
+boundary)

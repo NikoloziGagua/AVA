@@ -3558,3 +3558,62 @@ outside scope and will not be inspected or modified.
 
 NEEDS: codex (implement, test automatically and manually, commit, record exact
 evidence, and ask AVA for the single Phase 5 successor watcher)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: semantic memory Phase 4 automatic retrieval
+
+Shipped the shared source-verified automatic retrieval gate in commit `523c7e5`
+(`feat(memory): retrieve verified context across chat and voice`). Typed chat and
+OpenAI Realtime now search before model response generation; Hume uses the same
+gate at connection from the active chat's latest user context. The gate searches
+only the newest checkpoint in each immutable lineage, excludes the current
+source session, enforces personal/project scope at search and source-open time,
+re-verifies the authoritative message range, and injects at most two bounded,
+scrubbed recent source excerpts. Compact summaries are explicitly labelled as
+non-authoritative discovery text, and retrieved old instructions are explicitly
+reference-only.
+
+Embedding discovery is bounded to 2.5 seconds with no automatic retries. When
+embeddings are absent or fail, the result honestly identifies lexical fallback;
+when the index or source fails, the conversation continues with no memory
+injected. OpenAI voice uses a monotonic retrieval epoch so Stop, interruption,
+replacement, disconnect, or socket failure retires a slow result before it can
+trigger a late response. Mission Control receives one idempotent collapsed
+`memory.retrieval.*` provenance/status event per chat or OpenAI voice run and
+never receives the query or retrieved source text.
+
+Changed areas: `server/src/memory-index/{auto-retrieve.ts,
+auto-retrieve.test.ts,store.ts,embedding.ts,embedding.test.ts}`, typed chat and
+OpenAI/Hume realtime composition plus route tests, `server/src/index.ts`, the
+repeatable `server/scripts/memory-retrieval-smoke.ts` harness and package script,
+and memory/voice/Mission-Control architecture and feature documentation. No web
+or Explorer registry contract changed.
+
+Automated evidence: the focused memory/chat/voice/route/tool set passed 10 files
+and 153 tests; the complete server suite passed 188 files and 1,439 tests; the
+complete web suite passed 91 files and 404 tests. Server TypeScript/build and the
+production web/PWA build passed. `git diff --check` and the bounded privacy scan
+passed. Explorer contract/reality was not rerun because no registry or verified
+manifest evidence changed.
+
+Committed-HEAD evidence: `npm.cmd -w server run smoke:memory-retrieval` created
+a temporary on-disk AVA database and passed fresh-chat retrieval, OpenAI voice
+continuity, Hume voice continuity, semantic paraphrase, irrelevant-memory
+suppression, exact project/privacy isolation, SQLite close/reopen persistence,
+and temporary-data cleanup. It used deterministic synthetic non-secret data and
+no external credentials. The committed `dist` server then passed the canonical
+boot smoke (`{"ok":true,"log":"healthy"}`).
+
+Known boundary: Hume supplies its final spoken transcript only after EVI has
+already begun response generation. This phase therefore truthfully supports
+typed-chat-to-Hume and older cross-chat memory at connection, not semantic
+retrieval for a brand-new spoken-only Hume utterance. Its connection-time result
+is currently logged rather than attached to a not-yet-existing Hume turn run;
+chat and OpenAI voice expose Mission Control events. User-governed correction,
+pinning, supersession, and conflict resolution remain Phase 5. Niko's unrelated
+`.claude/settings.local.json` edit and untracked persona research document were
+preserved. Forge was neither inspected nor modified.
+
+NEEDS: ava (schedule exactly one successor Codex watcher for semantic-memory
+Phase 5 governance controls, keeping the same pinned thread and test discipline)

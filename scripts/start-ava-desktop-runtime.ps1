@@ -5,6 +5,7 @@ $serverDir = Join-Path $repoRoot "server"
 $serverEntry = Join-Path $serverDir "dist\index.js"
 $buildIdFile = Join-Path $serverDir "dist\build-id.txt"
 $browserLauncher = Join-Path $PSScriptRoot "start-ava-browser.ps1"
+$activepiecesLauncher = Join-Path $PSScriptRoot "start-activepieces-runtime.ps1"
 $inputDesktopLauncher = Join-Path $PSScriptRoot "start-on-input-desktop.ps1"
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
 
@@ -29,6 +30,23 @@ if (-not $desiredBuildId) {
   -File $browserLauncher
 if ($LASTEXITCODE -ne 0) {
   throw "AVA Chrome launcher failed with exit code $LASTEXITCODE."
+}
+
+# A configured pinned automation is part of the local AVA runtime. Start its
+# genuine engine/worker before AVA begins accepting work; keep AVA usable if an
+# optional automation dependency fails, because the invocation then reports its
+# own honest unavailable/unreachable result.
+try {
+  & powershell.exe `
+    -NoLogo `
+    -NoProfile `
+    -ExecutionPolicy Bypass `
+    -File $activepiecesLauncher
+  if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Activepieces launcher exited with code $LASTEXITCODE."
+  }
+} catch {
+  Write-Warning "Activepieces did not start: $($_.Exception.Message)"
 }
 
 # Keep exactly one AVA server. Liveness is insufficient: a process started

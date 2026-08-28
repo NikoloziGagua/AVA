@@ -321,6 +321,11 @@ describe("Explorer read API", () => {
     db.close();
   });
 
+  it("links Activepieces task events back to the canonical automation capability", () => {
+    expect(capabilityIdsForTool("automation_system_report")).toEqual(["automation.activepieces"]);
+    expect(capabilityIdsForTool("automation_status")).toEqual(["automation.activepieces"]);
+  });
+
   it("returns real learned playbooks with provenance and recall metrics", async () => {
     const { app, db, memoryDir } = setup();
     const playbook: Playbook = {

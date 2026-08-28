@@ -239,6 +239,7 @@ export function capabilityIdsForTool(tool: string): string[] {
   if (/^memory_index_/.test(tool)) return ["memory.semantic-index"];
   if (/^memory_/.test(tool)) return ["memory.durable"];
   if (/^watch_/.test(tool)) return ["automation.watches"];
+  if (/^automation_/.test(tool)) return ["automation.activepieces"];
   if (/^shopify_/.test(tool)) return ["services.shopify-products"];
   if (tool === "find_places") return ["services.google-places"];
   if (/^chrome_/.test(tool) || tool === "computer_use") return ["browser.persistent-control"];

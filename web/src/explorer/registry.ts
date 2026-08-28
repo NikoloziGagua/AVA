@@ -1766,7 +1766,7 @@ const capabilities: ExplorerCapability[] = [
     domainId: "automation",
     name: "Activepieces deterministic playbooks",
     shortName: "Activepieces",
-    description: "Runs one pinned, versioned deterministic workflow while AVA retains routing, evidence, verification and memory authority. The local Activepieces runtime is not currently configured.",
+    description: "Runs one pinned, versioned workflow on a genuine local Activepieces runtime while AVA retains routing, evidence, verification and memory authority.",
     purpose: "Move mature repetitive procedures into a fast deterministic executor without creating a second AVA orchestrator.",
     stability: "experimental",
     definition: {
@@ -1776,6 +1776,9 @@ const capabilities: ExplorerCapability[] = [
         source("server/src/automations/system-report.ts", "SystemReportAutomationService"),
         source("server/src/tools/automations-mcp.ts", "buildAutomationTools"),
         source("server/src/automations/system-report.test.ts", "AVA-owned system report automation", "test"),
+        source("server/scripts/activepieces-system-report-live-smoke.ts", "black-box genuine runtime acceptance", "test"),
+        source("scripts/setup-activepieces-runtime.ps1", "pinned genuine runtime setup"),
+        source("scripts/start-activepieces-runtime.ps1", "desktop runtime lifecycle"),
         source("docs/features/activepieces-automations.md", "Activepieces deterministic playbooks", "documentation"),
       ],
     },
@@ -1789,11 +1792,11 @@ const capabilities: ExplorerCapability[] = [
       { targetType: "service", targetId: "activepieces.webhook", relationship: "depends-on", required: true, description: "Requires a configured Activepieces Community Edition instance and the pinned ava.system-report v1 webhook." },
       { targetType: "capability", targetId: "memory.durable", relationship: "writes-to", required: true, description: "Only independently verified artifacts enter the semantic index." },
     ],
-    readiness: readiness(["defined", "tested"], { recentSuccess: false }),
+    readiness: readiness(["defined", "configured", "available", "healthy", "tested"], { recentSuccess: true }),
     verification: verification(
       ["The response echoes the exact request, workflow and version.", "AVA writes, reads back and SHA-256 verifies the artifact before success.", "A duplicate request reuses the same run and memory entry."],
       ["tool-result", "artifact", "task-event", "unit-test"],
-      ["Configured endpoint health is not execution proof.", "The deterministic fixture proves AVA's seam, not a live Activepieces runtime."],
+      ["Configured endpoint health is not execution proof; the black-box smoke requires a real completed invocation.", "The local source runtime is a pinned experimental integration, not a general arbitrary-flow executor."],
     ),
     safety: safety("low", "never", ["Sends bounded readiness metadata to one configured webhook.", "Writes a local report and memory locator."], {
       sensitiveData: ["No raw memory, credentials or authentication state are allowed."],

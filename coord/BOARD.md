@@ -3676,3 +3676,82 @@ inspected or modified.
 
 NEEDS: codex (implement and verify the complete Phase 5 governance slice, then
 ask AVA for one successor only if an agreed memory phase remains)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: semantic memory Phase 5 governance controls
+
+Shipped commit `c491669` (`feat(memory): add immutable governance controls`).
+AVA now keeps an append-only, versioned governance record over canonical SQLite
+memory. Niko and AVA can correct the compact current view, pin a relevant
+thread, explicitly supersede an obsolete thread, open a pairwise conflict, and
+resolve it to one source-verified winner. Original checkpoint rows and source
+fingerprints are never rewritten. Multiple partial corrections compose in
+version order while the original remains visible. Every mutation records actor,
+time, bounded reason, stable replay key, target, and resulting version; stale
+writes, cross-thread replay keys, cross-project relationships, unavailable
+sources, and ambiguous conflicts fail closed.
+
+Normal search and the shared chat/OpenAI/Hume retrieval gate now use only the
+current, non-conflicted governed state. A correction is labelled as a
+user-governed overlay and does not manufacture source support. Pinning is only a
+small ordering hint after relevance. Superseded and conflicted entries remain
+inspectable through explicit history, but cannot be injected automatically.
+The Memory > Index UI shows current/history/conflict state, effective versus
+original content, bounded governance history, and versioned Pin, Correct, Mark
+obsolete, Mark conflict, and conflict-resolution controls. The same operations
+are available through authenticated typed routes and four provider-neutral agent
+tools; agent use flows through the existing Mission Control tool seam.
+
+Exact product files: `server/src/memory-index/{governance.ts,
+governance.test.ts,store.ts,types.ts,auto-retrieve.ts}`,
+`server/src/state/{schema.sql,db.ts,db.test.ts}`,
+`server/src/routes/{memory.ts,memory.test.ts}`,
+`server/src/tools/{memory-mcp.ts,memory-mcp.test.ts}`,
+`server/src/policy/{classify.ts,classify.test.ts}`,
+`server/src/orchestrator/{tool-rubric.ts,tool-rubric.test.ts}`,
+`server/scripts/memory-governance-smoke.ts`, `server/package.json`,
+`web/src/{api.ts,memory/MemoryIndexSection.tsx,
+memory/MemoryIndexSection.test.tsx,explorer/registry.ts,
+explorer/verified-manifest.json}`, `web/{vite.config.ts,
+scripts/build-managed.mjs}`, `docs/features/{semantic-memory-index.md,
+mission-control.md}`, `docs/architecture/{03-tools-catalog.md,
+08-memory-learning-identity.md}`, and `docs/AVA-CAPABILITIES.md`. The bounded
+3 MiB Workbox limit keeps AVA's existing renderer-rich application shell
+installable offline; the production asset is 2.10 MiB and remains under that
+explicit bound.
+
+Verification on the final implementation: focused governance/API/tool tests
+passed 3 files / 40 tests; the final policy/rubric/routes/governance and Memory
+UI/Explorer sets passed 4 files / 53 tests and 2 files / 22 tests. The complete
+server suite passed 189 files / 1,448 tests and the complete web suite passed 91
+files / 408 tests. Server TypeScript/schema build and production PWA build
+passed; the PWA precached 8 entries / 2213.14 KiB. Explorer contract/reality
+passed with 33 capabilities, 66/66 tools, 27/27 routes, 108 verified source
+references, and zero broken references. `git diff --check` passed with only
+normal CRLF notices, and the production-file secret scan returned clean.
+
+Deterministic black-box evidence requires no provider credentials. The existing
+retrieval smoke passed fresh-chat, OpenAI voice, Hume voice, semantic paraphrase,
+irrelevant suppression, project/privacy isolation, SQLite restart persistence,
+and cleanup. The new child-process, on-disk governance smoke passed immutable
+correction overlay, replay idempotency, pin ordering, conflict suppression and
+resolution, supersession with visible history, restart persistence, and cleanup.
+The canonical committed-HEAD boot smoke returned
+`{"ok":true,"log":"healthy"}`. AVA was rebuilt and relaunched from that exact
+commit; live `/api/health` reports `ok=true`, `ready=true`, provider `openai`,
+and build ID `3d08117d-5d12-4ccb-a39f-a87c63cd6152`.
+
+Honest limitations: V1 conflicts are deliberately pairwise; corrections govern
+the compact locator and are not themselves authoritative source evidence; Hume
+still performs connection-time chat-to-voice retrieval rather than semantic
+retrieval from a brand-new spoken-only utterance. Mem0/another canonical store,
+background embedding-model migration, a large administration dashboard, and
+transcript deletion remain explicitly deferred rather than hidden phases. No
+additional agreed memory phase remains, so no successor memory watcher was
+scheduled. Niko's unrelated `.claude/settings.local.json` edit and untracked
+persona research document were preserved. Forge was neither inspected nor
+modified.
+
+NEEDS: ava (the agreed memory/RAG sequence is complete; select one saved Idea
+for Niko's next bounded Codex handoff rather than inventing another memory phase)

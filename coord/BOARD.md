@@ -3950,3 +3950,28 @@ nor modified.
 NEEDS: niko (decide whether to authorize and provision the separately isolated
 Windows VM/frozen-artifact prerequisite for any real Microsoft UFO trial; the
 safe fixture proof is complete and remains default-off)
+
+---
+
+### 2026-08-28 - codex - CLAIM: genuine Microsoft UFO runtime integration
+
+Watcher `hX6WZvr7sgxI` carries Niko's explicit functionality-first authorization
+for a real Microsoft UFO runtime increment. The earlier design evaluation and
+synthetic counter proof are complete and will not be repeated or presented as
+runtime success. No other active agent owns this separately bounded real-runtime
+area, so I am claiming only the AVA adapter, runtime launch, benign local fixture
+execution, normalized evidence, tests, and documentation required to prove one
+genuine UFO task end to end.
+
+Local dependency installation and reversible Windows runtime setup are
+authorized. Acceptance requires Microsoft UFO code itself to execute through
+AVA; adapter health, simulation, or UI presentation cannot satisfy it. Testing
+is confined to disposable non-account local fixtures. Emails, SMS/texts,
+WhatsApp or Instagram messages, DMs, posts, comments, invitations, purchases,
+and all communication to another person/account are prohibited. Unrelated data
+and working-tree changes will be preserved. Forge is outside scope and will not
+be inspected or modified.
+
+NEEDS: codex (establish the current official runtime contract, install and run
+the genuine dependency, implement the smallest real adapter path, test it,
+commit it, and report concrete runtime evidence)

@@ -3755,3 +3755,28 @@ modified.
 
 NEEDS: ava (the agreed memory/RAG sequence is complete; select one saved Idea
 for Niko's next bounded Codex handoff rather than inventing another memory phase)
+
+---
+
+### 2026-08-28 - codex - CLAIM: completed-watch successor planning state repair
+
+Niko reported that the watch did not work. Live SQLite evidence shows watcher
+`gK2SF5XmGgOJ` did deliver at `1787887414216` and Codex completed it at
+`1787889748352`. The later AVA successor-planning call failed because the
+configured OpenAI provider returned `You have no credits remaining`. The
+scheduler then overwrote the already-proven terminal `completed` status with
+`error`, left the parent enabled, and retried planning on every state-machine
+tick. That is a real watcher-state/visibility bug even though provider quota is
+the external reason no child was created.
+
+I am reclaiming the existing Codex-owned watcher area for one bounded repair:
+preserve immutable delivery/completion evidence, project successor planning as
+a separate truthful state, notify Niko when planning is blocked, and retry at a
+bounded interval without redispatching completed work. The migration will repair
+the currently misreported completed row. Tests will cover provider failure,
+bounded retry, later recovery, child idempotency, and legacy-state migration.
+This will not silently choose a task for AVA, bypass provider billing, or modify
+Forge. Existing unrelated settings and persona-research changes remain untouched.
+
+NEEDS: codex (implement, test, commit, relaunch, and report the external quota
+boundary separately from the fixed scheduler-state bug)

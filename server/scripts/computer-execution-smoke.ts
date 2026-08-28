@@ -132,6 +132,33 @@ function assertVerifiedSearch(run: ChatRun, expectedQuery: string): void {
     "deterministic route unexpectedly invoked a model provider");
 }
 
+function assertVerifiedRoute(
+  run: ChatRun,
+  expectedTool: "chrome_open_url" | "chrome_youtube_search",
+  expectedArgs: Record<string, string>,
+  expectedMethod: "chrome_exact_url" | "chrome_youtube_search_url",
+): void {
+  const calls = run.events.filter((event) => event.event === "tool_call");
+  assert(calls.length === 1, `expected one tool call, got ${calls.length}`);
+  assert(calls[0]!.data.tool === expectedTool, `AVA selected ${String(calls[0]!.data.tool)} instead of ${expectedTool}`);
+  const actualArgs = calls[0]!.data.args as Record<string, unknown> | undefined;
+  for (const [key, value] of Object.entries(expectedArgs)) {
+    assert(actualArgs?.[key] === value, `${expectedTool} ${key} did not match the literal request`);
+  }
+  const result = run.events.find((event) => event.event === "tool_result")?.data;
+  const verification = result?.verification as { state?: string; method?: string } | undefined;
+  assert(result?.ok === true, `${expectedTool} did not report success`);
+  assert(verification?.state === "verified", `${expectedTool} was not independently verified`);
+  assert(verification.method === expectedMethod, `${expectedTool} used an unexpected verification method`);
+  assert(run.receipt.outcome === "verified", `${expectedTool} receipt was not verified`);
+  assert(run.receipt.verificationScope === "task_outcome", `${expectedTool} verified only an operation/response`);
+  assert(run.mission.run.verificationStatus === "verified", `${expectedTool} Mission Control projection was not verified`);
+  assert(run.mission.events.some((event) => event.type === "verification.evidence.recorded"),
+    `${expectedTool} Mission Control omitted verification provenance`);
+  assert(!run.mission.events.some((event) => event.type === "provider.usage.recorded"),
+    `${expectedTool} unexpectedly invoked a model provider`);
+}
+
 async function assertBrowserQuery(query: string): Promise<void> {
   const response = await fetch("http://127.0.0.1:9222/json/list");
   assert(response.ok, "persistent browser CDP endpoint is unavailable");
@@ -150,6 +177,32 @@ async function assertBrowserQuery(query: string): Promise<void> {
   assert(found, "CDP did not show the exact requested Google results URL");
 }
 
+async function assertBrowserUrl(expected: string): Promise<void> {
+  const response = await fetch("http://127.0.0.1:9222/json/list");
+  assert(response.ok, "persistent browser CDP endpoint is unavailable");
+  const pages = await response.json() as Array<{ type?: string; url?: string }>;
+  const normalized = new URL(expected).toString();
+  assert(pages.some((page) => page.type === "page" && page.url === normalized),
+    `CDP did not show the exact requested URL ${normalized}`);
+}
+
+async function assertBrowserYouTubeQuery(query: string): Promise<void> {
+  const response = await fetch("http://127.0.0.1:9222/json/list");
+  assert(response.ok, "persistent browser CDP endpoint is unavailable");
+  const pages = await response.json() as Array<{ type?: string; url?: string }>;
+  assert(pages.some((page) => {
+    if (page.type !== "page" || typeof page.url !== "string") return false;
+    try {
+      const url = new URL(page.url);
+      return /^(?:www\.)?youtube\.com$/i.test(url.hostname)
+        && url.pathname === "/results"
+        && url.searchParams.get("search_query") === query;
+    } catch {
+      return false;
+    }
+  }), "CDP did not show the exact requested YouTube results URL");
+}
+
 async function main(): Promise<void> {
   const typedQuery = "AVA ROUTER LIVE 2026-08-28";
   const voiceQuery = "AVA VOICE ROUTER LIVE 2026-08-28";
@@ -166,6 +219,22 @@ async function main(): Promise<void> {
     assertVerifiedSearch(voice, voiceQuery);
     await assertBrowserQuery(voiceQuery);
     console.log(`voice-originated: verified in ${voice.durationMs}ms (${voice.taskId})`);
+
+    const site = await runChat("Open GitHub");
+    assertVerifiedRoute(site, "chrome_open_url", { url: "https://github.com/" }, "chrome_exact_url");
+    await assertBrowserUrl("https://github.com/");
+    console.log(`known-site: verified in ${site.durationMs}ms (${site.taskId})`);
+
+    const explicit = await runChat("Open https://example.com/");
+    assertVerifiedRoute(explicit, "chrome_open_url", { url: "https://example.com/" }, "chrome_exact_url");
+    await assertBrowserUrl("https://example.com/");
+    console.log(`explicit-url: verified in ${explicit.durationMs}ms (${explicit.taskId})`);
+
+    const youtubeQuery = "AVA YOUTUBE ROUTER LIVE 2026-08-28";
+    const youtube = await runChat(`Search YouTube for ${youtubeQuery}`, true);
+    assertVerifiedRoute(youtube, "chrome_youtube_search", { query: youtubeQuery }, "chrome_youtube_search_url");
+    await assertBrowserYouTubeQuery(youtubeQuery);
+    console.log(`youtube-voice: verified in ${youtube.durationMs}ms (${youtube.taskId})`);
 
     const unsupported = await runChat("Use Microsoft UFO to open Google and search for AVA");
     assert(!unsupported.events.some((event) => event.event === "tool_call"),

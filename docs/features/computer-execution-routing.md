@@ -1,13 +1,14 @@
 # Computer execution routing
 
-Status: first bounded route implemented
+Status: bounded browser fast paths implemented
 Authority: AVA's chat/action orchestrator
 
 AVA now has a small provider-neutral decision boundary for computer actions whose
-correct executor can be chosen deterministically. The first route is intentionally
-narrow: a request such as **“Open Google and search for AVA”** goes directly to
-AVA's persistent browser instead of asking a model to choose among browser,
-vision, native control, shell, or Microsoft UFO.
+correct executor can be chosen deterministically. Literal requests such as
+**“Open Google and search for AVA”**, **“Open GitHub”**,
+**“Open https://example.com/”**, and **“Search YouTube for AVA demos”** go
+directly to AVA's persistent browser instead of asking a model to choose among
+browser, vision, native control, shell, or Microsoft UFO.
 
 ## Why this exists
 
@@ -19,6 +20,8 @@ actually supports the requested operation:
 | Task | Selected executor | Why |
 | --- | --- | --- |
 | One explicit Google query | Ava persistent Chrome | One URL operation with deterministic post-action verification |
+| One explicit YouTube query | Ava persistent Chrome | One encoded results URL with exact query verification |
+| Declared site or explicit HTTP(S) URL | Ava persistent Chrome | One exact destination with deterministic URL verification |
 | Multi-step web research | Normal agent + browser tools | The request requires reading, reasoning, branching, and source synthesis |
 | Native Windows action | Existing native/vision path | Outside this first route; no false support claim |
 | Explicit UFO browser request | Unsupported | The installed AVA UFO adapter is fixed to its disposable Notepad proof |
@@ -50,10 +53,30 @@ the returned task ID when it opens the stream. This prevents an immediate
 unsupported/fail-closed decision from finishing between POST and SSE connection
 and leaving voice with a silent result.
 
-The query is limited to 500 characters. Text recognized by AVA's secret scrubber
+Search queries are limited to 500 characters. Text recognized by AVA's secret scrubber
 is refused before browser navigation. Activity surfaces receive redacted tool
 arguments, and verification stores only a bounded hash reference rather than a
 second copy of the search text.
+
+## Direct site and YouTube fast paths
+
+- `website-open.direct.v1` accepts only declared aliases or explicit HTTP(S)
+  destinations. Declared aliases currently cover Google, YouTube, Gmail,
+  Reddit, GitHub, Wikipedia, and Google Maps. Unknown brand names remain with
+  the agent rather than being turned into guessed domains.
+- A bare host/path such as `example.com/docs` is normalized to HTTPS. URLs with
+  another scheme, embedded credentials, more than 2,048 characters, or text
+  caught by the secret scrubber fail closed before navigation.
+- `chrome_open_url` verifies the exact normalized active URL after navigation;
+  a redirect is a contradiction, not a verified success.
+- `youtube-search.direct.v1` opens an encoded
+  `https://www.youtube.com/results?search_query=...` URL and requires the exact
+  decoded query on the live YouTube results route.
+- Requests that continue with reading, comparing, clicking, playing, signing
+  in, sending, posting, or another operation do not take either one-step route.
+  They stay in the normal agent loop so AVA can execute and verify each stage.
+- Repeated requests are idempotent: if the exact destination is already active,
+  AVA foregrounds it and still performs the live verification check.
 
 ## User-visible evidence
 
@@ -72,14 +95,18 @@ npm.cmd -w server run smoke:computer-routing
 ```
 
 It creates a temporary authenticated device, talks to the running AVA server,
-executes typed, repeated and voice-originated searches, checks the real CDP URL,
-reads receipts and Mission Control provenance, checks the unsupported UFO/web
-boundary, and then revokes its token and soft-deletes its disposable sessions.
+executes typed, repeated and voice-originated Google searches, a declared-site
+open, an explicit-URL open, and a YouTube search, checks the real CDP URL, reads
+receipts and Mission Control provenance, checks the unsupported UFO/web boundary,
+and then revokes its token and soft-deletes its disposable sessions.
 
 ## Honest limitations and next boundary
 
-- The fast grammar covers one direct Google query, not arbitrary web tasks.
+- The fast grammar covers direct Google/YouTube queries and exact known-site or
+  HTTP(S) navigation, not arbitrary web tasks.
 - Compound instructions intentionally stay with the agent.
+- Site aliases are a data declaration, not a search-engine fallback; unknown
+  names are not guessed. Adding an alias requires a reviewed registry entry.
 - Regional Google hosts other than `google.com` and `google.co.uk` are not yet
   accepted as verified outcomes.
 - This slice reuses one persistent browser, but it does not add a new cross-session

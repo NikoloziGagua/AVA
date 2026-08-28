@@ -36,6 +36,7 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "read_discussion": return "Reading a Claude consult";
     case "read_claude_updates": return "Reading Claude's update notes";
     case "chrome_navigate": return a.url ? `Opening ${domain(s(a.url))}` : "Opening a page";
+    case "chrome_open_url": return a.url ? `Opening ${domain(s(a.url))}` : "Opening a website";
     case "chrome_click": return "Clicking";
     case "chrome_type": return "Typing";
     case "chrome_press_key": return "Pressing a key";
@@ -45,6 +46,7 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "chrome_tabs": return "Checking tabs";
     case "computer_use": return a.task ? truncate(s(a.task), 50) : "Controlling the screen";
     case "chrome_google_search": return a.query ? `Searching Google for ${truncate(s(a.query), 42)}` : "Searching Google";
+    case "chrome_youtube_search": return a.query ? `Searching YouTube for ${truncate(s(a.query), 42)}` : "Searching YouTube";
     case "control_app": { const app = s(a.app) || s(a.name); return app ? `Controlling ${truncate(app, 30)}` : "Controlling an app"; }
     case "find_places": return a.query ? `Finding places: ${truncate(s(a.query), 36)}` : "Finding places";
     case "take_screenshot": return "Taking a screenshot";

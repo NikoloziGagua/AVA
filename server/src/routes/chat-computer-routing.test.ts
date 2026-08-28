@@ -115,4 +115,39 @@ describe("chat computer execution routing", () => {
     });
     expect(fixture.memorySearch).not.toHaveBeenCalled();
   });
+
+  it("routes a declared site directly and suppresses unrelated recall", async () => {
+    const fixture = setup();
+    await request(fixture.app).post("/api/chat").send({
+      text: "Open GitHub",
+    }).expect(200);
+    await vi.waitFor(() => expect(fixture.calls).toHaveLength(1));
+
+    expect(fixture.calls[0]!.computerExecutionPlan).toMatchObject({
+      status: "execute",
+      routeId: "website-open.direct.v1",
+      toolName: "chrome_open_url",
+      args: { url: "https://github.com/" },
+    });
+    expect(fixture.memorySearch).not.toHaveBeenCalled();
+  });
+
+  it("uses the same YouTube route for a voice-originated action turn", async () => {
+    const fixture = setup();
+    await request(fixture.app).post("/api/chat").send({
+      text: "Search YouTube for AVA VOICE FAST PATH",
+      voice: true,
+      persist: false,
+    }).expect(200);
+    await vi.waitFor(() => expect(fixture.calls).toHaveLength(1));
+
+    expect(fixture.calls[0]!.mode).toBe("action");
+    expect(fixture.calls[0]!.computerExecutionPlan).toMatchObject({
+      status: "execute",
+      routeId: "youtube-search.direct.v1",
+      toolName: "chrome_youtube_search",
+      args: { query: "AVA VOICE FAST PATH" },
+    });
+    expect(fixture.memorySearch).not.toHaveBeenCalled();
+  });
 });

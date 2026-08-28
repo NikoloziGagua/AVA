@@ -21,6 +21,10 @@ describe("classifyIntent", () => {
     expect(classifyIntent("open Google and search for AVA")).toBe("action");
     expect(classifyIntent("search Google for AVA")).toBe("action");
     expect(classifyIntent("use chrome_google_search for AVA")).toBe("action");
+    expect(classifyIntent("open YouTube")).toBe("action");
+    expect(classifyIntent("search YouTube for AVA")).toBe("action");
+    expect(classifyIntent("use chrome_open_url for https://example.com")).toBe("action");
+    expect(classifyIntent("use chrome_youtube_search for AVA")).toBe("action");
     expect(classifyIntent("take a screenshot")).toBe("action");
   });
 

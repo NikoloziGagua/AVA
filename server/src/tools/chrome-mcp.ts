@@ -49,6 +49,69 @@ export function verifyGoogleSearchUrl(current: string, query: string): {
   }
 }
 
+export function youtubeSearchUrl(query: string): string {
+  const url = new URL("https://www.youtube.com/results");
+  url.searchParams.set("search_query", query);
+  return url.toString();
+}
+
+export function verifyYouTubeSearchUrl(current: string, query: string): {
+  verified: boolean;
+  reason: string;
+} {
+  try {
+    const url = new URL(current);
+    const youtubeHost = /^(?:www\.)?youtube\.com$/i.test(url.hostname);
+    if (!youtubeHost || url.pathname !== "/results") {
+      return { verified: false, reason: "The active page is not YouTube's search-results route." };
+    }
+    if (url.searchParams.get("search_query") !== query) {
+      return { verified: false, reason: "The active YouTube results URL does not contain the exact requested query." };
+    }
+    return { verified: true, reason: "The active page is YouTube's results route with the exact requested query." };
+  } catch {
+    return { verified: false, reason: "The browser returned an invalid active-page URL." };
+  }
+}
+
+export function normalizeDirectHttpUrl(raw: string): { ok: true; url: string } | { ok: false; reason: string } {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 2_048) {
+    return { ok: false, reason: "URL must be between 1 and 2,048 characters." };
+  }
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return { ok: false, reason: "Only HTTP and HTTPS destinations are supported." };
+    }
+    if (!url.hostname || url.username || url.password) {
+      return { ok: false, reason: "URL must contain a host and must not embed credentials." };
+    }
+    return { ok: true, url: url.toString() };
+  } catch {
+    return { ok: false, reason: "URL is invalid." };
+  }
+}
+
+export function verifyExactHttpUrl(current: string, target: string): {
+  verified: boolean;
+  reason: string;
+} {
+  const expected = normalizeDirectHttpUrl(target);
+  const actual = normalizeDirectHttpUrl(current);
+  if (!expected.ok || !actual.ok) {
+    return { verified: false, reason: "The browser or requested destination returned an invalid HTTP(S) URL." };
+  }
+  if (actual.url !== expected.url) {
+    return { verified: false, reason: "The active page URL does not exactly match the requested destination." };
+  }
+  return { verified: true, reason: "The active page URL exactly matches the requested destination." };
+}
+
+function boundedHash(kind: string, value: string): string {
+  return `${kind}:${createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16)}`;
+}
+
 export function buildChromeTools(opts: {
   /**
    * Lazy accessor for the persistent Chromium context. Chrome only boots when a
@@ -71,6 +134,60 @@ export function buildChromeTools(opts: {
     };
 
   return [
+    {
+      tool: {
+        name: "chrome_open_url",
+        description:
+          "Open one explicit HTTP(S) destination in AVA's persistent Chrome and " +
+          "verify that the active URL exactly matches it. Use for a direct URL or a " +
+          "declared known-site route, not for multi-step browsing, search-result clicks, " +
+          "login, form submission, or Microsoft UFO.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: { type: "string", minLength: 1, maxLength: 2048 },
+          },
+          required: ["url"],
+          additionalProperties: false,
+        },
+      },
+      run: wrap("chrome_open_url", async (chrome, args) => {
+        const parsed = normalizeDirectHttpUrl(typeof args.url === "string" ? args.url : "");
+        if (!parsed.ok) return { ok: false, text: `error: ${parsed.reason}` };
+        if (scrubSecrets(parsed.url) !== parsed.url) {
+          return { ok: false, text: "error: URL appears to contain a credential or secret and was not opened." };
+        }
+
+        const alreadyThere = verifyExactHttpUrl(chrome.url(), parsed.url).verified;
+        const opened = await chrome.open(alreadyThere ? undefined : parsed.url);
+        if (!opened.ok) return { ok: false, text: `error: ${opened.reason}` };
+
+        const verified = verifyExactHttpUrl(chrome.url(), parsed.url);
+        const verification: ToolVerificationEvidence = {
+          state: verified.verified ? "verified" : "contradicted",
+          scope: "task_outcome",
+          method: "chrome_exact_url",
+          summary: verified.reason,
+          evidenceRef: boundedHash("browser-url", parsed.url),
+          observedAt: Date.now(),
+        };
+        if (!verified.verified) {
+          return {
+            ok: false,
+            text: `error: The destination opened, but verification failed: ${verified.reason}`,
+            verification,
+          };
+        }
+
+        return {
+          ok: true,
+          text:
+            `${new URL(parsed.url).hostname.replace(/^www\./, "")} is open in AVA Chrome. ` +
+            "Route: direct persistent browser with exact destination verification.",
+          verification,
+        };
+      }),
+    },
     {
       tool: {
         name: "chrome_google_search",
@@ -105,13 +222,12 @@ export function buildChromeTools(opts: {
 
         const observedAt = Date.now();
         const verified = verifyGoogleSearchUrl(chrome.url(), query);
-        const queryRef = createHash("sha256").update(query, "utf8").digest("hex").slice(0, 16);
         const verification: ToolVerificationEvidence = {
           state: verified.verified ? "verified" : "contradicted",
           scope: "task_outcome",
           method: "chrome_google_search_url",
           summary: verified.reason,
-          evidenceRef: `google-search:${queryRef}`,
+          evidenceRef: boundedHash("google-search", query),
           observedAt,
         };
         if (!verified.verified) {
@@ -128,6 +244,64 @@ export function buildChromeTools(opts: {
           text:
             `Google is open in AVA Chrome with results for “${shown}”. ` +
             `Route: direct persistent browser (faster and more precise than visual control).`,
+          verification,
+        };
+      }),
+    },
+    {
+      tool: {
+        name: "chrome_youtube_search",
+        description:
+          "Fast deterministic YouTube search in AVA's persistent Chrome. It opens " +
+          "the exact encoded /results URL and verifies its host, route, and " +
+          "search_query value. Use only for one literal YouTube query; do not use " +
+          "it to select or play a result without a separate explicit step.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", minLength: 1, maxLength: 500 },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+      run: wrap("chrome_youtube_search", async (chrome, args) => {
+        const query = typeof args.query === "string" ? args.query.replace(/\s+/g, " ").trim() : "";
+        if (!query || query.length > 500) {
+          return { ok: false, text: "error: YouTube search query must be between 1 and 500 characters." };
+        }
+        if (scrubSecrets(query) !== query) {
+          return { ok: false, text: "error: search query appears to contain a credential or secret and was not sent." };
+        }
+
+        const target = youtubeSearchUrl(query);
+        const alreadyThere = verifyYouTubeSearchUrl(chrome.url(), query).verified;
+        const opened = await chrome.open(alreadyThere ? undefined : target);
+        if (!opened.ok) return { ok: false, text: `error: ${opened.reason}` };
+
+        const verified = verifyYouTubeSearchUrl(chrome.url(), query);
+        const verification: ToolVerificationEvidence = {
+          state: verified.verified ? "verified" : "contradicted",
+          scope: "task_outcome",
+          method: "chrome_youtube_search_url",
+          summary: verified.reason,
+          evidenceRef: boundedHash("youtube-search", query),
+          observedAt: Date.now(),
+        };
+        if (!verified.verified) {
+          return {
+            ok: false,
+            text: `error: YouTube search opened, but verification failed: ${verified.reason}`,
+            verification,
+          };
+        }
+
+        const shown = query.length > 180 ? `${query.slice(0, 177)}...` : query;
+        return {
+          ok: true,
+          text:
+            `YouTube is open in AVA Chrome with results for â€œ${shown}â€. ` +
+            "Route: direct persistent browser with exact query verification.",
           verification,
         };
       }),

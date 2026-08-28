@@ -24,7 +24,17 @@ describe("classifyRisk", () => {
   it("low: a direct Google search is reversible browser navigation", () => {
     expect(classifyRisk("chrome_google_search", { query: "AVA test" })).toEqual({
       tier: "low",
-      reason: "direct reversible Google search in AVA Chrome",
+      reason: "direct reversible search in AVA Chrome",
+    });
+  });
+  it("low: direct URL and YouTube routes are reversible browser actions", () => {
+    expect(classifyRisk("chrome_open_url", { url: "https://example.com/" })).toEqual({
+      tier: "low",
+      reason: "direct reversible navigation in AVA Chrome",
+    });
+    expect(classifyRisk("chrome_youtube_search", { query: "AVA test" })).toEqual({
+      tier: "low",
+      reason: "direct reversible search in AVA Chrome",
     });
   });
   it("low: fs_write under allowlist root (caller still allowlist-checks separately)", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planComputerExecution } from "./computer-execution-router.js";
+import { knownBrowserSite, planComputerExecution } from "./computer-execution-router.js";
 
 describe("planComputerExecution", () => {
   it.each([
@@ -23,6 +23,45 @@ describe("planComputerExecution", () => {
     expect(planComputerExecution("Search Google for React Flow and compare it with ELK")).toBeNull();
   });
 
+  it.each([
+    ["Open YouTube and search for ambient coding music", "ambient coding music"],
+    ["search YouTube for AVA demos", "AVA demos"],
+    ["YouTube search accessible React tutorials", "accessible React tutorials"],
+  ])("routes one YouTube query directly: %s", (request, query) => {
+    expect(planComputerExecution(request)).toMatchObject({
+      status: "execute",
+      routeId: "youtube-search.direct.v1",
+      toolName: "chrome_youtube_search",
+      args: { query },
+    });
+  });
+
+  it.each([
+    ["Open YouTube.", "https://www.youtube.com/"],
+    ["please open the GitHub website", "https://github.com/"],
+    ["Go to google maps", "https://www.google.com/maps"],
+    ["Visit example.com/path?q=one", "https://example.com/path?q=one"],
+    ["Navigate to https://example.com/docs#install", "https://example.com/docs#install"],
+  ])("opens a declared site or explicit destination directly: %s", (request, url) => {
+    expect(planComputerExecution(request)).toMatchObject({
+      status: "execute",
+      routeId: "website-open.direct.v1",
+      toolName: "chrome_open_url",
+      args: { url },
+    });
+  });
+
+  it("keeps aliases data-driven and does not guess unknown brand domains", () => {
+    expect(knownBrowserSite("reddit")).toBe("https://www.reddit.com/");
+    expect(knownBrowserSite("some made up service")).toBeNull();
+    expect(planComputerExecution("Open some made up service")).toBeNull();
+  });
+
+  it("keeps compound site/search work on the normal agent path", () => {
+    expect(planComputerExecution("Open YouTube and search for AVA, then play the first video")).toBeNull();
+    expect(planComputerExecution("Open github.com and summarize my notifications")).toBeNull();
+  });
+
   it("does not hijack unrelated browser or native-app tasks", () => {
     expect(planComputerExecution("Open Instagram and message Lasha")).toBeNull();
     expect(planComputerExecution("Open Notepad and write hello")).toBeNull();
@@ -41,6 +80,25 @@ describe("planComputerExecution", () => {
     expect(planComputerExecution("Open Google and search for sk-abcdefghijklmnopqrstuvwxyz123456")).toMatchObject({
       status: "unsupported",
       routeId: "google-search.secret-blocked.v1",
+    });
+    expect(planComputerExecution("Search YouTube for sk-abcdefghijklmnopqrstuvwxyz123456")).toMatchObject({
+      status: "unsupported",
+      routeId: "youtube-search.secret-blocked.v1",
+    });
+    expect(planComputerExecution("Open https://example.com/?token=sk-abcdefghijklmnopqrstuvwxyz123456")).toMatchObject({
+      status: "unsupported",
+      routeId: "website-open.secret-blocked.v1",
+    });
+  });
+
+  it("rejects embedded credentials and unsupported URL schemes", () => {
+    expect(planComputerExecution("Open https://user:password@example.com/private")).toMatchObject({
+      status: "unsupported",
+      routeId: "website-open.invalid-target.v1",
+    });
+    expect(planComputerExecution("Open javascript:alert(1)")).toMatchObject({
+      status: "unsupported",
+      routeId: "website-open.invalid-target.v1",
     });
   });
 });

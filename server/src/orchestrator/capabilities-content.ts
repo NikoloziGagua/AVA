@@ -42,8 +42,11 @@ genuinely failed — then I offer the next approach.
   attached profile, never shell-launching a separate unlogged profile.
   "Open Google and search for X" uses one fast chrome_google_search action that
   opens the encoded results URL and verifies the active host, route, and exact
-  query. It does not pay for visual control or invoke the fixed Notepad-only
-  Microsoft UFO adapter.
+  query. Direct declared sites and explicit HTTP(S) URLs use chrome_open_url;
+  one literal YouTube query uses chrome_youtube_search. Both verify the exact
+  active destination and stay on the normal agent path for compound follow-up.
+  They do not pay for visual control or invoke the fixed Notepad-only Microsoft
+  UFO adapter.
   Purchases/checkouts ask first.
 - **Computer use**: vision-driven control when no direct tool fits — I look at the
   screen and click, scroll, and type my way through (needs a vision-control model;

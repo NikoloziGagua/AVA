@@ -19,7 +19,7 @@ const ACTION_PATTERNS: RegExp[] = [
   /\bmemory_(remember|forget|read)\b/i,
   /\bmemory_index_(capture|search|open|forget)\b/i,
   /\bnotes?_(capture|search|update|promote)\b/i,
-  /\bchrome_(open|google_search|navigate|click|type|read_page|screenshot|tabs|press_key)\b/i,
+  /\bchrome_(open|open_url|google_search|youtube_search|navigate|click|type|read_page|screenshot|tabs|press_key)\b/i,
 
   // URLs.
   /https?:\/\/\S+/i,
@@ -41,8 +41,8 @@ const ACTION_PATTERNS: RegExp[] = [
   // Open/navigate to Chrome or Google. The Google shape is a common spoken
   // command and must retain tools so voice reaches the same deterministic
   // computer route as typed chat.
-  /\bopen\s+(?:chrome|google)\b/i,
-  /\bsearch\s+google(?:\s+for)?\s+\S+/i,
+  /\bopen\s+(?:chrome|google|youtube|gmail|reddit|github|wikipedia)\b/i,
+  /\bsearch\s+(?:google|youtube)(?:\s+for)?\s+\S+/i,
   /\b(navigate|go|browse)\s+to\s+(?:https?|www\.|[A-Za-z]:[\\/]|the\s+\w+)/i,
 
   /\btake\s+a?\s*screenshot/i,

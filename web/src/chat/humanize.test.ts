@@ -23,6 +23,14 @@ describe("humanizeTool", () => {
     expect(humanizeTool("chrome_google_search")).toBe("Searching Google");
   });
 
+  it("describes direct website and YouTube routes without raw tool names", () => {
+    expect(humanizeTool("chrome_open_url", { url: "https://www.youtube.com/" })).toBe("Opening youtube.com");
+    expect(humanizeTool("chrome_open_url")).toBe("Opening a website");
+    expect(humanizeTool("chrome_youtube_search", { query: "ambient coding music" }))
+      .toBe("Searching YouTube for ambient coding music");
+    expect(humanizeTool("chrome_youtube_search")).toBe("Searching YouTube");
+  });
+
   it("gives friendly phrases for the common tools", () => {
     expect(humanizeTool("take_screenshot")).toBe("Taking a screenshot");
     expect(humanizeTool("claude_code")).toBe("Writing code");

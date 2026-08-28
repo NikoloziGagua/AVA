@@ -101,6 +101,58 @@ describe("runAgent (v2 loop)", () => {
     });
   });
 
+  it("executes a deterministic website route without a provider round-trip", async () => {
+    const provider = new MockLLMProvider({});
+    const tool: ToolDef = {
+      tool: {
+        name: "chrome_open_url",
+        description: "open URL",
+        inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+      },
+      run: vi.fn(async () => ({
+        ok: true,
+        text: "example.com is open in AVA Chrome.",
+        verification: {
+          state: "verified" as const,
+          scope: "task_outcome" as const,
+          method: "chrome_exact_url",
+          summary: "The active page URL exactly matches the requested destination.",
+          observedAt: 1,
+        },
+      })),
+    };
+    const events: AgentEvent[] = [];
+    const db = openInMemoryDb();
+    await runAgent({
+      prompt: "Open https://example.com",
+      computerExecutionPlan: planComputerExecution("Open https://example.com"),
+      abort: new AbortController(),
+      emit: (event) => events.push(event),
+      runId: "website-route-run",
+      sessionId: "website-route-session",
+      db,
+      deps: {
+        chrome: null as never,
+        pidfiles: null as never,
+        fsRoots: [],
+        memoryDir: makeMemDir(),
+        provider,
+        tools: [tool],
+      } as never,
+    });
+
+    expect(provider.calls.stream).toHaveLength(0);
+    expect(tool.run).toHaveBeenCalledWith(
+      { url: "https://example.com/" },
+      expect.objectContaining({ runId: "website-route-run" }),
+    );
+    expect(events.find((event) => event.kind === "tool_result")?.payload).toMatchObject({
+      tool: "chrome_open_url",
+      ok: true,
+      verification: { state: "verified", method: "chrome_exact_url" },
+    });
+  });
+
   it("fails closed without invoking the fixed UFO tool for an explicit UFO web request", async () => {
     const provider = new MockLLMProvider({});
     const ufo = vi.fn();

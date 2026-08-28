@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787949277284,
+  "generatedAt": 1787951942384,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -880,7 +880,15 @@
       "file": "server/src/tools/activity-log-mcp.ts"
     },
     {
+      "name": "chrome_open_url",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
       "name": "chrome_google_search",
+      "file": "server/src/tools/chrome-mcp.ts"
+    },
+    {
+      "name": "chrome_youtube_search",
       "file": "server/src/tools/chrome-mcp.ts"
     },
     {

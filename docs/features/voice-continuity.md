@@ -90,3 +90,22 @@ The reconnect seed remains bounded by `REALTIME_SEED_TURNS` (default 12) for
 cost. Hume refreshes concurrent cross-window typed changes on reconnect because
 this bridge has no proven ordered live item-insertion contract for Hume. Normal
 in-app keyboard/voice switching reconnects by design.
+
+## Durable cross-chat recall (2026-08-28)
+
+Recent transcript seeding handles one chat. Older research and developed ideas
+now use the source-verified SQLite memory index as a second, bounded layer:
+
+- OpenAI Realtime searches after a transcript passes the gate and before it sends
+  `response.create`. Only latest, relevant, scope-valid checkpoints with an
+  unchanged source are injected as a system reference item.
+- A retrieval epoch retires slow results after Stop, interruption, replacement,
+  disconnect, or upstream failure, so stale memory cannot trigger a late reply.
+- Hume applies the same retrieval service when connecting, using the active
+  chat's latest user turn. This covers the important keyboard-to-Hume handoff.
+  The current EVI bridge cannot deterministically retrieve from a brand-new
+  spoken-only utterance before Hume begins responding, so that narrower case is
+  explicitly not claimed yet.
+- Mission Control shows `memory.retrieval.used`, `no_match`, `suppressed`,
+  `unavailable`, or `error` for chat and OpenAI voice without storing the query or
+  source excerpt in telemetry.

@@ -493,7 +493,7 @@ export class MemoryIndexService {
     };
   }
 
-  private candidateRows(project: string | null | undefined): CandidateRow[] {
+  private candidateRows(project: string | null | undefined, latestOnly = false): CandidateRow[] {
     const scope = projectKey(project).key;
     return this.db.prepare(`
       SELECT e.*, s.entry_id, s.session_id, s.source_label, s.from_message_id,
@@ -505,15 +505,26 @@ export class MemoryIndexService {
       LEFT JOIN memory_index_embeddings b ON b.entry_id = e.id
       WHERE e.status = 'active'
         AND (e.privacy_level = 'personal' OR (? IS NOT NULL AND e.project_key = ?))
+        AND (
+          ? = 0 OR e.checkpoint_sequence = (
+            SELECT MAX(newest.checkpoint_sequence)
+            FROM memory_index_entries newest
+            WHERE newest.status = 'active'
+              AND COALESCE(newest.thread_id, newest.id) = COALESCE(e.thread_id, e.id)
+          )
+        )
       ORDER BY e.updated_at DESC, e.id ASC
       LIMIT 500
-    `).all(scope, scope) as CandidateRow[];
+    `).all(scope, scope, latestOnly ? 1 : 0) as CandidateRow[];
   }
 
-  async search(query: string, options: { project?: string | null; limit?: number } = {}): Promise<MemorySearchResponse> {
+  async search(
+    query: string,
+    options: { project?: string | null; limit?: number; latestOnly?: boolean } = {},
+  ): Promise<MemorySearchResponse> {
     const cleanQuery = cleanInline(query, 1_000);
     if (!cleanQuery) throw new Error("memory search query is required");
-    const rows = this.candidateRows(options.project);
+    const rows = this.candidateRows(options.project, options.latestOnly === true);
     const limit = Math.max(1, Math.min(20, Math.floor(options.limit ?? 8)));
     let queryEmbedding: MemoryEmbedding | null = null;
     let notice: string | null = null;
@@ -603,7 +614,7 @@ export class MemoryIndexService {
 
   readSource(
     entryId: string,
-    options: { project?: string | null; maxCharacters?: number } = {},
+    options: { project?: string | null; maxCharacters?: number; preferRecent?: boolean } = {},
   ): MemorySourceRead | null {
     const row = this.entryRow(entryId);
     if (!row) return null;
@@ -627,15 +638,19 @@ export class MemoryIndexService {
     const messages: MemorySourceRead["messages"] = [];
     let returnedCharacters = 0;
     let truncated = false;
-    for (const message of sourceMessages) {
+    const ordered = options.preferRecent ? [...sourceMessages].reverse() : sourceMessages;
+    for (const message of ordered) {
       const remaining = limit - returnedCharacters;
       if (remaining <= 0) { truncated = true; break; }
       const scrubbed = scrubSecrets(message.content);
-      const content = scrubbed.slice(0, remaining);
+      const content = options.preferRecent
+        ? scrubbed.slice(Math.max(0, scrubbed.length - remaining))
+        : scrubbed.slice(0, remaining);
       messages.push({ id: message.id, role: message.role, content });
       returnedCharacters += content.length;
       if (content.length < scrubbed.length) { truncated = true; break; }
     }
+    if (options.preferRecent) messages.reverse();
     return { result, messages, truncated, returnedCharacters };
   }
 

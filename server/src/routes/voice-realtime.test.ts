@@ -23,6 +23,7 @@ import {
   chooseResumeOrNew,
   seedContentType,
   openAiHistoryFrames,
+  openAiMemoryContextFrame,
   buildVoiceConversationSummary,
   buildHumeSessionSettings,
   buildHumeHistoryBlock,
@@ -279,6 +280,33 @@ describe("seedContentType — GA realtime content-part type for seeded turns", (
   it("uses input_text for user and system turns", () => {
     expect(seedContentType("user")).toBe("input_text");
     expect(seedContentType("system")).toBe("input_text");
+  });
+});
+
+describe("voice memory context transport", () => {
+  it("injects verified OpenAI memory as a system reference item", () => {
+    const frame = JSON.parse(openAiMemoryContextFrame("[VERIFIED DURABLE MEMORY]\nsource excerpt")!);
+    expect(frame).toEqual({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "system",
+        content: [{ type: "input_text", text: "[VERIFIED DURABLE MEMORY]\nsource excerpt" }],
+      },
+    });
+    expect(openAiMemoryContextFrame("  ")).toBeNull();
+  });
+
+  it("keeps preloaded Hume memory inside the priority prompt budget", () => {
+    const memory = "[VERIFIED DURABLE MEMORY]\nThe current decision uses SQLite.";
+    const prompt = buildHumeVoicePrompt({
+      voicePersona: "AVA identity",
+      updates: "latest update",
+      history: `recent chat\n${memory}`,
+      base: "x".repeat(20_000),
+    }, 11_000);
+    expect(prompt).toContain(memory);
+    expect(prompt.length).toBeLessThanOrEqual(11_000);
   });
 });
 

@@ -81,6 +81,11 @@ import { resolveRunObjective } from "../orchestrator/objective-lineage.js";
 import { getTaskReceipt, pruneTaskReceipts, saveTaskReceipt } from "../state/task-receipts.js";
 import type { MemoryIndexService } from "../memory-index/store.js";
 import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
+import {
+  recordAutomaticMemoryDecision,
+  retrieveAutomaticMemory,
+} from "../memory-index/auto-retrieve.js";
+import { detectProject, loadProjectIndex } from "../memory/project-index.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -442,8 +447,25 @@ export function chatRoutes(
       }
     }
 
+    // Durable cross-chat recall is a pre-agent discovery gate, not another
+    // model tool call. The index selects only the latest checkpoint in each
+    // lineage, verifies its authoritative source, enforces project scope, and
+    // returns a bounded scrubbed excerpt. Failure is fail-open for conversation
+    // delivery and fail-closed for memory injection.
+    const memoryProject = (() => {
+      try { return detectProject(latestUserText, loadProjectIndex(agentDeps.memoryDir))?.slug ?? null; }
+      catch { return null; }
+    })();
+    const memoryRetrieval = await retrieveAutomaticMemory(agentDeps.memoryIndex, {
+      query: latestUserText,
+      channel: "chat",
+      currentSessionId: sessionId,
+      project: memoryProject,
+    });
+
     const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix
       + (resolvedVisualContext ? `${resolvedVisualContext.prompt}\n\n` : "")
+      + (memoryRetrieval.prompt ? `${memoryRetrieval.prompt}\n\n` : "")
       + latestUserText;
     const reasoningEffort = agentDeps.provider!.name === "openai"
       ? (parsed.data.voice ? "none" : mapReasoning(getReasoningLevel(db), mode))
@@ -505,6 +527,12 @@ export function chatRoutes(
           runId,
           parentContext?.parentSpanId ?? null,
           parentContext?.causationEventId ?? null,
+        );
+        recordAutomaticMemoryDecision(
+          agentDeps.observability,
+          runId,
+          memoryRetrieval,
+          "ava:memory-retrieval",
         );
         const observedSessionId = sessionId;
         unregisterMissionStop = agentDeps.observability.registerStopHandler(

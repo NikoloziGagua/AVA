@@ -152,6 +152,10 @@ The first slice covers:
 9. Authenticated replayable SSE.
 10. A desktop-first run tree, live timeline, status, latency, usage, errors, evidence, and scoped Stop.
 11. Authenticated, bounded, export-time-sanitized JSON evidence for a selected run or trace.
+12. Source-verified memory retrieval decisions for chat and OpenAI voice, including
+    actual search mode, selected checkpoint/source provenance, and an honest reason
+    when memory was suppressed or unavailable. Retrieved text and the user query
+    are never copied into observability.
 
 Coverage is deliberately honest:
 

@@ -12,11 +12,14 @@ describe("OpenAIMemoryEmbedder", () => {
       model: "fixture-embedding-model",
       vector: [0.2, 0.4],
     });
-    expect(create).toHaveBeenCalledWith({
-      model: "fixture-embedding-model",
-      input: "sanitized summary",
-      encoding_format: "float",
-    });
+    expect(create).toHaveBeenCalledWith(
+      {
+        model: "fixture-embedding-model",
+        input: "sanitized summary",
+        encoding_format: "float",
+      },
+      { timeout: 2_500, maxRetries: 0 },
+    );
   });
 
   it("fails closed on an empty or non-finite vector", async () => {

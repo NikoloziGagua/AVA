@@ -25,6 +25,12 @@ import type { ObservabilityService } from "../observability/store.js";
 import type { ObservabilityParentContext, ObservabilityRunStatus } from "../observability/types.js";
 import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
 import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
+import type { MemoryIndexService } from "../memory-index/store.js";
+import {
+  recordAutomaticMemoryDecision,
+  retrieveAutomaticMemory,
+} from "../memory-index/auto-retrieve.js";
+import { detectProject, loadProjectIndex } from "../memory/project-index.js";
 import {
   resolveVoiceProvider,
   describeVoiceProvider,
@@ -662,6 +668,20 @@ export function openAiHistoryFrames(
     }));
 }
 
+/** A verified memory excerpt is a system reference item, never a user command. */
+export function openAiMemoryContextFrame(prompt: string): string | null {
+  const text = prompt.trim();
+  if (!text) return null;
+  return JSON.stringify({
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "system",
+      content: [{ type: "input_text", text }],
+    },
+  });
+}
+
 /** The typed agent already receives this durable summary before its unsummarised
  * rows. Voice receives the same earlier-conversation anchor, while recent rows
  * remain normal conversation items. */
@@ -842,6 +862,8 @@ export interface RealtimeProxyDeps {
   observability?: ObservabilityService;
   /** Shared post-turn durable-memory gate used by chat and both voice providers. */
   memoryAutoCapture?: AutoMemoryCapture;
+  /** Shared source-verified retrieval gate used before chat/voice model replies. */
+  memoryIndex?: MemoryIndexService;
   /** Voice for the realtime model's spoken output (hybrid mode). */
   voice?: string;
   /**
@@ -1064,6 +1086,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     let cancelResponseOnCreate = false;
     let suppressCurrentResponse = false;
     let responseAfterCancellation = false;
+    // Retrieval sits between an accepted transcript and response.create. This
+    // separate epoch prevents a slow lookup from responding to a superseded or
+    // stopped utterance while keeping response.cancel protocol-valid.
+    let memoryRetrievalEpoch = 0;
+    let memoryRetrievalPending = false;
     // Highest stored message already represented upstream. Voice can remain
     // connected while another client writes typed turns; this high-water makes
     // importing those turns before the next utterance deterministic/idempotent.
@@ -1404,6 +1431,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               log.info("realtime: cancelled active do_on_computer run");
             }
             if (!shouldForwardResponseCancel(responseActive)) {
+              if (memoryRetrievalPending) {
+                memoryRetrievalEpoch += 1;
+                memoryRetrievalPending = false;
+                cancelObservedTurn("cancelled_during_memory_retrieval", "Voice turn stopped by Niko");
+                return;
+              }
               if (responseRequested) {
                 cancelResponseOnCreate = true;
                 log.info("realtime: queued cancellation for requested response");
@@ -1864,6 +1897,11 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           }
           try { if (client.readyState === WebSocket.OPEN) client.send(bargeInFrame()); } catch { /* */ }
           // fall through: persist the user turn + response.create for the new turn
+        } else if (hybrid && memoryRetrievalPending) {
+          memoryRetrievalEpoch += 1;
+          memoryRetrievalPending = false;
+          cancelObservedTurn("replaced_during_memory_retrieval", "Voice turn replaced by a newer utterance");
+          try { if (client.readyState === WebSocket.OPEN) client.send(bargeInFrame()); } catch { /* */ }
         } else if (hybrid && responseRequested) {
           // The prior response has only been requested, so response.cancel would
           // currently be invalid. Cancel it on response.created, then create one
@@ -1874,7 +1912,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           try { if (client.readyState === WebSocket.OPEN) client.send(bargeInFrame()); } catch { /* */ }
         }
         log.info(`realtime: accepted transcript text=${JSON.stringify(acceptedText)}`);
-        beginObservedTurn(acceptedText);
+        const observedTurn = beginObservedTurn(acceptedText);
         // SINGLE place the spoken USER turn is stored. Both earlier branches
         // (rejected transcript, "Ava is speaking") have already returned, so this
         // runs once per real utterance — no phantom turns. The internal /api/chat
@@ -1897,8 +1935,40 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         if (hybrid && !responseActive && !responseRequested) {
           // Model didn't auto-reply (create_response:false). Now that the
           // transcript passed the gate, ask it to respond — speak or call a tool.
-          responseRequested = true;
-          try { upstream.send(JSON.stringify({ type: "response.create" })); } catch { /* */ }
+          const epoch = ++memoryRetrievalEpoch;
+          memoryRetrievalPending = true;
+          void (async () => {
+            const memoryProject = (() => {
+              try { return detectProject(acceptedText, loadProjectIndex(deps.memoryDir))?.slug ?? null; }
+              catch { return null; }
+            })();
+            const memory = await retrieveAutomaticMemory(deps.memoryIndex, {
+              query: acceptedText,
+              channel: "openai_voice",
+              currentSessionId: sessionId,
+              project: memoryProject,
+            });
+            if (epoch !== memoryRetrievalEpoch || !memoryRetrievalPending) return;
+            memoryRetrievalPending = false;
+            if (observedTurn) {
+              recordAutomaticMemoryDecision(deps.observability, observedTurn.runId, memory, "ava:voice-memory");
+            }
+            const memoryFrame = openAiMemoryContextFrame(memory.prompt);
+            if (memoryFrame) {
+              try { upstream.send(memoryFrame); } catch { /* upstream closed */ }
+            }
+            if (upstream.readyState !== WebSocket.OPEN || client.readyState !== WebSocket.OPEN) return;
+            responseRequested = true;
+            try { upstream.send(JSON.stringify({ type: "response.create" })); } catch { responseRequested = false; }
+          })().catch((error) => {
+            if (epoch !== memoryRetrievalEpoch) return;
+            memoryRetrievalPending = false;
+            log.warn("realtime: memory retrieval failed", error instanceof Error ? error.message : error);
+            if (upstream.readyState === WebSocket.OPEN && client.readyState === WebSocket.OPEN) {
+              responseRequested = true;
+              try { upstream.send(JSON.stringify({ type: "response.create" })); } catch { responseRequested = false; }
+            }
+          });
         }
         return; // accepted transcript was forwarded above exactly once
       }
@@ -1912,6 +1982,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
     // ─── Lifecycle ────────────────────────────────────────────────────
     upstream.on("close", (code, reason) => {
+      memoryRetrievalEpoch += 1;
+      memoryRetrievalPending = false;
       clearInterval(missionHeartbeat);
       const partial = flushAssistantTurn(); // don't lose a turn the model spoke before the socket dropped
       const r = reason?.toString() || "(no reason)";
@@ -1945,6 +2017,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       try { client.close(code, r); } catch { /* ignore */ }
     });
     upstream.on("error", (err) => {
+      memoryRetrievalEpoch += 1;
+      memoryRetrievalPending = false;
       log.error("realtime upstream error:", err.message);
       clearInterval(missionHeartbeat);
       if (currentObservedTurn) {
@@ -1966,6 +2040,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     });
 
     client.on("close", () => {
+      memoryRetrievalEpoch += 1;
+      memoryRetrievalPending = false;
       clearInterval(missionHeartbeat);
       clearFragmentTimer();
       voiceTurns.clear();
@@ -1975,6 +2051,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       try { upstream.close(); } catch { /* ignore */ }
     });
     client.on("error", (err) => {
+      memoryRetrievalEpoch += 1;
+      memoryRetrievalPending = false;
       log.warn("realtime client error:", err.message);
       clearInterval(missionHeartbeat);
       clearFragmentTimer();
@@ -2059,7 +2137,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
       const pendingFromClient: string[] = [];
 
-      upstream.on("open", () => {
+      upstream.on("open", async () => {
         opened = true;
         // Resolve the session FIRST (resume the latest, like the OpenAI path) so we
         // can seed its recent history into Hume's prompt. Without this Hume starts
@@ -2080,9 +2158,32 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         const summary = hybrid && sessionId
           ? buildVoiceConversationSummary(getSessionFull(deps.db, sessionId)?.summary)
           : "";
-        const history = hybrid && sessionId
-          ? summary + buildHumeHistoryBlock(listMessages(deps.db, sessionId), seedN)
+        const storedHistory = hybrid && sessionId ? listMessages(deps.db, sessionId) : [];
+        let history = hybrid && sessionId
+          ? summary + buildHumeHistoryBlock(storedHistory, seedN)
           : "";
+        // Hume begins reasoning while audio is still streaming, before its
+        // user_message transcript reaches this proxy. The safe v1 boundary is
+        // therefore connection-time retrieval from the active chat's latest
+        // typed/user context. This fixes chat -> Hume continuity without
+        // claiming current spoken-only semantic lookup the protocol path cannot
+        // deterministically provide yet.
+        const retrievalQuery = [...storedHistory].reverse().find((message) => message.role === "user")?.content ?? "";
+        const memoryProject = (() => {
+          try { return detectProject(retrievalQuery, loadProjectIndex(deps.memoryDir))?.slug ?? null; }
+          catch { return null; }
+        })();
+        const memory = await retrieveAutomaticMemory(deps.memoryIndex, {
+          query: retrievalQuery,
+          channel: "hume_voice",
+          currentSessionId: sessionId,
+          project: memoryProject,
+        });
+        if (memory.prompt) history += `\n\n${memory.prompt}`;
+        log.info(
+          `realtime(hume): memory retrieval status=${memory.status} selected=${memory.selected.length} `
+          + `semantic=${memory.semanticAvailable ? "available" : "unavailable"}`,
+        );
         const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
         const humePrompt = buildHumeVoicePrompt({ voicePersona: VOICE_PERSONA_INSTRUCTIONS, updates, history, base: compactBase });
         const contextText = (updates + history).trim();

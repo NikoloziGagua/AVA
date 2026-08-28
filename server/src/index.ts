@@ -939,6 +939,7 @@ const realtimeProxy = buildRealtimeProxy({
   apiKey: cfg.openaiApiKey,
   memoryDir: cfg.memoryDir,
   runAction: runVoiceAction,
+  memoryIndex,
   memoryAutoCapture,
   observability,
   voice: process.env.REALTIME_VOICE || undefined,

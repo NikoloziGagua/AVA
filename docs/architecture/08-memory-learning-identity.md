@@ -486,10 +486,16 @@ remain authoritative; vectors are replaceable discovery data. See
 [`docs/features/semantic-memory-index.md`](../features/semantic-memory-index.md)
 for the contract, limitations and test procedure.
 
-Automatic capture now covers completed research, the first mature checkpoint of
-a meaningfully developed Idea and material linked checkpoints as the Idea evolves.
-Automatic retrieval injection remains deferred; explicit capture/search/open/
-forget continue to use the same canonical records and evidence boundary.
+Automatic capture covers completed research, the first mature checkpoint of a
+meaningfully developed Idea and material linked checkpoints as the Idea evolves.
+Automatic retrieval now uses the same canonical records and evidence boundary in
+typed chat and voice. The shared pre-response gate searches only latest lineage
+checkpoints, enforces personal/project scope, re-verifies the source, opens a
+bounded scrubbed authoritative excerpt and records why it did or did not use
+memory. OpenAI Realtime applies the gate per accepted utterance before
+`response.create`; Hume preloads it from the active chat's latest user context at
+connection because its transcript arrives after provider response generation has
+already begun. Explicit capture/search/open/forget remain available.
 
 ### 2.11 Auto-learning from corrections
 

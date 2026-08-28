@@ -2,23 +2,31 @@ import type OpenAI from "openai";
 import type { MemoryEmbedder, MemoryEmbedding } from "./types.js";
 
 export const DEFAULT_MEMORY_EMBEDDING_MODEL = "text-embedding-3-small";
+export const DEFAULT_MEMORY_EMBEDDING_TIMEOUT_MS = 2_500;
 
 export class OpenAIMemoryEmbedder implements MemoryEmbedder {
   readonly provider = "openai";
   readonly model: string;
   private readonly client: OpenAI;
 
-  constructor(client: OpenAI, model = DEFAULT_MEMORY_EMBEDDING_MODEL) {
+  constructor(
+    client: OpenAI,
+    model = DEFAULT_MEMORY_EMBEDDING_MODEL,
+    private readonly timeoutMs = DEFAULT_MEMORY_EMBEDDING_TIMEOUT_MS,
+  ) {
     this.client = client;
     this.model = model;
   }
 
   async embed(text: string): Promise<MemoryEmbedding> {
-    const response = await this.client.embeddings.create({
-      model: this.model,
-      input: text,
-      encoding_format: "float",
-    });
+    const response = await this.client.embeddings.create(
+      {
+        model: this.model,
+        input: text,
+        encoding_format: "float",
+      },
+      { timeout: this.timeoutMs, maxRetries: 0 },
+    );
     const vector = response.data[0]?.embedding;
     if (!vector?.length || vector.some((value) => !Number.isFinite(value))) {
       throw new Error("embedding provider returned no usable vector");

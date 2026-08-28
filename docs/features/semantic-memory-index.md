@@ -3,7 +3,7 @@
 ## Status
 
 Implemented as a conservative automatic-and-explicit beta with immutable linked
-Idea checkpoints. It is a retrieval
+Idea checkpoints and source-verified automatic recall across chat and voice. It is a retrieval
 layer for substantial research, developed ideas and decisions; it does not
 replace AVA's compact preference/observation memory or copy complete transcripts.
 
@@ -21,12 +21,15 @@ replace AVA's compact preference/observation memory or copy complete transcripts
    anything worth keeping outside the two automatic categories. AVA calls
    `memory_index_capture` with a bounded source range and a compact
    summary containing useful conclusions, open questions and next steps.
-4. In another chat or voice turn, AVA calls `memory_index_search` for prior
-   research, ideas or decisions before claiming it cannot recall them.
-5. Retrieval explains the match and rechecks the original message range. AVA may
-   rely only on `usable=true` results.
-6. AVA calls `memory_index_open` when the question needs source detail beyond the
-   compact locator summary. The authoritative range is loaded only then.
+4. In another chat or OpenAI voice turn, a shared pre-response gate searches by
+   meaning, selects only the latest checkpoint in each lineage, and rechecks the
+   original source before injecting any context. Hume applies the same gate at
+   connection from the active chat's latest user context.
+5. Automatic retrieval explains its used/no-match/suppressed/unavailable result
+   in Mission Control. AVA may rely only on `usable=true` results.
+6. Automatic recall opens a bounded recent portion of the authoritative source;
+   the compact summary is a discovery locator and never substitutes for source
+   verification. Explicit `memory_index_open` remains available for deeper detail.
 7. Sir can say **"forget that indexed idea"**. AVA searches when needed, then
    calls `memory_index_forget` with the exact ID and current version.
 
@@ -88,6 +91,36 @@ Search is deliberately hybrid:
 The built-in adapter uses OpenAI `text-embedding-3-small` and the documented
 floating-point embeddings response. The adapter is behind `MemoryEmbedder`, so a
 future local or hosted provider can replace it without migrating canonical entries.
+
+### Automatic retrieval gate
+
+`server/src/memory-index/auto-retrieve.ts` is the one provider-neutral gate used
+by typed chat, OpenAI Realtime and Hume. It:
+
+- ignores greetings and low-relevance matches;
+- searches latest checkpoints only, so an older idea snapshot cannot override a
+  newer one;
+- excludes the current source session because normal conversation history already
+  carries that context;
+- enforces personal/project scope before search and again before source read;
+- rejects changed or unavailable sources and never falls back to an older
+  checkpoint whose newer source is unhealthy;
+- opens a bounded, scrubbed recent source excerpt and labels the summary as
+  non-authoritative discovery text;
+- marks recalled text as reference-only, so old instructions cannot become new
+  actions; and
+- fails open for the live conversation but closed for memory injection.
+
+OpenAI Realtime waits at the accepted-transcript boundary, injects one system
+reference item, then sends `response.create`. A monotonic epoch invalidates slow
+lookups when Niko interrupts, replaces, stops, or disconnects a turn. Hume begins
+reasoning before its final transcript reaches AVA, so its deterministic v1 path
+preloads recall from the active chat's latest typed/user context on connection.
+Current spoken-only Hume semantic lookup is not claimed in this phase.
+
+Each chat/OpenAI turn records a bounded `memory.retrieval.*` event in Mission
+Control. The event contains status, mode, source IDs/health and match explanation,
+but never the query or retrieved transcript text. Replayed recording is idempotent.
 
 ## Privacy and boundaries
 
@@ -162,8 +195,9 @@ The authoritative checkpoint source range also remains capped at 80 messages.
 
 ## Deliberately deferred
 
-- automatic retrieval injection into ordinary turns (search remains an explicit
-  AVA tool decision in this phase);
+- deterministic current-utterance semantic retrieval for Hume (connection-time
+  chat-to-voice retrieval is implemented; the existing EVI bridge receives the
+  transcript only after Hume has started the response);
 - user-governed correction, pinning and supersession controls for checkpoints;
 - Mem0 or another second canonical memory store;
 - background re-embedding and embedding-model migration UI;
@@ -179,13 +213,29 @@ Deterministic coverage lives in:
 
 - `server/src/memory-index/store.test.ts`
 - `server/src/memory-index/auto-capture.test.ts`
+- `server/src/memory-index/auto-retrieve.test.ts`
 - `server/src/memory-index/embedding.test.ts`
 - `server/src/routes/memory.test.ts`
+- `server/src/routes/chat-memory-retrieval.test.ts`
 - `server/src/tools/memory-mcp.test.ts`
 - `web/src/memory/MemoryIndexSection.test.tsx`
 
+The repeatable manual boundary smoke is:
+
+```powershell
+npm.cmd -w server run smoke:memory-retrieval
+```
+
+It creates a temporary on-disk AVA database, captures personal and project
+memories, closes and reopens SQLite, then exercises the shared gate as fresh
+chat, OpenAI voice and Hume voice. It also checks semantic paraphrase recall,
+irrelevant-memory suppression, project isolation and removal of all smoke data.
+No external credentials or consequential actions are used.
+
 The tests cover sanitized compact storage, semantic paraphrase recall, lexical
-fallback, source changes/deletion, project isolation, deduplication, automatic
+fallback, source changes/deletion, project isolation, latest-lineage selection,
+cross-chat injection, chat/voice transport, interruption-safe ordering,
+observability deduplication, automatic
 research and multi-turn idea gates, editor decline/failure isolation, voice/chat
 provenance, replay idempotency, versioned forget, embedding validation,
 authenticated routes and user-visible match reasons.

@@ -3527,3 +3527,34 @@ acceptance and must not confuse a queued Codex continuation with AVA inference
 availability.
 
 NEEDS: codex (`XtMadZzeBkeZ` should deliver Phase 4 at this clean boundary)
+
+---
+
+### 2026-08-28 - codex - CLAIM: semantic memory Phase 4 automatic retrieval
+
+Watcher `XtMadZzeBkeZ` arrived in the exact pinned Codex thread. I read the
+complete 3,529-line board (SHA-256
+`F83CB9F500DF8D4AD5C58BDB53F4AF3BF66A2E9B57D74B0B9066FE60148BDC67`);
+no other active agent owns this Phase 4 slice. I am continuing the existing
+Codex-owned semantic-memory sequence without rebuilding explicit capture,
+automatic capture, or linked checkpoints.
+
+This bounded phase will add one shared pre-agent retrieval gate for typed chat,
+OpenAI voice, and Hume. It must select only relevant latest usable checkpoints,
+enforce personal/project scope, re-verify the authoritative source before use,
+inject only bounded sanitized discovery context, and expose honest used/
+suppressed reasons. Embeddings may improve discovery but may not replace source
+verification or be claimed when unavailable. Irrelevant, stale, changed,
+unavailable, cross-project, duplicate, and secret-bearing memory must fail
+closed while conversation delivery fails open.
+
+Acceptance includes deterministic relevance/no-match/project/source/latest-
+lineage/paraphrase/idempotency/privacy/failure tests across chat and both voice
+runtimes, focused and complete suites/builds, committed-HEAD boot smoke, real
+AVA black-box chat/voice/restart/isolation tests with cleanup, a scoped commit,
+and exactly one successor watcher for the next incomplete memory phase. Niko's
+unrelated settings and persona-research changes remain untouched. Forge is
+outside scope and will not be inspected or modified.
+
+NEEDS: codex (implement, test automatically and manually, commit, record exact
+evidence, and ask AVA for the single Phase 5 successor watcher)

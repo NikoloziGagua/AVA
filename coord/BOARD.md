@@ -3442,3 +3442,66 @@ one exact-thread AVA successor watcher. Existing unrelated changes stay
 untouched. Forge remains outside scope.
 
 NEEDS: codex (implement and verify Phase 3, then arrange the Phase 4 watcher)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: semantic memory Phase 3 linked checkpoints
+
+Shipped immutable linked Idea checkpoints in commit `0e4b0f6`
+(`feat(memory): link evolving idea checkpoints`). A first developed Idea creates
+an `initial` checkpoint; later material decisions, conclusions, revisions,
+topic shifts, open questions, and next steps append children with stable thread
+ID, parent ID, monotonic sequence, change kind, and a sanitized plain-language
+reason. Earlier entries are never rewritten. Parent-version/latest-thread
+guards, stable automatic-event claims, a per-thread sequence constraint, and a
+post-editor parent recheck prevent replay or concurrent completion from forking
+the lineage. When a broader later completion wins first, the older completion
+is recorded as skipped rather than producing a duplicate child.
+
+The conservative deterministic gate suppresses superficial turns before the
+memory editor is called. A genuinely distinct later Idea must be developed over
+at least two user and two assistant turns before it can start a new thread. The
+Memory Index API and UI now expose checkpoint position, latest/history status,
+parent/thread IDs, change kind, and the reason AVA saved the checkpoint. AVA's
+memory-search tool is told to group results by thread and normally use the
+latest verified checkpoint. The SQLite migration backfills all existing Phase
+2 entries as one-checkpoint threads before creating the new uniqueness index;
+a legacy Phase 2 database migration is covered explicitly.
+
+Changed areas: `server/src/memory-index/{auto-capture.ts,
+auto-capture.test.ts,store.ts,store.test.ts,types.ts}`, SQLite schema/migration
+and tests, Memory Index route/tool types and tests, Memory Index web UI/types and
+tests, Explorer registry/verified manifest, and semantic-memory/capability/
+architecture documentation.
+
+Automated evidence: focused and broader memory/chat/OpenAI-voice/Hume-voice/
+route/tool/database coverage passed (including 145 tests in the broad focused
+server set); the complete root test command passed 186 server files / 1,425
+server tests and 91 web files / 404 web tests. Server and production web builds
+passed. Explorer contract/reality passed with 33 capabilities, 62/62 tool
+mappings, 106 verified source references, and 22/22 routes. `git diff --check`
+passed. Committed-HEAD server build ID
+`e381a57d-fbc4-41e5-b10a-04fa544d3267` was booted successfully.
+
+Black-box evidence through the real authenticated AVA API: a two-turn Amber
+Compass Idea produced exactly one verified initial checkpoint; a named design
+decision appended checkpoint 2 under the same thread; `Thanks, that makes
+sense` produced no editor checkpoint; a voice-marked next step appended
+checkpoint 3 with `next_step` kind and AVA-voice provenance. The three entries
+survived a forced server restart with intact parent chain and verified sources.
+Hybrid search found the latest checkpoint, and fresh AVA chats before and after
+restart used search/open to recover both the `Copper Signal` decision and the
+`Blue Lantern` next step. All disposable entries, chats, and pairing devices
+were then forgotten, soft-deleted, or revoked.
+
+Known boundaries: checkpoint routing currently follows the most recent
+verified automatic Idea thread in a source conversation. A developed distinct
+Idea starts a new thread, but returning later to an older one of several Idea
+threads in the same chat is not yet semantically re-routed. Source ranges remain
+capped at 80 messages. Automatic relevance/privacy-gated injection is Phase 4;
+user correction/pin/supersession is Phase 5. Niko's unrelated
+`.claude/settings.local.json` edit and untracked persona research document were
+preserved. Forge was neither inspected nor modified.
+
+NEEDS: codex (commit this completion record, then have AVA schedule exactly one
+Phase 4 automatic-retrieval continuation watcher to this pinned thread)

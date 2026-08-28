@@ -244,8 +244,8 @@ describe("automatic source-verified memory retrieval", () => {
       commitSha: sha,
       sourceKind: "git_commit",
       actor: "codex",
-      title: "Genuine Microsoft UFO Notepad workflow",
-      summary: "AVA added a bounded genuine Microsoft UFO runtime path for disposable Notepad tasks.",
+      title: "Run pinned Microsoft UFO fixture",
+      summary: "AVA committed the pinned Microsoft UFO fixture across product files.",
       capabilities: ["Microsoft UFO"],
       verification: ["A committed benign Notepad smoke completed."],
     });

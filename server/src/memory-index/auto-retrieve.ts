@@ -57,6 +57,11 @@ function isRelevant(result: MemoryIndexResult, explicitRecall: boolean): boolean
   const lexical = result.match.lexicalScore;
   if (semantic >= 0.62 || lexical >= 0.34) return true;
   if (semantic >= 0.52 && lexical >= 0.1) return true;
+  // Improvement records are already constrained to exact, reachable product
+  // commits. Their compact titles are naturally shorter than conversations,
+  // so a specific multi-term product match should survive the general-purpose
+  // conversational threshold. This does not bypass source verification.
+  if (result.entry.kind === "improvement" && lexical >= 0.24 && result.match.sharedTerms.length >= 2) return true;
   return explicitRecall && (semantic >= 0.5 || lexical >= 0.18);
 }
 

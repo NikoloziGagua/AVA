@@ -4422,3 +4422,77 @@ settings and persona-research work remain untouched; Forge stays outside scope.
 
 NEEDS: codex (implement, test automatically and through live AVA, commit, index,
 and record the completion boundary)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: verified site and YouTube browser fast paths
+
+Shipped the second bounded browser-routing increment in exact commit
+`9f28a9d07c4f770185e111bdc15f56faaa8566a1` (`feat(browser): add verified
+site and YouTube fast paths`). Literal typed or voice requests can now open an
+explicit HTTP(S) destination, open a small declared site alias, or search
+YouTube through AVA's persistent attached browser without a planning-model,
+vision-control, shell-Chrome, or Microsoft UFO detour.
+
+The declared aliases are Google, YouTube, Gmail, Reddit, GitHub, Wikipedia and
+Google Maps. Unknown brand names are not guessed. Bare hosts are normalized to
+HTTPS; unsupported schemes, embedded credentials, overlong inputs and
+secret-shaped destinations fail before navigation. `chrome_open_url` requires
+the live normalized URL to match the requested destination exactly, so a
+redirect is contradictory evidence rather than verified success.
+`chrome_youtube_search` requires the live YouTube `/results` route and exact
+decoded `search_query`. Both routes foreground an already-matching page
+idempotently. Requests that continue with reading, comparing, clicking,
+playing, login, sending, posting or another operation stay on the ordinary
+agent path.
+
+Changed product areas: the provider-neutral computer execution router and its
+parser tests; Chrome URL/YouTube operations and verification tests; agent/chat
+typed-and-voice routing; intent, policy, timeout, capability-prompt and tool
+rubric truth; chat activity labels; Explorer workflow/tool bindings and emitted
+verified manifest; the committed-head black-box smoke; and
+`docs/features/computer-execution-routing.md`. Existing policy, browser lease,
+task receipt, Mission Control, sanitization and verification seams are reused;
+no parallel control plane was added.
+
+Verification passed: focused server coverage 6 files / 107 tests; focused web
+coverage 2 files / 24 tests; complete server suite 196 files / 1,531 tests;
+complete web suite 91 files / 413 tests; server TypeScript build; production
+web/PWA build; `git diff --check`; and the Explorer contract/reality audit at
+34 capabilities, 73/73 real tools, 29/29 routes, 116 verified source references
+and zero broken references. A bounded scan found no committed secret material;
+the one `authorization` match is the smoke's disposable locally issued bearer
+token held only in process memory.
+
+AVA was rebuilt and relaunched from the committed product HEAD as listener PID
+20500, ready on build ID `b9efec5a-11c0-4423-9544-c68bb789448b`. The
+authenticated live black-box smoke passed all cases against AVA and the real
+CDP browser: typed Google `eSQlXpzEM89X` (6,801 ms), idempotent repeat
+`ecO40g9mf0gj` (5,431 ms), voice-originated Google `V7U4RB6mLUgD` (7,636 ms),
+known-site GitHub `Ot6s8mJllYwZ` (7,183 ms), explicit URL
+`VNuYdOknoRqs` (5,405 ms), voice-originated YouTube `MNjcswLyN5jA`
+(6,903 ms), and unsupported UFO/browser `cH2BVlSKPRrg` with no tool dispatch.
+Each supported route produced one exact live-URL check, a task-outcome verified
+receipt and Mission Control verification provenance with no provider-usage
+event. The smoke revoked its temporary token and soft-deleted its disposable
+sessions. It sent no email, message, post, purchase or other communication.
+
+The improvement-index restart/idempotency smoke indexed 473 reachable product
+updates, reused all 473 on reopen, failed zero and removed its temporary DB.
+After the committed-head AVA boot, the live database contains exact source
+commit `9f28a9d...` as verified improvement entry
+`memory_improvement_9f28a9d07c4f7701`, titled `Add verified site and YouTube
+fast paths`. This improvement is therefore discoverable through Memory -> Index
+and not documented only on this board.
+
+Known boundary: these are one-step deterministic operations. Selecting a video,
+handling login, reading pages, arbitrary brand discovery and multi-step browser
+work remain with AVA's normal browser agent. Exact URL verification deliberately
+reports sites that redirect as unverified; it does not weaken evidence to make
+more destinations appear successful. Niko's unrelated
+`.claude/settings.local.json` change and untracked persona-research document
+were preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (try `Open GitHub`, `Open https://example.com`, and `Search YouTube
+for <anything>` in chat or voice; inspect the task receipt/Mission Control if
+desired, then choose the next frequent one-step browser operation)

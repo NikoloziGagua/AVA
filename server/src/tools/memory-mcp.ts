@@ -249,7 +249,13 @@ export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
           from = eligible.find((message) => message.id === explicitFrom) ?? null;
         } else if (typeof args.start_marker === "string" && args.start_marker.trim()) {
           const marker = args.start_marker.trim().toLocaleLowerCase();
-          for (let indexAt = eligible.length - 1; indexAt >= 0; indexAt -= 1) {
+          // `start_marker` names the FIRST relevant source message. The user's
+          // capture instruction often repeats that phrase verbatim (for example,
+          // "index the discussion beginning X"). Searching backward therefore
+          // selected the capture command itself and produced a hash-valid range
+          // that omitted the actual discussion. Search chronologically so the
+          // bounded source contains every later refinement through `through`.
+          for (let indexAt = 0; indexAt < eligible.length; indexAt += 1) {
             if (eligible[indexAt]!.content.toLocaleLowerCase().includes(marker)) {
               from = eligible[indexAt]!;
               break;

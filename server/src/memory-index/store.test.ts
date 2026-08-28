@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { openInMemoryDb } from "../state/db.js";
-import { createSession } from "../state/sessions.js";
+import { createSession, softDeleteSession } from "../state/sessions.js";
 import { appendMessage } from "../state/messages.js";
 import { MemoryIndexService } from "./store.js";
 import type { MemoryEmbedder, MemoryEmbedding } from "./types.js";
@@ -153,6 +153,15 @@ describe("semantic memory index", () => {
     expect(changedService.get(captured.result.entry.id)).toMatchObject({
       usable: false,
       source: { status: "changed" },
+    });
+
+    const softDeleted = conversation();
+    const softDeletedService = new MemoryIndexService(softDeleted.db, null);
+    const hidden = await capture(softDeletedService, softDeleted);
+    softDeleteSession(softDeleted.db, softDeleted.session.id);
+    expect(softDeletedService.get(hidden.result.entry.id)).toMatchObject({
+      usable: false,
+      source: { status: "unavailable", sessionId: softDeleted.session.id },
     });
 
     const deleted = conversation();

@@ -98,6 +98,11 @@ The tools are present only when the current persisted chat session and index
 service are available. They work through the same chat route used by text and
 voice, so both modalities address the same SQLite index.
 
+`memory_index_capture.start_marker` is resolved chronologically to the first
+matching message. This is deliberate: the later capture instruction often
+quotes the marker while saying “index the discussion beginning …”; that quote
+must not replace the actual discussion as the verified source boundary.
+
 ## Idempotency and failure behavior
 
 A source fingerprint includes session, exact range, content hash and privacy
@@ -105,6 +110,8 @@ scope. Repeating capture for the same range returns the existing entry. Embeddin
 write is replaceable and failure leaves the canonical entry searchable by keyword.
 Search never upgrades an unavailable source to usable. Version conflicts on forget
 return a stale-state error rather than applying an outdated request.
+Soft-deleting the linked chat immediately makes its source unavailable even
+while AVA retains the underlying rows for the normal deletion-retention window.
 
 ## Deliberately deferred
 

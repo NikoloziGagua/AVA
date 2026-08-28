@@ -231,9 +231,11 @@ export class MemoryIndexService {
 
   private messagesForRange(sessionId: string, fromMessageId: number, throughMessageId: number): MessageRow[] {
     return this.db.prepare(`
-      SELECT id, role, content FROM messages
-      WHERE session_id = ? AND id BETWEEN ? AND ?
-      ORDER BY id ASC
+      SELECT m.id, m.role, m.content
+      FROM messages m
+      JOIN sessions s ON s.id = m.session_id AND s.deleted_at IS NULL
+      WHERE m.session_id = ? AND m.id BETWEEN ? AND ?
+      ORDER BY m.id ASC
     `).all(sessionId, fromMessageId, throughMessageId) as MessageRow[];
   }
 

@@ -253,7 +253,13 @@ describe("source-linked memory tools", () => {
     const source = createSession(db, { title: "Research archive idea" });
     appendMessage(db, { sessionId: source.id, role: "user", content: "Start of memory architecture: build a knowledge archive." });
     appendMessage(db, { sessionId: source.id, role: "assistant", content: "Keep SQLite canonical and verify source ranges. password=source-fixture-secret" });
-    appendMessage(db, { sessionId: source.id, role: "user", content: "Index this discussion." });
+    // A real capture instruction normally quotes the marker. The tool must use
+    // the first source occurrence, not this later command occurrence.
+    appendMessage(db, {
+      sessionId: source.id,
+      role: "user",
+      content: "Index this discussion beginning Start of memory architecture.",
+    });
     const index = new MemoryIndexService(db, embedder);
     const sourceTools = buildMemoryTools({ memoryDir: dir, db, index, sessionId: source.id });
     const captureTool = sourceTools.find((tool) => tool.tool.name === "memory_index_capture")!;

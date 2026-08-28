@@ -226,6 +226,27 @@ describe("ChatScreen send failure", () => {
     expect(onEnterVoice).toHaveBeenCalledWith("created-session");
   });
 
+  it("preserves a requested session when voice is re-entered before history hydration", () => {
+    const onEnterVoice = vi.fn();
+    fetchSession.mockReturnValue(new Promise(() => {}));
+    render(<ChatScreen sessionId="returning-session" {...noNav} onEnterVoice={onEnterVoice} />);
+
+    // Deliberately click in the first render, before fetchSession's promise can
+    // populate ChatScreen's local session state.
+    fireEvent.click(screen.getByRole("button", { name: "voice" }));
+
+    expect(onEnterVoice).toHaveBeenCalledWith("returning-session");
+  });
+
+  it("reports a still-blank New chat as having no canonical session yet", () => {
+    const onEnterVoice = vi.fn();
+    render(<ChatScreen sessionId={null} {...noNav} onEnterVoice={onEnterVoice} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "voice" }));
+
+    expect(onEnterVoice).toHaveBeenCalledWith(null);
+  });
+
   it("explains when the server has no LLM provider configured", async () => {
     sendMessage.mockRejectedValue(new ApiError(503, "no_llm_provider"));
     render(<ChatScreen sessionId={null} {...noNav} />);

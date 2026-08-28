@@ -102,10 +102,19 @@ Things worth noting from the diagram:
 
 1. **New chat, no id.** From home: `onOpenChat(null)` (the "New" nav item) or `onCommand(text)` (the command bar) opens `{ name: "chat", sessionId: null, initialText? }`. Inside `ChatScreen`, the first `send()` POSTs with `sessionId: null`; the server replies `{ sessionId }`, which the screen stores in local state (`ChatScreen.tsx:144-146`).
 2. **Opening an existing chat.** `onOpenChat(sid)` from the chat list passes a real id; `ChatScreen` fetches its history and adopts that id (`ChatScreen.tsx:49-61`).
-3. **Chat → voice.** `chat`'s `onEnterVoice` builds `{ name: "voice", from: "chat", sessionId: view.sessionId }` (`App.tsx:115`) — the **current** session id is handed to voice, so spoken turns continue the same conversation.
+3. **Chat → voice.** `ChatScreen` passes its own current session id through
+   `onEnterVoice`. If it has already sent a typed turn, voice resumes that exact
+   ID. If the New chat is still blank, `App` passes `startFresh=true`; voice asks
+   the server to create a new session rather than applying the Home-orb
+   resume-latest fallback.
 4. **Voice → chat.** On exit/keyboard-switch, `VoiceScreen` calls back with the (possibly newly-created) session id, and `App.tsx:131-134` reopens `chat` with it. So a conversation can start typed, continue spoken, and return to typed without losing thread.
 
-> Important subtlety: the `view.sessionId` carried in `App` and the `sessionId` held *inside* `ChatScreen` are two different variables. `App` passes its value in as the `requestedSessionId` prop; `ChatScreen` keeps its own `sessionId` state and updates it after the first send. When you open a brand-new chat and send a message, `App.view.sessionId` stays `null` (App never hears about the new id) — only `ChatScreen` knows the real id. That's why **chat→voice from a freshly-created, never-reopened chat passes `null`**, and voice has to create/adopt its own session. This is a real edge in the current design, called out here so it isn't mistaken for a bug.
+> Important subtlety: `App.view.sessionId` and `ChatScreen`'s local `sessionId`
+> are different variables. The mic callback deliberately sends the local value,
+> so a typed New chat keeps its server-assigned ID without remounting the running
+> chat. Only a genuinely blank New chat sends `null`; its origin is carried
+> separately as `startFresh`, preventing it from being mistaken for Home-orb
+> resume-latest entry.
 
 ---
 
@@ -461,3 +470,8 @@ local session ID, so a freshly created chat never hands the stale route-level
 `null` to voice. Voice also closes its socket and media resources on explicit
 navigation and unmount. `App` still avoids lifting the new ID during a running
 chat because doing so would change the keyed view and remount the live stream.
+For a still-blank New chat, `null` is intentional and paired with `startFresh`;
+for Home-orb voice, `null` intentionally retains resume-latest behavior.
+When returning from voice, the requested session ID is also used by the mic
+button during asynchronous history hydration, closing the rapid re-entry window
+where local chat state has not adopted it yet.

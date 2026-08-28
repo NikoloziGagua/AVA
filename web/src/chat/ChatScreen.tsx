@@ -520,7 +520,10 @@ export function ChatScreen({
           <Composer
             onSend={(text) => { void send(text); }}
             onKill={kill}
-            onMicTap={() => onEnterVoice?.(sessionId)}
+            // Reopening a persisted chat hydrates its local state asynchronously.
+            // During that short window the requested ID is already canonical;
+            // never turn it into null and accidentally invoke fresh-voice policy.
+            onMicTap={() => onEnterVoice?.(sessionId ?? requestedSessionId)}
             busy={busy}
             seed={seed}
           />

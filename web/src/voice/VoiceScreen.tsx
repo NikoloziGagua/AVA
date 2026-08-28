@@ -12,6 +12,8 @@ import { Mic, Keyboard, MicOff, Square, X, MessageSquarePlus, PanelsTopLeft } fr
 
 export interface VoiceScreenProps {
   initialSessionId: string | null;
+  /** A blank chat is an explicit new conversation, not a request to resume latest. */
+  startFresh?: boolean;
   onExit: (sessionId: string | null) => void;
   onSwitchToKeyboard: (sessionId: string | null) => void;
 }
@@ -26,8 +28,8 @@ export function shouldShowVoiceStop(state: RealtimeState, actionPending: boolean
   return actionPending || state === "thinking" || state === "responding";
 }
 
-export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: VoiceScreenProps) {
-  const v = useRealtimeVoice({ initialSessionId });
+export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSwitchToKeyboard }: VoiceScreenProps) {
+  const v = useRealtimeVoice({ initialSessionId, startFresh });
   const [secs, setSecs] = useState(0);
   const chromeScope = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
@@ -35,7 +37,10 @@ export function VoiceScreen({ initialSessionId, onExit, onSwitchToKeyboard }: Vo
   const capturing = v.capturing;
   const showStop = shouldShowVoiceStop(v.state, v.actionPending);
   const leaveVoice = (destination: "exit" | "keyboard") => {
-    const sessionId = v.sessionId;
+    // The session hello updates a ref synchronously and React state on the next
+    // render. Read the authoritative ref so an immediate Exit/Keyboard tap
+    // cannot hand App the stale null that preceded a newly-created session.
+    const sessionId = v.getSessionId();
     // Release the mic/socket immediately. The hook's unmount cleanup is a
     // second safety net for navigation paths outside these two buttons.
     v.stop();

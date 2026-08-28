@@ -228,6 +228,12 @@ export function App() {
           >
             <VoiceScreen
               initialSessionId={view.sessionId}
+              // A null id has two different meanings. From Home it means
+              // "resume my latest conversation"; from a blank New chat it means
+              // "this is deliberately a new conversation". Preserve that
+              // distinction so voice cannot jump from a fresh chat into the
+              // most recently used voice thread.
+              startFresh={view.from === "chat" && view.sessionId === null}
               onExit={(sid) => {
                 if (view.from === "chat") setView({ name: "chat", sessionId: sid });
                 else setView({ name: "orbit" });

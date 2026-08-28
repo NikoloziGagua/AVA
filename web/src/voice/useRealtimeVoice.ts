@@ -231,7 +231,14 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(s);
 }
 
-export function useRealtimeVoice({ initialSessionId }: { initialSessionId: string | null }) {
+export function useRealtimeVoice({
+  initialSessionId,
+  startFresh = false,
+}: {
+  initialSessionId: string | null;
+  /** Force the first connection to create a session when entered from blank New chat. */
+  startFresh?: boolean;
+}) {
   const [state, setState] = useState<RealtimeState>("idle");
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [caption, setCaption] = useState<RealtimeCaption | null>(null);
@@ -274,10 +281,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const prevVoiceEngineRef = useRef<VoiceEngine>(voiceEngine); // last engine we connected with (reconnect on change)
   const capturingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(initialSessionId);
-  // When the user taps "+new", the next connect forces a fresh server session
-  // (?new=1) instead of resuming the most-recent conversation. Consumed (reset)
-  // once the server hands back the new session id.
-  const forceNewRef = useRef(false);
+  // A blank New chat and the in-voice "+new" action both force a fresh server
+  // session (?new=1) instead of resuming the most-recent conversation. The flag
+  // is consumed only when the proxy hands back that new canonical session id,
+  // so a connection attempt that fails before acknowledgement can retry safely.
+  const forceNewRef = useRef(startFresh && initialSessionId === null);
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
   const esRef = useRef<EventSource | null>(null);
   const ttsRef = useRef<HTMLAudioElement | null>(null);
@@ -940,7 +948,15 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     // very first non-session frame is handled by the right path.
     if (action.kind === "session") {
       if (action.mode) hybridRef.current = action.mode === "hybrid";
-      if (action.sessionId) setSessionId(action.sessionId);
+      if (action.sessionId) {
+        // This is the authoritative acknowledgement for both a resumed and a
+        // newly-created conversation. Consume the one-shot ?new=1 intent here
+        // (the common early-return path), and update the ref synchronously so a
+        // reconnect racing React's state effect cannot create a second session.
+        forceNewRef.current = false;
+        sessionIdRef.current = action.sessionId;
+        setSessionId(action.sessionId);
+      }
       return;
     }
     // Ava-specific control frames, handled the same in hybrid + transcribe:
@@ -1413,9 +1429,15 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
   useEffect(() => () => { intentionalStopRef.current = true; cleanup(); }, [cleanup]);
 
+  // Navigation sometimes follows the session hello before React has committed
+  // the corresponding state render. The ref is updated in that event handler,
+  // so callers can always return to the canonical chat rather than stale null.
+  const getSessionId = useCallback(() => sessionIdRef.current, []);
+
   return {
     state,
     sessionId,
+    getSessionId,
     caption,
     // Transcript display: committed scrollback + one live interim line + orb meter.
     turns,

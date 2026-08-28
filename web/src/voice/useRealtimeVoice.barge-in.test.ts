@@ -222,6 +222,47 @@ async function bootPtt() {
 }
 
 describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
+  it("forces a fresh canonical session when voice starts from a blank New chat", async () => {
+    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: null, startFresh: true }));
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+
+    const first = FakeWebSocket.last!;
+    expect(first.url).toContain("new=1");
+    expect(first.url).not.toContain("sessionId=");
+
+    // The proxy acknowledgement consumes the one-shot fresh flag. Any later
+    // reconnect resumes this exact session instead of creating another one.
+    let acknowledgedImmediately: string | null = null;
+    await act(async () => {
+      first.fireOpen();
+      first.fireMessage({ type: "ava.session", sessionId: "fresh-session", mode: "hybrid" });
+      acknowledgedImmediately = hook.result.current.getSessionId();
+    });
+    expect(acknowledgedImmediately).toBe("fresh-session");
+    await flush();
+    hook.result.current.stop();
+    // A real WebSocket emits close after close(); our minimal fake needs the
+    // terminal event explicitly so the hook releases its starting guard.
+    await act(async () => { first.fireClose(); });
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+
+    const resumed = FakeWebSocket.last!;
+    expect(resumed).not.toBe(first);
+    expect(resumed.url).toContain("sessionId=fresh-session");
+    expect(resumed.url).not.toContain("new=1");
+  });
+
+  it("keeps null Home-orb voice entry on the existing resume-latest policy", async () => {
+    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: null }));
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+
+    expect(FakeWebSocket.last!.url).not.toContain("new=1");
+    expect(FakeWebSocket.last!.url).not.toContain("sessionId=");
+  });
+
   it("connects, latches hybrid, and lands in listening", async () => {
     const { hook } = await bootHybrid();
     expect(hook.result.current.state).toBe("listening");

@@ -404,12 +404,19 @@ home orb), the proxy decides whether to resume or start fresh via
 - The client's **"+new conversation"** control sends `?new=1`, which forces a
   fresh session (`newConversation`, `useRealtimeVoice.ts:872`; `wantNew` →
   `resumeId: null`).
+- Entering voice from a deliberately blank **New chat** also sends `?new=1`.
+  `App` distinguishes that origin from the Home orb, whose null ID still means
+  resume latest.
 
 The chosen id is echoed to the client in the **session hello** frame
 (`sessionHelloFrame`, `voice-realtime.ts:515`), which also carries `mode`
 (`hybrid` | `transcribe`). The client latches both: it adopts the session id and
 sets `hybridRef` so it knows whether to play realtime audio or own the reply
 (`handleServerEvent`, `useRealtimeVoice.ts:649`).
+That acknowledgement also consumes the one-shot fresh intent and updates the
+session ref synchronously. A reconnect after acknowledgement therefore resumes
+the exact new session rather than creating another one, and an immediate
+Exit/Keyboard handoff returns that same ID before the React state render lands.
 
 ### 8b. History + self-knowledge seeding
 
@@ -858,6 +865,9 @@ assume `/api/speak` can produce the cloned voice.
 
 - Chat-to-voice uses the actual `ChatScreen.sessionId`, including the ID returned
   by the first send in a new chat.
+- A still-blank New chat has no ID, so `App` explicitly marks its first voice
+  connection fresh. Home-orb entry remains resume-latest despite also having no
+  explicit ID.
 - Automatic resume uses `getMostRecentSession` (activity order), not the pin-first
   `listSessions` projection.
 - OpenAI instructions include the durable earlier-conversation summary and the

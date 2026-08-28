@@ -38,7 +38,7 @@ vi.mock("./chat/ChatScreen.js", async () => {
     ChatScreen: ({ onOpenStrategy, onOpenVisual, onEnterVoice }: {
       onOpenStrategy?: (sessionId: string) => void;
       onOpenVisual?: (visualId: string) => void;
-      onEnterVoice?: (sessionId: string) => void;
+      onEnterVoice?: (sessionId: string | null) => void;
     }) => {
       const mount = React.useRef(++state.nextChatMount);
       return (
@@ -47,6 +47,7 @@ vi.mock("./chat/ChatScreen.js", async () => {
           <button onClick={() => onOpenStrategy?.("internal-chat-17")}>mock take to room</button>
           <button onClick={() => onOpenVisual?.("visual_abcdefgh")}>mock open visual</button>
           <button onClick={() => onEnterVoice?.("internal-chat-17")}>mock enter voice</button>
+          <button onClick={() => onEnterVoice?.(null)}>mock enter blank voice</button>
         </div>
       );
     },
@@ -56,11 +57,15 @@ vi.mock("./chat/ChatScreen.js", async () => {
 vi.mock("./rules/RulesScreen.js", () => ({ RulesScreen: () => null }));
 vi.mock("./memory/MemoryScreen.js", () => ({ MemoryScreen: () => null }));
 vi.mock("./self/SelfScreen.js", () => ({ SelfScreen: () => null }));
-vi.mock("./orbit/OrbitScreen.js", () => ({ OrbitScreen: () => null }));
+vi.mock("./orbit/OrbitScreen.js", () => ({
+  OrbitScreen: ({ onEnterVoice }: { onEnterVoice?: () => void }) => (
+    <button onClick={onEnterVoice}>mock home voice</button>
+  ),
+}));
 vi.mock("./orbit/ChatListScreen.js", () => ({ ChatListScreen: () => null }));
 vi.mock("./voice/VoiceScreen.js", () => ({
-  VoiceScreen: ({ initialSessionId }: { initialSessionId: string | null }) => (
-    <div>voice-session-{initialSessionId ?? "none"}</div>
+  VoiceScreen: ({ initialSessionId, startFresh }: { initialSessionId: string | null; startFresh?: boolean }) => (
+    <div>voice-session-{initialSessionId ?? "none"}-fresh-{String(!!startFresh)}</div>
   ),
 }));
 vi.mock("./explorer/ExplorerScreen.js", () => ({ ExplorerScreen: () => null }));
@@ -115,6 +120,20 @@ describe("App New-chat navigation", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "New" }));
     fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
-    expect(screen.getByText("voice-session-internal-chat-17")).toBeTruthy();
+    expect(screen.getByText("voice-session-internal-chat-17-fresh-false")).toBeTruthy();
+  });
+
+  it("marks voice entry from a blank New chat as a fresh conversation", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock enter blank voice" }));
+    expect(screen.getByText("voice-session-none-fresh-true")).toBeTruthy();
+  });
+
+  it("keeps Home-orb voice entry on resume-latest behavior", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
+    expect(screen.getByText("voice-session-none-fresh-false")).toBeTruthy();
   });
 });

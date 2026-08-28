@@ -11,6 +11,8 @@ Previously, every time Sir opened voice from the orb (with no session id), the p
 ## How Sir interacts
 
 - **Enter voice from the orb** → Ava resumes the most-recent session automatically. No action needed.
+- **Enter voice from a blank New chat** → Ava creates a new canonical session for
+  that chat. It never falls back to the most-recent voice conversation.
 - **Tap "+new"** (`web/src/voice/VoiceScreen.tsx:74`) → drops the current session and reconnects with `?new=1`, forcing a fresh "Voice chat" session (`useRealtimeVoice.ts:872` `newConversation`).
 - Entering voice with an explicit session id (e.g. continuing a specific chat) resumes that exact session.
 
@@ -75,6 +77,14 @@ Voice and typed chat are two input modes over one canonical session transcript:
   high-water and imports typed rows written by another client at the ordered
   speech-start/push-to-talk-commit boundary before the next spoken item.
 - `?new=1` now reaches Hume as well as OpenAI.
+- A null session ID is interpreted by origin: Home-orb entry keeps the
+  resume-latest policy, while a blank New-chat entry sets `startFresh` and sends
+  `?new=1`. The `ava.session` acknowledgement consumes that one-shot flag and
+  synchronously adopts the returned ID, so later reconnects resume the same new
+  conversation instead of minting another one. Exit/Keyboard also reads that
+  authoritative ID directly, so even an immediate mode switch returns to the
+  newly created chat rather than stale `null`. While that chat reloads its
+  history, its requested ID remains authoritative for an immediate mic re-entry.
 
 The reconnect seed remains bounded by `REALTIME_SEED_TURNS` (default 12) for
 cost. Hume refreshes concurrent cross-window typed changes on reconnect because

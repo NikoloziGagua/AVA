@@ -4239,3 +4239,27 @@ runtime health and task evidence remain separate proof of present behaviour.
 NEEDS: niko (open Explore, search `Microsoft UFO`, inspect its workflow and
 current health; open Memory -> Index and filter `Improvements` to see shipped
 updates with exact Git provenance)
+
+---
+
+### 2026-08-28 - codex - CORRECTION: genuine runtime with actions disabled
+
+Post-commit state review found one additional truthful-health edge case. An
+installed, healthy genuine runtime whose fixture actions are intentionally
+disabled must be `partially_ready / healthy`, not `setup_required /
+unavailable`. Commit `e743549` (`fix(explorer): distinguish disabled UFO
+actions`) separates runtime availability from action availability and extends
+the deterministic state test accordingly. The focused route test, server build,
+Explorer contract/reality audit and committed-HEAD boot smoke all passed. The
+audit remains 34 capabilities, 70/70 tools and 29/29 routes with no broken
+references.
+
+AVA was relaunched as PID 4488, build ID
+`70e8c78c-9c04-4268-9ae2-7a51e8707e03`. Boot reconciliation automatically
+indexed exact commit `e74354998e967e3944fddb26a874c032f2c2c9ed` as
+`Distinguish disabled UFO actions`; the live database now has 470 improvement
+records and 470 active improvement entries. This was not manually inserted.
+Unrelated local changes remain preserved. Forge was neither inspected nor
+modified.
+
+NEEDS: niko (same product check as above; no further implementation dependency)

@@ -3975,3 +3975,110 @@ be inspected or modified.
 NEEDS: codex (establish the current official runtime contract, install and run
 the genuine dependency, implement the smallest real adapter path, test it,
 commit it, and report concrete runtime evidence)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: genuine Microsoft UFO Notepad runtime
+
+Shipped commit `0c9cd23` (`feat(ufo): run pinned Microsoft UFO fixture`),
+following the scoped claim commit `84d15c7`. This is a real Microsoft UFO²
+execution path, not another synthetic proof or health-only presentation. The
+official Microsoft/UFO `v3.0.8` source is installed in AVA's ignored runtime
+directory at exact commit
+`96983c73ed09e884a5f1d7ff8936c953b234b684`, with a dedicated Python 3.10
+virtual environment and an AVA-generated pinned manifest. The reproducible
+installer verifies the source commit/imports, writes the bounded `ava` profile,
+omits UFO's CommandLineExecutor, disables RAG/experience/evaluation retention,
+copies the fixed Notepad fixture driver, and never persists the provider key.
+
+AVA now exposes `ufo_runtime_run` in real mode only when installation,
+manifest, Windows boundary, credential, allowlist, and enabled-action health all
+agree. It accepts no arbitrary prompt, target, text, file, or application. The
+existing policy journal always classifies it high-risk and requires explicit
+approval even if a standing allow rule exists. The adapter opens only the
+disposable `ava-ufo-proof.txt` Notepad fixture, launches UFO directly without a
+shell under a reduced environment, bounds steps/time, supports abort/tree-kill,
+and independently reads the visible Notepad Document through UI Automation.
+UFO exit, recorded execution steps, and exact UIA evidence must all agree before
+the result becomes verified.
+
+The AVA-owned request projection remains versioned and idempotent. Replay uses
+the stable request fingerprint and does not run UFO again; cancellation,
+timeout, restart recovery, stale/late completion, and prior terminal state
+cannot be overwritten. Mission Control receives exactly one correlated
+`experimental_computer_use_runtime` child trace. The parent tool call owns the
+action and the child is evidence-only. Its terminal evidence distinguishes
+`runtime=microsoft_ufo` and `microsoftUfoRuntime=executed`, with release,
+commit, bounded task/step/exit facts, and independent verification provenance;
+usage and cost remain honestly `not_reported`. Task receipts use
+`microsoft_ufo_windows_uia` rather than trusting UFO's own success message.
+
+Raw UFO task logs can include model payloads and screenshots. The adapter keeps
+stdout/stderr only in bounded process memory, extracts the facts above, and
+removes the raw per-task directory in `finally` before completion. The three
+manual development-run log/screenshot directories and four redirected console
+files were also deleted from the ignored runtime after evidence extraction;
+they are not recoverable, and no unrelated user data was touched. The fixed
+fixture closes without saving. No email, text/SMS, WhatsApp/Instagram message,
+DM, post, comment, invitation, purchase, or communication to another person or
+account was sent during implementation or testing.
+
+Exact tracked areas: `.env.example`;
+`server/src/ufo/{experiment.ts,experiment.test.ts,runtime-adapter.test.ts}`;
+`server/src/tools/{ufo-experiment-mcp.ts,ufo-experiment-mcp.test.ts}`;
+`server/src/policy/{classify.ts,classify.test.ts,enforce.ts,runtime.test.ts}`;
+`server/src/{index.ts,orchestrator/timeout.ts}`;
+`server/scripts/{install-ufo-runtime.ts,ufo-notepad-fixture.py,ufo-runtime-smoke.ts}`;
+`server/{package.json,tsconfig.scripts.json}`;
+`docs/features/{microsoft-ufo-experiment.md,mission-control.md}`; and a
+historical-status banner in
+`docs/self/proposals/microsoft-ufo-evaluation.md`. The local ignored `.env`
+now enables the bounded real mode on this machine; checked-in defaults remain
+off.
+
+Concrete real evidence: an initial direct official-CLI run selected
+`ava-ufo-proof.txt - Notepad`, delegated HostAgent -> AppAgent, executed UFO's
+own `set_edit_text` action, reached `FINISH`, and a separate Pywinauto read saw
+exactly `AVA REAL UFO PROOF 2026-08-28`. The first failed development attempts
+also produced useful evidence: one was blocked by a Notepad create-file modal;
+the next exposed UFO `v3.0.8`'s duplicated OpenAI endpoint-template defect
+(`/chat/completions/chat/completions`, HTTP 404). The installer now uses the
+correct SDK base URL, `https://api.openai.com/v1`.
+
+The opt-in AVA-path smoke then passed twice, including once after commit:
+`runtime=microsoft_ufo`, release `v3.0.8`, the exact commit above,
+`fixture=notepad-text-v1`, `independentlyVerified=true`, one Mission Control
+terminal event, and `rawRuntimeLogsRetained=false`. The synthetic compatibility
+smoke also still passed with one idempotent counter action and
+`microsoftUfoRuntime=unavailable`.
+
+Verification: final focused real-adapter/service/tool/policy coverage passed 4
+files / 37 tests (the broader focused boundary including routes/classification
+passed 6 files / 67 tests before the final timeout case). The final complete
+server suite passed 193 files / 1,479 tests. The complete web suite passed 91
+files / 408 tests. Server TypeScript/schema/scripts build passed; production
+web/PWA build passed with 2,412 modules and 8 precache entries. `git diff
+--check` passed. The task production-file and installed-runtime secret scans
+found no credential material. The committed-HEAD boot smoke returned
+`{"ok":true,"log":"healthy"}`.
+
+AVA was rebuilt and relaunched after all gates. Live health is `ready=true`,
+provider `openai`, PID `16144`, build ID
+`90001fce-ad0a-4180-b74e-68e7731ef880`, running product HEAD `0c9cd23`.
+
+Known boundary: this proves exactly one genuine disposable Notepad workflow in
+the normal local Windows user session; it is not general computer use or VM
+containment. UFO observes the visible desktop while choosing the fixed window,
+provider token/cost figures are unavailable, and a hard OS/server crash could
+require manual child-process cleanup even though restart recovery prevents
+replay. The official requirements were installed in the dedicated venv but are
+not a complete SBOM/fully locked transitive dependency bundle. No successor was
+scheduled because expansion to another application or arbitrary tasks requires
+a separately chosen bounded capability. Niko's unrelated
+`.claude/settings.local.json` edit and untracked persona-research document were
+preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (test from AVA Action chat by asking “run the Microsoft UFO Notepad
+proof”, approve the high-risk prompt, then inspect the verified receipt and the
+single Mission Control child trace; choose a separate next fixture only if this
+bounded real capability is useful)

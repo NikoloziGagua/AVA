@@ -24,6 +24,7 @@ import { VoiceTurnAccumulator } from "../voice/turn-policy.js";
 import type { ObservabilityService } from "../observability/store.js";
 import type { ObservabilityParentContext, ObservabilityRunStatus } from "../observability/types.js";
 import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
+import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
 import {
   resolveVoiceProvider,
   describeVoiceProvider,
@@ -839,6 +840,8 @@ export interface RealtimeProxyDeps {
   ) => Promise<{ text: string; sessionId: string | null }>;
   /** Shared AVA-owned event stream. Hume remains explicitly out of v1 coverage. */
   observability?: ObservabilityService;
+  /** Shared post-turn durable-memory gate used by chat and both voice providers. */
+  memoryAutoCapture?: AutoMemoryCapture;
   /** Voice for the realtime model's spoken output (hybrid mode). */
   voice?: string;
   /**
@@ -1235,13 +1238,27 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     // `response.done`, so chat history (and the voice recollection that re-seeds it)
     // sees coherent turns instead of clause-fragments.
     let assistantTurnBuf = "";
-    const flushAssistantTurn = (): string => {
+    let lastAcceptedUserMessageId: number | null = null;
+    const flushAssistantTurn = (eligibleForMemory = false): string => {
       const text = assistantTurnBuf.trim();
       assistantTurnBuf = "";
+      const sourceUserMessageId = eligibleForMemory ? lastAcceptedUserMessageId : null;
+      if (eligibleForMemory) lastAcceptedUserMessageId = null;
       if (hybrid && sessionId && text) {
         const stored = appendMessage(deps.db, { sessionId, role: "assistant", content: text });
         persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
         touchSession(deps.db, sessionId);
+        if (sourceUserMessageId !== null && deps.memoryAutoCapture) {
+          const captureInput = {
+            sessionId,
+            userMessageId: sourceUserMessageId,
+            assistantMessageId: stored.id,
+            channel: "voice" as const,
+          };
+          void deps.memoryAutoCapture(captureInput).catch((err) => {
+            log.warn("realtime: automatic memory capture failed", err instanceof Error ? err.message : err);
+          });
+        }
       }
       return text;
     };
@@ -1437,6 +1454,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             error?: { type?: string; code?: string; message?: string };
             response?: {
               id?: string;
+              status?: string;
               usage?: {
                 input_tokens?: number;
                 output_tokens?: number;
@@ -1486,7 +1504,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         } else if (evt.type === "response.done") {
           responseActive = false;
           responseRequested = false;
-          const spokenText = flushAssistantTurn(); // persist the whole spoken turn as one message
+          const responseCompleted = evt.response?.status == null || evt.response.status === "completed";
+          const spokenText = flushAssistantTurn(!suppressCurrentResponse && responseCompleted); // persist the whole spoken turn as one message
           if (suppressCurrentResponse) {
             suppressCurrentResponse = false;
             if (responseAfterCancellation) {
@@ -1866,6 +1885,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         if (hybrid && sessionId) {
           const stored = appendMessage(deps.db, { sessionId, role: "user", content: acceptedText });
           persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
+          lastAcceptedUserMessageId = stored.id;
           touchSession(deps.db, sessionId);
         }
         // Send the caption first. Because upstream and browser are different
@@ -2002,12 +2022,28 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // so history isn't a pile of clause-fragments (which also poisons the recall
       // we seed back into the prompt).
       let assistantTurnBuf = "";
-      const flushAssistantTurn = () => {
+      let lastAcceptedUserMessageId: number | null = null;
+      let currentTurnMemoryEligible = true;
+      const flushAssistantTurn = (eligibleForMemory = false) => {
         const text = assistantTurnBuf.trim();
         assistantTurnBuf = "";
+        const sourceUserMessageId = eligibleForMemory && currentTurnMemoryEligible
+          ? lastAcceptedUserMessageId
+          : null;
+        if (eligibleForMemory) lastAcceptedUserMessageId = null;
         if (hybrid && sessionId && text) {
-          appendMessage(deps.db, { sessionId, role: "assistant", content: text });
+          const stored = appendMessage(deps.db, { sessionId, role: "assistant", content: text });
           touchSession(deps.db, sessionId);
+          if (sourceUserMessageId !== null && deps.memoryAutoCapture) {
+            void deps.memoryAutoCapture({
+              sessionId,
+              userMessageId: sourceUserMessageId,
+              assistantMessageId: stored.id,
+              channel: "voice",
+            }).catch((err) => {
+              log.warn("realtime(hume): automatic memory capture failed", err instanceof Error ? err.message : err);
+            });
+          }
         }
       };
       const redact = (m: string) => redactSecrets(m, [hume.apiKey, hume.secretKey, hume.configId, hume.voiceId]);
@@ -2100,7 +2136,9 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             return;
           }
           if (hybrid && sessionId) {
-            appendMessage(deps.db, { sessionId, role: "user", content: decision.text });
+            const stored = appendMessage(deps.db, { sessionId, role: "user", content: decision.text });
+            lastAcceptedUserMessageId = stored.id;
+            currentTurnMemoryEligible = true;
             touchSession(deps.db, sessionId);
           }
           try {
@@ -2141,6 +2179,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
                 return;
               }
               actionRuns.finish(action.id);
+              currentTurnMemoryEligible = false;
               const msg = e instanceof Error ? e.message : String(e);
               try { client.send(actionResultFrame(formatSpeechText(`That didn't work, Sir — ${msg}`))); } catch { /* */ }
               if (sessionId) {
@@ -2158,7 +2197,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         if (t.assistantText && hybrid && sessionId && t.assistantText.trim()) {
           assistantTurnBuf += (assistantTurnBuf ? " " : "") + t.assistantText.trim();
         }
-        if (t.turnEnd) flushAssistantTurn();
+        if (t.turnEnd) flushAssistantTurn(true);
 
         // Forward translated frames (audio, captions, errors) to the client.
         for (const frame of t.frames) {

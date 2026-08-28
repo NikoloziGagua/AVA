@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS memory_index_entries (
   project TEXT,
   project_key TEXT,
   privacy_level TEXT NOT NULL DEFAULT 'personal',
+  capture_mode TEXT NOT NULL DEFAULT 'explicit',
+  capture_reason TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   embedding_status TEXT NOT NULL DEFAULT 'pending',
   source_fingerprint TEXT NOT NULL UNIQUE,
@@ -76,6 +78,23 @@ CREATE TABLE IF NOT EXISTS memory_index_embeddings (
   vector BLOB NOT NULL,
   created_at INTEGER NOT NULL
 );
+
+-- One content-free decision record per assistant turn considered for automatic
+-- durable memory. It makes provider retries/replayed terminal events idempotent
+-- without copying prompts, transcripts, or generated summaries into a queue.
+CREATE TABLE IF NOT EXISTS memory_index_auto_events (
+  assistant_message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  candidate_kind TEXT,
+  reason TEXT NOT NULL,
+  entry_id TEXT REFERENCES memory_index_entries(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_index_auto_session
+  ON memory_index_auto_events(session_id, updated_at DESC);
 
 -- Sanitized task-result snapshots shown in conversation. Mission Control owns
 -- the full event history; this table stores only the bounded receipt JSON so

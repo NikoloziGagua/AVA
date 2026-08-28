@@ -39,6 +39,9 @@ export function MemoryIndexCard({
         <div className="min-w-0">
           <div className="mb-1 flex flex-wrap items-center gap-2">
             <span className="hud text-[9px] uppercase tracking-[0.18em] text-[var(--ac)]">{entry.kind}</span>
+            <span className={`rounded-full border px-2 py-0.5 text-[10px] ${entry.captureMode === "automatic" ? "border-violet-300/20 bg-violet-300/[0.07] text-violet-100/70" : "border-white/10 text-white/45"}`}>
+              {entry.captureMode === "automatic" ? "captured automatically" : "saved by request"}
+            </span>
             {entry.project && <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/45">{entry.project}</span>}
             <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-white/45">
               {result.match.mode === "hybrid"
@@ -85,6 +88,7 @@ export function MemoryIndexCard({
             {source.sessionId ? " / linked" : " / source link unavailable"}
           </p>
           <p>Captured {new Date(entry.createdAt).toLocaleString()} / memory {entry.id}</p>
+          {entry.captureReason && <p>Capture provenance: {entry.captureReason}</p>}
           {source.sessionId && result.usable && onOpenChat && (
             <button
               type="button"
@@ -140,12 +144,12 @@ export function MemoryIndexSection({ onOpenChat }: { onOpenChat?: (sessionId: st
               </div>
               <h2 id="memory-index-title" className="text-xl font-medium text-white/90">Research & idea index</h2>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-white/45">
-                Ask AVA to "index this discussion" after important research or a developed idea. Search finds the compact summary, then AVA checks the original conversation before trusting it.
+                Completed research and ideas you meaningfully develop with AVA are captured automatically. You can still say "remember this" for anything else. Search finds the compact summary, then AVA checks the original conversation before trusting it.
               </p>
             </div>
             <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-[10px] text-white/45">
               <BookOpenCheck size={13} />
-              explicit capture v1
+              automatic + explicit
             </div>
           </div>
 
@@ -185,7 +189,7 @@ export function MemoryIndexSection({ onOpenChat }: { onOpenChat?: (sessionId: st
           {error && <div className="rounded-xl border border-red-300/20 bg-red-300/[0.06] px-3 py-2 text-xs text-red-200" role="alert">{error}</div>}
           {!error && !loading && response?.results.length === 0 && (
             <div className="rounded-xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/35">
-              No source-linked memory matched. Capture one by telling AVA to index an important discussion.
+              No source-linked memory matched. Finish a research or developed-idea discussion, or tell AVA "remember this" explicitly.
             </div>
           )}
           <div className="grid gap-3 xl:grid-cols-2">

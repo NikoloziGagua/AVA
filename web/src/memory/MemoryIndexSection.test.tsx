@@ -28,6 +28,8 @@ const result: MemoryIndexResult = {
     tags: ["memory", "RAG"],
     project: null,
     privacyLevel: "personal",
+    captureMode: "automatic",
+    captureReason: "Automatically indexed a meaningfully developed idea from AVA chat.",
     embeddingStatus: "ready",
     createdAt: Date.UTC(2026, 7, 28),
     updatedAt: Date.UTC(2026, 7, 28),
@@ -78,10 +80,12 @@ describe("MemoryIndexSection", () => {
 
     expect(await screen.findByText("Durable research recall")).toBeTruthy();
     expect(screen.getByText("source verified")).toBeTruthy();
+    expect(screen.getByText("captured automatically")).toBeTruthy();
     expect(screen.getByText(/SQLite is canonical/)).toBeTruthy();
     fireEvent.click(screen.getByText("Why AVA found this"));
     expect(screen.getByText(/semantic similarity 91%/)).toBeTruthy();
     expect(screen.getByText(/messages 10/)).toBeTruthy();
+    expect(screen.getByText(/meaningfully developed idea from AVA chat/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Open source chat" }));
     expect(openChat).toHaveBeenCalledWith("session-source");
   });

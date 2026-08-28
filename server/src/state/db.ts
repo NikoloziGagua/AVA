@@ -16,6 +16,10 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "sessions", "deleted_at", "INTEGER");
   tryAddColumn(db, "sessions", "pinned", "INTEGER NOT NULL DEFAULT 0");
   tryAddColumn(db, "messages", "metadata", "TEXT NOT NULL DEFAULT '{}'");
+  // Semantic-memory Phase 2 provenance. Existing explicit entries remain
+  // explicit; automatic capture is an additive, inspectable origin.
+  tryAddColumn(db, "memory_index_entries", "capture_mode", "TEXT NOT NULL DEFAULT 'explicit'");
+  tryAddColumn(db, "memory_index_entries", "capture_reason", "TEXT");
   // Self worker selector: new intents record the selection visible at intake;
   // approval-gated intents lock the then-current selection when approved.
   tryAddColumn(db, "self_improvements", "worker_provider", "TEXT NOT NULL DEFAULT 'claude'");

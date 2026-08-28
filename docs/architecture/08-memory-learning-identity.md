@@ -441,6 +441,15 @@ conclusions, open questions, next steps, tags, privacy scope and timestamps. A
 source row points to an exact persisted message range and stores a SHA-256 content
 fingerprint. Transcript bodies are not copied into the index.
 
+After a clean persisted assistant turn, `AutoMemoryCaptureCoordinator` applies a
+deterministic category gate. Explicit research requests and ideas developed over
+multiple turns may be summarized by a conservative side model; routine chat,
+failed/partial work, interruptions and delegated `persist:false` action turns do
+not enter automatic memory. The same post-turn seam is used by chat, OpenAI
+Realtime and Hume, so provenance records whether the source was typed or spoken.
+Assistant-message keyed claim rows make replay and concurrent delivery
+idempotent without storing another transcript copy.
+
 The runtime tools are:
 
 - `memory_index_capture` selects a bounded range (maximum 80 messages), sanitizes
@@ -468,9 +477,10 @@ remain authoritative; vectors are replaceable discovery data. See
 [`docs/features/semantic-memory-index.md`](../features/semantic-memory-index.md)
 for the contract, limitations and test procedure.
 
-Automatic research/idea indexing and checkpoint generation are deliberately
-deferred. The first release proves explicit capture, cross-chat retrieval, source
-verification and match transparency before introducing background policy.
+Automatic capture now covers completed research and the first mature checkpoint
+of a meaningfully developed idea. Linked revisions/topic-change checkpoints and
+automatic retrieval injection remain deferred; explicit capture/search/open/
+forget continue to use the same canonical records and evidence boundary.
 
 ### 2.11 Auto-learning from corrections
 

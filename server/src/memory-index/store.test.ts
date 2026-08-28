@@ -73,6 +73,8 @@ describe("semantic memory index", () => {
 
     expect(captured.created).toBe(true);
     expect(captured.result.entry.embeddingStatus).toBe("ready");
+    expect(captured.result.entry.captureMode).toBe("explicit");
+    expect(captured.result.entry.captureReason).toBeNull();
     expect(captured.result.entry.summary).toContain("sk-***");
     expect(captured.result.entry.summary).not.toContain(secret);
     expect(captured.result.source.status).toBe("verified");

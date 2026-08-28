@@ -2,23 +2,28 @@
 
 ## Status
 
-Implemented as an explicit-capture beta. It is a retrieval layer for substantial
-research, developed ideas and decisions; it does not replace AVA's compact
-preference/observation memory or copy complete transcripts.
+Implemented as a conservative automatic-and-explicit beta. It is a retrieval
+layer for substantial research, developed ideas and decisions; it does not
+replace AVA's compact preference/observation memory or copy complete transcripts.
 
 ## User contract
 
-1. Sir says **"index this discussion"** or otherwise explicitly asks AVA to
-   preserve a developed research/idea segment.
-2. AVA calls `memory_index_capture` with a bounded source range and a compact
+1. A successfully completed research turn or an idea meaningfully developed by
+   both Sir and AVA is offered to the automatic memory gate. Greetings, routine
+   execution, incomplete work and ordinary conversation are rejected locally.
+2. A conservative side-model editor may produce a bounded compact record. It can
+   decline the candidate; its failure never changes or delays chat/voice delivery.
+3. Sir can still say **"remember this"** or **"index this discussion"** for
+   anything worth keeping outside the two automatic categories. AVA calls
+   `memory_index_capture` with a bounded source range and a compact
    summary containing useful conclusions, open questions and next steps.
-3. In another chat or voice turn, AVA calls `memory_index_search` for prior
+4. In another chat or voice turn, AVA calls `memory_index_search` for prior
    research, ideas or decisions before claiming it cannot recall them.
-4. Retrieval explains the match and rechecks the original message range. AVA may
+5. Retrieval explains the match and rechecks the original message range. AVA may
    rely only on `usable=true` results.
-5. AVA calls `memory_index_open` when the question needs source detail beyond the
+6. AVA calls `memory_index_open` when the question needs source detail beyond the
    compact locator summary. The authoritative range is loaded only then.
-6. Sir can say **"forget that indexed idea"**. AVA searches when needed, then
+7. Sir can say **"forget that indexed idea"**. AVA searches when needed, then
    calls `memory_index_forget` with the exact ID and current version.
 
 The Memory screen's **Index** tab lists recent entries and supports query plus an
@@ -35,6 +40,13 @@ SQLite remains canonical:
   count and SHA-256 content fingerprint.
 - `memory_index_embeddings`: replaceable float vector plus provider, model,
   dimensions and sanitized-input hash.
+- `memory_index_auto_events`: content-free, assistant-message-keyed processing
+  receipt used to make automatic capture idempotent. It stores only category,
+  status, bounded reason and resulting entry IDâ€”never a transcript or raw prompt.
+
+Each entry also records whether capture was `explicit` or `automatic` and a
+sanitized provenance reason. The source range remains the authority in either
+case.
 
 The vector is a discovery aid. It is never canonical memory and never validates
 a claim. Each result rereads the referenced messages and recomputes the source
@@ -67,7 +79,8 @@ future local or hosted provider can replace it without migrating canonical entri
 ## Privacy and boundaries
 
 - `scrubSecrets` runs before summary persistence, before embedding calls and
-  again when records are materialized for API/tool/UI output.
+  automatic-editor calls, and again when records are materialized for
+  API/tool/UI output.
 - Embedding input contains only the bounded compact record, never the underlying
   transcript range.
 - Personal entries are included in normal recall. Project entries require an
@@ -98,6 +111,11 @@ The tools are present only when the current persisted chat session and index
 service are available. They work through the same chat route used by text and
 voice, so both modalities address the same SQLite index.
 
+Automatic capture is wired to the post-turn boundary of persisted chat and both
+realtime voice providers. It is offered only after a complete assistant response.
+Failed, partial, uncertain, cancelled, interrupted, disconnected and
+`persist:false` delegated-action turns are not automatic-memory candidates.
+
 `memory_index_capture.start_marker` is resolved chronologically to the first
 matching message. This is deliberate: the later capture instruction often
 quotes the marker while saying “index the discussion beginning …”; that quote
@@ -112,40 +130,54 @@ Search never upgrades an unavailable source to usable. Version conflicts on forg
 return a stale-state error rather than applying an outdated request.
 Soft-deleting the linked chat immediately makes its source unavailable even
 while AVA retains the underlying rows for the normal deletion-retention window.
+Automatic events use the persisted assistant message ID as a stable claim key,
+so replaying a response cannot call the memory editor twice or create another
+entry. A first developed-idea checkpoint suppresses overlapping automatic copies
+in this phase; linked revisions are the next phase.
 
 ## Deliberately deferred
 
-- automatic indexing of every research answer;
 - automatic topic-change/decision checkpoints;
+- linked revisions and supersession for an idea that continues evolving;
+- automatic retrieval injection into ordinary turns (search remains an explicit
+  AVA tool decision in this phase);
 - Mem0 or another second canonical memory store;
 - background re-embedding and embedding-model migration UI;
 - a large memory administration dashboard;
 - transcript deletion from an index-forget action.
 
-These should follow only after explicit capture/retrieval quality is measured on
-real AVA conversations.
+These should follow only after automatic-and-explicit capture/retrieval quality
+is measured on real AVA conversations.
 
 ## Verification
 
 Deterministic coverage lives in:
 
 - `server/src/memory-index/store.test.ts`
+- `server/src/memory-index/auto-capture.test.ts`
 - `server/src/memory-index/embedding.test.ts`
 - `server/src/routes/memory.test.ts`
 - `server/src/tools/memory-mcp.test.ts`
 - `web/src/memory/MemoryIndexSection.test.tsx`
 
 The tests cover sanitized compact storage, semantic paraphrase recall, lexical
-fallback, source changes/deletion, project isolation, deduplication, versioned
-forget, embedding validation, authenticated routes and user-visible match reasons.
+fallback, source changes/deletion, project isolation, deduplication, automatic
+research and multi-turn idea gates, editor decline/failure isolation, voice/chat
+provenance, replay idempotency, versioned forget, embedding validation,
+authenticated routes and user-visible match reasons.
 
 Manual acceptance:
 
-1. In a chat, develop a small idea and say **"Index this discussion as an idea
-   called Test Recall."**
-2. Open **Memory > Index** and confirm the card says `source verified`.
-3. Start another chat and ask for the idea using different wording.
-4. Confirm AVA reports what matched and grounds the answer only in a verified
+1. In a disposable chat, ask AVA to research a small topic and let the answer
+   finish. Open **Memory > Index** and confirm one `captured automatically`
+   research card says `source verified`.
+2. Send an ordinary greeting in a fresh disposable chat and confirm no memory is
+   created.
+3. Develop an idea with AVA over at least two turns each and confirm exactly one
+   automatic idea card links the full range. Repeat through voice and confirm the
+   provenance says AVA voice.
+4. Start another chat and ask for the idea using different wording.
+5. Confirm AVA reports what matched and grounds the answer only in a verified
    source. With no embedding provider, confirm it openly reports keyword fallback.
-5. Edit/delete the source in a test database or remove the source conversation;
+6. Edit/delete the source in a test database or remove the source conversation;
    confirm the card becomes changed/unavailable and is not treated as usable.

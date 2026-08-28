@@ -7,6 +7,7 @@ export type MemoryPrivacyLevel = typeof MEMORY_PRIVACY_LEVELS[number];
 export type MemoryEmbeddingStatus = "pending" | "ready" | "unavailable";
 export type MemorySourceStatus = "verified" | "changed" | "unavailable";
 export type MemoryRetrievalMode = "recent" | "lexical" | "semantic" | "hybrid";
+export type MemoryCaptureMode = "explicit" | "automatic";
 
 export type MemoryIndexEntry = {
   id: string;
@@ -20,6 +21,8 @@ export type MemoryIndexEntry = {
   tags: string[];
   project: string | null;
   privacyLevel: MemoryPrivacyLevel;
+  captureMode: MemoryCaptureMode;
+  captureReason: string | null;
   embeddingStatus: MemoryEmbeddingStatus;
   createdAt: number;
   updatedAt: number;
@@ -93,6 +96,9 @@ export type CaptureMemoryInput = {
   tags?: string[];
   project?: string | null;
   privacyLevel?: MemoryPrivacyLevel;
+  /** Internal provenance. Authenticated routes and agent tools always use explicit. */
+  captureMode?: MemoryCaptureMode;
+  captureReason?: string | null;
 };
 
 export type CaptureMemoryResult = {

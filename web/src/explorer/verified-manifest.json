@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787875883948,
+  "generatedAt": 1787883279647,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -301,6 +301,12 @@
       "capability": "memory.semantic-index",
       "path": "server/src/memory-index/store.ts",
       "symbol": "MemoryIndexService",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "path": "server/src/memory-index/auto-capture.ts",
+      "symbol": "AutoMemoryCaptureCoordinator",
       "kind": "implementation"
     },
     {

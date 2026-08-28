@@ -64,6 +64,7 @@ import { buildProvider } from "./orchestrator/llm/factory.js";
 import { bootstrapMemoryDir } from "./memory/bootstrap.js";
 import { MemoryIndexService } from "./memory-index/store.js";
 import { OpenAIMemoryEmbedder } from "./memory-index/embedding.js";
+import { AutoMemoryCaptureCoordinator } from "./memory-index/auto-capture.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
 import { loadSelfKnowledge } from "./self/identity.js";
@@ -581,12 +582,16 @@ const memoryIndex = new MemoryIndexService(
     ? new OpenAIMemoryEmbedder(openai, process.env.MEMORY_EMBEDDING_MODEL?.trim() || undefined)
     : null,
 );
+const memoryAutoCapture = provider
+  ? new AutoMemoryCaptureCoordinator(db, provider, memoryIndex).consider
+  : undefined;
 
 const agentDeps = {
   pidfiles,
   fsRoots: cfg.fsRoots,
   memoryDir: cfg.memoryDir,
   memoryIndex,
+  memoryAutoCapture,
   dataDir: cfg.dataDir,
   getChrome,
   pushDeliver,
@@ -934,6 +939,7 @@ const realtimeProxy = buildRealtimeProxy({
   apiKey: cfg.openaiApiKey,
   memoryDir: cfg.memoryDir,
   runAction: runVoiceAction,
+  memoryAutoCapture,
   observability,
   voice: process.env.REALTIME_VOICE || undefined,
   providerConfig: resolveVoiceProvider(),

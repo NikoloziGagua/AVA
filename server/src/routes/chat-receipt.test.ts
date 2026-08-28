@@ -9,9 +9,10 @@ import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
 import type { AgentEvent } from "../orchestrator/agent.js";
 import type { TaskReceipt } from "../receipts/task-receipt.js";
+import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
 import { chatRoutes } from "./chat.js";
 
-function setup(script: AgentEvent[]) {
+function setup(script: AgentEvent[], memoryAutoCapture?: AutoMemoryCapture) {
   const dir = mkdtempSync(join(tmpdir(), "ava-receipt-"));
   const memoryDir = mkdtempSync(join(tmpdir(), "ava-receipt-mem-"));
   const db = openDb(join(dir, "x.db"));
@@ -40,6 +41,7 @@ function setup(script: AgentEvent[]) {
         getChrome: async () => ({} as never),
         provider: new MockLLMProvider({ scripts: [] }),
         runAgentImpl: runAgentImpl as never,
+        memoryAutoCapture,
       },
       { anthropic: null, openai: null },
     ));
@@ -193,5 +195,68 @@ describe("chat task receipt SSE", () => {
     expect(receipt.expected).toBe(
       "Continue previous objective: Read and compare the five research articles.",
     );
+  });
+
+  it("offers one clean persisted turn to automatic memory with exact source IDs", async () => {
+    const memoryAutoCapture = vi.fn<AutoMemoryCapture>(async () => ({
+      status: "captured", reason: "fixture", entryId: "memory-fixture",
+    }));
+    const { app } = setup([
+      { kind: "final", payload: { text: "The completed research answer is ready." } },
+      { kind: "done", payload: {} },
+    ], memoryAutoCapture);
+    const started = await request(app).post("/api/chat").send({ text: "Research source-verified memory." }).expect(200);
+    await vi.waitFor(() => expect(memoryAutoCapture).toHaveBeenCalledTimes(1));
+    expect(memoryAutoCapture).toHaveBeenCalledWith({
+      sessionId: started.body.sessionId,
+      userMessageId: expect.any(Number),
+      assistantMessageId: expect.any(Number),
+      channel: "chat",
+    });
+    const input = memoryAutoCapture.mock.calls[0]![0];
+    expect(input.userMessageId).toBeLessThan(input.assistantMessageId);
+  });
+
+  it("marks a persisted voice-origin turn with voice provenance", async () => {
+    const memoryAutoCapture = vi.fn<AutoMemoryCapture>(async () => ({
+      status: "captured", reason: "fixture", entryId: "memory-voice-fixture",
+    }));
+    const { app } = setup([
+      { kind: "final", payload: { text: "The voice research answer is complete." } },
+      { kind: "done", payload: {} },
+    ], memoryAutoCapture);
+    await request(app).post("/api/chat").send({
+      text: "Research voice continuity.", voice: true,
+    }).expect(200);
+    await vi.waitFor(() => expect(memoryAutoCapture).toHaveBeenCalledTimes(1));
+    expect(memoryAutoCapture.mock.calls[0]![0]).toMatchObject({ channel: "voice" });
+  });
+
+  it("does not offer failed or non-persisted action turns to automatic memory", async () => {
+    const failedCapture = vi.fn<AutoMemoryCapture>(async () => ({
+      status: "captured", reason: "should not run", entryId: "wrong",
+    }));
+    const failed = setup([
+      { kind: "tool_call", payload: { tool: "shell", args: {} } },
+      { kind: "tool_result", payload: { tool: "shell", ok: false, result: "failed" } },
+      { kind: "final", payload: { text: "The operation failed." } },
+      { kind: "done", payload: {} },
+    ], failedCapture);
+    await request(failed.app).post("/api/chat").send({ text: "Research after this failure." }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(failedCapture).not.toHaveBeenCalled();
+
+    const actionCapture = vi.fn<AutoMemoryCapture>(async () => ({
+      status: "captured", reason: "should not run", entryId: "wrong",
+    }));
+    const action = setup([
+      { kind: "final", payload: { text: "Voice action done." } },
+      { kind: "done", payload: {} },
+    ], actionCapture);
+    await request(action.app).post("/api/chat").send({
+      text: "Research through delegated voice action.", voice: true, persist: false,
+    }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(actionCapture).not.toHaveBeenCalled();
   });
 });

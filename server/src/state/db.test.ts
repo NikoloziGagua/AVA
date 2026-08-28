@@ -26,6 +26,8 @@ describe("openDb", () => {
     expect(names).toContain("tool_calls");
     expect(names).toContain("explorer_tasks");
     expect(names).toContain("explorer_events");
+    expect(names).toContain("memory_index_entries");
+    expect(names).toContain("memory_index_auto_events");
     expect(names).toContain("device_tokens");
     expect(names).toContain("pairing_codes");
     db.close();
@@ -99,6 +101,20 @@ describe("db migrations: targeted watches", () => {
     ]));
     const indexes = db.prepare("PRAGMA index_list(watches)").all() as Array<{ name: string }>;
     expect(indexes.some((index) => index.name === "idx_watches_one_child")).toBe(true);
+    db.close();
+  });
+});
+
+describe("db migrations: automatic semantic memory provenance", () => {
+  it("adds capture provenance and the idempotent event claim table", () => {
+    const db = openDb(":memory:");
+    const columns = db.prepare("PRAGMA table_info(memory_index_entries)").all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "capture_mode",
+      "capture_reason",
+    ]));
+    const autoColumns = db.prepare("PRAGMA table_info(memory_index_auto_events)").all() as Array<{ name: string; pk: number }>;
+    expect(autoColumns.find((column) => column.name === "assistant_message_id")?.pk).toBe(1);
     db.close();
   });
 });

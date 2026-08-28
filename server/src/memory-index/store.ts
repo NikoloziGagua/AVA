@@ -32,6 +32,8 @@ type EntryRow = {
   project: string | null;
   project_key: string | null;
   privacy_level: string;
+  capture_mode: string;
+  capture_reason: string | null;
   status: string;
   embedding_status: string;
   source_fingerprint: string;
@@ -120,6 +122,8 @@ function entryFromRow(row: EntryRow): MemoryIndexEntry {
     tags: parseStringArray(row.tags).map(scrubSecrets),
     project: row.project ? scrubSecrets(row.project) : null,
     privacyLevel: row.privacy_level as MemoryPrivacyLevel,
+    captureMode: row.capture_mode === "automatic" ? "automatic" : "explicit",
+    captureReason: row.capture_reason ? scrubSecrets(row.capture_reason) : null,
     embeddingStatus: row.embedding_status as MemoryIndexEntry["embeddingStatus"],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -335,6 +339,8 @@ export class MemoryIndexService {
     const summary = cleanText(input.summary, 6_000);
     if (!title || !summary) throw new Error("memory title and summary are required");
     const privacyLevel = input.privacyLevel ?? "personal";
+    const captureMode = input.captureMode === "automatic" ? "automatic" : "explicit";
+    const captureReason = cleanInline(input.captureReason, 280) || null;
     const project = projectKey(input.project);
     if (privacyLevel === "project" && !project.key) throw new Error("project privacy requires a project");
     const conclusions = cleanList(input.conclusions, 12, 600);
@@ -369,13 +375,14 @@ export class MemoryIndexService {
         this.db.prepare(`
           INSERT OR IGNORE INTO memory_index_entries (
             id, version, kind, title, summary, conclusions, open_questions,
-            next_steps, tags, project, project_key, privacy_level, status,
-            embedding_status, source_fingerprint, created_at, updated_at
-          ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+            next_steps, tags, project, project_key, privacy_level, capture_mode,
+            capture_reason, status, embedding_status, source_fingerprint,
+            created_at, updated_at
+          ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
         `).run(
           id, input.kind, title, summary, JSON.stringify(conclusions), JSON.stringify(openQuestions),
           JSON.stringify(nextSteps), JSON.stringify(tags), project.display, project.key,
-          privacyLevel, embeddingStatus, fingerprint, now, now,
+          privacyLevel, captureMode, captureReason, embeddingStatus, fingerprint, now, now,
         );
         const inserted = this.db.prepare("SELECT * FROM memory_index_entries WHERE source_fingerprint = ?")
           .get(fingerprint) as EntryRow;

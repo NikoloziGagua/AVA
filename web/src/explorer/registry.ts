@@ -1421,14 +1421,16 @@ const capabilities: ExplorerCapability[] = [
       implementation: "implemented",
       sourceReferences: [
         source("server/src/memory-index/store.ts", "MemoryIndexService"),
+        source("server/src/memory-index/auto-capture.ts", "AutoMemoryCaptureCoordinator"),
         source("server/src/memory-index/embedding.ts", "OpenAIMemoryEmbedder"),
         source("server/src/routes/memory.ts", "memoryRoutes", "route"),
         source("server/src/tools/memory-mcp.ts", "buildMemoryIndexTools"),
         source("web/src/memory/MemoryIndexSection.tsx", "MemoryIndexSection"),
         source("server/src/memory-index/store.test.ts", "semantic memory index", "test"),
+        source("server/src/memory-index/auto-capture.test.ts", "automatic semantic-memory capture", "test"),
       ],
     },
-    examples: ["Index this memory-system discussion.", "What did we decide about durable research recall?", "Forget that indexed idea."],
+    examples: ["Research durable memory systems.", "Remember this discussion.", "What did we decide about durable research recall?", "Forget that indexed idea."],
     inputs: [
       { name: "selected conversation range", description: "A bounded range of authoritative AVA message IDs.", required: true, sensitive: true },
       { name: "compact record", description: "Sanitised title, summary, conclusions, open questions, next steps and tags.", required: true, sensitive: true },
@@ -1445,9 +1447,9 @@ const capabilities: ExplorerCapability[] = [
     ],
     readiness: readiness(["defined", "configured", "available", "healthy", "tested"], { recentSuccess: true }),
     verification: verification(
-      ["Capture stores no transcript body and records one exact message-range fingerprint.", "Every returned result rechecks the original message range before it is marked usable.", "Repeated capture of the same source range is idempotent."],
+      ["Automatic capture is offered only after a completed research or meaningfully developed idea turn.", "Capture stores no transcript body and records one exact message-range fingerprint.", "Every returned result rechecks the original message range before it is marked usable.", "Repeated or concurrent capture of the same source range is idempotent."],
       ["api-response", "tool-result", "unit-test", "artifact"],
-      ["Explicit capture is required in v1; automatic indexing is not enabled.", "Embedding similarity helps locate evidence but never validates the remembered claim."],
+      ["Automatic capture currently covers completed research and the first mature checkpoint of a multi-turn idea; linked revisions are deferred.", "Automatic retrieval injection is not enabled yet; AVA searches through the existing tools.", "Embedding similarity helps locate evidence but never validates the remembered claim."],
     ),
     safety: safety("low", "never", ["Persists compact personal or project context for later retrieval."], {
       sensitiveData: ["Conversation summaries", "Research conclusions", "Project decisions"],
@@ -2442,7 +2444,8 @@ const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
     "Capture and recover a source-linked memory",
     "Use a compact hybrid index to find prior research or ideas, then verify the original conversation before answering from it.",
     [
-      { key: "request", name: "Recognise explicit capture or recall", description: "Distinguish index-this, search-prior-work and forget-one-entry requests.", kind: "decision" },
+      { key: "request", name: "Recognise capture or recall", description: "Distinguish an automatic post-turn candidate, an explicit remember-this request, search-prior-work and forget-one-entry requests.", kind: "decision" },
+      { key: "auto-gate", parent: "request", name: "Gate completed research or ideas", description: "Offer only completed research or a sufficiently developed multi-turn idea to a conservative memory editor; routine, failed and interrupted work exits without persistence.", kind: "decision" },
       { key: "range", parent: "request", name: "Select bounded source range", description: "Resolve an exact persisted conversation segment, capped at 80 messages.", kind: "decision" },
       { key: "scrub", parent: "range", capabilityId: "security.secret-redaction", name: "Sanitise compact record", description: "Scrub the supplied summary, decisions, questions, steps, tags and project before persistence or embedding.", kind: "verification" },
       { key: "capture", parent: "scrub", name: "Capture idempotently", description: "Persist one canonical SQLite entry, source fingerprint and replaceable embedding without copying transcript bodies.", kind: "external-action", toolName: "memory_index_capture", producesEvidence: ["tool-result", "artifact"] },
@@ -2454,6 +2457,8 @@ const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
     ],
     [
       { from: "request", to: "range", kind: "branch", label: "capture" },
+      { from: "request", to: "auto-gate", kind: "branch", label: "automatic candidate" },
+      { from: "auto-gate", to: "range", kind: "branch", label: "accepted" },
       { from: "range", to: "scrub" },
       { from: "scrub", to: "capture" },
       { from: "request", to: "query", kind: "branch", label: "recall" },

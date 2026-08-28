@@ -80,6 +80,7 @@ import { TaskReceiptBuilder, type TaskReceipt } from "../receipts/task-receipt.j
 import { resolveRunObjective } from "../orchestrator/objective-lineage.js";
 import { getTaskReceipt, pruneTaskReceipts, saveTaskReceipt } from "../state/task-receipts.js";
 import type { MemoryIndexService } from "../memory-index/store.js";
+import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -182,6 +183,8 @@ export type AgentDeps = {
   memoryDir: string;
   /** AVA-owned compact semantic index; absent only in isolated legacy tests. */
   memoryIndex?: MemoryIndexService;
+  /** Best-effort post-turn research/idea capture; never delays or changes chat delivery. */
+  memoryAutoCapture?: AutoMemoryCapture;
   dataDir: string;
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
@@ -309,13 +312,15 @@ export function chatRoutes(
     // unanswered user lines).
     // persist:false (HYBRID voice handoff) runs the tools but stores nothing —
     // the realtime proxy is the single source of truth for voice turns.
+    let persistedUserMessageId: number | null = null;
     if (parsed.data.persist !== false) {
-      appendMessage(db, {
+      const storedUser = appendMessage(db, {
         sessionId,
         role: "user",
         content: parsed.data.text,
         ...(resolvedVisualContext ? { metadata: { visualContext: resolvedVisualContext.context } } : {}),
       });
+      persistedUserMessageId = storedUser.id;
     }
 
     // Fire-and-forget: summarization must NOT block the response. Awaiting it
@@ -532,6 +537,7 @@ export function chatRoutes(
       const toolStartedAt = new Map<string, number[]>();
       let terminalReceiptPublished = false;
       let finalTextForLearning: string | null = null;
+      let persistedAssistantMessageId: number | null = null;
       let playbookLearningSettled = false;
       const publishReceipt = (at: number, remember: boolean): TaskReceipt => {
         const receipt = receiptBuilder.snapshot(at);
@@ -681,12 +687,13 @@ export function chatRoutes(
         if (parsed.data.persist !== false) {
           if (e.kind === "final") {
             const visualMessages = [...runVisualReferences.values()];
-            appendMessage(db, {
+            const storedAssistant = appendMessage(db, {
               sessionId: sid,
               role: "assistant",
               content: e.payload.text,
               ...(visualMessages.length ? { metadata: { visualMessages } } : {}),
             });
+            persistedAssistantMessageId = storedAssistant.id;
           } else if (e.kind === "error") {
             // Surface a run-ending error (LLM quota/timeout, stream failure) in the
             // transcript instead of leaving the chat silent — the run otherwise
@@ -863,6 +870,30 @@ export function chatRoutes(
         // without emitting the bookkeeping `done` event. Close that seam here
         // so the stream always receives one terminal receipt and one terminator.
         if (!receiptBuilder.terminal) emit({ kind: "done", payload: {} });
+        const completed = receiptBuilder.snapshot(Date.now());
+        if (
+          parsed.data.persist !== false
+          && persistedUserMessageId !== null
+          && persistedAssistantMessageId !== null
+          && completed.lifecycle === "finished"
+          && completed.failedToolResults === 0
+          && completed.uncertainToolResults === 0
+          && completed.outcome !== "failed"
+          && completed.outcome !== "partial"
+          && completed.outcome !== "contradicted"
+          && agentDeps.memoryAutoCapture
+        ) {
+          // Memory is an optional post-turn side effect. Chat is already complete,
+          // and a failed/slow memory editor must never hold the session run open.
+          void agentDeps.memoryAutoCapture({
+            sessionId: sid,
+            userMessageId: persistedUserMessageId,
+            assistantMessageId: persistedAssistantMessageId,
+            channel: parsed.data.voice ? "voice" : "chat",
+          }).catch((err) => {
+            console.warn("[memory-index] automatic capture failed:", err instanceof Error ? err.message : err);
+          });
+        }
       } catch (err) {
         // Last-resort guard: an exception escaping the agent loop (e.g. a SQLite
         // write failing inside emit) must end THIS run — not become an unhandled

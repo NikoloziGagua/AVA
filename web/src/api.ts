@@ -748,6 +748,8 @@ export type MemoryIndexEntry = {
   tags: string[];
   project: string | null;
   privacyLevel: "personal" | "project";
+  captureMode: "explicit" | "automatic";
+  captureReason: string | null;
   embeddingStatus: "pending" | "ready" | "unavailable";
   createdAt: number;
   updatedAt: number;

@@ -1449,7 +1449,7 @@ const capabilities: ExplorerCapability[] = [
     verification: verification(
       ["Automatic capture is offered only after a completed research or meaningfully developed idea turn.", "Capture stores no transcript body and records one exact message-range fingerprint.", "Every returned result rechecks the original message range before it is marked usable.", "Repeated or concurrent capture of the same source range is idempotent."],
       ["api-response", "tool-result", "unit-test", "artifact"],
-      ["Automatic capture currently covers completed research and the first mature checkpoint of a multi-turn idea; linked revisions are deferred.", "Automatic retrieval injection is not enabled yet; AVA searches through the existing tools.", "Embedding similarity helps locate evidence but never validates the remembered claim."],
+      ["Automatic capture currently covers completed research and the first mature checkpoint of a multi-turn idea; linked revisions are deferred.", "A completed read-only research turn can retain an honest unverified-evidence limitation; failed or contradicted work is excluded.", "Automatic retrieval injection is not enabled yet; AVA searches through the existing tools.", "Embedding similarity helps locate evidence but never validates the remembered claim."],
     ),
     safety: safety("low", "never", ["Persists compact personal or project context for later retrieval."], {
       sensitiveData: ["Conversation summaries", "Research conclusions", "Project decisions"],

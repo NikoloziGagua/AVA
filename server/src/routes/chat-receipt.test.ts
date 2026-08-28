@@ -259,4 +259,18 @@ describe("chat task receipt SSE", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(actionCapture).not.toHaveBeenCalled();
   });
+
+  it("allows completed read/research turns whose executor evidence is honest but not independently verified", async () => {
+    const memoryAutoCapture = vi.fn<AutoMemoryCapture>(async () => ({
+      status: "captured", reason: "fixture", entryId: "memory-read-fixture",
+    }));
+    const { app } = setup([
+      { kind: "tool_call", payload: { tool: "chrome_read_page", args: {} } },
+      { kind: "tool_result", payload: { tool: "chrome_read_page", ok: true, result: "source text" } },
+      { kind: "final", payload: { text: "The research synthesis is complete with its evidence limitations stated." } },
+      { kind: "done", payload: {} },
+    ], memoryAutoCapture);
+    await request(app).post("/api/chat").send({ text: "Research a bounded topic." }).expect(200);
+    await vi.waitFor(() => expect(memoryAutoCapture).toHaveBeenCalledTimes(1));
+  });
 });

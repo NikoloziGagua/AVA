@@ -96,7 +96,8 @@ subscriptions, rules, and self-improvement intents.
   refuses to treat it as usable if the original messages changed or vanished.
   An OpenAI embedding is used when configured; keyword retrieval remains an
   honest fallback. Automatic capture is replay-idempotent and excludes routine,
-  failed, partial, cancelled and interrupted work.
+  failed, contradicted, cancelled and interrupted work. Completed read-only
+  research may preserve an honest unverified-evidence limitation.
 - **Playbooks (procedural memory, evidence-gated):** after a run reaches a
   terminal receipt with an independently **verified task outcome** and ≥2 tool
   steps, a side model distills it into a playbook —

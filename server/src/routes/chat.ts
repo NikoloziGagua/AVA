@@ -877,9 +877,7 @@ export function chatRoutes(
           && persistedAssistantMessageId !== null
           && completed.lifecycle === "finished"
           && completed.failedToolResults === 0
-          && completed.uncertainToolResults === 0
           && completed.outcome !== "failed"
-          && completed.outcome !== "partial"
           && completed.outcome !== "contradicted"
           && agentDeps.memoryAutoCapture
         ) {

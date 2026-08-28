@@ -444,7 +444,7 @@ fingerprint. Transcript bodies are not copied into the index.
 After a clean persisted assistant turn, `AutoMemoryCaptureCoordinator` applies a
 deterministic category gate. Explicit research requests and ideas developed over
 multiple turns may be summarized by a conservative side model; routine chat,
-failed/partial work, interruptions and delegated `persist:false` action turns do
+failed or contradicted work, interruptions and delegated `persist:false` action turns do
 not enter automatic memory. The same post-turn seam is used by chat, OpenAI
 Realtime and Hume, so provenance records whether the source was typed or spoken.
 Assistant-message keyed claim rows make replay and concurrent delivery

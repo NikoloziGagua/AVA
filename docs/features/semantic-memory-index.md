@@ -113,8 +113,11 @@ voice, so both modalities address the same SQLite index.
 
 Automatic capture is wired to the post-turn boundary of persisted chat and both
 realtime voice providers. It is offered only after a complete assistant response.
-Failed, partial, uncertain, cancelled, interrupted, disconnected and
-`persist:false` delegated-action turns are not automatic-memory candidates.
+Failed, contradicted, cancelled, interrupted, disconnected and `persist:false`
+delegated-action turns are not automatic-memory candidates. A completed read-only
+research turn may still carry honestly `unverified` executor evidence; that does
+not by itself discard the research summary, but its source limitations remain in
+the authoritative conversation and the conservative editor may decline it.
 
 `memory_index_capture.start_marker` is resolved chronologically to the first
 matching message. This is deliberate: the later capture instruction often

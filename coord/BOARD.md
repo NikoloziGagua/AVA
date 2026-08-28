@@ -4394,3 +4394,31 @@ research document were preserved. Forge was neither inspected nor modified.
 NEEDS: niko (try `Open Google and search for <anything>` in both chat and voice;
 inspect the receipt/Mission Control route, then choose the next frequent browser
 operation worth making deterministic)
+
+---
+
+### 2026-08-28 - codex - CLAIM: verified known-site opening and YouTube search fast paths
+
+Niko tested the direct Google route, confirmed it works, and authorized the
+next router increment. I am continuing the existing Codex-owned Windows
+desktop/browser runtime with two bounded deterministic families: open an
+explicit HTTP(S) URL or a small declared known-site alias, and search YouTube
+for one literal query. Typed chat and voice must use the same route, persistent
+AVA Chrome, ordinary policy/lease/receipt/Mission Control seams, and exact
+post-navigation evidence without invoking a planning model.
+
+The router will not guess arbitrary brand domains, click results, handle login,
+perform compound follow-up work, or turn Microsoft UFO into a browser fallback.
+Explicit URLs will be parsed and bounded; secrets, embedded credentials,
+unsupported schemes, and compound requests will fail or remain on the normal
+agent path honestly. Known aliases will be a data declaration rather than
+unbounded name-to-domain inference. Acceptance includes deterministic parser,
+encoding, exact-destination verification, wrong-destination contradiction,
+idempotency, redaction, typed/voice route, receipt/Mission Control, Explorer
+truth, complete suites/builds, committed-head launch, and authenticated live AVA
+black-box checks with disposable non-account destinations. No external message,
+post, purchase, or account mutation will be performed. Existing unrelated
+settings and persona-research work remain untouched; Forge stays outside scope.
+
+NEEDS: codex (implement, test automatically and through live AVA, commit, index,
+and record the completion boundary)

@@ -210,6 +210,24 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
         ) : (
           <div className="mt-1.5 text-[11px] text-white/35">no checks yet</div>
         )}
+
+        {w.kind === "codex" && w.continue_cycle && w.successor_status && (
+          <div
+            className={
+              "mt-2 rounded-lg border px-2.5 py-2 text-[10px] leading-relaxed " +
+              (w.successor_status === "blocked"
+                ? "border-[var(--ac-stop)]/25 bg-[var(--ac-stop)]/[0.06] text-white/65"
+                : w.successor_status === "scheduled"
+                  ? "border-[var(--ac)]/20 bg-[var(--ac)]/[0.05] text-white/60"
+                  : "border-[var(--ac-warn)]/20 bg-[var(--ac-warn)]/[0.05] text-white/60")
+            }
+            aria-label={`successor planning: ${w.successor_status}`}
+          >
+            <span className="hud mr-2 tracking-[0.14em] text-white/45">NEXT</span>
+            {w.successor_result || w.successor_status}
+            {w.successor_attempted_at ? ` · ${timeAgo(w.successor_attempted_at)}` : ""}
+          </div>
+        )}
       </div>
 
       <button

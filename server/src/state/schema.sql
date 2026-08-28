@@ -625,5 +625,9 @@ CREATE TABLE IF NOT EXISTS watches (
   dispatch_turn_id TEXT,
   dispatch_pid INTEGER,
   delivered_at INTEGER,
-  completed_at INTEGER
+  completed_at INTEGER,
+  successor_status TEXT,
+  successor_result TEXT,
+  successor_attempted_at INTEGER,
+  successor_session_id TEXT
 );

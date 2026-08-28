@@ -75,6 +75,27 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "watches", "dispatch_pid", "INTEGER");
   tryAddColumn(db, "watches", "delivered_at", "INTEGER");
   tryAddColumn(db, "watches", "completed_at", "INTEGER");
+  // Watches v4: completion of the delivered Codex task and planning of its
+  // optional successor are independent facts. A provider/planner outage must
+  // not erase the already-verified task completion boundary.
+  tryAddColumn(db, "watches", "successor_status", "TEXT");
+  tryAddColumn(db, "watches", "successor_result", "TEXT");
+  tryAddColumn(db, "watches", "successor_attempted_at", "INTEGER");
+  tryAddColumn(db, "watches", "successor_session_id", "TEXT");
+  db.prepare(`
+    UPDATE watches
+    SET successor_status = 'blocked',
+        successor_result = last_result,
+        successor_attempted_at = COALESCE(last_run_at, completed_at),
+        last_status = 'completed',
+        last_result = 'pinned Codex task reached a completed task boundary'
+    WHERE kind = 'codex' AND continue_cycle = 1 AND completed_at IS NOT NULL
+      AND last_status = 'error' AND successor_status IS NULL
+      AND (
+        last_result LIKE 'AVA could not select the next Codex task:%'
+        OR last_result = 'AVA planning finished without creating the required successor watch'
+      )
+  `).run();
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_watches_one_child
     ON watches(parent_watch_id) WHERE parent_watch_id IS NOT NULL`);
   // Mission Control v1 initially shipped the 30-day detailed boundary first.

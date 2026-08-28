@@ -997,6 +997,10 @@ export type WatchRow = {
   continue_cycle?: number | boolean;
   delivered_at?: number | null;
   completed_at?: number | null;
+  successor_status?: "planning" | "blocked" | "scheduled" | null;
+  successor_result?: string | null;
+  successor_attempted_at?: number | null;
+  successor_session_id?: string | null;
 };
 
 export async function fetchWatches(): Promise<WatchRow[]> {

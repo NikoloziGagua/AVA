@@ -103,7 +103,10 @@ export function buildWatchTools(o: { db: Db; resolveCodexTarget?: () => CodexWat
               : `every ${w.interval_minutes}min`;
         const lines = all.map((w) =>
           `${w.id} [${w.enabled ? "on" : "off"}] ${w.kind} ${sched(w)} — ${w.prompt.slice(0, 100)}` +
-          (w.last_status ? ` | last: ${w.last_status}${w.last_result ? ` (${w.last_result.slice(0, 80)})` : ""}` : " | never run"));
+          (w.last_status ? ` | last: ${w.last_status}${w.last_result ? ` (${w.last_result.slice(0, 80)})` : ""}` : " | never run") +
+          (w.kind === "codex" && w.continue_cycle && w.successor_status
+            ? ` | next: ${w.successor_status}${w.successor_result ? ` (${w.successor_result.slice(0, 120)})` : ""}`
+            : ""));
         return { ok: true, text: lines.join("\n") };
       },
     },

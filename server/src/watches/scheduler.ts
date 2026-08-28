@@ -4,6 +4,7 @@ import {
   getChildWatch,
   recordCodexCompleted,
   recordCodexDispatch,
+  recordCodexSuccessor,
   recordWatchRun,
   setWatchEnabled,
   type Watch,
@@ -204,21 +205,51 @@ async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
 
   const existingChild = getChildWatch(deps.db, w.id);
   if (existingChild) {
+    recordCodexSuccessor(deps.db, w.id, {
+      status: "scheduled",
+      result: `AVA scheduled successor watcher ${existingChild.id}`,
+    });
     setWatchEnabled(deps.db, w.id, false);
     deps.notify(`AVA scheduled Codex's next task (${existingChild.id}).`);
     return;
   }
   const plan = deps.planNextCodexTask ?? planNextCodexTaskViaHttp;
-  const planned = await plan(w, deps);
+  recordCodexSuccessor(deps.db, w.id, {
+    status: "planning",
+    result: "AVA is selecting the next bounded Codex task.",
+  });
+  let planned: WatchCheckResult;
+  try {
+    planned = await plan(w, deps);
+  } catch (cause) {
+    planned = { kind: "error", message: cause instanceof Error ? cause.message : String(cause) };
+  }
   if (planned.kind === "error") {
-    recordWatchRun(deps.db, w.id, { status: "error", result: `AVA could not select the next Codex task: ${planned.message}` });
+    const detail = `AVA could not select the next Codex task: ${planned.message}`;
+    recordCodexSuccessor(deps.db, w.id, { status: "blocked", result: detail });
+    if (w.successor_status !== "blocked" || w.successor_result !== detail) {
+      deps.notify(`Codex task completed, but successor planning is blocked: ${planned.message.slice(0, 160)}`);
+    }
     return;
   }
   const child = getChildWatch(deps.db, w.id);
   if (!child) {
-    recordWatchRun(deps.db, w.id, { status: "error", result: "AVA planning finished without creating the required successor watch" });
+    const detail = "AVA planning finished without creating the required successor watch";
+    recordCodexSuccessor(deps.db, w.id, {
+      status: "blocked",
+      result: detail,
+      sessionId: planned.sessionId,
+    });
+    if (w.successor_status !== "blocked" || w.successor_result !== detail) {
+      deps.notify(`Codex task completed, but successor planning is blocked: ${detail}`);
+    }
     return;
   }
+  recordCodexSuccessor(deps.db, w.id, {
+    status: "scheduled",
+    result: `AVA scheduled successor watcher ${child.id}`,
+    sessionId: planned.sessionId,
+  });
   setWatchEnabled(deps.db, w.id, false);
   deps.notify(`AVA selected and scheduled Codex's next task (${child.id}).`);
 }

@@ -35,6 +35,10 @@ export type Watch = {
   dispatch_pid: number | null;
   delivered_at: number | null;
   completed_at: number | null;
+  successor_status: "planning" | "blocked" | "scheduled" | null;
+  successor_result: string | null;
+  successor_attempted_at: number | null;
+  successor_session_id: string | null;
 };
 
 export function createWatch(db: Db, o: {
@@ -123,6 +127,21 @@ export function recordCodexCompleted(db: Db, id: string, now = Date.now()): void
   `).run(now, now, id);
 }
 
+export function recordCodexSuccessor(db: Db, id: string, input: {
+  status: NonNullable<Watch["successor_status"]>;
+  result: string;
+  sessionId?: string | null;
+  now?: number;
+}): void {
+  const now = input.now ?? Date.now();
+  db.prepare(`
+    UPDATE watches
+    SET successor_status = ?, successor_result = ?, successor_attempted_at = ?,
+        successor_session_id = COALESCE(?, successor_session_id)
+    WHERE id = ? AND completed_at IS NOT NULL
+  `).run(input.status, input.result.slice(0, 500), now, input.sessionId ?? null, id);
+}
+
 /** Today's occurrence of an "HH:MM" local time, epoch ms. */
 export function todaysOccurrence(dailyAt: string, now: number): number {
   const [h, m] = dailyAt.split(":").map(Number);
@@ -143,7 +162,12 @@ export function dueWatches(db: Db, now: number = Date.now()): Watch[] {
       // Codex delivery is a state machine, not a periodic condition check.
       // Once staged it must be inspected on every scheduler tick so a Stop
       // hook waiting at the clean boundary can receive its planned successor.
-      if (w.kind === "codex" && w.delivery_marker !== null) return true;
+      if (w.kind === "codex" && w.delivery_marker !== null) {
+        if (w.completed_at === null) return true;
+        if (!w.continue_cycle || w.successor_status === "scheduled") return true;
+        const retryMs = Math.max(1, w.interval_minutes) * 60_000;
+        return w.successor_attempted_at === null || now - w.successor_attempted_at >= retryMs;
+      }
       // Ordinary one-shots run once. A targeted delivery is multi-phase
       // (wait -> dispatch -> verify -> complete), so it remains due after its
       // start time until the scheduler explicitly completes/disables it.

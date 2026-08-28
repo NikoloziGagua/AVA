@@ -284,4 +284,79 @@ describe("pinned Codex delivery (watches v3)", () => {
     expect(getChildWatch(db, parent.id)).toMatchObject({ prompt: "next task", parent_watch_id: parent.id });
     expect(getWatch(db, parent.id)!.enabled).toBe(0);
   });
+
+  it("preserves completion, exposes a blocked planner, backs off, then schedules exactly one child", async () => {
+    const db = openInMemoryDb();
+    const parent = createWatch(db, {
+      prompt: "completed task",
+      kind: "codex",
+      intervalMinutes: 1,
+      target,
+      continueCycle: true,
+    });
+    const start = new Date("2026-08-28T04:00:00Z");
+    db.prepare(`UPDATE watches SET delivery_marker = ?, dispatch_offset = 10, delivered_at = ?, last_run_at = ? WHERE id = ?`)
+      .run(`[AVA-WATCH:${parent.id}]`, start.getTime() - 120_000, start.getTime() - 120_000, parent.id);
+    const planNextCodexTask = vi.fn()
+      .mockResolvedValueOnce({ kind: "error" as const, message: "provider quota exhausted" })
+      .mockImplementationOnce(async () => {
+        createWatch(db, {
+          prompt: "recovered successor",
+          kind: "codex",
+          intervalMinutes: 1,
+          target,
+          continueCycle: true,
+          parentWatchId: parent.id,
+        });
+        return { kind: "final" as const, text: "scheduled", sessionId: "planner-recovery" };
+      });
+    const notify = vi.fn();
+    const inspectCodex = vi.fn(() => ({
+      state: "idle" as const,
+      markerSeen: true,
+      markerTurnCompleted: true,
+      turnId: "turn-parent",
+      fileSize: 200,
+      reason: "complete",
+    }));
+
+    vi.useFakeTimers({ now: start });
+    try {
+      await tickOnce(deps(db, { dispatchCodex: vi.fn(), inspectCodex, planNextCodexTask, notify }));
+      const blocked = getWatch(db, parent.id)!;
+      expect(blocked).toMatchObject({
+        enabled: 1,
+        last_status: "completed",
+        last_result: "pinned Codex task reached a completed task boundary",
+        successor_status: "blocked",
+        successor_result: "AVA could not select the next Codex task: provider quota exhausted",
+      });
+      const completedAt = blocked.completed_at;
+      expect(completedAt).not.toBeNull();
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("successor planning is blocked"));
+
+      vi.advanceTimersByTime(30_000);
+      await tickOnce(deps(db, { dispatchCodex: vi.fn(), inspectCodex, planNextCodexTask, notify }));
+      expect(planNextCodexTask).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(31_000);
+      await tickOnce(deps(db, { dispatchCodex: vi.fn(), inspectCodex, planNextCodexTask, notify }));
+      const recovered = getWatch(db, parent.id)!;
+      expect(recovered).toMatchObject({
+        enabled: 0,
+        last_status: "completed",
+        completed_at: completedAt,
+        successor_status: "scheduled",
+        successor_result: expect.stringContaining("AVA scheduled successor watcher"),
+        successor_session_id: "planner-recovery",
+      });
+      expect(getChildWatch(db, parent.id)).toMatchObject({ prompt: "recovered successor" });
+
+      await tickOnce(deps(db, { dispatchCodex: vi.fn(), inspectCodex, planNextCodexTask, notify }));
+      expect(planNextCodexTask).toHaveBeenCalledTimes(2);
+      expect(listWatches(db).filter((watch) => watch.parent_watch_id === parent.id)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

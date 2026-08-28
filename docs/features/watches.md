@@ -45,7 +45,9 @@ The Memory surface includes a **Standing watches** section for schedule, status,
 latest result, pause/resume, and deletion. Each ordinary check also owns a chat
 session (linked on its first run), so its history appears in the Chats list.
 Pinned task watches additionally show whether delivery is waiting, dispatching,
-delivered, running, completed, or failed.
+delivered, running, completed, or failed. For continuous Codex cycles, task
+completion and successor planning are separate visible states: a planner outage
+cannot rewrite a verified completion as a failed task.
 
 ## How it works
 
@@ -175,7 +177,11 @@ HTTP route caps it at 24 h.
   accepting normal input or follow-up input. For
   `continue_cycle`, the Stop hook records completion and
   waits up to six minutes for AVA to plan and stage exactly one child; a planner
-  outage ends the turn honestly rather than waiting forever.
+  outage ends the turn honestly rather than waiting forever. AVA preserves the
+  parent's completed state, records the successor as blocked with the provider
+  error, notifies Sir, and retries only after the watch interval. It never
+  redispatches the completed task. Once planning recovers, the unique parent-child
+  constraint still permits exactly one successor.
 - **Disabled without an LLM provider.** If no provider is configured at boot, the
   scheduler logs `watch scheduler disabled — no LLM provider` and never starts
   (`index.ts`). Checks are agent runs; no brain, no checks.

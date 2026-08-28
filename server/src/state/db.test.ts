@@ -152,10 +152,48 @@ describe("db migrations: targeted watches", () => {
       "dispatch_pid",
       "delivered_at",
       "completed_at",
+      "successor_status",
+      "successor_result",
+      "successor_attempted_at",
+      "successor_session_id",
     ]));
     const indexes = db.prepare("PRAGMA index_list(watches)").all() as Array<{ name: string }>;
     expect(indexes.some((index) => index.name === "idx_watches_one_child")).toBe(true);
     db.close();
+  });
+});
+
+describe("db migrations: completed Codex successor planning", () => {
+  beforeEach(cleanup);
+  afterEach(cleanup);
+
+  it("moves a legacy planner error into successor state without erasing completion", () => {
+    const first = openDb(TEST_DB);
+    first.prepare(`
+      INSERT INTO watches (
+        id, prompt, interval_minutes, once, enabled, created_at, kind,
+        continue_cycle, delivery_marker, delivered_at, completed_at,
+        last_run_at, last_status, last_result
+      ) VALUES ('legacy-cycle', 'done task', 1, 1, 1, 1, 'codex', 1,
+        '[AVA-WATCH:legacy-cycle]', 2, 3, 4, 'error',
+        'AVA could not select the next Codex task: provider quota exhausted')
+    `).run();
+    first.close();
+
+    const migrated = openDb(TEST_DB);
+    expect(migrated.prepare(`
+      SELECT last_status, last_result, completed_at, successor_status,
+             successor_result, successor_attempted_at
+      FROM watches WHERE id = 'legacy-cycle'
+    `).get()).toEqual({
+      last_status: "completed",
+      last_result: "pinned Codex task reached a completed task boundary",
+      completed_at: 3,
+      successor_status: "blocked",
+      successor_result: "AVA could not select the next Codex task: provider quota exhausted",
+      successor_attempted_at: 4,
+    });
+    migrated.close();
   });
 });
 

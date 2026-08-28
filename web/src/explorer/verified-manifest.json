@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787951942384,
+  "generatedAt": 1787954821315,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -434,6 +434,30 @@
       "path": "server/src/tools/watches-mcp.ts",
       "symbol": "buildWatchTools",
       "kind": "implementation"
+    },
+    {
+      "capability": "automation.activepieces",
+      "path": "server/src/automations/activepieces.ts",
+      "symbol": "ActivepiecesWebhookExecutor",
+      "kind": "implementation"
+    },
+    {
+      "capability": "automation.activepieces",
+      "path": "server/src/automations/system-report.ts",
+      "symbol": "SystemReportAutomationService",
+      "kind": "implementation"
+    },
+    {
+      "capability": "automation.activepieces",
+      "path": "server/src/tools/automations-mcp.ts",
+      "symbol": "buildAutomationTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "automation.activepieces",
+      "path": "docs/features/activepieces-automations.md",
+      "symbol": "Activepieces deterministic playbooks",
+      "kind": "documentation"
     },
     {
       "capability": "notifications.push-approvals",
@@ -878,6 +902,14 @@
     {
       "name": "read_logs",
       "file": "server/src/tools/activity-log-mcp.ts"
+    },
+    {
+      "name": "automation_system_report",
+      "file": "server/src/tools/automations-mcp.ts"
+    },
+    {
+      "name": "automation_status",
+      "file": "server/src/tools/automations-mcp.ts"
     },
     {
       "name": "chrome_open_url",

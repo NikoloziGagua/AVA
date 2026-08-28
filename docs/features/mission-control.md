@@ -6,6 +6,25 @@ First proving ground: OpenAI Realtime voice → AVA action agent → tool execut
 
 Mission Control is AVA's operational view of what is happening, why it is happening, what is waiting, what failed, and what has actually been verified. It opens in a separate browser window beside voice chat but remains part of the same AVA application. Both views consume the same AVA-owned runtime and event stream.
 
+## Experimental Microsoft UFO fixture evidence
+
+The Microsoft UFO proof-of-concept reuses Mission Control rather than creating
+a parallel journal. Every accepted fixture request becomes one stable,
+AVA-owned `experimental_computer_use_fixture` child run correlated to the
+initiating chat run when available. Boundary, start, terminal, verification,
+timeout, cancellation, restart, and fail-closed events use stable dedupe keys.
+
+Evidence contains only the fixture ID, enum operation, bounded step count,
+version, sanitized outcome summary, and explicit `not_reported` usage/cost. It
+never contains host arguments, provider payloads, secrets, screenshots, raw UI
+trees, or hidden reasoning. The trace explicitly identifies the runtime as a
+synthetic fixture and Microsoft UFO as unavailable. Late/replayed events remain
+immutable history and cannot change terminal projections. Mission Control's
+existing retention, export re-redaction, SSE replay, and action-accounting
+rules apply unchanged. See
+[`microsoft-ufo-experiment.md`](microsoft-ufo-experiment.md) for the exact
+default-off boundary and real-runtime prerequisites.
+
 ## Settled design decisions
 
 These are defaults, not unanswered questions.

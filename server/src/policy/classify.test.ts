@@ -117,6 +117,11 @@ describe("classifyRisk", () => {
     expect(classifyRisk("research_visual_create", { title: "Evidence map" }).tier).toBe("low");
     expect(classifyRisk("visual_explanation_list", {}).tier).toBe("read-only");
   });
+  it("keeps UFO status/observation read-only and fixture action explicitly high-risk", () => {
+    expect(classifyRisk("ufo_experiment_status", {}).tier).toBe("read-only");
+    expect(classifyRisk("ufo_experiment_observe", { fixtureId: "counter-v1" }).tier).toBe("read-only");
+    expect(classifyRisk("ufo_experiment_action", { fixtureId: "counter-v1", expectedFixtureVersion: 1 }).tier).toBe("high");
+  });
 });
 
 describe("screen-sight and watch tools (2026-07-03 stall fix)", () => {

@@ -102,6 +102,8 @@ import { selfRoutes } from "./routes/self.js";
 import { StrategyRoomStore } from "./strategy/store.js";
 import { StrategyRoomCoordinator } from "./strategy/coordinator.js";
 import { buildCodexConsultant } from "./strategy/codex-consultant.js";
+import { loadUfoExperimentConfig, UfoExperimentService } from "./ufo/experiment.js";
+import { ufoExperimentRoutes } from "./routes/ufo-experiment.js";
 import { getSelfWorkerSelection } from "./self/worker-selection.js";
 import { buildClaudeSelfWorker, buildCodexSelfWorker, buildSelfWorkerRegistry } from "./self/workers.js";
 
@@ -133,6 +135,7 @@ const codexDispatcher = buildCodexDispatcher({
   handoffDir: join(cfg.dataDir, "codex-watch-inbox"),
 });
 const observability = new ObservabilityService(db);
+const ufoExperiment = new UfoExperimentService(db, loadUfoExperimentConfig(), observability);
 const strategyStore = new StrategyRoomStore(db);
 const interruptedStrategyRooms = strategyStore.failInterruptedRooms();
 if (interruptedStrategyRooms > 0) {
@@ -598,6 +601,7 @@ const agentDeps = {
   notifyDone,
   provider,  // LLMProvider | null
   observability,
+  ufoExperiment,
   logsDir: cfg.logsDir,
   // Reliable API integrations — wired only when BOTH/the needed creds are set in .env.
   shopify: cfg.shopifyStore && cfg.shopifyAdminToken
@@ -669,6 +673,7 @@ app.use("/api/explorer", explorerRoutes(requireToken(db), {
   capabilitySnapshot: () => buildCapabilitySnapshot(capabilityRouteDeps),
 }));
 app.use("/api/mission-control", missionControlRoutes(requireToken(db), observability));
+app.use("/api/ufo-experiment", ufoExperimentRoutes(requireToken(db), ufoExperiment));
 app.use("/api/strategy", strategyRoutes(requireToken(db), strategyCoordinator));
 app.use("/api/playbooks", playbooksRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
 app.use("/api/watches", watchesRoutes(db, requireToken(db)));

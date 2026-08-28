@@ -26,6 +26,8 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   // 20s each — the 30s unknown-tool default rejected exactly the sweeps the
   // tool exists for.
   find_places: 120_000,
+  ufo_experiment_observe: 15_000,
+  ufo_experiment_action: 15_000,
 };
 
 export function withTimeout<T>(p: Promise<T>, ms: number, tag: string): Promise<T> {

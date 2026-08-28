@@ -101,6 +101,39 @@ CREATE TABLE IF NOT EXISTS memory_index_auto_events (
 CREATE INDEX IF NOT EXISTS idx_memory_index_auto_session
   ON memory_index_auto_events(session_id, updated_at DESC);
 
+-- Experimental Microsoft UFO boundary. This stores only the deterministic,
+-- host-isolated fixture projection and bounded sanitized request evidence. It
+-- is not a UFO installation, provider payload store, or generic control plane.
+CREATE TABLE IF NOT EXISTS ufo_fixture_state (
+  fixture_id TEXT PRIMARY KEY,
+  value INTEGER NOT NULL DEFAULT 0,
+  version INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ufo_experiment_requests (
+  id TEXT PRIMARY KEY,
+  request_key TEXT NOT NULL UNIQUE,
+  observability_run_id TEXT NOT NULL UNIQUE,
+  input_fingerprint TEXT NOT NULL,
+  fixture_id TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  status TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  steps INTEGER NOT NULL DEFAULT 0,
+  max_steps INTEGER NOT NULL,
+  input_summary TEXT NOT NULL,
+  output_summary TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_ufo_experiment_status
+  ON ufo_experiment_requests(status, updated_at DESC);
+
 -- Phase 5 governance is append-only. The projection below is only the current
 -- fast lookup state; every user/AVA decision is retained in the immutable event
 -- table with actor, reason, target and resulting version. Memory entry content

@@ -18,6 +18,8 @@ const READ_ONLY_TOOLS = new Set([
   "watch_list", "person_list",
   "notes_search",
   "visual_explanation_list",
+  "ufo_experiment_status",
+  "ufo_experiment_observe",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -104,6 +106,10 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   }
 
   if (tool === "computer_use") return { tier: "medium", reason: "computer_use is GUI scripting" };
+
+  if (tool === "ufo_experiment_action") {
+    return { tier: "high", reason: "experimental fixture action requires explicit approval" };
+  }
 
   if (tool === "control_app") {
     // control_app runs PowerShell (UI Automation + SendKeys) locally. The

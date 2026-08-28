@@ -238,3 +238,19 @@ describe("db migrations: semantic memory governance", () => {
     db.close();
   });
 });
+
+describe("db schema: experimental UFO fixture boundary", () => {
+  it("creates durable idempotency and versioned fixture state without host-control fields", () => {
+    const db = openDb(":memory:");
+    const requestColumns = db.prepare("PRAGMA table_info(ufo_experiment_requests)").all() as Array<{ name: string }>;
+    expect(requestColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "request_key", "observability_run_id", "input_fingerprint", "status", "version", "max_steps",
+    ]));
+    expect(requestColumns.map((column) => column.name)).not.toEqual(expect.arrayContaining([
+      "shell", "path", "url", "cookie", "screenshot", "provider_payload",
+    ]));
+    const indexes = db.prepare("PRAGMA index_list(ufo_experiment_requests)").all() as Array<{ name: string; unique: number }>;
+    expect(indexes).toContainEqual(expect.objectContaining({ name: "sqlite_autoindex_ufo_experiment_requests_2", unique: 1 }));
+    db.close();
+  });
+});

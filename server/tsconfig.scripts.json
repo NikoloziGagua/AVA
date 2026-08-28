@@ -9,6 +9,7 @@
   "include": [
     "src/ambient.d.ts",
     "scripts/auto-improve-loop.ts",
-    "scripts/memory-retrieval-smoke.ts"
+    "scripts/memory-retrieval-smoke.ts",
+    "scripts/ufo-experiment-smoke.ts"
   ]
 }

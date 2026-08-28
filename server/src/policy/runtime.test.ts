@@ -120,6 +120,44 @@ describe("buildPolicyHook", () => {
     expect(r).toEqual({ allow: true });
   });
 
+  it("UFO fixture action ignores standing allow rules and expires without explicit approval", async () => {
+    createRule(db, {
+      source: "allow experimental fixture",
+      parsed: JSON.stringify({ match: { tool: "ufo_experiment_action" }, action: "allow" }),
+      status: "active",
+    });
+    const events: PolicyEvent[] = [];
+    const hook = buildPolicyHook({ db, sessionId, emit: (event) => events.push(event), approvalTimeoutMs: 20 });
+    const result = await hook("ufo_experiment_action", { fixtureId: "counter-v1", expectedFixtureVersion: 1 });
+    expect(result.allow).toBe(false);
+    expect(events.map((event) => event.kind)).toEqual(["approval_required", "approval_resolved"]);
+    expect(events.at(-1)).toMatchObject({ kind: "approval_resolved", payload: { status: "expired" } });
+  });
+
+  it("UFO fixture action proceeds only after an explicit approval decision", async () => {
+    const hook = buildPolicyHook({
+      db, sessionId, approvalTimeoutMs: 5_000,
+      emit: (event) => {
+        if (event.kind === "approval_required") setTimeout(() => decide(db, event.payload.id, "approved"), 5);
+      },
+    });
+    await expect(hook("ufo_experiment_action", { fixtureId: "counter-v1", expectedFixtureVersion: 1 }))
+      .resolves.toEqual({ allow: true });
+  });
+
+  it("an active deny rule still blocks the UFO fixture action before approval", async () => {
+    createRule(db, {
+      source: "deny experimental fixture",
+      parsed: JSON.stringify({ match: { tool: "ufo_experiment_action" }, action: "deny" }),
+      status: "active",
+    });
+    const events: PolicyEvent[] = [];
+    const hook = buildPolicyHook({ db, sessionId, emit: (event) => events.push(event) });
+    const result = await hook("ufo_experiment_action", { fixtureId: "counter-v1", expectedFixtureVersion: 1 });
+    expect(result.allow).toBe(false);
+    expect(events).toHaveLength(0);
+  });
+
   it("Stop during the veto window cancels (not allow): aborting the signal blocks the tool", async () => {
     const events: PolicyEvent[] = [];
     const ac = new AbortController();

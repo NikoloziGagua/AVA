@@ -48,7 +48,7 @@ scheduler and pokes whoever is up.
 | Self-improvement worker selector | codex | active; provider-neutral Claude Code/Codex selector behind existing approval and release gates | 2026-08-15 |
 | Microsoft UFO design-only evaluation | codex | complete in isolated Self worktree; design-only proposal and evidence audit | 2026-08-27 |
 | Persona v2 and consistency evaluation | unclaimed | complete in `8d5f2ae`; available for reviewed follow-up | 2026-08-28 |
-| Semantic memory index (explicit capture/retrieval v1) | unclaimed | live-stress repairs shipped in `199fe3b`; measured follow-up available | 2026-08-28 |
+| Semantic memory index | codex | active: Phase 2 automatic research/idea capture | 2026-08-28 |
 
 ---
 
@@ -3337,3 +3337,33 @@ research document were preserved. Forge was neither inspected nor modified.
 NEEDS: nobody (the exact-thread watcher transport is committed, live, and
 verified through scheduling, busy-turn queueing, clean-boundary delivery, reply,
 and persisted completion)
+
+---
+
+### 2026-08-28 - codex - CLAIM: semantic memory Phase 2 automatic capture
+
+Niko approved continuation of the full memory/RAG implementation and asked AVA
+to keep Codex moving across clean phase boundaries with tests after every phase.
+The explicit source-verified capture/search/open/forget loop and its live stress
+repairs are already shipped in `c674a7c` and `199fe3b`; I will not rebuild them.
+
+I am claiming the unowned semantic-memory area for the next bounded phase from
+the agreed sequence: automatically recognize completed user-requested research
+and meaningfully developed ideas, create one bounded source-verified checkpoint
+at an authoritative completed-turn boundary, and expose honest capture evidence
+without making every chat message a memory. The phase must reuse SQLite as the
+canonical source, the existing sanitizer/embedder/source fingerprint/project
+scope/idempotency contracts, and the same text/voice session identity. It will
+fail open for conversation delivery but fail closed for memory persistence:
+ambiguous or unverified content must not be silently learned.
+
+Acceptance includes deterministic classification/capture/idempotency/privacy/
+source-change tests; restart and cross-session behavior; manual AVA chat and
+voice-marked black-box checks; focused and broader suites/builds; committed-HEAD
+boot smoke; documentation; a scoped commit; and a successor watcher before the
+phase boundary. Existing unrelated changes remain untouched. Forge is outside
+scope and will not be inspected or modified.
+
+NEEDS: codex (inspect the shipped index, implement the smallest complete
+automatic-capture phase, test it automatically and manually, commit, and ask
+AVA to queue the next continuation watcher)

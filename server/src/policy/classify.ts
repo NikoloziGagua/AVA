@@ -20,6 +20,7 @@ const READ_ONLY_TOOLS = new Set([
   "visual_explanation_list",
   "ufo_experiment_status",
   "ufo_experiment_observe",
+  "automation_status",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -92,6 +93,9 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   if (tool === "strategy_room_open") return { tier: "low", reason: "bounded read-only Strategy Room discussion" };
   if (tool === "visual_explanation_create" || tool === "research_visual_create") {
     return { tier: "low", reason: "validated local visual revision" };
+  }
+  if (tool === "automation_system_report") {
+    return { tier: "low", reason: "pinned read-only system snapshot to a verified local report" };
   }
 
   // Mutates live store products — keep Sir's veto window.

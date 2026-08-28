@@ -57,6 +57,8 @@ import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
 import { buildShopifyTools } from "../tools/shopify-mcp.js";
 import { buildPlacesTools } from "../tools/places-mcp.js";
 import { buildUfoExperimentTools } from "../tools/ufo-experiment-mcp.js";
+import { buildAutomationTools } from "../tools/automations-mcp.js";
+import type { SystemReportAutomationService } from "../automations/system-report.js";
 import type { UfoExperimentService } from "../ufo/experiment.js";
 import type { CodexWatchTarget } from "../watches/codex-dispatch.js";
 import { getReasoningLevel } from "../state/reasoning-pref.js";
@@ -220,6 +222,7 @@ export type AgentDeps = {
   observability?: ObservabilityService;
   /** Default-off experimental UFO boundary; never represents host capability. */
   ufoExperiment?: UfoExperimentService;
+  automationService?: SystemReportAutomationService;
 };
 
 export type Metered = { anthropic: Anthropic | null; openai: OpenAI | null };
@@ -816,6 +819,7 @@ export function chatRoutes(
         const ufoExperimentTools = agentDeps.ufoExperiment
           ? buildUfoExperimentTools(agentDeps.ufoExperiment)
           : [];
+        const automationTools = agentDeps.automationService ? buildAutomationTools(agentDeps.automationService) : [];
         // Discuss-with-Claude is available in BOTH modes (Sir may ask by voice):
         // it queues a background, read-only consult bound to THIS session (sid),
         // returns immediately, and can recount past discussions. Only wired when
@@ -873,6 +877,7 @@ export function chatRoutes(
             ...strategyRoomTools,
             ...visualExplanationTools,
             ...ufoExperimentTools,
+            ...automationTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
             // Standing background checks ("notify me if/when …") — the
             // scheduler re-runs them; Ava just registers/lists/deletes here.
@@ -896,6 +901,7 @@ export function chatRoutes(
             ...strategyRoomTools,
             ...visualExplanationTools,
             ...ufoExperimentTools.filter((tool) => tool.tool.name === "ufo_experiment_status"),
+            ...automationTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
           ];
         }

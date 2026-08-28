@@ -47,6 +47,10 @@ export type Config = {
   shopifyAdminToken: string | null;
   /** Google Places API (New) key — for the find_places tool. */
   googlePlacesApiKey: string | null;
+  activepiecesEnabled: boolean;
+  activepiecesSystemReportWebhookUrl: string | null;
+  activepiecesWebhookToken: string | null;
+  activepiecesTimeoutMs: number;
 };
 
 const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -145,5 +149,10 @@ export function loadConfig(): Config {
     shopifyStore: process.env.SHOPIFY_STORE ?? null,
     shopifyAdminToken: process.env.SHOPIFY_ADMIN_TOKEN ?? null,
     googlePlacesApiKey: process.env.GOOGLE_PLACES_API_KEY ?? null,
+    activepiecesEnabled: /^(1|true|yes)$/i.test(process.env.ACTIVEPIECES_ENABLED ?? ""),
+    activepiecesSystemReportWebhookUrl: process.env.ACTIVEPIECES_SYSTEM_REPORT_WEBHOOK_URL?.trim() || null,
+    activepiecesWebhookToken: process.env.ACTIVEPIECES_WEBHOOK_TOKEN?.trim() || null,
+    activepiecesTimeoutMs: Math.max(5_000, Math.min(30_000,
+      Math.round(Number(process.env.ACTIVEPIECES_TIMEOUT_SECONDS ?? 20) * 1_000) || 20_000)),
   };
 }

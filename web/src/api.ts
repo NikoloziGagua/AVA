@@ -761,7 +761,7 @@ export async function postMemoryLine(line: string): Promise<void> {
 export type MemoryIndexEntry = {
   id: string;
   version: number;
-  kind: "research" | "idea" | "remembered" | "improvement";
+  kind: "research" | "idea" | "remembered" | "improvement" | "artifact";
   title: string;
   summary: string;
   conclusions: string[];

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { nanoid } from "nanoid";
 import type { Db } from "../state/db.js";
 import { scrubSecrets } from "../security/scrub.js";
@@ -8,6 +10,7 @@ import type {
   CaptureMemoryInput,
   CaptureMemoryResult,
   CaptureImprovementInput,
+  CaptureAutomationArtifactInput,
   MemoryCorrection,
   MemoryEmbedder,
   MemoryEmbedding,
@@ -25,6 +28,7 @@ import type {
   MemorySourceEvidence,
   MemorySourceStatus,
 } from "./types.js";
+import { automationArtifactFingerprint, type AutomationArtifactRecord } from "../automations/artifact-record.js";
 
 type EntryRow = {
   id: string;
@@ -271,7 +275,12 @@ function projectKey(project: string | null | undefined): { display: string | nul
     : { display: null, key: null };
 }
 
-function sourceReason(status: MemorySourceStatus, count: number, type: "conversation_range" | "improvement_record"): string {
+function sourceReason(status: MemorySourceStatus, count: number, type: "conversation_range" | "improvement_record" | "automation_artifact"): string {
+  if (type === "automation_artifact") {
+    if (status === "verified") return "The immutable automation record and its independently verified artifact still match.";
+    if (status === "changed") return "The automation record or artifact no longer matches its original hash.";
+    return "The verified automation artifact is no longer available.";
+  }
   if (type === "improvement_record") {
     if (status === "verified") return "The immutable improvement record still matches and its exact Git commit remains on AVA's current branch.";
     if (status === "changed") return "The stored improvement record no longer matches its original fingerprint.";
@@ -291,6 +300,7 @@ export class MemoryIndexService {
     private readonly db: Db,
     private readonly embedder: MemoryEmbedder | null = null,
     private readonly committedImprovementExists: ((commitSha: string) => boolean) | null = null,
+    private readonly automationArtifactRoot: string | null = null,
   ) {
     this.governance = new MemoryGovernanceStore(db);
   }
@@ -321,7 +331,8 @@ export class MemoryIndexService {
   private verifySource(entryId: string, now = Date.now()): MemorySourceEvidence {
     const source = this.sourceRow(entryId);
     if (!source) throw new Error("memory source record is missing");
-    const type = source.source_type === "improvement_record" ? "improvement_record" : "conversation_range";
+    const type = source.source_type === "improvement_record" ? "improvement_record"
+      : source.source_type === "automation_artifact" ? "automation_artifact" : "conversation_range";
     let status: MemorySourceStatus = "unavailable";
     let commitSha: string | null = null;
     if (type === "improvement_record" && source.source_ref) {
@@ -332,6 +343,21 @@ export class MemoryIndexService {
         const hash = improvementRecordHash(record);
         if (hash !== source.content_hash || hash !== record.record_fingerprint) status = "changed";
         else if (this.committedImprovementExists?.(record.commit_sha)) status = "verified";
+      }
+    } else if (type === "automation_artifact" && source.source_ref && this.automationArtifactRoot) {
+      const record = this.db.prepare("SELECT * FROM automation_artifact_records WHERE id = ?")
+        .get(source.source_ref) as AutomationArtifactRecord | undefined;
+      if (record) {
+        const { record_fingerprint: _stored, ...base } = record;
+        const fingerprint = automationArtifactFingerprint(base);
+        const root = resolve(this.automationArtifactRoot);
+        const path = resolve(record.artifact_path);
+        const inside = relative(root, path) && !relative(root, path).startsWith("..") && !relative(root, path).includes(":");
+        if (fingerprint !== record.record_fingerprint || source.content_hash !== record.record_fingerprint) status = "changed";
+        else if (inside) {
+          try { status = sha256(readFileSync(path, "utf8")) === record.artifact_hash ? "verified" : "changed"; }
+          catch { status = "unavailable"; }
+        }
       }
     } else if (source.session_id) {
       const messages = this.messagesForRange(source.session_id, source.from_message_id, source.through_message_id);
@@ -709,6 +735,42 @@ export class MemoryIndexService {
     };
   }
 
+  async captureAutomationArtifact(input: CaptureAutomationArtifactInput): Promise<CaptureMemoryResult> {
+    const record = this.db.prepare("SELECT * FROM automation_artifact_records WHERE id = ?")
+      .get(cleanInline(input.recordId, 160)) as AutomationArtifactRecord | undefined;
+    if (!record) throw new Error("automation artifact record is unavailable");
+    const { record_fingerprint: _stored, ...base } = record;
+    const expected = automationArtifactFingerprint(base);
+    if (expected !== record.record_fingerprint) throw new Error("automation artifact record failed its immutable fingerprint check");
+    const fingerprint = sha256(JSON.stringify({ type: "automation_artifact", sourceRef: record.id, hash: expected }));
+    let row = this.db.prepare("SELECT * FROM memory_index_entries WHERE source_fingerprint = ?").get(fingerprint) as EntryRow | undefined;
+    let created = false;
+    if (!row) {
+      const id = `memory_artifact_${record.id.replace(/[^a-z0-9]/gi, "").slice(-18)}`;
+      const now = Date.now(); const embeddingStatus = this.embedder ? "pending" : "unavailable";
+      this.db.transaction(() => {
+        this.db.prepare(`INSERT INTO memory_index_entries (id,version,kind,title,summary,conclusions,open_questions,
+          next_steps,tags,project,project_key,privacy_level,capture_mode,capture_reason,thread_id,parent_entry_id,
+          checkpoint_sequence,checkpoint_kind,checkpoint_reason,status,embedding_status,source_fingerprint,created_at,updated_at)
+          VALUES (?,1,'artifact',?,?,'[]','[]','[]',?,NULL,NULL,'personal','automatic',?,?,NULL,1,'initial',NULL,'active',?,?,?,?)`)
+          .run(id, record.title, record.summary, JSON.stringify(["automation", record.workflow_id, "verified-artifact"]),
+            "Automatically indexed after AVA independently verified the automation artifact.", id, embeddingStatus, fingerprint, record.created_at, now);
+        this.db.prepare(`INSERT INTO memory_index_sources (entry_id,session_id,source_type,source_ref,source_label,
+          from_message_id,through_message_id,message_count,content_hash,availability,last_verified_at)
+          VALUES (?,NULL,'automation_artifact',?,?,0,0,0,?,'verified',?)`).run(id, record.id,
+            `Verified automation artifact ${record.id}`, expected, now);
+        this.governance.ensureCurrent(id, id, now); created = true;
+      })();
+      row = this.entryRow(id)!;
+    }
+    if (row.embedding_status !== "ready") {
+      if (input.deferEmbedding) this.queueEmbedding(entryFromRow(row)); else { await this.storeEmbedding(entryFromRow(row)); row = this.entryRow(row.id)!; }
+    }
+    return { created, result: this.result(row, { mode: "recent", reason: created
+      ? "Indexed automatically from an independently verified automation artifact."
+      : "This exact verified automation artifact was already indexed.", semanticScore: null, lexicalScore: 0, sharedTerms: [] }) };
+  }
+
   private candidateRows(project: string | null | undefined, latestOnly = false): CandidateRow[] {
     const scope = projectKey(project).key;
     return this.db.prepare(`
@@ -888,6 +950,14 @@ export class MemoryIndexService {
         truncated: content.length >= limit,
         returnedCharacters: content.length,
       };
+    }
+    if (result.source.type === "automation_artifact" && result.source.reference) {
+      const record = this.db.prepare("SELECT * FROM automation_artifact_records WHERE id = ?")
+        .get(result.source.reference) as AutomationArtifactRecord | undefined;
+      if (!record) return { result, messages: [], truncated: false, returnedCharacters: 0 };
+      const content = scrubSecrets(readFileSync(record.artifact_path, "utf8")).slice(0, limit);
+      return { result, messages: [{ id: 0, role: "assistant", content }], truncated: content.length >= limit,
+        returnedCharacters: content.length };
     }
     if (!result.source.sessionId) {
       return { result, messages: [], truncated: false, returnedCharacters: 0 };

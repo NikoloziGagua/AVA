@@ -609,6 +609,59 @@ CREATE INDEX IF NOT EXISTS idx_notes_updated
 CREATE INDEX IF NOT EXISTS idx_notes_kind_status
   ON notes(kind, status, updated_at DESC);
 
+-- AVA-owned deterministic automations. The external workflow engine is an
+-- executor, never the authority: AVA owns request identity, lifecycle,
+-- verification and the compact evidence record. Raw workflow payloads and
+-- credentials are deliberately absent.
+CREATE TABLE IF NOT EXISTS automation_runs (
+  id TEXT PRIMARY KEY,
+  request_key TEXT NOT NULL UNIQUE,
+  input_fingerprint TEXT NOT NULL,
+  workflow_id TEXT NOT NULL,
+  workflow_version INTEGER NOT NULL,
+  executor TEXT NOT NULL,
+  external_run_id TEXT,
+  observability_run_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  step_count INTEGER NOT NULL DEFAULT 0,
+  input_summary TEXT NOT NULL,
+  output_summary TEXT,
+  artifact_path TEXT,
+  artifact_hash TEXT,
+  memory_entry_id TEXT,
+  verification_state TEXT NOT NULL DEFAULT 'unverified',
+  verification_method TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  completed_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_runs_updated
+  ON automation_runs(updated_at DESC, id);
+
+-- Immutable source record used by the semantic index after an automation
+-- artifact has independently passed AVA's verifier. The referenced file stays
+-- authoritative; this row and the compact memory entry are discovery data.
+CREATE TABLE IF NOT EXISTS automation_artifact_records (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL UNIQUE REFERENCES automation_runs(id) ON DELETE RESTRICT,
+  workflow_id TEXT NOT NULL,
+  workflow_version INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  artifact_path TEXT NOT NULL,
+  artifact_hash TEXT NOT NULL,
+  verification_method TEXT NOT NULL,
+  record_fingerprint TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_artifacts_created
+  ON automation_artifact_records(created_at DESC, id);
+
 -- Legacy visual explanations remain readable for migration. New revisions use
 -- the renderer-neutral visual_message_revisions table below; rendered HTML,
 -- SVG, and PNG remain disposable browser artifacts and are never persisted.

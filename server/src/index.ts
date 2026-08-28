@@ -18,7 +18,7 @@ import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
 import { rotateInternalTokens } from "./auth/internal-tokens.js";
 import { authRoutes } from "./routes/auth.js";
-import { chatRoutes } from "./routes/chat.js";
+import { chatRoutes, type AgentDeps } from "./routes/chat.js";
 import { healthRoutes } from "./routes/health.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { statusRoutes } from "./routes/status.js";
@@ -65,6 +65,8 @@ import { bootstrapMemoryDir } from "./memory/bootstrap.js";
 import { MemoryIndexService } from "./memory-index/store.js";
 import { OpenAIMemoryEmbedder } from "./memory-index/embedding.js";
 import { AutoMemoryCaptureCoordinator } from "./memory-index/auto-capture.js";
+import { ActivepiecesWebhookExecutor } from "./automations/activepieces.js";
+import { SystemReportAutomationService } from "./automations/system-report.js";
 import { GitImprovementCommitSource, ImprovementIndexCoordinator } from "./memory-index/improvement-index.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
@@ -597,6 +599,7 @@ const memoryIndex = new MemoryIndexService(
     ? new OpenAIMemoryEmbedder(openai, process.env.MEMORY_EMBEDDING_MODEL?.trim() || undefined)
     : null,
   (sha) => improvementCommits.existsOnCurrentBranch(sha),
+  join(cfg.dataDir, "automation-artifacts"),
 );
 const improvementIndex = new ImprovementIndexCoordinator(memoryIndex, improvementCommits);
 void improvementIndex.reconcileRecent(1_000).then((result) => {
@@ -610,7 +613,7 @@ const memoryAutoCapture = provider
   ? new AutoMemoryCaptureCoordinator(db, provider, memoryIndex).consider
   : undefined;
 
-const agentDeps = {
+const agentDeps: AgentDeps = {
   pidfiles,
   fsRoots: cfg.fsRoots,
   memoryDir: cfg.memoryDir,
@@ -668,6 +671,32 @@ const capabilityRouteDeps: CapabilityRouteDeps = {
   pushReady: !!(cfg.vapidPublicKey && cfg.vapidPrivateKey),
   ufoHealth: () => ufoExperiment.health(),
 };
+
+const activepiecesExecutor = new ActivepiecesWebhookExecutor({
+  enabled: cfg.activepiecesEnabled,
+  systemReportWebhookUrl: cfg.activepiecesSystemReportWebhookUrl,
+  webhookToken: cfg.activepiecesWebhookToken,
+  timeoutMs: cfg.activepiecesTimeoutMs,
+});
+const automationService = new SystemReportAutomationService(db, activepiecesExecutor, cfg.dataDir, async () => {
+  const current = await buildCapabilitySnapshot(capabilityRouteDeps);
+  return {
+    generatedAt: current.generatedAt,
+    ready: current.core.brain.ready && current.core.memory.ready,
+    provider: current.core.brain.provider,
+    core: { brainReady: current.core.brain.ready, voiceReady: current.core.voice.ready,
+      browserReady: current.core.browser.ready, memoryReady: current.core.memory.ready },
+    counts: { preferences: current.core.memory.preferences, observations: current.core.memory.observations,
+      projects: current.core.memory.projects, people: current.core.memory.people,
+      playbooks: current.core.memory.playbooks, watches: current.automations.watches },
+    integrations: { instagram: current.integrations.instagram, whatsapp: current.integrations.whatsapp,
+      shopify: current.integrations.shopify, googlePlaces: current.integrations.googlePlaces,
+      screenVision: current.integrations.screenVision, push: current.integrations.push,
+      microsoftUfoAvailable: current.integrations.microsoftUfo.runtime.dependency === "available"
+        && current.integrations.microsoftUfo.runtime.adapter === "microsoft_ufo" },
+  };
+}, observability, async (recordId) => (await memoryIndex.captureAutomationArtifact({ recordId })).result.entry.id);
+agentDeps.automationService = automationService;
 
 app.use("/api", healthRoutes(startedAt, {
   provider: provider?.name ?? null,

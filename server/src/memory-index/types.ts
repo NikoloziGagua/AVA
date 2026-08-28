@@ -1,4 +1,4 @@
-export const MEMORY_INDEX_KINDS = ["research", "idea", "remembered", "improvement"] as const;
+export const MEMORY_INDEX_KINDS = ["research", "idea", "remembered", "improvement", "artifact"] as const;
 export type MemoryIndexKind = typeof MEMORY_INDEX_KINDS[number];
 
 /** Kinds that may be captured from conversation evidence by a user or agent. */
@@ -62,7 +62,7 @@ export type MemoryIndexEntry = {
 };
 
 export type MemorySourceEvidence = {
-  type: "conversation_range" | "improvement_record";
+  type: "conversation_range" | "improvement_record" | "automation_artifact";
   label: string;
   sessionId: string | null;
   fromMessageId: number;
@@ -219,3 +219,5 @@ export type CaptureImprovementInput = {
   /** Boot reconciliation may persist immediately and embed in the background. */
   deferEmbedding?: boolean;
 };
+
+export type CaptureAutomationArtifactInput = { recordId: string; deferEmbedding?: boolean };

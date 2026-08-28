@@ -4,8 +4,8 @@ import type { ToolDef } from "./ava-mcp.js";
 
 const fixtureSchema = { type: "string", enum: ["counter-v1"] } as const;
 
-function requestKey(runId: string, operation: "observe" | "advance", version: number): string {
-  return `${runId}:${operation}:counter-v1:${version}`;
+function requestKey(runId: string, operation: "observe" | "advance" | "execute", fixtureId: UfoFixtureId, version: number): string {
+  return `${runId}:${operation}:${fixtureId}:${version}`;
 }
 
 function failure(error: unknown) {
@@ -21,7 +21,7 @@ export function buildUfoExperimentTools(service: UfoExperimentService): ToolDef[
     {
       tool: {
         name: "ufo_experiment_status",
-        description: "Read the truthful status of AVA's default-off Microsoft UFO experiment. This reports whether only the safe synthetic fixture is available and never claims that UFO itself is installed.",
+        description: "Read the truthful status of AVA's Microsoft UFO experiment, including whether the synthetic counter or pinned genuine Notepad runtime is actually available.",
         inputSchema: { type: "object", properties: {}, additionalProperties: false },
       },
       async run() { return { text: JSON.stringify(service.health()), ok: true }; },
@@ -39,7 +39,7 @@ export function buildUfoExperimentTools(service: UfoExperimentService): ToolDef[
       async run(args, ctx) {
         try {
           const fixtureVersion = service.fixtureState(String(args.fixtureId) as UfoFixtureId).version;
-          const result = await service.run({ requestKey: requestKey(ctx.runId, "observe", fixtureVersion),
+          const result = await service.run({ requestKey: requestKey(ctx.runId, "observe", "counter-v1", fixtureVersion),
             fixtureId: String(args.fixtureId) as UfoFixtureId, operation: "observe",
             ...(args.maxSteps === undefined ? {} : { maxSteps: Number(args.maxSteps) }) },
           { parentRunId: ctx.runId, signal: ctx.signal });
@@ -71,7 +71,7 @@ export function buildUfoExperimentTools(service: UfoExperimentService): ToolDef[
       async run(args, ctx) {
         try {
           const expectedVersion = Number(args.expectedFixtureVersion);
-          const result = await service.run({ requestKey: requestKey(ctx.runId, "advance", expectedVersion),
+          const result = await service.run({ requestKey: requestKey(ctx.runId, "advance", "counter-v1", expectedVersion),
             fixtureId: String(args.fixtureId) as UfoFixtureId, operation: "advance",
             expectedFixtureVersion: expectedVersion,
             ...(args.maxSteps === undefined ? {} : { maxSteps: Number(args.maxSteps) }) },
@@ -90,9 +90,45 @@ export function buildUfoExperimentTools(service: UfoExperimentService): ToolDef[
         } catch (error) { return failure(error); }
       },
     },
+    {
+      tool: {
+        name: "ufo_runtime_run",
+        description: "Run genuine pinned Microsoft UFO only on AVA's disposable Notepad proof fixture. The text and target are fixed, Sir's explicit approval is always required, and AVA independently verifies the visible result. This is not arbitrary computer control.",
+        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      },
+      async run(_args, ctx) {
+        try {
+          const result = await service.run({
+            requestKey: requestKey(ctx.runId, "execute", "notepad-text-v1", 1),
+            fixtureId: "notepad-text-v1",
+            operation: "execute",
+          }, { parentRunId: ctx.runId, signal: ctx.signal });
+          return {
+            text: JSON.stringify(result),
+            ok: result.status === "completed",
+            verification: result.status === "completed" ? {
+              state: "verified" as const,
+              scope: "operation" as const,
+              method: "microsoft_ufo_windows_uia",
+              summary: "Microsoft UFO executed the fixed Notepad task and a separate UI Automation read verified the exact visible text.",
+              evidenceRef: result.id,
+              observedAt: result.completedAt ?? undefined,
+            } : {
+              state: "unavailable" as const,
+              scope: "operation" as const,
+              method: "microsoft_ufo_windows_uia",
+              summary: result.errorMessage ?? "Real runtime evidence was unavailable.",
+              evidenceRef: result.id,
+            },
+          };
+        } catch (error) { return failure(error); }
+      },
+    },
   ];
   // Do not advertise a mutation the configured runtime cannot perform. The
   // status/observe tools stay available so AVA can explain the fail-closed
   // state, but there is no fake action control while observe-only or offline.
-  return service.health().actionsAvailable ? tools : tools.slice(0, 2);
+  const health = service.health();
+  if (health.mode === "ufo") return health.actionsAvailable ? [tools[0]!, tools[3]!] : [tools[0]!];
+  return health.actionsAvailable ? tools.slice(0, 3) : tools.slice(0, 2);
 }

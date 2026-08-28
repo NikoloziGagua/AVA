@@ -107,8 +107,8 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (tool === "computer_use") return { tier: "medium", reason: "computer_use is GUI scripting" };
 
-  if (tool === "ufo_experiment_action") {
-    return { tier: "high", reason: "experimental fixture action requires explicit approval" };
+  if (tool === "ufo_experiment_action" || tool === "ufo_runtime_run") {
+    return { tier: "high", reason: "experimental computer-use action requires explicit approval" };
   }
 
   if (tool === "control_app") {

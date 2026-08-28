@@ -29,7 +29,7 @@ export function enforce({
   // A deny rule still wins, but no standing allow rule can turn this
   // experimental action into silent execution. The approval journal remains
   // the single positive authority.
-  if (tool === "ufo_experiment_action") {
+  if (tool === "ufo_experiment_action" || tool === "ufo_runtime_run") {
     return { decision: "ask", tier: "high", classification: c };
   }
   if (m.winning && m.decision === "allow") {

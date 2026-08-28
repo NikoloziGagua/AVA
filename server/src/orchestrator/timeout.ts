@@ -28,6 +28,7 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   find_places: 120_000,
   ufo_experiment_observe: 15_000,
   ufo_experiment_action: 15_000,
+  ufo_runtime_run: 610_000,
 };
 
 export function withTimeout<T>(p: Promise<T>, ms: number, tag: string): Promise<T> {

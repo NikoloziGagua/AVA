@@ -135,7 +135,7 @@ const codexDispatcher = buildCodexDispatcher({
   handoffDir: join(cfg.dataDir, "codex-watch-inbox"),
 });
 const observability = new ObservabilityService(db);
-const ufoExperiment = new UfoExperimentService(db, loadUfoExperimentConfig(), observability);
+const ufoExperiment = new UfoExperimentService(db, loadUfoExperimentConfig(process.env, cfg.dataDir), observability);
 const strategyStore = new StrategyRoomStore(db);
 const interruptedStrategyRooms = strategyStore.failInterruptedRooms();
 if (interruptedStrategyRooms > 0) {

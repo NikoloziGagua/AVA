@@ -1,5 +1,11 @@
 # Microsoft UFO: design-only eligibility assessment
 
+> Historical decision record (2026-08-27): this document describes the
+> pre-installation review boundary. Niko later explicitly authorized a bounded
+> local implementation. The current operational truth is documented in
+> [`docs/features/microsoft-ufo-experiment.md`](../../features/microsoft-ufo-experiment.md);
+> the original assessment below remains unchanged as review evidence.
+
 | Field | Value |
 |---|---|
 | AVA Self intent | `-Nb9YsN1KWjQ` |

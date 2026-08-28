@@ -6,24 +6,33 @@ First proving ground: OpenAI Realtime voice → AVA action agent → tool execut
 
 Mission Control is AVA's operational view of what is happening, why it is happening, what is waiting, what failed, and what has actually been verified. It opens in a separate browser window beside voice chat but remains part of the same AVA application. Both views consume the same AVA-owned runtime and event stream.
 
-## Experimental Microsoft UFO fixture evidence
+## Experimental Microsoft UFO evidence
 
-The Microsoft UFO proof-of-concept reuses Mission Control rather than creating
-a parallel journal. Every accepted fixture request becomes one stable,
-AVA-owned `experimental_computer_use_fixture` child run correlated to the
-initiating chat run when available. Boundary, start, terminal, verification,
-timeout, cancellation, restart, and fail-closed events use stable dedupe keys.
+The Microsoft UFO integration reuses Mission Control rather than creating a
+parallel journal. Synthetic counter requests remain
+`experimental_computer_use_fixture` child runs. A genuine bounded Notepad run
+is one `experimental_computer_use_runtime` child correlated to the initiating
+chat run. Boundary, start, terminal, verification, timeout, cancellation,
+restart, and fail-closed events use stable request IDs and dedupe keys.
 
-Evidence contains only the fixture ID, enum operation, bounded step count,
-version, sanitized outcome summary, and explicit `not_reported` usage/cost. It
-never contains host arguments, provider payloads, secrets, screenshots, raw UI
-trees, or hidden reasoning. The trace explicitly identifies the runtime as a
-synthetic fixture and Microsoft UFO as unavailable. Late/replayed events remain
-immutable history and cannot change terminal projections. Mission Control's
-existing retention, export re-redaction, SSE replay, and action-accounting
-rules apply unchanged. See
+Real-runtime evidence is deliberately compact: pinned provider release/commit,
+fixed fixture/operation, task ID, bounded step count, process exit, independent
+Windows UI Automation verification, and the disposable resource reference.
+The terminal event says `microsoftUfoRuntime: executed`; it does not infer real
+execution from installation health or synthetic success. Usage and cost remain
+`not_reported` because this adapter does not receive trustworthy provider
+accounting.
+
+UFO's raw task directory can contain prompts, responses, screenshots, and UI
+state. AVA extracts only the bounded facts above and deletes that directory
+before completing the adapter boundary. Raw stdout/stderr, provider payloads,
+secrets, screenshots, UI trees, arbitrary arguments, and hidden reasoning do
+not enter the durable event model. Late/replayed events cannot change terminal
+projections. Existing retention, export re-redaction, SSE replay, and
+action-accounting rules apply unchanged. The initiating tool call owns the
+action; the child is evidence-only. See
 [`microsoft-ufo-experiment.md`](microsoft-ufo-experiment.md) for the exact
-default-off boundary and real-runtime prerequisites.
+runtime, setup, approval, and verification contract.
 
 ## Settled design decisions
 

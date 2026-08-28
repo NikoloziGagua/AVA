@@ -120,6 +120,18 @@ describe("buildPolicyHook", () => {
     expect(r).toEqual({ allow: true });
   });
 
+  it("always asks before the genuine bounded UFO runtime even when a standing allow rule exists", async () => {
+    createRule(db, {
+      source: "test",
+      parsed: JSON.stringify({ match: { tool: "ufo_runtime_run" }, action: "allow" }),
+      status: "active",
+    });
+    const hook = buildPolicyHook({ db, sessionId, approvalTimeoutMs: 20,
+      emit: (event) => { if (event.kind === "approval_required") decide(db, event.payload.id, "denied"); } });
+    const result = await hook("ufo_runtime_run", {});
+    expect(result).toMatchObject({ allow: false });
+  });
+
   it("UFO fixture action ignores standing allow rules and expires without explicit approval", async () => {
     createRule(db, {
       source: "allow experimental fixture",

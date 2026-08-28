@@ -43,7 +43,7 @@ describe("UFO experiment configuration and health", () => {
   it("fails closed for a requested real UFO runtime without frozen dependencies and isolation", () => {
     const health = getUfoExperimentHealth(config({ mode: "ufo", isolation: "disposable-windows-vm" }));
     expect(health).toMatchObject({ available: false, runtime: { adapter: "microsoft_ufo", dependency: "unavailable" } });
-    expect(health.runtime.reason).toMatch(/frozen Microsoft UFO artifact/i);
+    expect(health.runtime.reason).toMatch(/local Windows user-session boundary/i);
   });
 });
 

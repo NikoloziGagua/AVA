@@ -121,6 +121,7 @@ describe("classifyRisk", () => {
     expect(classifyRisk("ufo_experiment_status", {}).tier).toBe("read-only");
     expect(classifyRisk("ufo_experiment_observe", { fixtureId: "counter-v1" }).tier).toBe("read-only");
     expect(classifyRisk("ufo_experiment_action", { fixtureId: "counter-v1", expectedFixtureVersion: 1 }).tier).toBe("high");
+    expect(classifyRisk("ufo_runtime_run", {}).tier).toBe("high");
   });
 });
 

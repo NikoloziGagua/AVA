@@ -3416,3 +3416,29 @@ nor modified.
 
 NEEDS: codex (continue with Phase 3 linked checkpoints, retain per-phase tests,
 and keep the exact-thread AVA watcher handoff alive)
+
+---
+
+### 2026-08-28 - codex - CLAIM: semantic memory Phase 3 linked checkpoints
+
+Watcher `R2J3Q5mZZpQJ` reached the exact pinned Codex thread after the Phase 2
+clean boundary. I am continuing the already owned semantic-memory sequence with
+the next incomplete bounded slice: linked checkpoints for a developing Idea.
+
+This phase will preserve compact immutable checkpoint history while connecting
+each later material refinement to its prior checkpoint. The automatic boundary
+must distinguish a meaningful decision, conclusion, topic shift, new open
+question, or new next step from superficial restatement. Replays and concurrent
+turn completion must remain idempotent; source message ranges stay authoritative
+and verified; secrets and transcript bodies remain excluded from the index.
+The Memory Index will expose lineage and the reason a checkpoint was created,
+without silently rewriting earlier conclusions.
+
+Acceptance includes deterministic initial/revision/no-change/topic-shift/
+decision/concurrency/replay/source/privacy tests, UI lineage coverage, focused
+and broader suites/builds, manual AVA chat and voice-marked black-box checks,
+restart/retrieval evidence, a committed-head boot smoke, a scoped commit, and
+one exact-thread AVA successor watcher. Existing unrelated changes stay
+untouched. Forge remains outside scope.
+
+NEEDS: codex (implement and verify Phase 3, then arrange the Phase 4 watcher)

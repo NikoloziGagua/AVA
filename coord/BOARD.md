@@ -4306,3 +4306,91 @@ modified.
 
 NEEDS: codex (implement, stress-test automatically and through live AVA, commit,
 record exact evidence, and relaunch the verified build)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: computer execution router, verified Google fast path, and transient voice-result recovery
+
+Shipped the provider-neutral routing slice in `d800097` (`feat(browser): route
+direct Google searches`). Natural one-step requests such as `Open Google and
+search for X` now select persistent AVA Chrome and the dedicated
+`chrome_google_search` operation without paying for model/vision/UFO planning.
+The tool encodes the literal query, navigates or foregrounds the matching page,
+and verifies the exact Google host, `/search` path, and decoded `q` value before
+the task receipt can claim verified success. Compound research requests remain
+on the normal agent path. Secret-shaped queries fail before navigation.
+
+The same route is available to typed chat and voice-originated computer action
+handoffs. Explicit requests to use Microsoft UFO for Google fail truthfully and
+dispatch no tool because the current genuine UFO adapter remains the fixed
+Notepad proof; there is no silent synthetic or Notepad fallback. Existing
+policy, timeout, browser, receipt, Mission Control, verification, memory and
+playbook seams are reused. Deterministic direct routes skip irrelevant memory
+retrieval and playbook mutation, while normal non-deterministic work retains
+both systems.
+
+The first committed-head live stress run caught a separate real race: an
+immediate `persist:false` voice result could finish before SSE connected, and
+because it intentionally had no persisted assistant message the voice bridge
+received no final response. Commit `f0bacc7` (`fix(voice): replay fast transient
+action results`) adds a bounded five-minute sanitized final/receipt replay keyed
+by task ID, makes the voice bridge stream the task ID returned by POST, and
+prevents a mismatched task ID from receiving an older answer. A repeatable
+authenticated black-box script now exercises the full boundary through the
+running AVA server and cleans up its disposable sessions and token.
+
+Product areas changed: the new `server/src/orchestrator/computer-execution-router.ts`
+and tests; chat/agent integration; the verified Chrome Google operation and
+tests; voice intent/policy/rubric/timeout truth; receipt replay and the voice
+bridge; Explorer registry/manifest/tests; chat humanization; architecture and
+feature docs; and `server/scripts/computer-execution-smoke.ts` plus its package
+script. The two scoped product commits are exact SHAs
+`d8000978dd64c9600f0d296b43840882ce832152` and
+`f0bacc76303b3cf07b432ed94e4891801936e3bd`.
+
+Verification: the final focused server gate passed 6 files / 119 tests,
+including deterministic routing, exact-query verification, unsupported UFO,
+voice classification, `persist:false`, receipt replay, fast final recovery and
+wrong-task isolation. Focused web routing/Explorer/humanization coverage passed
+23 tests earlier in the same committed slice. The complete server suite passed
+196 files / 1,510 tests, and the complete web suite passed 91 files / 412 tests.
+One parallel high-load server run first timed out only the existing Chrome test
+hook while all 1,510 collected tests passed; the Chrome file then passed alone
+(4/4), and the clean non-parallel full server rerun passed. Server TypeScript
+build and production web/PWA build passed. `git diff --check` passed. The
+Explorer audit remains truthful at 34 capabilities, 71/71 implemented tools,
+29/29 routes, 116 verified references and zero broken references.
+
+AVA was rebuilt and relaunched from committed HEAD. The authenticated live
+black-box smoke talked to AVA itself and passed all cases: typed verified Google
+search task `xa-RvVFWSQRW` (6,496 ms), idempotent repeat
+`LedDP02uUw09` (5,454 ms), voice-originated verified search
+`n-LSsKmKdH93` (5,573 ms), and unsupported UFO/browser task
+`VRCfjLvhN7z0` with zero tool dispatch. Each real search produced exactly one
+Chrome call, exact CDP URL evidence, a task-outcome verified receipt, and
+Mission Control verification provenance with no provider-usage event. No
+email, text, DM, post, purchase, or other external communication was sent.
+
+The improvement index was checked both in the live AVA database and with its
+restart/idempotency smoke. `Route direct Google searches` is active with exact
+verified source commit `d8000978...`; `Replay fast transient action results` is
+active with exact verified source commit `f0bacc7...`. The disposable full-history
+smoke indexed 472 product improvements, reused all 472 after reopen, skipped 88
+non-product commits, produced zero failures, and removed its temporary database.
+This confirms the changes are visible in Memory -> Index rather than existing
+only in this board entry.
+
+Known boundary: this fast grammar intentionally covers one direct Google query,
+not arbitrary browsing or general Windows work. Compound, authenticated,
+ambiguous and multi-step browser tasks continue through AVA's normal agent and
+dedicated workflows. Microsoft UFO is still a fixed genuine Notepad proof, not
+a learning engine or universal fallback. The next useful increment should add
+another evidence-backed deterministic browser operation to this same router,
+not broadly route everything through UFO.
+
+Niko's unrelated `.claude/settings.local.json` change and untracked persona
+research document were preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (try `Open Google and search for <anything>` in both chat and voice;
+inspect the receipt/Mission Control route, then choose the next frequent browser
+operation worth making deterministic)

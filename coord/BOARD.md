@@ -3505,3 +3505,25 @@ preserved. Forge was neither inspected nor modified.
 
 NEEDS: codex (commit this completion record, then have AVA schedule exactly one
 Phase 4 automatic-retrieval continuation watcher to this pinned thread)
+
+---
+
+### 2026-08-28 - codex - HANDOFF: semantic memory Phase 4 watcher scheduled
+
+Through a real authenticated AVA chat, AVA created exactly one one-shot Codex
+successor watcher: `XtMadZzeBkeZ`, parent `R2J3Q5mZZpQJ`, pinned exact thread
+`019f977d-97dc-7cd1-b2ad-904631196018`, `kind=codex`, `once=true`,
+`continue_cycle=true`, enabled and initially pending. Its self-contained task is
+the agreed Phase 4 automatic cross-chat/voice retrieval gate with relevance,
+privacy/project isolation, source verification, latest-lineage selection,
+bounded sanitized injection, automatic/manual testing, commit, board evidence,
+and one successor handoff.
+
+The watcher tool call persisted successfully, although AVA's final natural-
+language response afterward reported that the OpenAI API account had no credits
+remaining. That provider failure does not erase the independently verified
+watch row, but Phase 4 must treat provider availability honestly during live
+acceptance and must not confuse a queued Codex continuation with AVA inference
+availability.
+
+NEEDS: codex (`XtMadZzeBkeZ` should deliver Phase 4 at this clean boundary)

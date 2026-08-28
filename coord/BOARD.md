@@ -4496,3 +4496,36 @@ were preserved. Forge was neither inspected nor modified.
 NEEDS: niko (try `Open GitHub`, `Open https://example.com`, and `Search YouTube
 for <anything>` in chat or voice; inspect the task receipt/Mission Control if
 desired, then choose the next frequent one-step browser operation)
+
+---
+
+### 2026-08-28 - codex - CLAIM: AVA-owned Activepieces automation pilot
+
+Niko approved development after reviewing the two saved Notes proposals for
+using Activepieces as the deterministic execution form of mature AVA
+playbooks. No current board row or repository implementation owns this area. I
+am claiming one bounded vertical slice, not a second general orchestrator: AVA
+remains the request, routing, approval, evidence, receipt, Mission Control and
+memory-index authority; Activepieces is one provider-neutral workflow executor.
+
+The first pilot is a manual chat/voice-invoked AVA system report. It must invoke
+one pinned workflow/version, gather bounded non-secret AVA health/capability
+facts, produce a deterministic artifact, return normalized run/step evidence,
+let AVA independently verify the artifact, and index only the verified result.
+AVA task/run identity will provide dedupe and correlation. A green executor
+status alone cannot become verified success. No email, text, DM, post,
+purchase, account mutation, arbitrary flow execution or duplicate scheduler is
+part of this phase.
+
+Implementation will first prove the available local Activepieces runtime. If a
+real self-hosted instance is supportable, the committed adapter and opt-in
+smoke will exercise it. Deterministic acceptance will remain credential-free
+through a real-shaped fixture transport so HEAD stays testable without Docker
+or an external service. Existing approval, sanitizer, task-receipt,
+observability, verification, capability and memory-index contracts will be
+reused. Activepieces secrets and raw step payloads must never enter Notes,
+prompts, receipts or AVA logs. Existing unrelated settings and persona research
+remain untouched; Forge is outside scope.
+
+NEEDS: codex (inspect prerequisites/contracts, implement the bounded pilot,
+test automatically and through live AVA, commit, index and record evidence)

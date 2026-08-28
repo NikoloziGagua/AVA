@@ -36,7 +36,7 @@ scheduler and pokes whoever is up.
 | Explorer (Atlas, registry, workflows) | codex | newcomer-first redesign shipped in `888e8c7`; awaiting Niko test | 2026-08-04 |
 | Forge control plane | claude | built, 145 tests green | 2026-07-26 |
 | Mission Control (observability) | codex | slice shipped, untracked | 2026-07-26 |
-| Realtime voice pipeline | codex | rearchitected, untracked | 2026-07-26 |
+| Realtime voice pipeline | codex | shipped: blank-new-chat session binding repair (`486de96`) | 2026-08-28 |
 | Windows desktop / browser runtime | codex | built, untracked, needs a decision | 2026-07-26 |
 | Capability Center (`web/src/capabilities/`) | UNCLAIMED | built by codex, orphaned - nothing renders it | 2026-07-26 |
 | Merging the three capability surfaces | UNCLAIMED | needs Niko's direction | 2026-07-26 |
@@ -3185,3 +3185,76 @@ research document were preserved. Forge was neither inspected nor modified.
 NEEDS: nobody (the repaired explicit-capture loop is committed, running, tested,
 cleaned up, and ready for measured use; automatic indexing remains a separate
 future increment)
+
+---
+
+### 2026-08-28 - codex - CLAIM: blank-new-chat voice session binding
+
+Niko reproduced a remaining canonical-conversation defect after the earlier
+chat/voice continuity repair: entering voice from a newly created but still
+blank chat passes no session ID, so the voice proxy applies its home-orb policy
+and resumes the most recently updated conversation. That makes the fresh chat
+appear to jump back to the one conversation previously used by voice. The prior
+connection teardown is present, but it will be stress-tested independently so a
+retired socket cannot remain authoritative during rapid mode changes.
+
+I am claiming the existing Codex-owned realtime voice/UI handoff only. The fix
+will preserve home-orb resume behavior, but mark voice entry from a blank New
+chat as an explicit fresh-conversation request. Acceptance covers exact session
+identity for existing chats, freshly persisted typed chats, and blank chats;
+rapid voice/keyboard/new-chat transitions; socket/media teardown; reconnect
+idempotency; deterministic focused regressions; broader suites/builds; and a
+committed-HEAD runtime smoke. Self and semantic memory are outside this change.
+Forge will not be inspected or modified.
+
+NEEDS: codex (implement, stress-test, commit, and return exact session evidence)
+
+---
+
+### 2026-08-28 - codex - blank-new-chat voice session binding shipped
+
+Commit `486de96` (`fix(voice): bind blank chats to fresh sessions`) fixes the
+remaining chat/voice identity split without changing the intentional Home-orb
+resume-latest behavior. The root cause was an overloaded null session ID: Home
+voice and a deliberately blank New chat both passed `null`, so the realtime
+proxy applied Home policy and resumed the latest conversation. `App` now carries
+the entry origin and marks only blank-New-chat voice as `startFresh`; the first
+WebSocket sends `new=1`, then the returned canonical `ava.session` ID is adopted
+synchronously for exit and reconnect.
+
+Stress testing exposed and closed two additional races. The common session-event
+path previously left the fresh-connection flag armed, so a reconnect could mint
+another chat; it now clears that flag and updates the ID ref before React state.
+Also, after returning to keyboard, `ChatScreen` initially hydrated local state
+asynchronously; an immediate mic press could temporarily pass null. The already
+requested persisted session is now authoritative throughout that hydration
+window. Existing voice teardown still closes the retired WebSocket/media path
+on mode exit and unmount.
+
+Changed product files: `web/src/App.tsx`, `web/src/voice/VoiceScreen.tsx`,
+`web/src/voice/useRealtimeVoice.ts`, `web/src/chat/ChatScreen.tsx`, focused tests
+for all four boundaries, and the voice/web architecture and continuity docs.
+
+Verification: focused voice/session server coverage passed 2 files / 95 tests;
+focused web coverage passed 4 files / 53 tests; the complete web suite passed
+91 files / 404 tests. Server TypeScript/schema build and the production PWA build
+passed (the pre-existing ES2024 and large-chunk notices remain warnings).
+`git diff --check` passed with normal CRLF notices. The committed-HEAD desktop
+runtime was rebuilt and relaunched; `/api/health` reports `ok=true`,
+`ready=true`, provider `openai`, and build ID
+`e6cac210-373d-44cd-b63a-a7f93124678a`.
+
+The decisive real-browser/CDP check used AVA's installed application and actual
+realtime proxy: entering voice from blank New sent `new=1` and created exactly
+one session (`i3YTpt7Cw4cN`); switching immediately to keyboard closed the old
+socket; immediate mic re-entry sent `sessionId=i3YTpt7Cw4cN` with no `new=1` and
+created no second session. Seven empty/system-only conversations produced by
+the diagnostic attempts were identified by exact IDs/timestamps and removed
+through AVA's authenticated session API (all returned 204); no user conversation
+was deleted. Niko's unrelated `.claude/settings.local.json` edit and untracked
+persona research document were preserved. Forge was neither inspected nor
+modified.
+
+NEEDS: niko (hard-refresh AVA once if an older service worker is visible, then
+test New -> mic -> keyboard -> mic; both modes should remain in that same New
+chat, while a second New starts a separate conversation)

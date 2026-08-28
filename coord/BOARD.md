@@ -3780,3 +3780,55 @@ Forge. Existing unrelated settings and persona-research changes remain untouched
 
 NEEDS: codex (implement, test, commit, relaunch, and report the external quota
 boundary separately from the fixed scheduler-state bug)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: truthful Codex-cycle successor state
+
+Shipped commit `24be1fa` (`fix(watches): preserve completed cycle state`). The
+watcher failure had two distinct layers. Delivery itself worked: live row
+`gK2SF5XmGgOJ` retained `delivered_at=1787887414216` and
+`completed_at=1787889748352`. Successor planning then failed because AVA's
+configured OpenAI provider returned `You have no credits remaining`; no child
+watch was created. Old scheduler code incorrectly replaced the verified task
+completion with that later planner error and retried on every state-machine
+inspection.
+
+Codex-cycle task lifecycle and successor-planning lifecycle are now separate
+durable fields. A provider error preserves `last_status=completed`, records
+`successor_status=blocked` plus the exact bounded reason and attempt time,
+notifies Niko, and waits for the watch interval before retrying. A later provider
+recovery creates exactly one child through the existing unique parent boundary,
+records `scheduled`, disables the parent, and cannot redispatch the completed
+task. `watch_list` and Memory > Standing watches show both states rather than
+calling completed work failed. The migration repairs already-misreported rows
+matching the two legacy successor-planning errors.
+
+Exact files: `server/src/state/{schema.sql,db.ts,db.test.ts,watches.ts}`,
+`server/src/watches/{scheduler.ts,scheduler.test.ts}`,
+`server/src/tools/{watches-mcp.ts,watches-mcp.test.ts}`,
+`web/src/{api.ts,memory/WatchesSection.tsx,
+memory/WatchesSection.test.tsx}`, and `docs/features/watches.md`.
+
+Verification: focused server coverage passed 3 files / 36 tests and focused web
+coverage passed 1 file / 7 tests. An initial full server run exposed transient,
+unrelated logger/chrome-click failures; both isolated tests passed 2 files / 8
+tests on immediate rerun, and the clean complete server rerun passed 189 files /
+1,451 tests. The complete web suite passed 91 files / 408 tests. Server build,
+production PWA build, `git diff --check`, bounded privacy scan, and committed-HEAD
+boot smoke (`{"ok":true,"log":"healthy"}`) passed.
+
+AVA was rebuilt and relaunched from the committed change; live health reports
+`ok=true`, `ready=true`, provider `openai`, build ID
+`f6cbd90c-ca23-45c3-ade4-ac5ba43c3fbb`. Live post-migration evidence for
+`gK2SF5XmGgOJ` now truthfully reads `last_status=completed`,
+`successor_status=blocked`, the preserved delivery/completion timestamps, zero
+children, and the exact exhausted-credit error. It remains enabled and will
+retry successor planning at its one-minute interval, without duplicating Phase
+5. Code cannot manufacture provider credit, so the cycle cannot create its next
+task until OpenAI API billing is available or Niko explicitly chooses another
+task/provider path. Existing unrelated settings and persona research were
+preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (restore OpenAI API credits for AVA's autonomous successor selection,
+or explicitly hand Codex the next saved Idea; the watcher state bug itself is fixed)

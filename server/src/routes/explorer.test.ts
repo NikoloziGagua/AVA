@@ -9,10 +9,11 @@ import { SseBuffer } from "../sse/buffer.js";
 import { openInMemoryDb } from "../state/db.js";
 import { createSession } from "../state/sessions.js";
 import { createExplorerTask, recordExplorerAgentEvent } from "../explorer/store.js";
-import { deriveExplorerCapabilities } from "../explorer/registry.js";
+import { capabilityIdsForTool, deriveExplorerCapabilities } from "../explorer/registry.js";
 import { writePlaybook, type Playbook } from "../playbooks/store.js";
 import type { CapabilitySnapshot } from "./capabilities.js";
 import { explorerRoutes } from "./explorer.js";
+import { getUfoExperimentHealth } from "../ufo/experiment.js";
 
 function snapshot(browserReady: boolean): CapabilitySnapshot {
   return {
@@ -32,6 +33,15 @@ function snapshot(browserReady: boolean): CapabilitySnapshot {
       googlePlaces: true,
       screenVision: true,
       push: false,
+      microsoftUfo: getUfoExperimentHealth({
+        enabled: false,
+        mode: "off",
+        isolation: "none",
+        allowFixtureActions: false,
+        allowedFixtures: [],
+        timeoutMs: 10_000,
+        maxSteps: 4,
+      }),
     },
     automations: { watches: 2, schedulerReady: true, selfImprovement: true },
   };
@@ -206,6 +216,12 @@ describe("Explorer read API", () => {
       readiness: "setup_required",
       health: "unavailable",
     });
+    expect(byId.ufo).toMatchObject({
+      readiness: "unavailable",
+      health: "unavailable",
+      statusConfidence: "high",
+    });
+    expect(byId.ufo.reason).toContain("disabled");
     expect(response.body.sources).toContain("runtime_probe");
 
     const reachableSnapshot = snapshot(true);
@@ -218,6 +234,74 @@ describe("Explorer read API", () => {
     });
     expect(reachableBrowser?.reason).toContain("accepts local CDP connections");
     db.close();
+  });
+
+  it("distinguishes every bounded UFO mode and maps its tools to one Atlas capability", () => {
+    const state = snapshot(true);
+    const deriveUfo = () => deriveExplorerCapabilities(state)
+      .find((capability) => capability.id === "ufo")!;
+
+    state.integrations.microsoftUfo = {
+      ...state.integrations.microsoftUfo,
+      enabled: true,
+      available: true,
+      mode: "fixture",
+      isolation: "synthetic-fixture-v1",
+      observeOnly: true,
+      runtime: {
+        ...state.integrations.microsoftUfo.runtime,
+        adapter: "synthetic_fixture",
+        dependency: "available",
+        reason: "The synthetic disposable fixture is available; this is not a Microsoft UFO runtime.",
+      },
+    };
+    expect(deriveUfo()).toMatchObject({ readiness: "partially_ready", health: "healthy" });
+    expect(deriveUfo().reason).toContain("observe-only counter fixture");
+
+    state.integrations.microsoftUfo.observeOnly = false;
+    state.integrations.microsoftUfo.actionsAvailable = true;
+    expect(deriveUfo().reason).toContain("approval-required");
+
+    state.integrations.microsoftUfo = {
+      ...state.integrations.microsoftUfo,
+      available: false,
+      mode: "ufo",
+      isolation: "local-windows-user-session",
+      observeOnly: true,
+      actionsAvailable: false,
+      runtime: {
+        adapter: "microsoft_ufo",
+        dependency: "unavailable",
+        release: "v3.0.8",
+        commit: null,
+        credentials: "missing",
+        reason: "The pinned runtime is present, but provider credentials are missing.",
+      },
+    };
+    expect(deriveUfo()).toMatchObject({ readiness: "setup_required", health: "unavailable" });
+    expect(deriveUfo().reason).toContain("credentials are missing");
+
+    state.integrations.microsoftUfo.available = true;
+    state.integrations.microsoftUfo.observeOnly = false;
+    state.integrations.microsoftUfo.actionsAvailable = true;
+    state.integrations.microsoftUfo.runtime = {
+      ...state.integrations.microsoftUfo.runtime,
+      dependency: "available",
+      commit: "96983c73ed09e884a5f1d7ff8936c953b234b684",
+      credentials: "configured",
+      reason: "The exact pinned genuine runtime is available.",
+    };
+    expect(deriveUfo()).toMatchObject({ readiness: "ready", health: "healthy" });
+    expect(deriveUfo().reason).toContain("fixed disposable Notepad proof");
+
+    for (const tool of [
+      "ufo_experiment_status",
+      "ufo_experiment_observe",
+      "ufo_experiment_action",
+      "ufo_runtime_run",
+    ]) {
+      expect(capabilityIdsForTool(tool)).toEqual(["desktop.microsoft-ufo"]);
+    }
   });
 
   it("reports its API version and instrumentation state", async () => {

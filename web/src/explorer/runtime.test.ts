@@ -65,6 +65,30 @@ describe("Explorer runtime evidence adapter", () => {
     expect(result.reason).toBe("Dedicated workflow probe passed.");
   });
 
+  it("uses the provider-neutral UFO runtime record as direct capability evidence", () => {
+    const capability = getCapability("desktop.microsoft-ufo");
+    expect(capability).toBeDefined();
+    const result = runtimeForCapability(capability!, [runtime({
+      id: "ufo",
+      domainId: "computer",
+      name: "Microsoft UFO bounded runtime",
+      readiness: "ready",
+      health: "healthy",
+      reason: "Genuine Microsoft UFO v3.0.8 is available only for the fixed disposable Notepad proof; actions require approval.",
+      statusConfidence: "high",
+    })]);
+
+    expect(result).toMatchObject({
+      readiness: "ready",
+      health: "healthy",
+      confidence: "high",
+      sources: ["ufo"],
+    });
+    expect(eventCapabilityIdsForAtlas(capability!)).toEqual(
+      expect.arrayContaining(["desktop.microsoft-ufo", "desktop", "ufo"]),
+    );
+  });
+
   it("reports unknown when the registry has no runtime adapter", () => {
     const capability = getCapability("instagram.send-dm");
     expect(capability).toBeDefined();

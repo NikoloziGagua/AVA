@@ -107,6 +107,24 @@ Authenticated HTTP remains read-only:
 There is no HTTP mutation route, generic UFO prompt endpoint, or separate
 control plane.
 
+## Explorer visibility
+
+Explorer exposes this experiment through the existing Capability Atlas and
+runtime-health adapter. Its single **Experimental Microsoft UFO** capability
+keeps four states distinct:
+
+- disabled by configuration;
+- synthetic counter available in observe-only mode;
+- synthetic counter actions configured but still approval-required; and
+- genuine pinned runtime available or unavailable for the fixed Notepad proof.
+
+The capability workflow branches explicitly between those surfaces. Synthetic
+evidence is labelled as fixture-harness evidence and never as Microsoft UFO
+success. Genuine readiness comes from the same authenticated health contract
+used by the tools, while recent runs link through the existing Mission Control
+capability IDs. Explorer adds no action button, mutation route, fallback from
+genuine to synthetic execution, or separate control plane.
+
 ## Tests and real smoke
 
 Deterministic tests inject the process boundary and cover pinned health,

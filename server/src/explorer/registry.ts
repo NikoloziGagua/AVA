@@ -101,6 +101,16 @@ const DEFINITIONS: StaticCapability[] = [
     verificationMethods: ["Screenshot artifact", "Vision tool result"],
   },
   {
+    id: "ufo",
+    domainId: "computer",
+    name: "Microsoft UFO bounded runtime",
+    description: "Experimental fixture-only computer use: a synthetic counter and one genuine pinned Notepad proof path.",
+    stability: "beta",
+    moduleReference: "server/src/ufo/experiment.ts",
+    dependencies: ["conversation"],
+    verificationMethods: ["Authenticated health contract", "Mission Control child trace", "Independent Windows UI Automation exact-text check"],
+  },
+  {
     id: "instagram",
     domainId: "accounts",
     name: "Instagram",
@@ -203,6 +213,7 @@ const DEFINITIONS: StaticCapability[] = [
 ];
 
 export function capabilityIdsForTool(tool: string): string[] {
+  if (/^ufo_/.test(tool)) return ["desktop.microsoft-ufo"];
   if (tool === "instagram_send_dm") {
     return ["instagram.send-dm", "instagram.messaging", "browser.persistent-control"];
   }
@@ -316,6 +327,40 @@ export function deriveExplorerCapabilities(
             "runtime_probe",
             "capability_snapshot.core.browser",
             `Browser runtime probe: ${snapshot.core.browser.mode}.`,
+            checkedAt,
+          ),
+        };
+      }
+      case "ufo": {
+        const state = snapshot.integrations.microsoftUfo;
+        const realReady = state.enabled
+          && state.mode === "ufo"
+          && state.available
+          && state.actionsAvailable
+          && state.runtime.adapter === "microsoft_ufo"
+          && state.runtime.dependency === "available";
+        const fixtureReady = state.enabled
+          && state.mode === "fixture"
+          && state.available
+          && state.runtime.adapter === "synthetic_fixture";
+        return {
+          ...base,
+          readiness: realReady ? "ready" : fixtureReady ? "partially_ready" : state.enabled ? "setup_required" : "unavailable",
+          health: realReady || fixtureReady ? "healthy" : "unavailable",
+          reason: realReady
+            ? `Genuine Microsoft UFO ${state.runtime.release ?? "runtime"} is available only for the fixed disposable Notepad proof; actions require approval.`
+            : fixtureReady
+              ? state.observeOnly
+                ? "Only the synthetic observe-only counter fixture is available; this is not Microsoft UFO execution."
+                : "Synthetic counter actions are configured but remain approval-required; this is not Microsoft UFO execution."
+              : state.enabled
+                ? state.runtime.reason
+                : "The experimental Microsoft UFO integration is disabled by configuration.",
+          statusConfidence: "high",
+          evidence: evidence(
+            "runtime_probe",
+            "capability_snapshot.integrations.microsoftUfo",
+            `${state.runtime.adapter} / ${state.runtime.dependency} / ${state.mode}; ${state.runtime.reason}`,
             checkedAt,
           ),
         };

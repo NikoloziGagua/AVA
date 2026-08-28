@@ -111,7 +111,7 @@ describe("Explorer capability registry", () => {
   });
 
   it("gives every capability a substantive operational workflow", () => {
-    expect(EXPLORER_CAPABILITIES).toHaveLength(33);
+    expect(EXPLORER_CAPABILITIES).toHaveLength(34);
     for (const capability of EXPLORER_CAPABILITIES) {
       const workflow = capability.workflow;
       expect(workflow, capability.id).toBeDefined();
@@ -174,6 +174,24 @@ describe("Explorer capability registry", () => {
     expect(
       whatsapp.nodes.find((node) => node.id === "whatsapp.messaging.verify-header")?.description,
     ).toMatch(/conversation pane/i);
+  });
+
+  it("models the bounded Microsoft UFO runtime without conflating its synthetic fixture", () => {
+    const ufo = getCapability("desktop.microsoft-ufo")!;
+    expect(ufo.stability).toBe("experimental");
+    expect(ufo.safety).toMatchObject({ risk: "high", approval: "always" });
+    expect(ufo.description).toMatch(/not general computer use/i);
+    expect(ufo.verification.limitations.join(" ")).toMatch(/synthetic.*never Microsoft UFO success/i);
+    expect(ufo.runtime?.toolNames).toEqual([
+      "ufo_experiment_status",
+      "ufo_experiment_observe",
+      "ufo_experiment_action",
+      "ufo_runtime_run",
+    ]);
+    expect(ufo.workflow?.nodes.find((node) => node.id === "desktop.microsoft-ufo.run")?.description)
+      .toMatch(/no arbitrary prompt/i);
+    expect(ufo.workflow?.edges.some((edge) => edge.kind === "branch")).toBe(true);
+    expect(ufo.workflow?.edges.some((edge) => edge.kind === "stop")).toBe(true);
   });
 
   it("keeps every nested workflow node inside its own workflow without parent cycles", () => {

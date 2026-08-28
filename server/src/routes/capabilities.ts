@@ -5,6 +5,7 @@ import { listPeople } from "../apps/people.js";
 import { listPlaybooks } from "../playbooks/store.js";
 import { listWatches } from "../state/watches.js";
 import { getVoiceEngine } from "../state/voice-engine-pref.js";
+import type { UfoExperimentHealth } from "../ufo/experiment.js";
 
 export type BrowserReadiness = {
   ready: boolean;
@@ -35,6 +36,7 @@ export type CapabilitySnapshot = {
     googlePlaces: boolean;
     screenVision: boolean;
     push: boolean;
+    microsoftUfo: UfoExperimentHealth;
   };
   automations: {
     watches: number;
@@ -57,6 +59,7 @@ export type CapabilityRouteDeps = {
   googlePlacesReady: boolean;
   screenVisionReady: boolean;
   pushReady: boolean;
+  ufoHealth: () => UfoExperimentHealth;
 };
 
 /**
@@ -136,6 +139,7 @@ export async function buildCapabilitySnapshot(
       googlePlaces: deps.googlePlacesReady,
       screenVision: deps.screenVisionReady,
       push: deps.pushReady,
+      microsoftUfo: deps.ufoHealth(),
     },
     automations: {
       watches,

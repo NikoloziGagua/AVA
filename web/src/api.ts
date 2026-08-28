@@ -347,6 +347,28 @@ export type CapabilitySnapshot = {
     googlePlaces: boolean;
     screenVision: boolean;
     push: boolean;
+    microsoftUfo: {
+      schemaVersion: 1;
+      experimental: true;
+      enabled: boolean;
+      available: boolean;
+      mode: "off" | "fixture" | "ufo";
+      isolation: "none" | "synthetic-fixture-v1" | "disposable-windows-vm" | "local-windows-user-session";
+      observeOnly: boolean;
+      actionsAvailable: boolean;
+      approvalRequiredForActions: true;
+      allowedFixtures: Array<"counter-v1" | "notepad-text-v1">;
+      limits: { timeoutMs: number; maxSteps: number };
+      runtime: {
+        adapter: "synthetic_fixture" | "microsoft_ufo" | "none";
+        dependency: "available" | "not_checked" | "unavailable";
+        release: string | null;
+        commit: string | null;
+        credentials: "configured" | "missing" | "not_applicable";
+        reason: string;
+      };
+      nonGoals: string[];
+    };
   };
   automations: {
     watches: number;

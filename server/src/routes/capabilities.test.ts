@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openDb } from "../state/db.js";
 import { bootstrapMemoryDir } from "../memory/bootstrap.js";
 import { buildCapabilitySnapshot } from "./capabilities.js";
+import { getUfoExperimentHealth } from "../ufo/experiment.js";
 
 const dirs: string[] = [];
 
@@ -32,6 +33,15 @@ describe("buildCapabilitySnapshot", () => {
       googlePlacesReady: true,
       screenVisionReady: true,
       pushReady: false,
+      ufoHealth: () => getUfoExperimentHealth({
+        enabled: false,
+        mode: "off",
+        isolation: "none",
+        allowFixtureActions: false,
+        allowedFixtures: [],
+        timeoutMs: 10_000,
+        maxSteps: 4,
+      }),
     }, 1_000);
 
     expect(snapshot.uptimeMs).toBe(100);
@@ -41,6 +51,13 @@ describe("buildCapabilitySnapshot", () => {
     expect(snapshot.integrations.instagram).toBe(false);
     expect(snapshot.integrations.whatsapp).toBe(false);
     expect(snapshot.integrations.googlePlaces).toBe(true);
+    expect(snapshot.integrations.microsoftUfo).toMatchObject({
+      experimental: true,
+      enabled: false,
+      available: false,
+      mode: "off",
+      runtime: { adapter: "none", dependency: "not_checked" },
+    });
     expect(JSON.stringify(snapshot)).not.toContain("API_KEY");
     db.close();
   });

@@ -33,6 +33,7 @@ const CAPABILITY_RUNTIME_BINDINGS: Readonly<Record<string, RuntimeAdapterBinding
   "interpretation.request-mode": { ids: ["conversation"], direct: false },
   "orchestration.agent-loop": { ids: ["conversation"], direct: false },
   "browser.persistent-control": { ids: ["browser"], direct: true },
+  "desktop.microsoft-ufo": { ids: ["ufo"], direct: true },
   "shell-files.shell": { ids: ["files"], direct: true },
   "shell-files.filesystem": { ids: ["files"], direct: true },
   "coding.project-work": { ids: ["code"], direct: true },

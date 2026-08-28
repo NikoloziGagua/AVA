@@ -666,6 +666,7 @@ const capabilityRouteDeps: CapabilityRouteDeps = {
   googlePlacesReady: !!cfg.googlePlacesApiKey,
   screenVisionReady: !!cfg.openaiApiKey,
   pushReady: !!(cfg.vapidPublicKey && cfg.vapidPrivateKey),
+  ufoHealth: () => ufoExperiment.health(),
 };
 
 app.use("/api", healthRoutes(startedAt, {

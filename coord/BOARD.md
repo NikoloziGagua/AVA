@@ -48,6 +48,7 @@ scheduler and pokes whoever is up.
 | Self-improvement worker selector | codex | active; provider-neutral Claude Code/Codex selector behind existing approval and release gates | 2026-08-15 |
 | Microsoft UFO design-only evaluation | codex | complete in isolated Self worktree; design-only proposal and evidence audit | 2026-08-27 |
 | Persona v2 and consistency evaluation | unclaimed | complete in `8d5f2ae`; available for reviewed follow-up | 2026-08-28 |
+| Semantic memory index (explicit capture/retrieval v1) | unclaimed | complete in `c674a7c`; available for measured follow-up | 2026-08-28 |
 
 ---
 
@@ -3022,3 +3023,83 @@ document were preserved. Forge was neither inspected nor modified.
 
 NEEDS: niko (restart or reload AVA, inspect Memory -> List -> Personality, and
 try the manual chat/voice checks in `docs/features/persona-v2.md`)
+
+---
+
+### 2026-08-28 - codex - semantic memory index v1 claim
+
+Niko approved the narrow AVA-owned retrieval slice developed with AVA: capture
+one selected conversation segment, sanitize and summarize it into canonical
+SQLite state, embed only that bounded summary, retrieve it from a different
+chat through hybrid semantic and lexical search, verify that the authoritative
+source messages still exist and have not changed, and explain why the result
+matched. I am claiming this new semantic-memory-index area because no existing
+owner or active claim covers it.
+
+The first slice will include project and privacy boundaries, idempotent capture,
+forget propagation, an exact/keyword fallback when embeddings are unavailable,
+an explicit AVA capture/search tool path, and a small inspectable Memory result
+surface. Automatic indexing, Mem0 as a dependency, broad transcript ingestion,
+and a large dashboard remain deliberately out of scope until this loop is
+proven. SQLite remains authoritative; the embedding is only a discovery aid and
+never replaces source verification. Existing unrelated changes will be
+preserved. Forge is outside scope and will not be inspected or modified.
+
+NEEDS: codex (implement, test, commit, and return deterministic cross-session evidence)
+
+---
+
+### 2026-08-28 - codex - source-verified semantic memory index v1 shipped
+
+Commit `c674a7c` implements the agreed explicit-capture retrieval loop. AVA now
+stores bounded sanitized research/idea records in SQLite, embeds only those
+compact records when OpenAI is configured, falls back honestly to exact/keyword
+search, and re-fingerprints the authoritative conversation range before every
+result is usable. Exact repeated capture is idempotent; project-scoped entries
+do not appear without the matching project; versioned forget removes the vector
+and prevents silent resurrection. Provider/model/dimensions/input hash travel
+with vectors so incompatible spaces are never compared.
+
+The agent path adds `memory_index_capture`, `memory_index_search`,
+`memory_index_open`, and `memory_index_forget` to the same persisted session
+toolset used by text and voice. Search is a locator: `memory_index_open` loads a
+bounded sanitized authoritative range only when detail is needed. It returns no
+content for changed/unavailable sources. The Memory -> Index UI shows summary,
+source health, actual retrieval mode, match rationale, limitations, project
+scope, and an Open source chat action. Explorer declares the new capability and
+provider-neutral workflow with 62 tool mappings.
+
+Exact product files: `server/src/memory-index/{types,embedding,store}.ts` and
+their tests; `server/src/state/schema.sql`; `server/src/index.ts`;
+`server/src/routes/{chat,memory}.ts`; `server/src/routes/memory.test.ts`;
+`server/src/tools/memory-mcp.ts` and test; orchestrator capability, intent and
+rubric sources/tests; policy source/test; server Explorer mapper;
+`web/src/{App,api}.ts(x)`; `web/src/memory/{MemoryScreen,MemoryIndexSection}.tsx`
+and MemoryIndexSection test; web Explorer registry/test/generated manifest; and
+`docs/features/semantic-memory-index.md`, `docs/AVA-CAPABILITIES.md`, plus the
+memory/tool architecture docs.
+
+Verification: focused semantic-memory server tests passed 7 files / 96 tests;
+focused Memory/App web tests passed 3 files / 8 tests. The full server suite
+passed 185 files / 1,403 tests and the full web suite passed 91 files / 398
+tests. Server and production web builds passed. Explorer contract/reality audit
+passed with 33 capabilities, 62/62 tool mappings, 22/22 routes, 105 verified
+source references and zero broken sources. `git diff --check` passed with only
+normal CRLF notices. A committed-HEAD server rebuild and isolated scratch-data
+boot smoke returned `{ "ok": true, "log": "healthy" }`. The privacy audit found
+the only key-shaped value in new code is an intentional scrubbing test fixture;
+it is asserted absent from SQLite, provider input and tool output.
+
+Known limitations: v1 never auto-indexes a conversation or creates background
+checkpoints; there is no Mem0 dependency or second canonical store; existing
+entries are not automatically re-embedded after a model change; a matching
+source fingerprint proves integrity, not perfect summary fidelity; real
+semantic behavior still depends on configured OpenAI embeddings and otherwise
+uses lexical fallback. Existing ES2024 and large web-bundle notices remain
+warnings. Niko's unrelated `.claude/settings.local.json` edit and untracked
+persona research document were preserved. Forge was neither inspected nor
+modified.
+
+NEEDS: niko (reload AVA; explicitly index one developed discussion, then test
+cross-chat paraphrase recall and Memory -> Index using the manual steps in
+`docs/features/semantic-memory-index.md`)

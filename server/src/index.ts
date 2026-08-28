@@ -887,7 +887,7 @@ async function runVoiceAction(
       post = await postChat();
     }
     if (!post.ok) throw await responseFailure(post, "action start");
-    const started = (await post.json()) as { sessionId?: string };
+    const started = (await post.json()) as { sessionId?: string; taskId?: string };
     const sid = started.sessionId ?? sessionId;
     if (!sid) throw new Error("action start returned no session");
     // If the voice connection drops mid-run, kill the loopback run so it stops
@@ -895,7 +895,9 @@ async function runVoiceAction(
     // dead socket — the zombie-run fix.
     const killOnAbort = () => { void fetch(`${base}/api/chat/${sid}/kill`, { method: "POST", headers: auth }).catch(() => {}); };
     signal?.addEventListener("abort", killOnAbort, { once: true });
-    const res = await fetch(`${base}/api/chat/${sid}/stream`, { headers: auth, signal });
+    const streamUrl = `${base}/api/chat/${sid}/stream`
+      + (started.taskId ? `?taskId=${encodeURIComponent(started.taskId)}` : "");
+    const res = await fetch(streamUrl, { headers: auth, signal });
     if (!res.ok) throw await responseFailure(res, "action stream");
     const reader = res.body?.getReader();
     if (!reader) throw new Error("action stream returned no readable body");

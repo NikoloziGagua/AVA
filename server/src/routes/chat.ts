@@ -237,10 +237,17 @@ export function chatRoutes(
   // minutes as the fast path; SQLite provides restart-safe replay for 30 days.
   // Mission Control remains the richer technical record.
   const recentReceipts = new Map<string, { receipt: TaskReceipt; expiresAt: number }>();
+  // persist:false voice handoffs deliberately have no assistant message to
+  // reconstruct after a fast-finish/connect race. Retain the already-sanitized
+  // final beside its task id for the same short replay window as the receipt.
+  const recentFinals = new Map<string, { taskId: string; text: string; expiresAt: number }>();
   const RECEIPT_REPLAY_TTL_MS = 5 * 60_000;
   const pruneRecentReceipts = (now = Date.now()) => {
     for (const [sid, value] of recentReceipts) {
       if (value.expiresAt <= now) recentReceipts.delete(sid);
+    }
+    for (const [sid, value] of recentFinals) {
+      if (value.expiresAt <= now) recentFinals.delete(sid);
     }
   };
 
@@ -678,6 +685,13 @@ export function chatRoutes(
         if (e.kind === "final" && !e.payload.text.trim()) {
           e = { kind: "final", payload: { text: GRACEFUL_FINAL } };
         }
+        if (e.kind === "final") {
+          recentFinals.set(sid, {
+            taskId: runId,
+            text: e.payload.text,
+            expiresAt: Date.now() + RECEIPT_REPLAY_TTL_MS,
+          });
+        }
         // This is the one complete operational event seam shared by all tools.
         // Explorer omits model thought/delta events and applies its own broader
         // secret scrub before committing anything to the execution history.
@@ -1038,12 +1052,18 @@ export function chatRoutes(
       const sink = createSink(res);
       // Ids just need to be > what the client already has so they aren't deduped.
       let id = lastEventId;
-      const latest = latestAssistantAfterLastUser(db, sessionId);
-      if (latest) {
-        sink.write({ id: ++id, kind: "final", payload: { text: latest }, bytes: 0, ts: Date.now() });
-      }
       pruneRecentReceipts();
       const requestedTaskId = typeof req.query.taskId === "string" ? req.query.taskId : null;
+      const memoryFinal = recentFinals.get(sessionId);
+      const replayFinal = memoryFinal && (!requestedTaskId || requestedTaskId === memoryFinal.taskId)
+        ? memoryFinal.text
+        // A task-scoped client must never receive a persisted answer from a
+        // different turn. An unscoped legacy client may still use the durable
+        // conversation fallback after a server restart.
+        : requestedTaskId ? null : latestAssistantAfterLastUser(db, sessionId);
+      if (replayFinal) {
+        sink.write({ id: ++id, kind: "final", payload: { text: replayFinal }, bytes: 0, ts: Date.now() });
+      }
       const memoryReceipt = recentReceipts.get(sessionId)?.receipt;
       const recent = memoryReceipt && (!requestedTaskId || requestedTaskId === memoryReceipt.taskId)
         ? memoryReceipt

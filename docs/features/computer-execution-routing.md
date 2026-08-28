@@ -44,6 +44,12 @@ not a parallel scheduler or telemetry system.
    redirect, wrong query, launch failure, or URL mismatch is reported as a
    failure/contradiction rather than success.
 
+Fast non-persisted voice handoffs retain their sanitized final response and task
+receipt in a five-minute process-local replay window. The voice bridge also sends
+the returned task ID when it opens the stream. This prevents an immediate
+unsupported/fail-closed decision from finishing between POST and SSE connection
+and leaving voice with a silent result.
+
 The query is limited to 500 characters. Text recognized by AVA's secret scrubber
 is refused before browser navigation. Activity surfaces receive redacted tool
 arguments, and verification stores only a bounded hash reference rather than a
@@ -58,6 +64,17 @@ second copy of the search text.
   typed verification evidence; no new control plane is introduced.
 - Explorer's Browser automation workflow shows the direct-search branch and its
   verification/stop boundaries.
+
+The opt-in committed-head black-box check is:
+
+```powershell
+npm.cmd -w server run smoke:computer-routing
+```
+
+It creates a temporary authenticated device, talks to the running AVA server,
+executes typed, repeated and voice-originated searches, checks the real CDP URL,
+reads receipts and Mission Control provenance, checks the unsupported UFO/web
+boundary, and then revokes its token and soft-deletes its disposable sessions.
 
 ## Honest limitations and next boundary
 

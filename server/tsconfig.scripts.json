@@ -12,6 +12,7 @@
     "scripts/memory-retrieval-smoke.ts",
     "scripts/ufo-experiment-smoke.ts",
     "scripts/install-ufo-runtime.ts",
-    "scripts/ufo-runtime-smoke.ts"
+    "scripts/ufo-runtime-smoke.ts",
+    "scripts/computer-execution-smoke.ts"
   ]
 }

@@ -4587,3 +4587,88 @@ document remain untouched. Forge was neither inspected nor modified.
 NEEDS: niko (enable/install WSL2 and restart Docker Desktop when convenient;
 then Codex can provision Activepieces Community Edition, import the pinned
 system-report flow, run a genuine smoke, and relaunch AVA with the webhook)
+
+---
+
+### 2026-08-28 - codex - RECOVERY CLAIM: genuine Activepieces acceptance
+
+Niko correctly rejected the prior completion boundary after the exact live AVA
+request returned `executor_unavailable`. Deterministic adapter coverage was not
+a substitute for the claimed user path. I am reopening the same Codex-owned
+Activepieces area to establish a genuine runtime and execute the report through
+running AVA. Official self-hosting prefers Docker, but official development
+documentation also describes a direct Node/SQLite/in-memory-queue runtime; I
+will exhaust that route on this non-WSL machine before concluding an external
+prerequisite is unavoidable. Completion now requires the actual AVA chat action
+to create, independently verify, and index one report. No synthetic result can
+satisfy acceptance.
+
+NEEDS: codex (provision a genuine runtime, configure the pinned workflow, run
+the exact live AVA path, fix any failures, and record only real evidence)
+
+---
+
+### 2026-08-29 - codex - COMPLETE: genuine Activepieces report acceptance
+
+Niko was right to reject the fixture-only completion claim. Product commit
+`160611d2fd5b39364a4e6e3bb62727d01011d6ec` now installs and runs genuine
+Activepieces Community Edition source at pinned upstream commit
+`217380c40e2a3c138cbf461b6f4bd442e3decf2b` / release `0.88.3`, without
+requiring Docker or WSL on this machine. The local runtime is the official AP
+API, engine, worker and UI with PGLite and a memory queue. The live AVA path has
+no synthetic fallback.
+
+The new idempotent setup checks the official origin and exact commit, runs AP's
+official development setup, applies a tracked narrow Windows file-URL loader
+compatibility patch, starts the runtime hidden and provisions the pinned
+`ava.system-report` v1 synchronous webhook with a local shared header. Generated
+management credentials and the webhook secret stay only in ignored `.env`
+files and are never printed. AVA's normal desktop launcher now starts AP when
+configured; AP failure does not prevent AVA chat from starting and is reported
+honestly by the automation invocation.
+
+The committed black-box smoke reproduces both user requests through authenticated
+`/api/chat`: `Run AVA's system health report.` must select
+`automation_system_report`, and `Is Activepieces automation configured and
+available now?` must select `automation_status`. It rejects fixture execution,
+unverified receipts, missing artifact/hash/memory provenance, absent Mission
+Control delegation/terminal evidence, or a disabled status. The runtime process
+tree was completely stopped, relaunched through the tracked startup script and
+passed the smoke again. The installer was then rerun idempotently and reprovisioned
+the same flow rather than duplicating it.
+
+Final committed-HEAD evidence: AVA booted ready on build
+`5d1666a8-f5dc-4f9c-b891-db23615ec8fd`; live task `DLstSKAasjCj` created real
+run `automation_b7WU9gg3B98HlKDH7I` with executor `activepieces`, status
+`completed`, verification `verified`, report SHA-256
+`3086a286070deaf1cbdaa79e9f2997beebb382526584f7c4ca999a043da2178b`,
+verified memory entry `memory_artifact_b7WU9gg3B98HlKDH7I`, and Mission Control
+child `automation-run-automation_b7WU9gg3B98HlKDH7I`. The follow-up status tool
+reported `configured=true` and `available=true` and included that completed
+real run.
+
+Changed tracked areas: the setup/start PowerShell scripts and desktop launcher;
+the pinned AP compatibility patch; the AP flow provisioner; the opt-in exact
+chat/status live smoke; Activepieces documentation; package commands; and the
+Explorer capability text, real tool-event mapping, mapping test and verified
+manifest. Focused automation tests passed 6/6; focused automation/Explorer
+tests passed 14/14; complete server passed 198 files / 1,537 tests; complete web
+passed 91 files / 413 tests; server TypeScript and production web/PWA builds
+passed. Explorer contract/reality passed at 35 capabilities, 75/75 tools,
+29/29 routes, 120 verified references and zero broken references. PowerShell
+parsing, `git diff --check`, bounded secret scan, installer idempotency,
+full-process restart and committed-HEAD live smoke all passed.
+
+Known boundary: this is a pinned local source-development runtime and one
+versioned report flow, not arbitrary Activepieces-flow execution. AP reports no
+trusted usage/cost or external run ID for this synchronous flow, so AVA keeps
+those fields honestly unavailable. Niko's unrelated
+`.claude/settings.local.json` edit and untracked persona research were
+preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (ask AVA `Run AVA's system health report`, then `Is Activepieces
+automation configured and available now?`; both should now use the real runtime)
+
+ADDENDUM: the ordinary committed-head boot reconciler also indexed product
+commit `160611d...` as verified durable improvement record
+`improvement_160611d2fd5b39364a4e` (`Run genuine Activepieces report`).

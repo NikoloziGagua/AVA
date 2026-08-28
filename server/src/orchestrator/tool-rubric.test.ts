@@ -10,6 +10,10 @@ describe("TOOL_RUBRIC", () => {
     expect(TOOL_RUBRIC).toContain("notes_capture");
     expect(TOOL_RUBRIC).toContain("memory_forget");
     expect(TOOL_RUBRIC).toContain("memory_read");
+    expect(TOOL_RUBRIC).toContain("memory_index_capture");
+    expect(TOOL_RUBRIC).toContain("memory_index_search");
+    expect(TOOL_RUBRIC).toContain("memory_index_open");
+    expect(TOOL_RUBRIC).toContain("memory_index_forget");
     expect(TOOL_RUBRIC).toContain("self_improve");
     expect(TOOL_RUBRIC).toContain("focus-default-window.ps1");
     expect(TOOL_RUBRIC).toContain("WinSta0\\Default");
@@ -40,6 +44,12 @@ describe("TOOL_RUBRIC", () => {
   it("instructs that memory-read queries route through memory_read, not recitation", () => {
     expect(TOOL_RUBRIC.toLowerCase()).toContain("what do you remember");
     expect(TOOL_RUBRIC).toContain("memory_read");
+  });
+
+  it("keeps semantic recall source-verified and explicit-capture only", () => {
+    expect(TOOL_RUBRIC).toContain("original conversation range re-verifies");
+    expect(TOOL_RUBRIC).toContain("automatic indexing is not enabled");
+    expect(TOOL_RUBRIC).toContain("exact/keyword matching");
   });
 
   it("hard rules: .env paths blocked, no --dangerously-skip-permissions", () => {

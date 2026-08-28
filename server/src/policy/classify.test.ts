@@ -96,6 +96,12 @@ describe("classifyRisk", () => {
     expect(classifyRisk("memory_remember", { category: "preferences", text: "user prefers pwsh" }).tier).toBe("low");
     expect(classifyRisk("memory_forget", { category: "preferences", line: "old pref" }).tier).toBe("low");
   });
+  it("routes semantic memory search read-only and local index mutations low", () => {
+    expect(classifyRisk("memory_index_search", { query: "prior research" }).tier).toBe("read-only");
+    expect(classifyRisk("memory_index_open", { id: "memory_1" }).tier).toBe("read-only");
+    expect(classifyRisk("memory_index_capture", { title: "Decision" }).tier).toBe("low");
+    expect(classifyRisk("memory_index_forget", { id: "memory_1", expected_version: 1 }).tier).toBe("low");
+  });
   it("routes Notes reads and local mutations without a redundant approval stall", () => {
     expect(classifyRisk("notes_search", { query: "voice" }).tier).toBe("read-only");
     expect(classifyRisk("notes_capture", { content: "idea" }).tier).toBe("low");

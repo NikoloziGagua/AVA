@@ -736,6 +736,82 @@ export async function postMemoryLine(line: string): Promise<void> {
 
 // ── Learned workflows (playbooks) + standing watches — Memory screen read surfaces.
 
+export type MemoryIndexEntry = {
+  id: string;
+  version: number;
+  kind: "research" | "idea" | "remembered";
+  title: string;
+  summary: string;
+  conclusions: string[];
+  openQuestions: string[];
+  nextSteps: string[];
+  tags: string[];
+  project: string | null;
+  privacyLevel: "personal" | "project";
+  embeddingStatus: "pending" | "ready" | "unavailable";
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type MemoryIndexResult = {
+  entry: MemoryIndexEntry;
+  source: {
+    type: "conversation_range";
+    label: string;
+    sessionId: string | null;
+    fromMessageId: number;
+    throughMessageId: number;
+    messageCount: number;
+    status: "verified" | "changed" | "unavailable";
+    verifiedAt: number;
+    reason: string;
+  };
+  match: {
+    mode: "recent" | "lexical" | "semantic" | "hybrid";
+    reason: string;
+    semanticScore: number | null;
+    lexicalScore: number;
+    sharedTerms: string[];
+  };
+  usable: boolean;
+};
+
+export type MemoryIndexSearchResponse = {
+  query: string;
+  project: string | null;
+  mode: "recent" | "lexical" | "semantic" | "hybrid";
+  semanticAvailable: boolean;
+  notice: string | null;
+  results: MemoryIndexResult[];
+};
+
+export async function fetchMemoryIndex(project?: string): Promise<MemoryIndexSearchResponse> {
+  const params = new URLSearchParams();
+  if (project?.trim()) params.set("project", project.trim());
+  const suffix = params.size ? `?${params.toString()}` : "";
+  return request<MemoryIndexSearchResponse>(`/api/memory/index${suffix}`);
+}
+
+export async function searchMemoryIndex(input: {
+  query: string;
+  project?: string;
+}): Promise<MemoryIndexSearchResponse> {
+  return request<MemoryIndexSearchResponse>("/api/memory/index/search", {
+    method: "POST",
+    body: JSON.stringify({
+      query: input.query,
+      ...(input.project?.trim() ? { project: input.project.trim() } : {}),
+    }),
+  });
+}
+
+export async function forgetMemoryIndexEntry(id: string, expectedVersion: number): Promise<void> {
+  await request<{ ok: true }>(`/api/memory/index/${encodeURIComponent(id)}/forget`, {
+    method: "POST",
+    body: JSON.stringify({ expectedVersion }),
+  });
+}
+
 export type PlaybookRow = {
   slug: string;
   trigger: string;

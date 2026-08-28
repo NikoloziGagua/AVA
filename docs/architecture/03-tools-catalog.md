@@ -408,6 +408,30 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 
 **Edge cases.** Missing required fields return precise errors (`missing project slug`, `missing text`, `refresh: no matching observation`, etc.). The exact observation line format the model must use is dictated by the system prompt's "Memory" section, not enforced here — this tool trusts the caller's `text`.
 
+#### Source-linked index tools
+
+When a chat has an active SQLite session, the same builder also exposes
+`memory_index_capture`, `memory_index_search`, `memory_index_open`, and
+`memory_index_forget`.
+
+- **Capture** persists a bounded sanitized summary and a fingerprinted reference
+  to an exact conversation range. Repeating the same range and scope reuses the
+  entry rather than duplicating it.
+- **Search** combines semantic similarity with exact/keyword evidence and returns
+  the match explanation. Without a configured/working embedding provider it
+  falls back to lexical retrieval and says so.
+- **Open** loads the exact verified source range only after retrieval, bounded to
+  24,000 sanitized characters by default. This lets AVA answer from authoritative
+  detail without copying transcripts into the index.
+- **Forget** requires the entry's current version, removes it from retrieval and
+  deletes its embedding while leaving the source chat alone.
+
+Every returned source is rechecked against the canonical `messages` rows. A
+changed or unavailable source is `usable=false`; vector similarity alone is never
+proof. Project-scoped entries are returned only when that project is explicitly
+selected. The compact index is SQLite-backed and intentionally separate from the
+small Markdown blocks injected into every prompt.
+
 ---
 
 ### 5.10 `read_claude_updates` — read Claude's dev-log notes

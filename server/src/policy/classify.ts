@@ -8,6 +8,8 @@ const READ_ONLY_TOOLS = new Set([
   "fs_read", "fs_list", "fs_stat",
   "chrome_read_page", "chrome_screenshot", "chrome_tabs", "chrome_snapshot",
   "memory_read",
+  "memory_index_search",
+  "memory_index_open",
   // Pure reads that previously fell through to the unknown-tool default
   // ("medium" → ask) and paid a 15s veto stall on EVERY call — the API tools
   // added for speed were the slowest to start. All of these only read state.
@@ -145,8 +147,11 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   }
   if (tool === "person_remember") return { tier: "low", reason: "local people-map update" };
 
-  if (tool === "memory_remember" || tool === "memory_forget") {
-    return { tier: "low", reason: "memory mutation stays inside the local memory dir" };
+  if (
+    tool === "memory_remember" || tool === "memory_forget"
+    || tool === "memory_index_capture" || tool === "memory_index_forget"
+  ) {
+    return { tier: "low", reason: "memory mutation stays inside local AVA state" };
   }
 
   if (tool === "notes_capture" || tool === "notes_update" || tool === "notes_promote") {

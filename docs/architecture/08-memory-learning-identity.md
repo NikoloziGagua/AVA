@@ -32,7 +32,8 @@ All paths are absolute. Code citations use `path:line`.
    - [Promotion, refresh, supersede, forget](#27-promotion-refresh-supersede-forget)
    - [Projects and the project index](#28-projects-and-the-project-index)
    - [The runtime memory tools (how Ava writes)](#29-the-runtime-memory-tools-how-ava-writes)
-   - [Auto-learning from corrections](#210-auto-learning-from-corrections)
+   - [Source-linked semantic index](#210-source-linked-semantic-index)
+   - [Auto-learning from corrections](#211-auto-learning-from-corrections)
 3. [Identity and the system prompt](#3-identity-and-the-system-prompt)
    - [The persona (seeded identity)](#31-the-persona-seeded-identity)
    - [The capability map](#32-the-capability-map)
@@ -69,10 +70,13 @@ it knows. That prompt is assembled, layer by layer, from files on disk: a seeded
 rubric**, the list of allowed **filesystem roots**, and — when relevant — a matched
 **playbook** (a learned procedure) and **project context**.
 
-Memory is not a database of conversation history. It is a small, curated set of
-Markdown files that Ava deliberately writes to using memory tools, and which a human
-can read and edit from the phone. The design goal is a memory you can audit at a
-glance, not an opaque vector store.
+The always-loaded preference/observation memory is not a database of conversation
+history. It remains a small, curated set of Markdown files that Ava deliberately
+writes using memory tools, and which a human can read and edit from the phone.
+Alongside it, AVA now has a bounded SQLite **discovery index** for explicitly
+selected research and developed ideas. That index stores compact summaries and
+source references, not transcript copies; embeddings locate candidates but never
+replace verification of the authoritative conversation messages.
 
 ```mermaid
 flowchart TB
@@ -428,7 +432,47 @@ Ava the exact line format, the confidence ladder, and *when* to use refresh vs
 supersede vs forget — so the model produces well-formed calls without the tool having
 to repair bad input.
 
-### 2.10 Auto-learning from corrections
+### 2.10 Source-linked semantic index
+
+`server/src/memory-index/` implements a separate retrieval layer for substantial
+research, developed ideas and explicit "remember this discussion" requests. Its
+canonical entry is a sanitized compact record in SQLite: title, summary,
+conclusions, open questions, next steps, tags, privacy scope and timestamps. A
+source row points to an exact persisted message range and stores a SHA-256 content
+fingerprint. Transcript bodies are not copied into the index.
+
+The runtime tools are:
+
+- `memory_index_capture` selects a bounded range (maximum 80 messages), sanitizes
+  the supplied compact record, persists it idempotently and creates an embedding
+  when a provider is configured.
+- `memory_index_search` combines exact/keyword overlap with cosine similarity. It
+  still works in lexical fallback mode if the embedding provider is absent or
+  fails, and reports that fallback rather than hiding it.
+- `memory_index_open` loads a bounded sanitized source range after retrieval when
+  a detailed answer needs more than the compact locator summary.
+- `memory_index_forget` soft-deletes one exact version and immediately removes its
+  vector. It does not delete the original conversation.
+
+Every list, get and search result recomputes the authoritative range fingerprint.
+Only `source.status=verified` produces `usable=true`; changed or unavailable
+sources remain visible as diagnostic evidence but must not ground an answer.
+Personal entries are visible in the default scope. Project entries require the
+same explicit project boundary and are excluded from other projects.
+
+The default adapter is OpenAI `text-embedding-3-small`, following the official
+[embeddings API shape](https://developers.openai.com/api/docs/guides/embeddings#how-to-get-embeddings).
+Provider, model, vector dimensions and sanitized-input hash travel with every
+vector so incompatible spaces are never compared. SQLite summaries and sources
+remain authoritative; vectors are replaceable discovery data. See
+[`docs/features/semantic-memory-index.md`](../features/semantic-memory-index.md)
+for the contract, limitations and test procedure.
+
+Automatic research/idea indexing and checkpoint generation are deliberately
+deferred. The first release proves explicit capture, cross-chat retrieval, source
+verification and match transparency before introducing background policy.
+
+### 2.11 Auto-learning from corrections
 
 Beyond explicit `memory_remember` calls, Ava captures one signal automatically: **you
 correcting her**. In `chat.ts:125`, before each turn dispatches, the new user message

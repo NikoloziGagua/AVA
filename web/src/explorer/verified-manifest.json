@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787868317263,
+  "generatedAt": 1787875883948,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -295,6 +295,36 @@
       "capability": "memory.durable",
       "path": "server/src/memory/forget.ts",
       "symbol": "forgetLast/forgetMatch/forgetProject",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "path": "server/src/memory-index/store.ts",
+      "symbol": "MemoryIndexService",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "path": "server/src/memory-index/embedding.ts",
+      "symbol": "OpenAIMemoryEmbedder",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "path": "server/src/routes/memory.ts",
+      "symbol": "memoryRoutes",
+      "kind": "route"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "path": "server/src/tools/memory-mcp.ts",
+      "symbol": "buildMemoryIndexTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "path": "web/src/memory/MemoryIndexSection.tsx",
+      "symbol": "MemoryIndexSection",
       "kind": "implementation"
     },
     {
@@ -638,6 +668,14 @@
       "route": "/api/memory"
     },
     {
+      "capability": "memory.semantic-index",
+      "route": "/api/memory/index"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "route": "/api/memory/index/search"
+    },
+    {
       "capability": "memory.structured-notes",
       "route": "/api/notes"
     },
@@ -833,6 +871,22 @@
     },
     {
       "name": "memory_forget",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_index_capture",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_index_search",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_index_open",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_index_forget",
       "file": "server/src/tools/memory-mcp.ts"
     },
     {

@@ -5,8 +5,17 @@ import { applyRefresh, applySupersede, serializeObservation, type Confidence } f
 import { forgetLast, forgetMatch, forgetProject } from "../memory/forget.js";
 import { rememberObservation } from "../memory/remember.js";
 import { ensureProjectIndexed } from "../memory/project-index.js";
+import type { Db } from "../state/db.js";
+import { listMessages } from "../state/messages.js";
+import { MemoryIndexService } from "../memory-index/store.js";
+import { MEMORY_INDEX_KINDS, MEMORY_PRIVACY_LEVELS, type MemoryIndexKind, type MemoryPrivacyLevel } from "../memory-index/types.js";
 
-export type MemoryToolDeps = { memoryDir: string };
+export type MemoryToolDeps = {
+  memoryDir: string;
+  db?: Db;
+  index?: MemoryIndexService;
+  sessionId?: string | null;
+};
 
 function buildMemoryRead(deps: MemoryToolDeps): ToolDef {
   return {
@@ -188,6 +197,218 @@ function buildMemoryForget(deps: MemoryToolDeps): ToolDef {
   };
 }
 
+function stringList(value: unknown): string[] | undefined {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : undefined;
+}
+
+export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
+  if (!deps.db || !deps.index || !deps.sessionId) return [];
+  const db = deps.db;
+  const index = deps.index;
+  const sessionId = deps.sessionId;
+  return [
+    {
+      tool: {
+        name: "memory_index_capture",
+        description:
+          "Index an important research result or developed idea from this conversation when Sir explicitly asks AVA to remember/index it. Store a concise summary and source range, not the transcript. Use start_marker to select the first relevant message, or recent_messages for a bounded recent segment.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: MEMORY_INDEX_KINDS },
+            title: { type: "string", description: "Short, specific memory title." },
+            summary: { type: "string", description: "Useful compact summary of the developed research or idea." },
+            conclusions: { type: "array", items: { type: "string" } },
+            open_questions: { type: "array", items: { type: "string" } },
+            next_steps: { type: "array", items: { type: "string" } },
+            tags: { type: "array", items: { type: "string" } },
+            project: { type: "string", description: "Required when privacy_level=project." },
+            privacy_level: { type: "string", enum: MEMORY_PRIVACY_LEVELS },
+            start_marker: { type: "string", description: "A distinctive phrase present in the first relevant conversation message." },
+            start_message_id: { type: "integer", description: "Optional exact source boundary when already known." },
+            through_message_id: { type: "integer", description: "Optional exact final source boundary when already known." },
+            recent_messages: { type: "integer", minimum: 1, maximum: 40, description: "Fallback segment size; defaults to 10." },
+          },
+          required: ["kind", "title", "summary"],
+        },
+      },
+      run: async (args) => {
+        const all = listMessages(db, sessionId);
+        if (!all.length) return { ok: false, text: "This conversation has no persisted messages to index." };
+        const explicitThrough = Number(args.through_message_id);
+        const through = Number.isInteger(explicitThrough) && explicitThrough > 0
+          ? all.find((message) => message.id === explicitThrough)
+          : all.at(-1);
+        if (!through) return { ok: false, text: "The requested final source message was not found." };
+        const eligible = all.filter((message) => message.id <= through.id);
+        let from = null as typeof eligible[number] | null;
+        const explicitFrom = Number(args.start_message_id);
+        if (Number.isInteger(explicitFrom) && explicitFrom > 0) {
+          from = eligible.find((message) => message.id === explicitFrom) ?? null;
+        } else if (typeof args.start_marker === "string" && args.start_marker.trim()) {
+          const marker = args.start_marker.trim().toLocaleLowerCase();
+          for (let indexAt = eligible.length - 1; indexAt >= 0; indexAt -= 1) {
+            if (eligible[indexAt]!.content.toLocaleLowerCase().includes(marker)) {
+              from = eligible[indexAt]!;
+              break;
+            }
+          }
+          if (!from) return { ok: false, text: "The start_marker was not found in this conversation. Use a phrase copied from the first relevant message or recent_messages." };
+        } else {
+          const countRaw = Number(args.recent_messages ?? 10);
+          const count = Number.isInteger(countRaw) ? Math.max(1, Math.min(40, countRaw)) : 10;
+          from = eligible[Math.max(0, eligible.length - count)] ?? null;
+        }
+        if (!from || from.id > through.id) return { ok: false, text: "The selected conversation range is invalid." };
+        const kind = typeof args.kind === "string" && (MEMORY_INDEX_KINDS as readonly string[]).includes(args.kind)
+          ? args.kind as MemoryIndexKind
+          : null;
+        const privacyLevel = typeof args.privacy_level === "string" && (MEMORY_PRIVACY_LEVELS as readonly string[]).includes(args.privacy_level)
+          ? args.privacy_level as MemoryPrivacyLevel
+          : "personal";
+        if (!kind) return { ok: false, text: "kind must be research, idea or remembered" };
+        try {
+          const captured = await index.capture({
+            sessionId,
+            fromMessageId: from.id,
+            throughMessageId: through.id,
+            kind,
+            title: String(args.title ?? ""),
+            summary: String(args.summary ?? ""),
+            conclusions: stringList(args.conclusions),
+            openQuestions: stringList(args.open_questions),
+            nextSteps: stringList(args.next_steps),
+            tags: stringList(args.tags),
+            project: typeof args.project === "string" ? args.project : null,
+            privacyLevel,
+          });
+          const result = captured.result;
+          return {
+            ok: true,
+            text: JSON.stringify({
+              created: captured.created,
+              id: result.entry.id,
+              version: result.entry.version,
+              title: result.entry.title,
+              embedding: result.entry.embeddingStatus,
+              source: result.source,
+              note: captured.created
+                ? "Indexed once with a verified conversation source."
+                : "Reused the existing entry for this exact source range; no duplicate was created.",
+            }),
+          };
+        } catch (error) {
+          return { ok: false, text: error instanceof Error ? error.message : String(error) };
+        }
+      },
+    },
+    {
+      tool: {
+        name: "memory_index_search",
+        description:
+          "Search AVA's compact cross-session index for prior research, developed ideas, decisions and remembered discussions. Use this before saying AVA cannot recall prior work. Only rely on results whose source status is verified; explain the match reason and any fallback notice.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+            project: { type: "string", description: "Optional explicit project boundary. Other projects are excluded." },
+            limit: { type: "integer", minimum: 1, maximum: 20 },
+          },
+          required: ["query"],
+        },
+      },
+      run: async (args) => {
+        try {
+          const found = await index.search(String(args.query ?? ""), {
+            project: typeof args.project === "string" ? args.project : null,
+            limit: Number.isInteger(Number(args.limit)) ? Number(args.limit) : undefined,
+          });
+          return {
+            ok: true,
+            text: JSON.stringify({
+              ...found,
+              instruction: "Use only usable=true results. A match locates evidence; it does not replace the verified source.",
+            }),
+          };
+        } catch (error) {
+          return { ok: false, text: error instanceof Error ? error.message : String(error) };
+        }
+      },
+    },
+    {
+      tool: {
+        name: "memory_index_open",
+        description:
+          "Open the authoritative conversation range behind one source-verified index result. Search first, then use its exact ID and matching project boundary. Content is sanitized and bounded; do not use messages when usable=false.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            project: { type: "string", description: "Required for a project-scoped result." },
+          },
+          required: ["id"],
+        },
+      },
+      run: async (args) => {
+        const id = String(args.id ?? "").trim();
+        if (!id) return { ok: false, text: "id is required" };
+        const source = index.readSource(id, {
+          project: typeof args.project === "string" ? args.project : null,
+        });
+        if (!source) return { ok: false, text: "Indexed memory not found in this privacy scope." };
+        return {
+          ok: source.result.usable,
+          text: JSON.stringify({
+            ...source,
+            instruction: source.result.usable
+              ? "Answer from these authoritative sanitized source messages, using the compact summary only as a locator. State when the returned range is truncated."
+              : "Do not answer from this memory because its source is not verified.",
+          }),
+        };
+      },
+    },
+    {
+      tool: {
+        name: "memory_index_forget",
+        description:
+          "Forget one semantic-index entry by exact ID and current version. Search first when Sir describes the memory rather than naming it. Forget removes it from lexical and semantic retrieval without deleting the original conversation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            expected_version: { type: "integer" },
+          },
+          required: ["id", "expected_version"],
+        },
+      },
+      run: async (args) => {
+        const id = String(args.id ?? "");
+        const expectedVersion = Number(args.expected_version);
+        if (!id || !Number.isInteger(expectedVersion) || expectedVersion < 1) {
+          return { ok: false, text: "id and expected_version are required" };
+        }
+        const forgotten = index.forget(id, expectedVersion);
+        if (!forgotten.ok) {
+          return {
+            ok: false,
+            text: forgotten.reason === "version_conflict"
+              ? `That memory changed. Search again and use version ${forgotten.currentVersion}.`
+              : "Memory index entry not found.",
+          };
+        }
+        return { ok: true, text: `Forgot semantic memory ${id}. Its embedding was removed; the original conversation was not deleted.` };
+      },
+    },
+  ];
+}
+
 export function buildMemoryTools(deps: MemoryToolDeps): ToolDef[] {
-  return [buildMemoryRead(deps), buildMemoryRemember(deps), buildMemoryForget(deps)];
+  return [
+    buildMemoryRead(deps),
+    buildMemoryRemember(deps),
+    buildMemoryForget(deps),
+    ...buildMemoryIndexTools(deps),
+  ];
 }

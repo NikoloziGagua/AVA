@@ -17,6 +17,7 @@ const ACTION_PATTERNS: RegExp[] = [
   /\bcomputer[\s_-]?use\b/i,
   /\bfs_(read|write|list|stat|delete)\b/i,
   /\bmemory_(remember|forget|read)\b/i,
+  /\bmemory_index_(capture|search|open|forget)\b/i,
   /\bnotes?_(capture|search|update|promote)\b/i,
   /\bchrome_(navigate|click|type|read_page|screenshot|tabs|press_key)\b/i,
 
@@ -48,6 +49,8 @@ const ACTION_PATTERNS: RegExp[] = [
   // and second-person framings ("remember I…", "remember me", "remember you…").
   /\b(remember|forget)\s+(that|what|everything|this|my|i|i'm|me|you|you're|your)\b/i,
   /\bwhat\s+do\s+you\s+remember\b/i,
+  /\b(index|capture|save)\s+(this|that|our)\s+(discussion|research|idea|decision)\b/i,
+  /\bwhat\s+did\s+we\s+(decide|conclude|learn|research)\b/i,
 
   // Visible Notes workspace. This matters most for voice, whose conservative
   // classifier would otherwise strip tools from "put this in notes".

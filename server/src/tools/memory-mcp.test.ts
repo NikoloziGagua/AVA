@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMemoryTools } from "./memory-mcp.js";
 import { loadProjectIndex } from "../memory/project-index.js";
+import { openInMemoryDb } from "../state/db.js";
+import { createSession } from "../state/sessions.js";
+import { appendMessage } from "../state/messages.js";
+import { MemoryIndexService } from "../memory-index/store.js";
+import type { MemoryEmbedder } from "../memory-index/types.js";
 
 let dir: string;
 beforeEach(() => {
@@ -230,5 +235,61 @@ describe("memory_forget", () => {
     const r = await t.run({ mode: "match", target: "pwsh" }, ctx);
     expect(r.ok).toBe(false);
     expect(r.text).toContain("not found");
+  });
+});
+
+describe("source-linked memory tools", () => {
+  const embedder: MemoryEmbedder = {
+    provider: "fixture",
+    model: "fixture-v1",
+    async embed(text) {
+      const related = /archive|remember prior research|durable recall/i.test(text);
+      return { provider: "fixture", model: "fixture-v1", vector: related ? [1, 0] : [0, 1] };
+    },
+  };
+
+  it("captures a selected current-chat segment and retrieves it from another chat", async () => {
+    const db = openInMemoryDb();
+    const source = createSession(db, { title: "Research archive idea" });
+    appendMessage(db, { sessionId: source.id, role: "user", content: "Start of memory architecture: build a knowledge archive." });
+    appendMessage(db, { sessionId: source.id, role: "assistant", content: "Keep SQLite canonical and verify source ranges. password=source-fixture-secret" });
+    appendMessage(db, { sessionId: source.id, role: "user", content: "Index this discussion." });
+    const index = new MemoryIndexService(db, embedder);
+    const sourceTools = buildMemoryTools({ memoryDir: dir, db, index, sessionId: source.id });
+    const captureTool = sourceTools.find((tool) => tool.tool.name === "memory_index_capture")!;
+    const captured = await captureTool.run({
+      kind: "idea",
+      title: "Durable research archive",
+      summary: "A source-linked archive should retrieve research while SQLite remains authoritative.",
+      conclusions: ["Verify source before using a memory"],
+      start_marker: "Start of memory architecture",
+      tags: ["memory", "research"],
+    }, ctx);
+    expect(captured.ok).toBe(true);
+    expect(JSON.parse(captured.text)).toMatchObject({ created: true, source: { status: "verified", messageCount: 3 } });
+
+    const other = createSession(db, { title: "Later chat" });
+    appendMessage(db, { sessionId: other.id, role: "user", content: "How should AVA remember prior research?" });
+    const otherTools = buildMemoryTools({ memoryDir: dir, db, index, sessionId: other.id });
+    const searchTool = otherTools.find((tool) => tool.tool.name === "memory_index_search")!;
+    const found = await searchTool.run({ query: "How should AVA remember prior research?" }, ctx);
+    expect(found.ok).toBe(true);
+    const foundPayload = JSON.parse(found.text);
+    expect(foundPayload).toMatchObject({
+      semanticAvailable: true,
+      results: [{ usable: true, entry: { title: "Durable research archive" }, source: { status: "verified" } }],
+    });
+
+    const openTool = otherTools.find((tool) => tool.tool.name === "memory_index_open")!;
+    const opened = await openTool.run({ id: foundPayload.results[0].entry.id }, ctx);
+    expect(opened.ok).toBe(true);
+    expect(opened.text).toContain("Start of memory architecture");
+    expect(opened.text).toContain("password: ***");
+    expect(opened.text).not.toContain("source-fixture-secret");
+  });
+
+  it("does not add index tools without a database, service and source session", () => {
+    expect(buildMemoryTools({ memoryDir: dir }).map((tool) => tool.tool.name))
+      .toEqual(["memory_read", "memory_remember", "memory_forget"]);
   });
 });

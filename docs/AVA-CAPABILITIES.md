@@ -59,6 +59,7 @@ approval row + a push notification, blocking up to 10 minutes). `.env` access an
 | **take_screenshot** | Capture a PNG of the Windows desktop under `Downloads/Ava/screenshots` and return **only the path** — the model has *not* seen the image. Its description and result say so plainly, so Ava never narrates a screenshot it can't actually see (fixes a live case of Ava confidently "describing" screenshots it never viewed). | Low. |
 | **look_at_screen** | Ava's honest eyes: capture the desktop **and** run ONE vision call on a standard multimodal model, returning a factual 2–4 sentence description (or an answer to a specific `question`). This is what Ava uses to describe the screen or verify a visual result. Registered **only when an OpenAI key is set**; 60 s tool budget. | Medium (a paid vision call). |
 | **memory_read / memory_remember / memory_forget** | Durable cross-session memory (see §3). | Low; secrets scrubbed on write. |
+| **memory_index_capture / memory_index_search / memory_index_open / memory_index_forget** | Explicitly capture and recover source-linked research, developed ideas and decisions across chats. Semantic similarity helps discovery; the original conversation range is re-verified and can be opened before detailed use. | Search/open are read-only; capture/forget are low-risk local persistence. Compact content is scrubbed before storage and embedding. |
 | **notes_capture / notes_search / notes_update / notes_promote** | Capture, find and organise general or project Notes; move cards through Ideas/Doing/Review/Done; promote a note to a task or explicit self-improvement request. | Note changes are low-risk local persistence. Self-improvement promotion enters the existing approval gate. |
 | **visual_explanation_create / research_visual_create / visual_explanation_list** | Create, revise or reopen progressive inline visuals. Ordinary mechanisms use the stable-ID process model. Deep research automatically chooses a genuine geographic map, timeline, evidence-gap matrix, claim-evidence graph, sourced chart or process diagram and carries claim-level sources, confidence, disagreement and gaps into every scene. | Low-risk local persistence. Inputs are schema-validated and recursively secret-scrubbed; renderers never execute generated HTML/JavaScript and work offline after installation. |
 | **strategy_room_open** | Move the authoritative current AVA chat snapshot into the shared Niko + AVA + Codex Strategy Room. | Low-risk, bounded discussion only. Returning an approved conclusion adds a proposal to the source chat and never executes it. |
@@ -86,6 +87,13 @@ subscriptions, rules, and self-improvement intents.
   `password/secret/token:` lines).
 - **Projects:** a matching project note auto-loads as context when a prompt or
   tool path mentions its roots.
+- **Source-linked research and idea index:** when Sir explicitly asks AVA to
+  index a developed discussion, AVA stores one compact summary in SQLite plus
+  the exact conversation range and a fingerprint. Retrieval combines semantic
+  similarity with exact/keyword evidence, explains why an item matched, and
+  refuses to treat it as usable if the original messages changed or vanished.
+  An OpenAI embedding is used when configured; keyword retrieval remains an
+  honest fallback. Automatic indexing is deliberately not enabled in v1.
 - **Playbooks (procedural memory, evidence-gated):** after a run reaches a
   terminal receipt with an independently **verified task outcome** and ≥2 tool
   steps, a side model distills it into a playbook —

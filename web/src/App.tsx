@@ -247,7 +247,10 @@ export function App() {
             exit={exitTo}
             transition={enterT}
           >
-            <MemoryScreen onClose={() => setView({ name: "orbit" })} />
+            <MemoryScreen
+              onClose={() => setView({ name: "orbit" })}
+              onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
+            />
           </motion.div>
         )}
         {view.name === "rules" && (

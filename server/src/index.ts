@@ -62,6 +62,8 @@ import { DEFAULT_VOICE } from "./routes/voice-defaults.js";
 import { buildDeliverer } from "./push/deliver.js";
 import { buildProvider } from "./orchestrator/llm/factory.js";
 import { bootstrapMemoryDir } from "./memory/bootstrap.js";
+import { MemoryIndexService } from "./memory-index/store.js";
+import { OpenAIMemoryEmbedder } from "./memory-index/embedding.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
 import { loadSelfKnowledge } from "./self/identity.js";
@@ -572,10 +574,20 @@ function queueDiscussion(topic: string, sessionId: string | null): string {
   return id;
 }
 
+const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;
+const openai = cfg.openaiApiKey ? new (await import("openai")).default({ apiKey: cfg.openaiApiKey }) : null;
+const memoryIndex = new MemoryIndexService(
+  db,
+  openai
+    ? new OpenAIMemoryEmbedder(openai, process.env.MEMORY_EMBEDDING_MODEL?.trim() || undefined)
+    : null,
+);
+
 const agentDeps = {
   pidfiles,
   fsRoots: cfg.fsRoots,
   memoryDir: cfg.memoryDir,
+  memoryIndex,
   dataDir: cfg.dataDir,
   getChrome,
   pushDeliver,
@@ -607,9 +619,6 @@ const agentDeps = {
         : null,
     })),
 };
-
-const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;
-const openai = cfg.openaiApiKey ? new (await import("openai")).default({ apiKey: cfg.openaiApiKey }) : null;
 
 const app = express();
 app.use(express.json({ limit: "1mb" }));
@@ -644,7 +653,7 @@ app.use("/api/chips", chipsRoutes(db, requireToken(db), { memoryDir: cfg.memoryD
 app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
   supported: provider?.name === "openai",
 }));
-app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
+app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir, index: memoryIndex }));
 app.use("/api/notes", notesRoutes(db, requireToken(db), { queueSelfImprove }));
 app.use("/api/visual-explanations", visualExplanationRoutes(db, requireToken(db)));
 app.use("/api/capabilities", capabilityRoutes(requireToken(db), capabilityRouteDeps));

@@ -79,6 +79,7 @@ import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
 import { TaskReceiptBuilder, type TaskReceipt } from "../receipts/task-receipt.js";
 import { resolveRunObjective } from "../orchestrator/objective-lineage.js";
 import { getTaskReceipt, pruneTaskReceipts, saveTaskReceipt } from "../state/task-receipts.js";
+import type { MemoryIndexService } from "../memory-index/store.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -179,6 +180,8 @@ export type AgentDeps = {
   pidfiles: PidfileRegistry;
   fsRoots: string[];
   memoryDir: string;
+  /** AVA-owned compact semantic index; absent only in isolated legacy tests. */
+  memoryIndex?: MemoryIndexService;
   dataDir: string;
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
@@ -712,7 +715,12 @@ export function chatRoutes(
         // Conversation mode skips the Chromium boot wait and the heavy tool
         // builders, but memory tools stay available so the agent can still
         // record observations or recall facts mid-conversation.
-        const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
+        const memoryTools = buildMemoryTools({
+          memoryDir: agentDeps.memoryDir,
+          db,
+          index: agentDeps.memoryIndex,
+          sessionId: sid,
+        });
         // Notes stay available in both routing modes: "put this in Notes" is a
         // lightweight conversational instruction, but it must still persist a
         // structured visible record. Voice records the same source lineage.

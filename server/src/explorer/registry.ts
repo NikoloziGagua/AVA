@@ -225,6 +225,7 @@ export function capabilityIdsForTool(tool: string): string[] {
   if (/^notes_/.test(tool)) return ["memory.structured-notes"];
   if (tool === "strategy_room_open") return ["conversation.strategy-room"];
   if (/^(visual_explanation_|research_visual_)/.test(tool)) return ["interface.visual-explanations"];
+  if (/^memory_index_/.test(tool)) return ["memory.semantic-index"];
   if (/^memory_/.test(tool)) return ["memory.durable"];
   if (/^watch_/.test(tool)) return ["automation.watches"];
   if (/^shopify_/.test(tool)) return ["services.shopify-products"];

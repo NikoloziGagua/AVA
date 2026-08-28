@@ -48,6 +48,9 @@ describe("classifyIntent", () => {
     expect(classifyIntent("remember me as terse")).toBe("action");
     expect(classifyIntent("remember I'm allergic to dairy")).toBe("action");
     expect(classifyIntent("remember you should always confirm before pushing")).toBe("action");
+    expect(classifyIntent("index this discussion")).toBe("action");
+    expect(classifyIntent("capture our research")).toBe("action");
+    expect(classifyIntent("what did we decide about memory?")).toBe("action");
   });
 
   it("keeps Notes capture available to conservative voice routing", () => {

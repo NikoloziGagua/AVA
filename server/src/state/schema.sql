@@ -21,6 +21,62 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
 
+-- Semantic memory is a compact discovery index, not a transcript duplicate.
+-- Entries contain only bounded sanitized summaries; sources retain exact
+-- conversation-range references and a content fingerprint so retrieval can be
+-- verified against the authoritative message rows before AVA trusts it.
+CREATE TABLE IF NOT EXISTS memory_index_entries (
+  id TEXT PRIMARY KEY,
+  version INTEGER NOT NULL DEFAULT 1,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  conclusions TEXT NOT NULL DEFAULT '[]',
+  open_questions TEXT NOT NULL DEFAULT '[]',
+  next_steps TEXT NOT NULL DEFAULT '[]',
+  tags TEXT NOT NULL DEFAULT '[]',
+  project TEXT,
+  project_key TEXT,
+  privacy_level TEXT NOT NULL DEFAULT 'personal',
+  status TEXT NOT NULL DEFAULT 'active',
+  embedding_status TEXT NOT NULL DEFAULT 'pending',
+  source_fingerprint TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  forgotten_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_index_scope
+  ON memory_index_entries(status, privacy_level, project_key, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_index_sources (
+  entry_id TEXT PRIMARY KEY REFERENCES memory_index_entries(id) ON DELETE CASCADE,
+  session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  source_label TEXT NOT NULL,
+  from_message_id INTEGER NOT NULL,
+  through_message_id INTEGER NOT NULL,
+  message_count INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  availability TEXT NOT NULL DEFAULT 'verified',
+  last_verified_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_index_source_session
+  ON memory_index_sources(session_id, from_message_id, through_message_id);
+
+-- Vectors are replaceable discovery data. Their provider/model/dimensions and
+-- exact sanitized-input hash travel with them so incompatible vector spaces
+-- are never compared. Forgetting an entry deletes this row immediately.
+CREATE TABLE IF NOT EXISTS memory_index_embeddings (
+  entry_id TEXT PRIMARY KEY REFERENCES memory_index_entries(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  input_hash TEXT NOT NULL,
+  vector BLOB NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
 -- Sanitized task-result snapshots shown in conversation. Mission Control owns
 -- the full event history; this table stores only the bounded receipt JSON so
 -- the latest diagnostic card survives a server restart or later reopen.

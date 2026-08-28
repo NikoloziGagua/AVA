@@ -10,6 +10,7 @@
     "test:watch": "vitest",
     "smoke:memory-retrieval": "tsx scripts/memory-retrieval-smoke.ts",
     "smoke:memory-governance": "tsx scripts/memory-governance-smoke.ts",
+    "smoke:improvement-index": "tsx scripts/improvement-index-smoke.ts",
     "smoke:ufo-experiment": "tsx scripts/ufo-experiment-smoke.ts",
     "setup:ufo-runtime": "tsx scripts/install-ufo-runtime.ts",
     "smoke:ufo-runtime": "tsx scripts/ufo-runtime-smoke.ts",

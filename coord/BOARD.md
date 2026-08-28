@@ -4082,3 +4082,30 @@ NEEDS: niko (test from AVA Action chat by asking “run the Microsoft UFO Notepa
 proof”, approve the high-risk prompt, then inspect the verified receipt and the
 single Mission Control child trace; choose a separate next fixture only if this
 bounded real capability is useful)
+
+---
+
+### 2026-08-28 - codex - CLAIM: source-verified improvement indexing
+
+Niko correctly identified that the completed semantic-memory sequence indexes
+research and developed Ideas but does not automatically index shipped AVA
+improvements. The genuine Microsoft UFO Notepad work is documented in Git and
+the coordination board yet is absent from Memory -> Index. The existing
+self-changelog and developer-update JSONL are separate lookup paths rather than
+the agreed fast source-verified index.
+
+I am continuing the existing Codex-owned semantic-memory area for one bounded
+repair: add `improvement` as a first-class indexed kind, create an immutable
+sanitized improvement record with exact commit/source evidence, automatically
+record successful Self swaps, reconcile qualifying committed AVA product
+changes idempotently on boot, and backfill the genuine UFO improvement. Search,
+automatic chat/OpenAI/Hume recall, governance, project/privacy boundaries and
+Memory UI will reuse the existing index rather than introduce another log. A
+commit must still exist and match before an improvement is usable; coordination-
+only commits, uncommitted work, failed runs and documentation claims alone will
+not become learned capability. Existing unrelated changes remain untouched.
+Forge is outside scope and will not be inspected or modified.
+
+NEEDS: codex (implement, stress-test through AVA, commit, and continue to the
+next bounded evidence-backed improvement only after this indexing contract is
+proven)

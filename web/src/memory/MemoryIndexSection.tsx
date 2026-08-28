@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, BookOpenCheck, Database, GitCompareArrows, MessageSquareText, Pencil, Pin, Search, ShieldCheck } from "lucide-react";
+import { AlertTriangle, BookOpenCheck, Database, GitCommit, GitCompareArrows, MessageSquareText, Pencil, Pin, Search, ShieldCheck } from "lucide-react";
 import {
   correctMemoryIndexEntry,
   fetchMemoryIndex,
@@ -275,11 +275,17 @@ export function MemoryIndexCard({
         <div className="mt-2 space-y-2 text-xs leading-relaxed text-white/50">
           <p>{match.reason}</p>
           <p>{source.reason}</p>
-          <p>Source verification checks that the linked conversation is unchanged; it does not independently certify the summary.</p>
-          <p>
-            Source: {source.label} / messages {source.fromMessageId}-{source.throughMessageId}
-            {source.sessionId ? " / linked" : " / source link unavailable"}
-          </p>
+          <p>{source.type === "improvement_record"
+            ? "Source verification checks the immutable improvement record and confirms its exact Git commit remains on AVA's current branch. It proves what code changed, not that every capability succeeds in every environment."
+            : "Source verification checks that the linked conversation is unchanged; it does not independently certify the summary."}</p>
+          {source.type === "improvement_record" ? (
+            <p className="inline-flex items-center gap-1.5"><GitCommit size={12} />Source: {source.label}{source.commitSha ? ` / ${source.commitSha}` : ""} / immutable product record</p>
+          ) : (
+            <p>
+              Source: {source.label} / messages {source.fromMessageId}-{source.throughMessageId}
+              {source.sessionId ? " / linked" : " / source link unavailable"}
+            </p>
+          )}
           <p>Captured {new Date(entry.createdAt).toLocaleString()} / memory {entry.id}</p>
           {entry.captureReason && <p>Capture provenance: {entry.captureReason}</p>}
           <p>
@@ -357,9 +363,9 @@ export function MemoryIndexSection({ onOpenChat }: { onOpenChat?: (sessionId: st
                 <Database size={17} />
                 <span className="hud text-[10px] uppercase tracking-[0.22em]">Source-linked recall</span>
               </div>
-              <h2 id="memory-index-title" className="text-xl font-medium text-white/90">Research & idea index</h2>
+              <h2 id="memory-index-title" className="text-xl font-medium text-white/90">Research, ideas & improvements</h2>
               <p className="mt-1 max-w-2xl text-xs leading-relaxed text-white/45">
-                Completed research and ideas you meaningfully develop with AVA are captured automatically. Material decisions and refinements become linked, immutable checkpoints rather than overwriting earlier conclusions. You can still say "remember this" for anything else. Search finds the compact summary, then AVA checks the original conversation before trusting it.
+                Completed research, ideas you meaningfully develop with AVA, and committed AVA product improvements are captured automatically. Material decisions and refinements become linked, immutable checkpoints rather than overwriting earlier conclusions. You can still say "remember this" for anything else. Search finds the compact summary, then AVA checks the original conversation or Git commit before trusting it.
               </p>
             </div>
             <div className="flex items-center gap-2 rounded-full border border-white/10 bg-black/20 px-3 py-1.5 text-[10px] text-white/45">
@@ -404,7 +410,7 @@ export function MemoryIndexSection({ onOpenChat }: { onOpenChat?: (sessionId: st
           {error && <div className="rounded-xl border border-red-300/20 bg-red-300/[0.06] px-3 py-2 text-xs text-red-200" role="alert">{error}</div>}
           {!error && !loading && response?.results.length === 0 && (
             <div className="rounded-xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/35">
-              No source-linked memory matched. Finish a research or developed-idea discussion, or tell AVA "remember this" explicitly.
+              No source-linked memory matched. Finish research, develop an idea, ship an AVA improvement, or tell AVA "remember this" explicitly.
             </div>
           )}
           <div className="grid gap-3 xl:grid-cols-2">

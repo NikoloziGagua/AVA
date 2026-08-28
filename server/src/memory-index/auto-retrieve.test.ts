@@ -236,6 +236,36 @@ describe("automatic source-verified memory retrieval", () => {
     expect(failed.reason).toContain("failed safely");
   });
 
+  it("recalls a committed improvement across chat and both voice channels from its verified Git evidence", async () => {
+    const db = openInMemoryDb();
+    const sha = "d".repeat(40);
+    const service = new MemoryIndexService(db, null, (candidate) => candidate === sha);
+    await service.captureImprovement({
+      commitSha: sha,
+      sourceKind: "git_commit",
+      actor: "codex",
+      title: "Genuine Microsoft UFO Notepad workflow",
+      summary: "AVA added a bounded genuine Microsoft UFO runtime path for disposable Notepad tasks.",
+      capabilities: ["Microsoft UFO"],
+      verification: ["A committed benign Notepad smoke completed."],
+    });
+
+    for (const channel of ["chat", "openai_voice", "hume_voice"] as const) {
+      const decision = await retrieveAutomaticMemory(service, {
+        query: "What update added the genuine Microsoft UFO Notepad workflow?",
+        channel,
+        currentSessionId: `fresh-${channel}`,
+      });
+      expect(decision).toMatchObject({
+        channel,
+        status: "used",
+        selected: [{ kind: "improvement", sourceStatus: "verified", sourceSessionId: null }],
+      });
+      expect(decision.prompt).toContain(`Git commit: ${sha}`);
+      expect(decision.prompt).toContain("immutable committed improvement records");
+    }
+  });
+
   it("records one idempotent privacy-bounded Mission Control explanation", async () => {
     const f = fixture();
     await capture(f);

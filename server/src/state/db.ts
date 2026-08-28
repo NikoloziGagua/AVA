@@ -27,6 +27,10 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "memory_index_entries", "checkpoint_sequence", "INTEGER NOT NULL DEFAULT 1");
   tryAddColumn(db, "memory_index_entries", "checkpoint_kind", "TEXT NOT NULL DEFAULT 'initial'");
   tryAddColumn(db, "memory_index_entries", "checkpoint_reason", "TEXT");
+  // Improvement-index sources reuse the same compact memory entries while
+  // pointing at an immutable committed-change record instead of a chat range.
+  tryAddColumn(db, "memory_index_sources", "source_type", "TEXT NOT NULL DEFAULT 'conversation_range'");
+  tryAddColumn(db, "memory_index_sources", "source_ref", "TEXT");
   db.prepare("UPDATE memory_index_entries SET thread_id = id WHERE thread_id IS NULL").run();
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_index_thread_sequence
     ON memory_index_entries(thread_id, checkpoint_sequence) WHERE thread_id IS NOT NULL`);

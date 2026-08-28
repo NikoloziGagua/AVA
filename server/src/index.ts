@@ -65,6 +65,7 @@ import { bootstrapMemoryDir } from "./memory/bootstrap.js";
 import { MemoryIndexService } from "./memory-index/store.js";
 import { OpenAIMemoryEmbedder } from "./memory-index/embedding.js";
 import { AutoMemoryCaptureCoordinator } from "./memory-index/auto-capture.js";
+import { GitImprovementCommitSource, ImprovementIndexCoordinator } from "./memory-index/improvement-index.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
 import { loadSelfKnowledge } from "./self/identity.js";
@@ -509,6 +510,16 @@ function buildImproverDeps(): ImproverDeps {
     // history so it doesn't undo past fixes.
     onSwapped: (intent, sha) => {
       appendChangelog(cfg.memoryDir, { summary: intent.goal, commit: sha });
+      // The swap is already committed and verified by the Self pipeline. Feed
+      // that exact commit into the same source-verified index used for every
+      // other AVA product change; failure here never rewrites shipment state.
+      void improvementIndex.indexCommit(sha, {
+        actor: "ava",
+        sourceKind: "self_swap",
+        body: intent.goal,
+      }).catch((error) => {
+        log.warn({ err: error instanceof Error ? error.message : String(error), sha }, "self: improvement indexing deferred to boot reconciliation");
+      });
     },
     // Real failures land in the friction ledger — the overnight loop mines it
     // for grounded goals before inventing new ideas.
@@ -579,12 +590,22 @@ function queueDiscussion(topic: string, sessionId: string | null): string {
 
 const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;
 const openai = cfg.openaiApiKey ? new (await import("openai")).default({ apiKey: cfg.openaiApiKey }) : null;
+const improvementCommits = new GitImprovementCommitSource(cfg.repoRoot);
 const memoryIndex = new MemoryIndexService(
   db,
   openai
     ? new OpenAIMemoryEmbedder(openai, process.env.MEMORY_EMBEDDING_MODEL?.trim() || undefined)
     : null,
+  (sha) => improvementCommits.existsOnCurrentBranch(sha),
 );
+const improvementIndex = new ImprovementIndexCoordinator(memoryIndex, improvementCommits);
+void improvementIndex.reconcileRecent(1_000).then((result) => {
+  log.info({ improvementIndex: result }, "memory: committed AVA improvements reconciled");
+}).catch((error) => {
+  // Search and conversation delivery remain available even if Git evidence is
+  // temporarily unreadable. The next boot retries the same idempotent scan.
+  log.warn({ err: error instanceof Error ? error.message : String(error) }, "memory: improvement reconciliation unavailable");
+});
 const memoryAutoCapture = provider
   ? new AutoMemoryCaptureCoordinator(db, provider, memoryIndex).consider
   : undefined;

@@ -87,9 +87,11 @@ subscriptions, rules, and self-improvement intents.
   `password/secret/token:` lines).
 - **Projects:** a matching project note auto-loads as context when a prompt or
   tool path mentions its roots.
-- **Source-linked research and idea index:** completed research and ideas
+- **Source-linked research, idea and improvement index:** completed research and ideas
   meaningfully developed by Sir and AVA are conservatively captured after a
-  clean typed or spoken turn; explicit "remember this" remains available. AVA
+  clean typed or spoken turn; every committed product improvement is reconciled
+  from its exact reachable Git commit, and successful Self swaps enter through
+  the same boundary. Explicit "remember this" remains available. AVA
   stores compact immutable checkpoints in SQLite plus
   the exact conversation range and a fingerprint. Retrieval combines semantic
   similarity with exact/keyword evidence, explains why an item matched, and
@@ -99,7 +101,9 @@ subscriptions, rules, and self-improvement intents.
   failed, contradicted, cancelled and interrupted work. Completed read-only
   research may preserve an honest unverified-evidence limitation. Later material
   Idea changes retain thread/parent/sequence/type/reason lineage; superficial
-  continuation does not create another checkpoint.
+  continuation does not create another checkpoint. Failed or uncommitted work,
+  docs/test-only commits and conversation claims are never promoted as shipped
+  improvements.
 - **Playbooks (procedural memory, evidence-gated):** after a run reaches a
   terminal receipt with an independently **verified task outcome** and ≥2 tool
   steps, a side model distills it into a playbook —

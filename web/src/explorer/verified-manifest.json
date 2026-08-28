@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787889475154,
+  "generatedAt": 1787945232597,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -319,6 +319,12 @@
       "capability": "memory.semantic-index",
       "path": "server/src/memory-index/auto-retrieve.ts",
       "symbol": "retrieveAutomaticMemory",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "path": "server/src/memory-index/improvement-index.ts",
+      "symbol": "ImprovementIndexCoordinator",
       "kind": "implementation"
     },
     {
@@ -1000,6 +1006,22 @@
       "file": "server/src/tools/strategy-room-mcp.ts"
     },
     {
+      "name": "ufo_experiment_status",
+      "file": "server/src/tools/ufo-experiment-mcp.ts"
+    },
+    {
+      "name": "ufo_experiment_observe",
+      "file": "server/src/tools/ufo-experiment-mcp.ts"
+    },
+    {
+      "name": "ufo_experiment_action",
+      "file": "server/src/tools/ufo-experiment-mcp.ts"
+    },
+    {
+      "name": "ufo_runtime_run",
+      "file": "server/src/tools/ufo-experiment-mcp.ts"
+    },
+    {
       "name": "read_claude_updates",
       "file": "server/src/tools/update-log-mcp.ts"
     },
@@ -1028,6 +1050,32 @@
       "file": "server/src/tools/watches-mcp.ts"
     }
   ],
-  "undeclaredTools": [],
-  "problems": []
+  "undeclaredTools": [
+    "ufo_experiment_status",
+    "ufo_experiment_observe",
+    "ufo_experiment_action",
+    "ufo_runtime_run"
+  ],
+  "problems": [
+    {
+      "kind": "undeclared_tool",
+      "tool": "ufo_experiment_status",
+      "file": "server/src/tools/ufo-experiment-mcp.ts"
+    },
+    {
+      "kind": "undeclared_tool",
+      "tool": "ufo_experiment_observe",
+      "file": "server/src/tools/ufo-experiment-mcp.ts"
+    },
+    {
+      "kind": "undeclared_tool",
+      "tool": "ufo_experiment_action",
+      "file": "server/src/tools/ufo-experiment-mcp.ts"
+    },
+    {
+      "kind": "undeclared_tool",
+      "tool": "ufo_runtime_run",
+      "file": "server/src/tools/ufo-experiment-mcp.ts"
+    }
+  ]
 }

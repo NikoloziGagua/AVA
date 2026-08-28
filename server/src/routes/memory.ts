@@ -3,7 +3,7 @@ import { z } from "zod";
 import { readMemoryView } from "../memory/file-view.js";
 import { editLine, deleteLine, appendLineTo } from "../memory/edit-lines.js";
 import { MemoryIndexService } from "../memory-index/store.js";
-import { MEMORY_INDEX_KINDS, MEMORY_PRIVACY_LEVELS } from "../memory-index/types.js";
+import { CONVERSATION_MEMORY_KINDS, MEMORY_PRIVACY_LEVELS } from "../memory-index/types.js";
 
 const PatchBody = z.object({
   file: z.enum(["preferences", "observations"]),
@@ -20,7 +20,7 @@ const CaptureIndexBody = z.object({
   sessionId: z.string().min(1).max(160),
   fromMessageId: z.number().int().positive(),
   throughMessageId: z.number().int().positive(),
-  kind: z.enum(MEMORY_INDEX_KINDS),
+  kind: z.enum(CONVERSATION_MEMORY_KINDS),
   title: z.string().min(1).max(160),
   summary: z.string().min(1).max(6_000),
   conclusions: z.array(z.string().max(600)).max(12).optional(),

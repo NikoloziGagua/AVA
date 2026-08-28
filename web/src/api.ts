@@ -739,7 +739,7 @@ export async function postMemoryLine(line: string): Promise<void> {
 export type MemoryIndexEntry = {
   id: string;
   version: number;
-  kind: "research" | "idea" | "remembered";
+  kind: "research" | "idea" | "remembered" | "improvement";
   title: string;
   summary: string;
   conclusions: string[];
@@ -764,12 +764,14 @@ export type MemoryIndexResult = {
   entry: MemoryIndexEntry;
   originalEntry: MemoryIndexEntry;
   source: {
-    type: "conversation_range";
+    type: "conversation_range" | "improvement_record";
     label: string;
     sessionId: string | null;
     fromMessageId: number;
     throughMessageId: number;
     messageCount: number;
+    reference: string | null;
+    commitSha: string | null;
     status: "verified" | "changed" | "unavailable";
     verifiedAt: number;
     reason: string;

@@ -8,7 +8,7 @@ import { ensureProjectIndexed } from "../memory/project-index.js";
 import type { Db } from "../state/db.js";
 import { listMessages } from "../state/messages.js";
 import { MemoryIndexService } from "../memory-index/store.js";
-import { MEMORY_INDEX_KINDS, MEMORY_PRIVACY_LEVELS, type MemoryIndexKind, type MemoryPrivacyLevel } from "../memory-index/types.js";
+import { CONVERSATION_MEMORY_KINDS, MEMORY_PRIVACY_LEVELS, type ConversationMemoryKind, type MemoryPrivacyLevel } from "../memory-index/types.js";
 
 export type MemoryToolDeps = {
   memoryDir: string;
@@ -253,7 +253,7 @@ export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
         inputSchema: {
           type: "object",
           properties: {
-            kind: { type: "string", enum: MEMORY_INDEX_KINDS },
+            kind: { type: "string", enum: CONVERSATION_MEMORY_KINDS },
             title: { type: "string", description: "Short, specific memory title." },
             summary: { type: "string", description: "Useful compact summary of the developed research or idea." },
             conclusions: { type: "array", items: { type: "string" } },
@@ -304,8 +304,8 @@ export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
           from = eligible[Math.max(0, eligible.length - count)] ?? null;
         }
         if (!from || from.id > through.id) return { ok: false, text: "The selected conversation range is invalid." };
-        const kind = typeof args.kind === "string" && (MEMORY_INDEX_KINDS as readonly string[]).includes(args.kind)
-          ? args.kind as MemoryIndexKind
+        const kind = typeof args.kind === "string" && (CONVERSATION_MEMORY_KINDS as readonly string[]).includes(args.kind)
+          ? args.kind as ConversationMemoryKind
           : null;
         const privacyLevel = typeof args.privacy_level === "string" && (MEMORY_PRIVACY_LEVELS as readonly string[]).includes(args.privacy_level)
           ? args.privacy_level as MemoryPrivacyLevel

@@ -7,6 +7,7 @@ import { MemoryGovernanceStore, type GovernanceWriteBase, type GovernanceWriteRe
 import type {
   CaptureMemoryInput,
   CaptureMemoryResult,
+  CaptureImprovementInput,
   MemoryCorrection,
   MemoryEmbedder,
   MemoryEmbedding,
@@ -56,6 +57,8 @@ type EntryRow = {
 type SourceRow = {
   entry_id: string;
   session_id: string | null;
+  source_type: string;
+  source_ref: string | null;
   source_label: string;
   from_message_id: number;
   through_message_id: number;
@@ -63,6 +66,22 @@ type SourceRow = {
   content_hash: string;
   availability: string;
   last_verified_at: number | null;
+};
+
+type ImprovementRecordRow = {
+  id: string;
+  source_kind: string;
+  source_id: string;
+  commit_sha: string;
+  actor: string;
+  title: string;
+  summary: string;
+  capabilities: string;
+  changed_files: string;
+  verification: string;
+  record_fingerprint: string;
+  created_at: number;
+  indexed_at: number;
 };
 
 type EmbeddingRow = {
@@ -154,6 +173,21 @@ function sourceHash(messages: readonly MessageRow[]): string {
   }))));
 }
 
+function improvementRecordHash(row: Omit<ImprovementRecordRow, "id" | "record_fingerprint" | "indexed_at">): string {
+  return sha256(JSON.stringify({
+    sourceKind: row.source_kind,
+    sourceId: row.source_id,
+    commitSha: row.commit_sha,
+    actor: row.actor,
+    title: row.title,
+    summary: row.summary,
+    capabilities: parseStringArray(row.capabilities),
+    changedFiles: parseStringArray(row.changed_files),
+    verification: parseStringArray(row.verification),
+    createdAt: row.created_at,
+  }));
+}
+
 function embeddingInput(entry: MemoryIndexEntry): string {
   // Keep provider input comfortably inside the embedding endpoint's token
   // ceiling even for text whose token-to-character ratio is unusually high.
@@ -237,7 +271,12 @@ function projectKey(project: string | null | undefined): { display: string | nul
     : { display: null, key: null };
 }
 
-function sourceReason(status: MemorySourceStatus, count: number): string {
+function sourceReason(status: MemorySourceStatus, count: number, type: "conversation_range" | "improvement_record"): string {
+  if (type === "improvement_record") {
+    if (status === "verified") return "The immutable improvement record still matches and its exact Git commit remains on AVA's current branch.";
+    if (status === "changed") return "The stored improvement record no longer matches its original fingerprint.";
+    return "The improvement record or its exact Git commit is no longer available on AVA's current branch.";
+  }
   if (status === "verified") return `The original ${count} conversation message${count === 1 ? "" : "s"} still exist and match the capture fingerprint.`;
   if (status === "changed") return "The referenced conversation range no longer matches its capture fingerprint.";
   return "The original conversation range is no longer available.";
@@ -245,10 +284,13 @@ function sourceReason(status: MemorySourceStatus, count: number): string {
 
 export class MemoryIndexService {
   private readonly governance: MemoryGovernanceStore;
+  /** Serializes background backfill so boot reconciliation cannot burst the embedder. */
+  private embeddingQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly db: Db,
     private readonly embedder: MemoryEmbedder | null = null,
+    private readonly committedImprovementExists: ((commitSha: string) => boolean) | null = null,
   ) {
     this.governance = new MemoryGovernanceStore(db);
   }
@@ -279,8 +321,19 @@ export class MemoryIndexService {
   private verifySource(entryId: string, now = Date.now()): MemorySourceEvidence {
     const source = this.sourceRow(entryId);
     if (!source) throw new Error("memory source record is missing");
+    const type = source.source_type === "improvement_record" ? "improvement_record" : "conversation_range";
     let status: MemorySourceStatus = "unavailable";
-    if (source.session_id) {
+    let commitSha: string | null = null;
+    if (type === "improvement_record" && source.source_ref) {
+      const record = this.db.prepare("SELECT * FROM improvement_records WHERE id = ?")
+        .get(source.source_ref) as ImprovementRecordRow | undefined;
+      if (record) {
+        commitSha = record.commit_sha;
+        const hash = improvementRecordHash(record);
+        if (hash !== source.content_hash || hash !== record.record_fingerprint) status = "changed";
+        else if (this.committedImprovementExists?.(record.commit_sha)) status = "verified";
+      }
+    } else if (source.session_id) {
       const messages = this.messagesForRange(source.session_id, source.from_message_id, source.through_message_id);
       const boundariesMatch = messages[0]?.id === source.from_message_id
         && messages.at(-1)?.id === source.through_message_id
@@ -291,15 +344,17 @@ export class MemoryIndexService {
       UPDATE memory_index_sources SET availability = ?, last_verified_at = ? WHERE entry_id = ?
     `).run(status, now, entryId);
     return {
-      type: "conversation_range",
+      type,
       label: scrubSecrets(source.source_label),
       sessionId: source.session_id,
       fromMessageId: source.from_message_id,
       throughMessageId: source.through_message_id,
       messageCount: source.message_count,
+      reference: source.source_ref ? scrubSecrets(source.source_ref) : null,
+      commitSha,
       status,
       verifiedAt: now,
-      reason: sourceReason(status, source.message_count),
+      reason: sourceReason(status, source.message_count, type),
     };
   }
 
@@ -382,7 +437,16 @@ export class MemoryIndexService {
     }
   }
 
+  private queueEmbedding(entry: MemoryIndexEntry): void {
+    this.embeddingQueue = this.embeddingQueue
+      .then(() => this.storeEmbedding(entry))
+      .catch(() => undefined);
+  }
+
   async capture(input: CaptureMemoryInput): Promise<CaptureMemoryResult> {
+    if ((input as { kind?: string }).kind === "improvement") {
+      throw new Error("improvement memories require an immutable committed source");
+    }
     if (!Number.isInteger(input.fromMessageId) || !Number.isInteger(input.throughMessageId)
       || input.fromMessageId < 1 || input.throughMessageId < input.fromMessageId) {
       throw new Error("invalid conversation message range");
@@ -518,10 +582,138 @@ export class MemoryIndexService {
     };
   }
 
+  /**
+   * Index one committed AVA product improvement without manufacturing a chat
+   * transcript. The immutable record and reachable Git commit are the source;
+   * the compact memory remains only a searchable locator.
+   */
+  async captureImprovement(input: CaptureImprovementInput): Promise<CaptureMemoryResult> {
+    const commitSha = cleanInline(input.commitSha, 64).toLocaleLowerCase();
+    if (!/^[a-f0-9]{40}$/.test(commitSha)) throw new Error("improvement commit SHA is invalid");
+    if (!this.committedImprovementExists?.(commitSha)) {
+      throw new Error("improvement commit is not reachable from AVA's current branch");
+    }
+    const title = cleanInline(input.title, 160);
+    const summary = cleanText(input.summary, 6_000);
+    if (!title || !summary) throw new Error("improvement title and summary are required");
+    const capabilities = cleanList(input.capabilities, 20, 80);
+    const changedFiles = cleanList(input.changedFiles, 120, 260);
+    const verification = cleanList(input.verification, 12, 600);
+    const tags = cleanList([...(input.tags ?? []), ...capabilities, "ava-improvement"], 16, 48);
+    const createdAt = Number.isFinite(input.shippedAt) && (input.shippedAt ?? 0) > 0
+      ? Math.floor(input.shippedAt!)
+      : Date.now();
+    const sourceId = `git:${commitSha}`;
+    const recordId = `improvement_${commitSha.slice(0, 20)}`;
+    const recordBase = {
+      source_kind: input.sourceKind,
+      source_id: sourceId,
+      commit_sha: commitSha,
+      actor: input.actor,
+      title,
+      summary,
+      capabilities: JSON.stringify(capabilities),
+      changed_files: JSON.stringify(changedFiles),
+      verification: JSON.stringify(verification),
+      created_at: createdAt,
+    };
+    const recordFingerprint = improvementRecordHash(recordBase);
+    const now = Date.now();
+    this.db.prepare(`
+      INSERT OR IGNORE INTO improvement_records (
+        id, source_kind, source_id, commit_sha, actor, title, summary,
+        capabilities, changed_files, verification, record_fingerprint,
+        created_at, indexed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      recordId, recordBase.source_kind, sourceId, commitSha, recordBase.actor,
+      title, summary, recordBase.capabilities, recordBase.changed_files,
+      recordBase.verification, recordFingerprint, createdAt, now,
+    );
+    const record = this.db.prepare("SELECT * FROM improvement_records WHERE commit_sha = ?")
+      .get(commitSha) as ImprovementRecordRow | undefined;
+    if (!record) throw new Error("improvement record could not be created");
+    const sourceContentHash = improvementRecordHash(record);
+    if (sourceContentHash !== record.record_fingerprint) {
+      throw new Error("existing improvement record failed its immutable fingerprint check");
+    }
+    const fingerprint = sha256(JSON.stringify({
+      type: "improvement_record",
+      sourceRef: record.id,
+      hash: sourceContentHash,
+      privacyLevel: "personal",
+    }));
+    const prior = this.db.prepare("SELECT * FROM memory_index_entries WHERE source_fingerprint = ?")
+      .get(fingerprint) as EntryRow | undefined;
+    if (prior?.status === "forgotten") throw new Error("this exact improvement was deliberately forgotten");
+
+    let row = prior;
+    let created = false;
+    if (!row) {
+      const id = `memory_improvement_${commitSha.slice(0, 16)}`;
+      const embeddingStatus = this.embedder ? "pending" : "unavailable";
+      this.db.transaction(() => {
+        this.db.prepare(`
+          INSERT OR IGNORE INTO memory_index_entries (
+            id, version, kind, title, summary, conclusions, open_questions,
+            next_steps, tags, project, project_key, privacy_level, capture_mode,
+            capture_reason, thread_id, parent_entry_id, checkpoint_sequence,
+            checkpoint_kind, checkpoint_reason, status, embedding_status,
+            source_fingerprint, created_at, updated_at
+          ) VALUES (?, 1, 'improvement', ?, ?, ?, '[]', '[]', ?, NULL, NULL,
+            'personal', 'automatic', ?, ?, NULL, 1, 'initial', NULL, 'active',
+            ?, ?, ?, ?)
+        `).run(
+          id, record.title, record.summary, record.verification, JSON.stringify(tags),
+          `Automatically indexed a committed AVA improvement from ${record.source_kind}.`,
+          id, embeddingStatus, fingerprint, record.created_at, now,
+        );
+        const inserted = this.db.prepare("SELECT * FROM memory_index_entries WHERE source_fingerprint = ?")
+          .get(fingerprint) as EntryRow | undefined;
+        if (!inserted) throw new Error("improvement memory could not be created");
+        if (inserted.id === id) {
+          this.db.prepare(`
+            INSERT INTO memory_index_sources (
+              entry_id, session_id, source_type, source_ref, source_label,
+              from_message_id, through_message_id, message_count, content_hash,
+              availability, last_verified_at
+            ) VALUES (?, NULL, 'improvement_record', ?, ?, 0, 0, 0, ?, 'verified', ?)
+          `).run(id, record.id, `AVA Git commit ${commitSha.slice(0, 8)}`, sourceContentHash, now);
+          this.governance.ensureCurrent(id, id, now);
+          created = true;
+        }
+      })();
+      row = this.db.prepare("SELECT * FROM memory_index_entries WHERE source_fingerprint = ?")
+        .get(fingerprint) as EntryRow;
+    }
+
+    if (row.embedding_status !== "ready") {
+      if (input.deferEmbedding) {
+        this.queueEmbedding(entryFromRow(row));
+      } else {
+        await this.storeEmbedding(entryFromRow(row));
+        row = this.entryRow(row.id)!;
+      }
+    }
+    return {
+      created,
+      result: this.result(row, {
+        mode: "recent",
+        reason: created
+          ? "Indexed automatically from a source-verified AVA product commit."
+          : "This exact AVA product commit was already indexed; AVA reused it instead of duplicating it.",
+        semanticScore: null,
+        lexicalScore: 0,
+        sharedTerms: [],
+      }),
+    };
+  }
+
   private candidateRows(project: string | null | undefined, latestOnly = false): CandidateRow[] {
     const scope = projectKey(project).key;
     return this.db.prepare(`
-      SELECT e.*, s.entry_id, s.session_id, s.source_label, s.from_message_id,
+      SELECT e.*, s.entry_id, s.session_id, s.source_type, s.source_ref,
+             s.source_label, s.from_message_id,
              s.through_message_id, s.message_count, s.content_hash, s.availability,
              s.last_verified_at, b.provider, b.model, b.dimensions, b.input_hash,
              b.vector, b.created_at AS embedding_created_at
@@ -670,10 +862,36 @@ export class MemoryIndexService {
       lexicalScore: 0,
       sharedTerms: [],
     });
-    if (!result.usable || !result.source.sessionId) {
+    if (!result.usable) {
       return { result, messages: [], truncated: false, returnedCharacters: 0 };
     }
     const limit = Math.max(1_000, Math.min(40_000, Math.floor(options.maxCharacters ?? 24_000)));
+    if (result.source.type === "improvement_record" && result.source.reference) {
+      const record = this.db.prepare("SELECT * FROM improvement_records WHERE id = ?")
+        .get(result.source.reference) as ImprovementRecordRow | undefined;
+      if (!record) return { result, messages: [], truncated: false, returnedCharacters: 0 };
+      const capabilities = parseStringArray(record.capabilities);
+      const changedFiles = parseStringArray(record.changed_files);
+      const verification = parseStringArray(record.verification);
+      const content = scrubSecrets([
+        `AVA improvement: ${record.title}`,
+        record.summary,
+        capabilities.length ? `Capabilities: ${capabilities.join(", ")}` : "",
+        `Author: ${record.actor}`,
+        `Git commit: ${record.commit_sha}`,
+        changedFiles.length ? `Committed product files: ${changedFiles.slice(0, 24).join(", ")}${changedFiles.length > 24 ? ` (+${changedFiles.length - 24} more)` : ""}` : "",
+        ...verification.map((item) => `Evidence: ${item}`),
+      ].filter(Boolean).join("\n")).slice(0, limit);
+      return {
+        result,
+        messages: [{ id: 0, role: "assistant", content }],
+        truncated: content.length >= limit,
+        returnedCharacters: content.length,
+      };
+    }
+    if (!result.source.sessionId) {
+      return { result, messages: [], truncated: false, returnedCharacters: 0 };
+    }
     const sourceMessages = this.messagesForRange(
       result.source.sessionId,
       result.source.fromMessageId,

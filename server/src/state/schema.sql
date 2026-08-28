@@ -59,6 +59,8 @@ CREATE INDEX IF NOT EXISTS idx_memory_index_scope
 CREATE TABLE IF NOT EXISTS memory_index_sources (
   entry_id TEXT PRIMARY KEY REFERENCES memory_index_entries(id) ON DELETE CASCADE,
   session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+  source_type TEXT NOT NULL DEFAULT 'conversation_range',
+  source_ref TEXT,
   source_label TEXT NOT NULL,
   from_message_id INTEGER NOT NULL,
   through_message_id INTEGER NOT NULL,
@@ -70,6 +72,29 @@ CREATE TABLE IF NOT EXISTS memory_index_sources (
 
 CREATE INDEX IF NOT EXISTS idx_memory_index_source_session
   ON memory_index_sources(session_id, from_message_id, through_message_id);
+
+-- Immutable, sanitized product-change evidence. The memory index points here
+-- for committed AVA improvements instead of manufacturing a conversation.
+-- A record is usable only while its exact commit remains reachable from the
+-- current AVA branch and the stored record fingerprint still matches.
+CREATE TABLE IF NOT EXISTS improvement_records (
+  id TEXT PRIMARY KEY,
+  source_kind TEXT NOT NULL,
+  source_id TEXT NOT NULL UNIQUE,
+  commit_sha TEXT NOT NULL UNIQUE,
+  actor TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  capabilities TEXT NOT NULL DEFAULT '[]',
+  changed_files TEXT NOT NULL DEFAULT '[]',
+  verification TEXT NOT NULL DEFAULT '[]',
+  record_fingerprint TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  indexed_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_improvement_records_created
+  ON improvement_records(created_at DESC, id);
 
 -- Vectors are replaceable discovery data. Their provider/model/dimensions and
 -- exact sanitized-input hash travel with them so incompatible vector spaces

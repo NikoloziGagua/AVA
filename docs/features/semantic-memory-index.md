@@ -3,9 +3,9 @@
 ## Status
 
 Implemented as a conservative automatic-and-explicit beta with immutable linked
-Idea checkpoints, source-verified automatic recall across chat and voice, and
-append-only user governance. It is a retrieval
-layer for substantial research, developed ideas and decisions; it does not
+Idea checkpoints, source-verified committed improvement records, automatic recall
+across chat and voice, and append-only user governance. It is a retrieval layer
+for substantial research, developed ideas, decisions and shipped AVA changes; it does not
 replace AVA's compact preference/observation memory or copy complete transcripts.
 
 ## User contract
@@ -22,18 +22,24 @@ replace AVA's compact preference/observation memory or copy complete transcripts
    anything worth keeping outside the two automatic categories. AVA calls
    `memory_index_capture` with a bounded source range and a compact
    summary containing useful conclusions, open questions and next steps.
-4. In another chat or OpenAI voice turn, a shared pre-response gate searches by
+4. Every reachable Git commit that changes AVA product code is reconciled into
+   one immutable `improvement` entry. A successful Self swap also indexes its
+   exact resulting commit. Failed, uncommitted, test-only and documentation-only
+   work is not promoted into improvement memory. Conversation tools cannot
+   manufacture an improvement entry.
+5. In another chat or OpenAI voice turn, a shared pre-response gate searches by
    meaning, selects only the latest checkpoint in each lineage, and rechecks the
-   original source before injecting any context. Hume applies the same gate at
-   connection from the active chat's latest user context.
-5. Automatic retrieval explains its used/no-match/suppressed/unavailable result
+   original conversation or exact reachable Git commit before injecting any
+   context. Hume applies the same gate at connection from the active chat's
+   latest user context.
+6. Automatic retrieval explains its used/no-match/suppressed/unavailable result
    in Mission Control. AVA may rely only on `usable=true` results.
-6. Automatic recall opens a bounded recent portion of the authoritative source;
+7. Automatic recall opens a bounded recent portion of the authoritative source;
    the compact summary is a discovery locator and never substitutes for source
    verification. Explicit `memory_index_open` remains available for deeper detail.
-7. Sir can say **"forget that indexed idea"**. AVA searches when needed, then
+8. Sir can say **"forget that indexed idea"**. AVA searches when needed, then
    calls `memory_index_forget` with the exact ID and current version.
-8. Sir can correct the compact current view, pin an important current thread,
+9. Sir can correct the compact current view, pin an important current thread,
    mark one thread as explicitly replaced, or pause contradictory memories until
    choosing a winner. These actions require the visible governance version and a
    reason. They append history; they never rewrite the original checkpoint.
@@ -52,8 +58,13 @@ SQLite remains canonical:
 - `memory_index_entries`: bounded sanitized title, summary, conclusions, open
   questions, next steps, tags, scope, version, embedding state, thread ID,
   parent entry ID, sequence, checkpoint type and checkpoint reason.
-- `memory_index_sources`: source session, exact first/last message IDs, message
-  count and SHA-256 content fingerprint.
+- `memory_index_sources`: typed conversation or improvement source, source
+  reference, exact first/last message IDs where applicable, and SHA-256 content
+  fingerprint.
+- `improvement_records`: one sanitized immutable record per exact Git commit,
+  including source kind, actor, capability labels, committed product-file
+  boundary and bounded verification evidence. Unique source and commit keys make
+  boot reconciliation and Self-swap replay idempotent.
 - `memory_index_embeddings`: replaceable float vector plus provider, model,
   dimensions and sanitized-input hash.
 - `memory_index_auto_events`: content-free, assistant-message-keyed processing
@@ -78,14 +89,17 @@ expanding source range and previous checkpoint make their provenance inspectable
 An unrelated Idea developed later in the same chat starts a different thread.
 
 The vector is a discovery aid. It is never canonical memory and never validates
-a claim. Each result rereads the referenced messages and recomputes the source
-fingerprint:
+a claim. Each result rereads the referenced messages or improvement record,
+recomputes its source fingerprint, and (for an improvement) verifies that the
+exact commit remains reachable from current AVA `HEAD`:
 
 - `verified`: the exact range still exists and matches; result is usable.
 - `changed`: the range exists but its content fingerprint differs; unusable.
 - `unavailable`: the session/range no longer exists; unusable.
 
-No transcript body is duplicated into these tables. Deleting a source chat leaves
+No transcript body is duplicated into these tables. Improvement entries synthesize
+a bounded source excerpt from the immutable commit record; they never fabricate a
+conversation. Deleting a source chat leaves
 the compact record visible as unavailable evidence rather than silently turning it
 into truth. A matching fingerprint proves source integrity, not that a generated
 summary is semantically perfect; AVA should consult the linked source when detail
@@ -169,6 +183,9 @@ but never the query or retrieved transcript text. Replayed recording is idempote
   explicit matching project and are excluded from default or other-project search.
 - Capture is capped at 80 authoritative messages. Summaries, lists, tags, search
   queries and result counts all have hard bounds.
+- Improvement capture is internal-only, personal-scoped and requires a full
+  reachable 40-character commit SHA. Boot reconciliation serializes embedding
+  work so a historical backfill cannot burst the configured provider.
 - Forget is version-checked, immediately deletes the vector and prevents an exact
   forgotten range from being silently resurrected.
 
@@ -206,6 +223,10 @@ governance history rather than manufacturing a fake agent run.
 The tools are present only when the current persisted chat session and index
 service are available. They work through the same chat route used by text and
 voice, so both modalities address the same SQLite index.
+
+`memory_index_capture` and its HTTP equivalent accept only `research`, `idea`
+and `remembered`. `improvement` is deliberately not a user/agent input kind; it
+is created only by the Git/Self shipment boundary.
 
 Automatic capture is wired to the post-turn boundary of persisted chat and both
 realtime voice providers. It is offered only after a complete assistant response.
@@ -270,6 +291,7 @@ Deterministic coverage lives in:
 - `server/src/memory-index/store.test.ts`
 - `server/src/memory-index/auto-capture.test.ts`
 - `server/src/memory-index/auto-retrieve.test.ts`
+- `server/src/memory-index/improvement-index.test.ts`
 - `server/src/memory-index/governance.test.ts`
 - `server/src/memory-index/embedding.test.ts`
 - `server/src/routes/memory.test.ts`
@@ -282,6 +304,7 @@ The repeatable manual boundary smokes are:
 ```powershell
 npm.cmd -w server run smoke:memory-retrieval
 npm.cmd -w server run smoke:memory-governance
+npm.cmd -w server run smoke:improvement-index
 ```
 
 It creates a temporary on-disk AVA database, captures personal and project
@@ -292,6 +315,9 @@ No external credentials or consequential actions are used.
 The governance smoke appends a correction, pins/unpins, pauses and resolves a
 conflict, supersedes an obsolete thread, reopens SQLite, confirms source history
 and current state, then deletes its temporary database.
+The improvement smoke scans real reachable AVA commits into a disposable SQLite
+database, reopens it, proves replay does not duplicate entries, searches for the
+genuine Microsoft UFO update, verifies its exact Git source, and cleans up.
 
 The tests cover sanitized compact storage, semantic paraphrase recall, lexical
 fallback, source changes/deletion, project isolation, latest-lineage selection,
@@ -325,3 +351,9 @@ Manual acceptance:
    new chat. Resolve the conflict and confirm only the selected winner returns.
 10. Mark an obsolete memory as replaced and confirm normal recall omits it while
     the Memory Index still shows it as preserved history.
+11. Ship a committed AVA product change, restart AVA, and open **Memory > Index**.
+    Confirm one `improvement` card appears with the exact Git commit in **Why AVA
+    found this** and no fake **Open source chat** control.
+12. In a fresh chat or voice turn, ask what the shipped update changed. Confirm
+    AVA can retrieve its committed evidence. A removed or unreachable commit must
+    be shown as unavailable rather than trusted.

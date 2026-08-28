@@ -73,6 +73,8 @@ const result: MemoryIndexResult = {
     fromMessageId: 10,
     throughMessageId: 14,
     messageCount: 5,
+    reference: null,
+    commitSha: null,
     status: "verified",
     verifiedAt: Date.UTC(2026, 7, 28),
     reason: "The original 5 conversation messages still exist and match the capture fingerprint.",
@@ -203,6 +205,62 @@ describe("MemoryIndexSection", () => {
     expect(await screen.findByText("source changed")).toBeTruthy();
     fireEvent.click(screen.getByText("Why AVA found this"));
     expect(screen.getByText(/no longer matches/i)).toBeTruthy();
+  });
+
+  it("renders a committed improvement with Git provenance instead of a fake source chat", async () => {
+    const improvement: MemoryIndexResult = {
+      ...result,
+      entry: {
+        ...result.entry,
+        id: "memory_improvement_0c9cd23",
+        threadId: "memory_improvement_0c9cd23",
+        kind: "improvement",
+        title: "Run pinned Microsoft UFO fixture",
+        summary: "AVA added a bounded genuine Microsoft UFO Notepad workflow.",
+        conclusions: ["Committed Notepad smoke passed"],
+        openQuestions: [],
+        nextSteps: [],
+        tags: ["microsoft-ufo", "ava-improvement"],
+        captureReason: "Automatically indexed a committed AVA improvement from git_commit.",
+      },
+      originalEntry: {
+        ...result.originalEntry,
+        id: "memory_improvement_0c9cd23",
+        threadId: "memory_improvement_0c9cd23",
+        kind: "improvement",
+        title: "Run pinned Microsoft UFO fixture",
+        summary: "AVA added a bounded genuine Microsoft UFO Notepad workflow.",
+        conclusions: ["Committed Notepad smoke passed"],
+        openQuestions: [],
+        nextSteps: [],
+        tags: ["microsoft-ufo", "ava-improvement"],
+      },
+      source: {
+        type: "improvement_record",
+        label: "AVA Git commit 0c9cd23",
+        sessionId: null,
+        fromMessageId: 0,
+        throughMessageId: 0,
+        messageCount: 0,
+        reference: "improvement_0c9cd23",
+        commitSha: "0c9cd23f000000000000000000000000000000000",
+        status: "verified",
+        verifiedAt: Date.UTC(2026, 7, 28),
+        reason: "The immutable improvement record still matches and its exact Git commit remains on AVA's current branch.",
+      },
+      lineage: { ...result.lineage, threadId: "memory_improvement_0c9cd23", parentEntryId: null, sequence: 1, totalCheckpoints: 1 },
+    };
+    api.fetchMemoryIndex.mockResolvedValue(response({ results: [improvement] }));
+    const openChat = vi.fn();
+    render(<MemoryIndexSection onOpenChat={openChat} />);
+
+    expect(await screen.findByText("Run pinned Microsoft UFO fixture")).toBeTruthy();
+    expect(screen.getByText("improvement")).toBeTruthy();
+    fireEvent.click(screen.getByText("Why AVA found this"));
+    expect(screen.getAllByText(/immutable improvement record/)).toHaveLength(2);
+    expect(screen.getByText(/0c9cd23f000000000000000000000000000000000/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open source chat" })).toBeNull();
+    expect(openChat).not.toHaveBeenCalled();
   });
 
   it("appends a correction without hiding the original and refreshes the view", async () => {

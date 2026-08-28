@@ -1,5 +1,9 @@
-export const MEMORY_INDEX_KINDS = ["research", "idea", "remembered"] as const;
+export const MEMORY_INDEX_KINDS = ["research", "idea", "remembered", "improvement"] as const;
 export type MemoryIndexKind = typeof MEMORY_INDEX_KINDS[number];
+
+/** Kinds that may be captured from conversation evidence by a user or agent. */
+export const CONVERSATION_MEMORY_KINDS = ["research", "idea", "remembered"] as const;
+export type ConversationMemoryKind = typeof CONVERSATION_MEMORY_KINDS[number];
 
 export const MEMORY_PRIVACY_LEVELS = ["personal", "project"] as const;
 export type MemoryPrivacyLevel = typeof MEMORY_PRIVACY_LEVELS[number];
@@ -58,12 +62,16 @@ export type MemoryIndexEntry = {
 };
 
 export type MemorySourceEvidence = {
-  type: "conversation_range";
+  type: "conversation_range" | "improvement_record";
   label: string;
   sessionId: string | null;
   fromMessageId: number;
   throughMessageId: number;
   messageCount: number;
+  /** Stable source identity for non-conversation records (for example git:<sha>). */
+  reference: string | null;
+  /** Present only when the authoritative source is a committed AVA change. */
+  commitSha: string | null;
   status: MemorySourceStatus;
   verifiedAt: number;
   reason: string;
@@ -173,7 +181,7 @@ export type CaptureMemoryInput = {
   sessionId: string;
   fromMessageId: number;
   throughMessageId: number;
-  kind: MemoryIndexKind;
+  kind: ConversationMemoryKind;
   title: string;
   summary: string;
   conclusions?: string[];
@@ -195,4 +203,19 @@ export type CaptureMemoryInput = {
 export type CaptureMemoryResult = {
   created: boolean;
   result: MemoryIndexResult;
+};
+
+export type CaptureImprovementInput = {
+  commitSha: string;
+  sourceKind: "git_commit" | "self_swap";
+  actor: "ava" | "codex" | "claude" | "niko" | "other";
+  title: string;
+  summary: string;
+  capabilities?: string[];
+  changedFiles?: string[];
+  verification?: string[];
+  tags?: string[];
+  shippedAt?: number;
+  /** Boot reconciliation may persist immediately and embed in the background. */
+  deferEmbedding?: boolean;
 };

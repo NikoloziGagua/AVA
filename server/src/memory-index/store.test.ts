@@ -62,6 +62,88 @@ async function capture(service: MemoryIndexService, source: ReturnType<typeof co
 }
 
 describe("semantic memory index", () => {
+  it("indexes only reachable committed improvements and reuses their immutable source", async () => {
+    const source = conversation();
+    const sha = "a".repeat(40);
+    const embedder = new FakeEmbedder();
+    const service = new MemoryIndexService(source.db, embedder, (candidate) => candidate === sha);
+    const secret = "sk-proj-AbCdEf0123456789AbCdEf0123456789";
+    const input = {
+      commitSha: sha,
+      sourceKind: "git_commit" as const,
+      actor: "codex" as const,
+      title: "Run genuine Microsoft UFO fixture",
+      summary: `AVA can run one bounded local Notepad fixture. ${secret}`,
+      capabilities: ["Microsoft UFO"],
+      changedFiles: ["server/src/ufo/service.ts"],
+      verification: ["Committed server tests and one benign Notepad smoke passed."],
+      tags: ["ufo"],
+      shippedAt: Date.UTC(2026, 7, 28),
+    };
+
+    const first = await service.captureImprovement(input);
+    const replay = await service.captureImprovement(input);
+
+    expect(first.created).toBe(true);
+    expect(replay.created).toBe(false);
+    expect(replay.result.entry.id).toBe(first.result.entry.id);
+    expect(first.result).toMatchObject({
+      entry: { kind: "improvement", captureMode: "automatic", title: input.title },
+      source: { type: "improvement_record", status: "verified", commitSha: sha },
+      usable: true,
+    });
+    expect(first.result.entry.summary).not.toContain(secret);
+    const evidence = service.readSource(first.result.entry.id);
+    expect(evidence?.messages[0]?.content).toContain(`Git commit: ${sha}`);
+    expect(evidence?.messages[0]?.content).toContain("Microsoft UFO");
+    expect(evidence?.messages[0]?.content).not.toContain(secret);
+    expect(source.db.prepare("SELECT COUNT(*) AS count FROM improvement_records").get()).toEqual({ count: 1 });
+    expect(source.db.prepare("SELECT COUNT(*) AS count FROM memory_index_entries WHERE kind = 'improvement'").get()).toEqual({ count: 1 });
+  });
+
+  it("fails closed for uncommitted improvements and conversation attempts to manufacture one", async () => {
+    const source = conversation();
+    const sha = "b".repeat(40);
+    const service = new MemoryIndexService(source.db, null, () => false);
+
+    await expect(service.captureImprovement({
+      commitSha: sha,
+      sourceKind: "git_commit",
+      actor: "codex",
+      title: "Uncommitted claim",
+      summary: "This must not become durable product history.",
+    })).rejects.toThrow(/not reachable/i);
+    await expect(service.capture({
+      sessionId: source.session.id,
+      fromMessageId: source.first.id,
+      throughMessageId: source.last.id,
+      kind: "improvement",
+      title: "Conversation claim",
+      summary: "A conversation is not proof of a shipped improvement.",
+    } as never)).rejects.toThrow(/immutable committed source/i);
+    expect(source.db.prepare("SELECT COUNT(*) AS count FROM improvement_records").get()).toEqual({ count: 0 });
+  });
+
+  it("keeps tampered improvement evidence as history but marks it unusable", async () => {
+    const source = conversation();
+    const sha = "c".repeat(40);
+    const service = new MemoryIndexService(source.db, null, () => true);
+    const captured = await service.captureImprovement({
+      commitSha: sha,
+      sourceKind: "self_swap",
+      actor: "ava",
+      title: "Verified self improvement",
+      summary: "AVA swapped a verified improvement into the committed branch.",
+    });
+
+    source.db.prepare("UPDATE improvement_records SET summary = 'rewritten after capture' WHERE commit_sha = ?").run(sha);
+    expect(service.get(captured.result.entry.id)).toMatchObject({
+      usable: false,
+      source: { type: "improvement_record", status: "changed" },
+    });
+    expect(service.readSource(captured.result.entry.id)?.messages).toEqual([]);
+  });
+
   it("stores a sanitized compact record, source fingerprint and embedding without duplicating transcript content", async () => {
     const source = conversation();
     const embedder = new FakeEmbedder();

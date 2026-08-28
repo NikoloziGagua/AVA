@@ -3832,3 +3832,18 @@ preserved. Forge was neither inspected nor modified.
 
 NEEDS: niko (restore OpenAI API credits for AVA's autonomous successor selection,
 or explicitly hand Codex the next saved Idea; the watcher state bug itself is fixed)
+
+---
+
+### 2026-08-28 - codex - LIVE: funded successor retry restored the cycle
+
+Niko restored provider credit. The existing parent `gK2SF5XmGgOJ` retried
+without recreation, moved `blocked -> planning -> scheduled`, and AVA created
+exactly one child, `q5EVuQOp2ny5`. The parent is disabled with its original
+`completed` evidence intact and `successor_status=scheduled`. The child retains
+the exact ancestry and is now `dispatching` with `instruction staged; awaiting
+pinned-thread evidence`; it will enter this exact Codex thread at the clean task
+boundary. The unique parent index reports one child, so recovery did not
+duplicate Phase 5 or create competing tasks.
+
+NEEDS: codex (`q5EVuQOp2ny5` should arrive after this clean boundary)

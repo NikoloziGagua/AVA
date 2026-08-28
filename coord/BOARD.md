@@ -48,7 +48,7 @@ scheduler and pokes whoever is up.
 | Self-improvement worker selector | codex | active; provider-neutral Claude Code/Codex selector behind existing approval and release gates | 2026-08-15 |
 | Microsoft UFO design-only evaluation | codex | complete in isolated Self worktree; design-only proposal and evidence audit | 2026-08-27 |
 | Persona v2 and consistency evaluation | unclaimed | complete in `8d5f2ae`; available for reviewed follow-up | 2026-08-28 |
-| Semantic memory index (explicit capture/retrieval v1) | unclaimed | complete in `c674a7c`; available for measured follow-up | 2026-08-28 |
+| Semantic memory index (explicit capture/retrieval v1) | unclaimed | live-stress repairs shipped in `199fe3b`; measured follow-up available | 2026-08-28 |
 
 ---
 
@@ -3103,3 +3103,85 @@ modified.
 NEEDS: niko (reload AVA; explicitly index one developed discussion, then test
 cross-chat paraphrase recall and Memory -> Index using the manual steps in
 `docs/features/semantic-memory-index.md`)
+
+---
+
+### 2026-08-28 - codex - semantic memory live stress-test repair claim
+
+Niko authorized Codex to exercise the shipped memory index directly through AVA
+without requiring manual testing. The first real chat + voice-marked conversation
+and agent-selected `memory_index_capture` exposed a source-fidelity defect: AVA
+summarized a later refinement but the verified range contained only the capture
+instruction. Mission Control proves the model supplied a `start_marker` quoted in
+that instruction; the tool searched backward and matched the quote rather than
+the original message. The resulting entry `memory_6w0ISr5mjLAppJ` was therefore
+internally consistent at the hash level but not adequate evidence for every
+indexed conclusion.
+
+I am reclaiming the otherwise-unowned semantic-memory slice for the bounded
+repair and broader black-box stress pass: correct first-message selection,
+regression coverage, live cross-chat and voice-routed retrieval/open, duplicate
+capture, privacy/project isolation, stale-version forget, persistence across
+restart, and cleanup of disposable test data. Any further failure found will be
+fixed only within this existing source-verified memory contract. Forge remains
+outside scope and will not be inspected or modified.
+
+NEEDS: codex (repair, stress-test, commit, and return concrete live evidence)
+
+---
+
+### 2026-08-28 - codex - semantic memory live stress repairs shipped
+
+Commit `199fe3b` (`fix(memory): preserve authoritative source ranges`) fixes two
+defects found by exercising the real AVA model/tool/UI path rather than only the
+deterministic test seam. First, `start_marker` now resolves to the chronological
+first matching message. A capture command that quotes the requested marker can
+no longer replace the actual developed discussion with a one-message,
+hash-valid but evidentially incomplete range. Second, source verification now
+joins only non-deleted sessions, so deleting a chat immediately changes linked
+memory to `unavailable` / `usable=false`, matching the privacy and documentation
+contract even while normal soft-delete retention keeps underlying rows.
+
+The initial failure is preserved in Mission Control: run `PgEkf61rz3IN` called
+`memory_index_capture` with the quoted marker but recorded only message
+2447-2447. After the repair, the real Lumen Orchid run captured messages
+2451-2455 (five messages, correct first and last IDs), returned a ready embedding,
+and a separate voice-marked chat called both `memory_index_search` and
+`memory_index_open` before answering. The Memory -> Index UI rendered the card,
+`source verified`, embedding state, match disclosure, and its authenticated Open
+source chat path loaded the linked transcript.
+
+Additional live stress evidence: exact replay returned `created=false` with the
+same entry ID; 12/12 concurrent hybrid searches succeeded; semantic embeddings
+were available; project data was absent from unscoped search and present only
+with its matching project; a fake key-shaped value was absent from capture and
+search output; stale forget returned 409 and the current version succeeded; a
+full server restart preserved the entry and its verified source; a new AVA chat
+recalled all four requested facts and then used the agent forget path; forgotten
+source replay returned 409 instead of resurrection; missing source capture
+returned 404; empty search returned 400. On the final rebuilt server, soft-delete
+changed a live test entry to `unavailable` / `usable=false`, GET agreed, and
+forget removed it. Every disposable entry was forgotten and every disposable
+chat was soft-deleted; no test marker remains in the active index.
+
+Verification: focused memory coverage passed 6 files / 68 tests (including the
+new repeated-marker and soft-delete regressions); the complete server suite
+passed 185 files / 1,403 tests; the complete web suite passed 91 files / 398
+tests; server and production PWA builds passed; and `git diff --check` reported
+only normal CRLF notices. The committed-HEAD rebuild is live and `/api/health`
+reports `ok=true`, `ready=true`, provider `openai`, build ID
+`07fcd7ba-662f-4b7c-97ef-c75156587e4e`.
+
+Known limit remains explicit: a matching source fingerprint proves integrity,
+not perfect summary or final-answer fidelity. One deliberately ambiguous live
+voice prompt called the test marker the “identifier”; a later clean post-restart
+turn recovered the intended amber-hexagon fact from the same verified source.
+AVA therefore still opens authoritative messages for detail, and neither the UI
+nor docs claim that embedding or hashing semantically certifies a summary.
+
+Niko's unrelated `.claude/settings.local.json` edit and untracked persona
+research document were preserved. Forge was neither inspected nor modified.
+
+NEEDS: nobody (the repaired explicit-capture loop is committed, running, tested,
+cleaned up, and ready for measured use; automatic indexing remains a separate
+future increment)

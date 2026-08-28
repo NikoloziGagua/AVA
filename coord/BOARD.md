@@ -4109,3 +4109,72 @@ Forge is outside scope and will not be inspected or modified.
 NEEDS: codex (implement, stress-test through AVA, commit, and continue to the
 next bounded evidence-backed improvement only after this indexing contract is
 proven)
+
+---
+
+### 2026-08-28 - codex - COMPLETE: source-verified improvement indexing
+
+Shipped `cc23018` (`feat(memory): index committed AVA improvements`). The
+semantic index now has a first-class `improvement` kind backed by a sanitized
+immutable `improvement_records` source and an exact full Git commit SHA.
+Conversation/API capture accepts only research, idea and remembered records, so
+an assistant message cannot manufacture product history. A record is usable
+only while its fingerprint matches and its commit remains reachable from the
+current AVA branch.
+
+Boot reconciliation now indexes qualifying committed product changes once,
+skips coordination/docs/test-only history, replays idempotently, and serializes
+embedding backfill. The successful Self-swap boundary submits its exact shipped
+commit through the same coordinator; indexing failure does not rewrite shipment
+state and is retried at boot. Search, source opening, governance and automatic
+chat/OpenAI/Hume retrieval reuse the existing index. Memory -> Index now labels
+research, ideas and improvements, shows exact Git provenance, and never offers a
+fake source-chat link for a product commit.
+
+Changed areas: memory index types/store/schema/migrations/retrieval; new
+`server/src/memory-index/improvement-index.ts` and deterministic tests; Self
+swap and boot wiring in `server/src/index.ts`; authenticated capture/tool kind
+restriction; web API/card/Explorer evidence; semantic-memory/capability docs;
+and repeatable `smoke:improvement-index`.
+
+Verification: focused memory/tool/route tests passed 62 server tests and 8 web
+tests. Complete suites passed 194 files / 1,487 server tests and 91 files / 409
+web tests. Server build and production web/PWA build passed. The committed-HEAD
+boot smoke returned `{"ok":true,"log":"healthy"}`. `git diff --check` passed.
+The bounded secret scan found only deliberate redaction fixtures.
+
+The real-history disposable smoke completed in about two seconds: 466 product
+commits indexed, 83 non-product commits skipped, restart replay created 0 new
+entries and reused all 466, record/entry counts agreed, and the genuine UFO
+entry resolved to exact commit
+`0c9cd236b6f63bb0d6edc9b467f832aaf13938e4` with verified source status. The
+temporary database was removed. No external credentials or consequential
+actions were used. Forge was neither inspected nor modified. Niko's unrelated
+`.claude/settings.local.json` and persona research file remain untouched.
+
+Known boundary: a reachable commit proves the committed change boundary, not
+that every environment still executes the capability successfully. The
+Explorer contract validator passed, but its reality audit exposed a pre-existing
+separate truth gap: the four already-shipped UFO tools are not declared by any
+Explorer capability.
+
+NEEDS: codex (relaunch committed AVA, verify the live database/API backfill, then
+use the existing Codex-owned Explorer area for the smallest separate UFO
+capability-truth repair)
+
+---
+
+### 2026-08-28 - codex - CLAIM: truthful Microsoft UFO Explorer capability
+
+The post-index Explorer reality audit found exactly four real tools invisible
+from the operational source of truth: `ufo_experiment_status`,
+`ufo_experiment_observe`, `ufo_experiment_action`, and `ufo_runtime_run`. I am
+claiming the existing Codex-owned Explorer area for one bounded registry repair:
+declare the experimental UFO capability and its fixture/runtime branches using
+the already-committed implementation, health, policy, receipt and Mission
+Control evidence. This will not broaden or rerun UFO; it will distinguish the
+synthetic fixture from the genuine bounded Notepad runtime and make the reality
+audit honest.
+
+NEEDS: codex (relaunch and live-check improvement indexing first, then implement
+and verify this separate Explorer truth repair)

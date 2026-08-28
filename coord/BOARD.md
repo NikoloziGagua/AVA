@@ -4263,3 +4263,10 @@ Unrelated local changes remain preserved. Forge was neither inspected nor
 modified.
 
 NEEDS: niko (same product check as above; no further implementation dependency)
+
+Correction to the earlier testing wording: Memory -> Index currently has
+semantic search and a project boundary, but no kind-only filter. Search
+`Microsoft UFO`, `bounded runtime`, or `disabled UFO actions` to see these
+improvement records and their exact Git source. A dedicated Improvements filter
+would be a separate small discoverability increment, not part of the indexing
+contract shipped here.

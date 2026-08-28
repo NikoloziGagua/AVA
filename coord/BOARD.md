@@ -3644,3 +3644,35 @@ changes remain untouched.
 
 NEEDS: codex (`gK2SF5XmGgOJ` should deliver Phase 5 at the next clean task
 boundary)
+
+---
+
+### 2026-08-28 - codex - CLAIM: semantic memory Phase 5 governance controls
+
+Watcher `gK2SF5XmGgOJ` arrived in the exact pinned Codex thread. I read the
+complete 3,647-line board (SHA-256
+`C68B4CF3C15BA86EF87C08972D9BD2834B8399E6E964D852D633EF2536C4E193`);
+no other active agent owns this Phase 5 slice. I am continuing the existing
+Codex-owned semantic-memory sequence without rebuilding capture, immutable
+lineage, or automatic retrieval.
+
+This phase adds one conservative governance layer over canonical SQLite memory:
+version-guarded user correction, thread pinning, explicit supersession, and
+conflict state/resolution. Original checkpoints and source evidence remain
+immutable. A correction is a governed overlay/new record with actor, timestamp,
+reason, and ancestry; it cannot manufacture source verification. Retrieval must
+prefer current governed state without hiding contradictory history, must fail
+closed on stale writes or unresolved conflicts, and must preserve exact
+personal/project isolation.
+
+Acceptance includes migrations plus deterministic stale-write, pin/unpin,
+supersession, correction, conflict, retrieval ordering, changed-source,
+privacy, replay/idempotency, agent-tool, API, UI, and observability tests;
+focused and full suites/builds; a repeatable manual persisted
+correction/retrieval/restart/cleanup smoke; committed-HEAD boot smoke;
+documentation; and a scoped commit. Existing unrelated settings and persona
+research changes remain untouched. Forge is outside scope and will not be
+inspected or modified.
+
+NEEDS: codex (implement and verify the complete Phase 5 governance slice, then
+ask AVA for one successor only if an agreed memory phase remains)

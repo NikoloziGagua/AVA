@@ -17,6 +17,12 @@ describe("humanizeTool", () => {
     expect(humanizeTool("chrome_navigate", {})).toBe("Opening a page");
   });
 
+  it("describes the direct Google route without exposing a raw tool name", () => {
+    expect(humanizeTool("chrome_google_search", { query: "fast browser routing" }))
+      .toBe("Searching Google for fast browser routing");
+    expect(humanizeTool("chrome_google_search")).toBe("Searching Google");
+  });
+
   it("gives friendly phrases for the common tools", () => {
     expect(humanizeTool("take_screenshot")).toBe("Taking a screenshot");
     expect(humanizeTool("claude_code")).toBe("Writing code");

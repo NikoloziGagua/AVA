@@ -1,6 +1,6 @@
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildToolRegistry } from "./tool-registry.js";
-import type { LLMProvider, Message, ProviderUsage, ToolCall } from "./llm/types.js";
+import type { LLMProvider, Message, ProviderUsage, ToolCall, ToolResult } from "./llm/types.js";
 import type { ReasoningEffort } from "./reasoning.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import type { ToolVerificationEvidence } from "./verification-evidence.js";
@@ -20,6 +20,8 @@ import {
   type ActionResultClass,
 } from "./tool-result-consistency.js";
 import type { PersonaChannel } from "../persona/runtime.js";
+import type { ComputerExecutionPlan } from "./computer-execution-router.js";
+import { scrubSecrets } from "../security/scrub.js";
 
 export type AgentEvent =
   | { kind: "thought"; payload: { text: string } }
@@ -86,6 +88,8 @@ export type RunOpts = {
   recordUsage?: (usage: ProviderUsage) => void;
   /** Literal current turn used only to select a closed delivery register. */
   personaContext?: { userText: string; channel: PersonaChannel };
+  /** Narrow deterministic route selected from the literal user turn. */
+  computerExecutionPlan?: ComputerExecutionPlan | null;
 };
 
 export async function runAgent(opts: RunOpts): Promise<void> {
@@ -172,7 +176,107 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     killed = true;
   };
 
-  for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
+  const dispatchToolCall = async (call: ToolCall): Promise<{
+    classification: ActionResultClass;
+    result: ToolResult;
+  } | null> => {
+    if (abort.signal.aborted) return null;
+    // Tool arguments become UI and observability evidence, so only the shared
+    // redacted representation crosses that boundary. Dispatch still receives
+    // the original args.
+    emit({ kind: "tool_call", payload: { tool: call.name, args: redactSensitiveArgs(call.args) } });
+
+    const detected = detectProjectInArgs(call.args, projectIndex);
+    if (detected && detected.slug !== loadedProjectSlug) {
+      const body = readProjectFile(deps.memoryDir, detected.slug);
+      if (body) {
+        messages.push({
+          role: "user",
+          content: `[PROJECT CONTEXT â€” ${detected.slug}]\n${body}`,
+        });
+      }
+      loadedProjectSlug = detected.slug;
+    }
+
+    const decision = await policy(call.name, call.args);
+    if (abort.signal.aborted) return null;
+    if (!decision.allow) {
+      const result: ToolResult = { call_id: call.id, output: decision.message, is_error: true };
+      emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: result.output } });
+      messages.push({ role: "tool", content: result });
+      return { classification: classifyActionResult(result), result };
+    }
+    toolsUsed++;
+
+    const budget = TOOL_BUDGET_MS[call.name] ?? 30_000;
+    const callAbort = new AbortController();
+    const onRunAbort = () => callAbort.abort();
+    abort.signal.addEventListener("abort", onRunAbort, { once: true });
+    try {
+      if (abort.signal.aborted) return null;
+      const result = await withTimeout(registry.dispatch(call, callAbort.signal), budget, call.name);
+      if (abort.signal.aborted) return null;
+      emit({
+        kind: "tool_result",
+        payload: {
+          tool: call.name,
+          ok: !result.is_error,
+          result: result.output,
+          ...(result.verification ? { verification: result.verification } : {}),
+        },
+      });
+      messages.push({ role: "tool", content: result });
+      return { classification: classifyActionResult(result), result };
+    } catch (err) {
+      callAbort.abort();
+      if (abort.signal.aborted) return null;
+      const message = err instanceof Error ? err.message : String(err);
+      const result: ToolResult = { call_id: call.id, output: message, is_error: true };
+      emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: message } });
+      messages.push({ role: "tool", content: result });
+      return { classification: "error", result };
+    } finally {
+      abort.signal.removeEventListener("abort", onRunAbort);
+    }
+  };
+
+  // A fully specified route is executed before provider inference. It still
+  // passes through the same registry, policy, timeout, event, receipt, and
+  // verification seams as model-selected tool calls.
+  if (mode === "action" && opts.computerExecutionPlan) {
+    const plan = opts.computerExecutionPlan;
+    if (plan.status === "unsupported") {
+      finalText = plan.userMessage;
+      emit({ kind: "final", payload: { text: finalText } });
+      concluded = true;
+    } else {
+      const call: ToolCall = {
+        id: `ava-route-${runId}`,
+        name: plan.toolName,
+        args: plan.args,
+      };
+      messages.push({ role: "assistant", content: "", tool_calls: [call] });
+      const dispatched = await dispatchToolCall(call);
+      if (abort.signal.aborted) {
+        concludeCancelled();
+      } else if (dispatched) {
+        const verification = dispatched.result.verification;
+        if (!dispatched.result.is_error && verification?.state === "verified") {
+          finalText = dispatched.result.output;
+        } else if (!dispatched.result.is_error) {
+          finalText =
+            `I ran the selected ${plan.executor.replaceAll("_", " ")} route, Sir, ` +
+            `but could not independently verify the requested outcome. ${scrubSecrets(dispatched.result.output)}`;
+        } else {
+          finalText = `I couldn't complete the selected route, Sir â€” ${scrubSecrets(dispatched.result.output)}`;
+        }
+        emit({ kind: "final", payload: { text: finalText } });
+        concluded = true;
+      }
+    }
+  }
+
+  for (let turn = 0; !concluded && turn < MAX_AGENT_TURNS; turn++) {
     if (abort.signal.aborted) {
       concludeCancelled();
       break;

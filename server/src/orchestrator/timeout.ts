@@ -18,6 +18,7 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   // budget blowout. The dispatch-level abort (agent.ts) now cancels the loop on
   // timeout; 120s gives real visual tasks room to finish.
   computer_use: 120_000,
+  chrome_google_search: 45_000,
   control_app: 30_000,
   // Capture + one vision call on a multi-MB PNG — 30s default is too tight
   // when the vision model queues.

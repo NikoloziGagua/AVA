@@ -61,11 +61,17 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (
     tool === "chrome_open" ||
+    tool === "chrome_google_search" ||
     tool === "chrome_navigate" ||
     tool === "chrome_type" ||
     tool === "chrome_press_key"
   ) {
-    return { tier: "low", reason: "low-risk chrome action" };
+    return {
+      tier: "low",
+      reason: tool === "chrome_google_search"
+        ? "direct reversible Google search in AVA Chrome"
+        : "low-risk chrome action",
+    };
   }
 
   if (tool === "chrome_click") {

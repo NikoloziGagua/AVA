@@ -22,6 +22,8 @@ Two columns need a word of explanation:
 | `fs_list` | same | List one directory level | none | `read-only` |
 | `fs_stat` | same | Stat a path (size, mtime, isDir) | none | `read-only` |
 | `fs_delete` | same | Delete one file or empty dir | none | `high` (always) |
+| `chrome_open` | `tools/chrome-mcp.ts` + `tools/chrome.ts` | Open/foreground Ava's persistent browser, optionally at one URL | none | `low` |
+| `chrome_google_search` | same + `orchestrator/computer-execution-router.ts` | Open one exact encoded Google query in the persistent browser and verify the active host, route and query | none | `low` (credential-shaped text is refused before navigation) |
 | `chrome_navigate` | `tools/chrome-mcp.ts` + `tools/chrome.ts` | Navigate Ava's Chromium tab to a URL | none | `low` |
 | `chrome_click` | same | Click an element by selector | none | `low` (submit/checkout-like selector → `high`) |
 | `chrome_type` | same | Fill text into an input | none | `low` |
@@ -105,7 +107,7 @@ buildShellTool        → shell
 buildControlAppTool   → control_app
 buildFilesystemTools  → fs_read, fs_write, fs_list, fs_stat, fs_delete
 buildClaudeCodeTool   → claude_code
-buildChromeTools      → chrome_navigate … chrome_tabs
+buildChromeTools      → chrome_open, chrome_google_search, chrome_navigate … chrome_tabs
 buildComputerUseTool  → computer_use
 buildScreenshotTool   → take_screenshot
 buildSelfImproveTool / buildSelfImproveStatusTool (if deps present)
@@ -273,6 +275,8 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 
 | Tool | Input | Action | Output |
 |---|---|---|---|
+| `chrome_open` | `{ url? }` | Start/attach to Ava's persistent browser and foreground it; optionally navigate the active tab | Browser-visible status/title |
+| `chrome_google_search` | `{ query }` | Open `https://www.google.com/search?q=…`, or foreground the already-matching page; then compare the live URL's host, path, and exact decoded query | Verified result, or a contradicted/error result if redirected or mismatched |
 | `chrome_navigate` | `{ url }` | `page.goto(url, { waitUntil:"domcontentloaded", timeout:30s })` | `loaded: <title>` |
 | `chrome_click` | `{ selector }` | `page.click(selector, 10s)` (CSS or `text=` selector) | `clicked` |
 | `chrome_type` | `{ selector, text }` | `page.fill(selector, text, 10s)` | `typed` |

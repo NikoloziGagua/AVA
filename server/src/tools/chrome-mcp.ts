@@ -1,5 +1,8 @@
 // server/src/tools/chrome-mcp.ts
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { createHash } from "node:crypto";
+import type { ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
+import { scrubSecrets } from "../security/scrub.js";
 import type { Chrome } from "./chrome.js";
 
 export type ChromeToolEvent =
@@ -8,10 +11,43 @@ export type ChromeToolEvent =
 
 export type ChromeToolDef = {
   tool: Tool;
-  run: (args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }>;
+  run: (args: Record<string, unknown>) => Promise<{
+    text: string;
+    ok: boolean;
+    verification?: ToolVerificationEvidence;
+  }>;
 };
 
-type ChromeRun = (chrome: Chrome, args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }>;
+type ChromeRun = (chrome: Chrome, args: Record<string, unknown>) => Promise<{
+  text: string;
+  ok: boolean;
+  verification?: ToolVerificationEvidence;
+}>;
+
+export function googleSearchUrl(query: string): string {
+  const url = new URL("https://www.google.com/search");
+  url.searchParams.set("q", query);
+  return url.toString();
+}
+
+export function verifyGoogleSearchUrl(current: string, query: string): {
+  verified: boolean;
+  reason: string;
+} {
+  try {
+    const url = new URL(current);
+    const googleHost = /^(?:www\.)?google\.(?:com|co\.uk)$/i.test(url.hostname);
+    if (!googleHost || url.pathname !== "/search") {
+      return { verified: false, reason: "The active page is not a supported Google search-results URL." };
+    }
+    if (url.searchParams.get("q") !== query) {
+      return { verified: false, reason: "The active Google results URL does not contain the exact requested query." };
+    }
+    return { verified: true, reason: "The active page is Google's search route with the exact requested query." };
+  } catch {
+    return { verified: false, reason: "The browser returned an invalid active-page URL." };
+  }
+}
 
 export function buildChromeTools(opts: {
   /**
@@ -35,6 +71,67 @@ export function buildChromeTools(opts: {
     };
 
   return [
+    {
+      tool: {
+        name: "chrome_google_search",
+        description:
+          "Fast deterministic Google search in AVA's persistent Chrome. Use this " +
+          "instead of chrome_open + typing, computer_use, control_app, shell, or " +
+          "Microsoft UFO when Sir asks to open Google and search for one query. It " +
+          "opens the exact encoded search URL, foregrounds AVA Chrome, and verifies " +
+          "the active Google /search URL and q parameter before reporting success.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", minLength: 1, maxLength: 500 },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+      run: wrap("chrome_google_search", async (chrome, args) => {
+        const query = typeof args.query === "string" ? args.query.replace(/\s+/g, " ").trim() : "";
+        if (!query || query.length > 500) {
+          return { ok: false, text: "error: Google search query must be between 1 and 500 characters." };
+        }
+        if (scrubSecrets(query) !== query) {
+          return { ok: false, text: "error: search query appears to contain a credential or secret and was not sent." };
+        }
+
+        const target = googleSearchUrl(query);
+        const alreadyThere = verifyGoogleSearchUrl(chrome.url(), query).verified;
+        const opened = await chrome.open(alreadyThere ? undefined : target);
+        if (!opened.ok) return { ok: false, text: `error: ${opened.reason}` };
+
+        const observedAt = Date.now();
+        const verified = verifyGoogleSearchUrl(chrome.url(), query);
+        const queryRef = createHash("sha256").update(query, "utf8").digest("hex").slice(0, 16);
+        const verification: ToolVerificationEvidence = {
+          state: verified.verified ? "verified" : "contradicted",
+          scope: "task_outcome",
+          method: "chrome_google_search_url",
+          summary: verified.reason,
+          evidenceRef: `google-search:${queryRef}`,
+          observedAt,
+        };
+        if (!verified.verified) {
+          return {
+            ok: false,
+            text: `error: Google search opened, but verification failed: ${verified.reason}`,
+            verification,
+          };
+        }
+
+        const shown = query.length > 180 ? `${query.slice(0, 177)}...` : query;
+        return {
+          ok: true,
+          text:
+            `Google is open in AVA Chrome with results for “${shown}”. ` +
+            `Route: direct persistent browser (faster and more precise than visual control).`,
+          verification,
+        };
+      }),
+    },
     {
       tool: {
         name: "chrome_open",

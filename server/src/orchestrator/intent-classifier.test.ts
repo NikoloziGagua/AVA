@@ -18,6 +18,9 @@ describe("classifyIntent", () => {
   it("treats explicit tool requests as action", () => {
     expect(classifyIntent("use claude_code to summarize this repo")).toBe("action");
     expect(classifyIntent("open chrome to news.ycombinator.com")).toBe("action");
+    expect(classifyIntent("open Google and search for AVA")).toBe("action");
+    expect(classifyIntent("search Google for AVA")).toBe("action");
+    expect(classifyIntent("use chrome_google_search for AVA")).toBe("action");
     expect(classifyIntent("take a screenshot")).toBe("action");
   });
 

@@ -78,7 +78,13 @@ describe("Explorer capability registry", () => {
       "core.browser.mode",
     ]);
     expect(browser.runtime?.toolNames).toContain("chrome_open");
+    expect(browser.runtime?.toolNames).toContain("chrome_google_search");
     expect(browser.runtime?.toolNames).toContain("chrome_snapshot");
+    expect(browser.workflow?.nodes.find((node) => node.toolName === "chrome_google_search"))
+      .toMatchObject({
+        name: "Search Google directly",
+        kind: "external-action",
+      });
 
     const instagram = getCapability("instagram.messaging")!;
     expect(instagram.runtime?.snapshot?.[0]?.note).toMatch(/browser readiness/i);

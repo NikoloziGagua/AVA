@@ -378,6 +378,16 @@ const browserWorkflow: ExplorerWorkflow = {
       producesEvidence: ["tool-result"],
     },
     {
+      id: "browser.persistent-control.google-search",
+      capabilityId: "browser.persistent-control",
+      parentNodeId: "browser.persistent-control.open",
+      name: "Search Google directly",
+      description: "For a single explicit query, open the encoded Google results URL and verify the host, route and exact q parameter without visual control.",
+      kind: "external-action",
+      toolName: "chrome_google_search",
+      producesEvidence: ["tool-result", "dom-confirmation"],
+    },
+    {
       id: "browser.persistent-control.target",
       capabilityId: "browser.persistent-control",
       parentNodeId: "browser.persistent-control.inspect",
@@ -434,6 +444,9 @@ const browserWorkflow: ExplorerWorkflow = {
   ],
   edges: [
     { id: "browser.persistent-control.e1", from: "browser.persistent-control.open", to: "browser.persistent-control.inspect", kind: "next" },
+    { id: "browser.persistent-control.google-e1", from: "browser.persistent-control.open", to: "browser.persistent-control.google-search", kind: "branch", label: "single Google query" },
+    { id: "browser.persistent-control.google-e2", from: "browser.persistent-control.google-search", to: "browser.persistent-control.report", kind: "verification", label: "exact URL verified" },
+    { id: "browser.persistent-control.google-e3", from: "browser.persistent-control.google-search", to: "browser.persistent-control.stop", kind: "stop", label: "redirect or mismatch" },
     { id: "browser.persistent-control.e2", from: "browser.persistent-control.open", to: "browser.persistent-control.stop", kind: "stop", label: "attachment failed" },
     { id: "browser.persistent-control.e3", from: "browser.persistent-control.inspect", to: "browser.persistent-control.target", kind: "next" },
     { id: "browser.persistent-control.e4", from: "browser.persistent-control.target", to: "browser.persistent-control.act", kind: "branch", label: "exact target" },
@@ -887,11 +900,12 @@ const capabilities: ExplorerCapability[] = [
       sourceReferences: [
         source("server/src/tools/chrome.ts", "buildChrome"),
         source("server/src/tools/chrome-mcp.ts", "buildChromeTools"),
+        source("server/src/orchestrator/computer-execution-router.ts", "planComputerExecution"),
         source("server/src/tools/chrome-mcp.test.ts", "buildChromeTools", "test"),
         source("scripts/start-ava-browser.ps1", "AVA browser launcher"),
       ],
     },
-    examples: ["Open AVA Chrome.", "Read this page.", "Fill in this form and verify the result."],
+    examples: ["Open AVA Chrome.", "Open Google and search for AVA.", "Read this page.", "Fill in this form and verify the result."],
     inputs: [
       { name: "URL", description: "Optional page to navigate to.", required: false, sensitive: true },
       { name: "selector or accessibility reference", description: "A target element for interaction.", required: false },
@@ -917,7 +931,7 @@ const capabilities: ExplorerCapability[] = [
       stopConditions: ["Stop before a consequential submit when approval is required.", "Stop when the browser target cannot be identified unambiguously."],
     }),
     runtime: runtime(
-      ["chrome_open", "chrome_navigate", "chrome_click", "chrome_type", "chrome_press_key", "chrome_snapshot", "chrome_read_page", "chrome_screenshot", "chrome_tabs", "computer_use"],
+      ["chrome_open", "chrome_google_search", "chrome_navigate", "chrome_click", "chrome_type", "chrome_press_key", "chrome_snapshot", "chrome_read_page", "chrome_screenshot", "chrome_tabs", "computer_use"],
       [
         { path: "core.browser.ready", dimension: "available", interpretation: "boolean" },
         { path: "core.browser.mode", dimension: "healthy", interpretation: "attached" },

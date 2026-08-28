@@ -86,8 +86,10 @@ import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
 import {
   recordAutomaticMemoryDecision,
   retrieveAutomaticMemory,
+  type AutomaticMemoryDecision,
 } from "../memory-index/auto-retrieve.js";
 import { detectProject, loadProjectIndex } from "../memory/project-index.js";
+import { planComputerExecution } from "../orchestrator/computer-execution-router.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -415,6 +417,9 @@ export function chatRoutes(
       : classifyTypedIntent(parsed.data.text);
     const mode: "conversation" | "action" =
       process.env.FORCE_INTENT === "conversation" ? "conversation" : intent;
+    const computerExecutionPlan = mode === "action"
+      ? planComputerExecution(latestUserText)
+      : null;
 
     // Recall: in action mode with saved playbooks, match this request to a known
     // playbook locally and inject its steps + a stakes rubric. This used to be a
@@ -426,7 +431,7 @@ export function chatRoutes(
     // Which playbook steered this run, if any — its typed evidence record and
     // verified-duration trend are updated from the terminal receipt.
     let recalledSlug: string | null = null;
-    if (mode === "action" && !parsed.data.voice) {
+    if (mode === "action" && !parsed.data.voice && !computerExecutionPlan) {
       try {
         const index = loadPlaybookIndex(agentDeps.memoryDir);
         if (index.length) {
@@ -460,12 +465,24 @@ export function chatRoutes(
       try { return detectProject(latestUserText, loadProjectIndex(agentDeps.memoryDir))?.slug ?? null; }
       catch { return null; }
     })();
-    const memoryRetrieval = await retrieveAutomaticMemory(agentDeps.memoryIndex, {
-      query: latestUserText,
-      channel: "chat",
-      currentSessionId: sessionId,
-      project: memoryProject,
-    });
+    const memoryRetrieval: AutomaticMemoryDecision = computerExecutionPlan
+      ? {
+          channel: "chat",
+          status: "suppressed",
+          reason: "A deterministic computer route was selected; durable memory is not needed for this action.",
+          project: memoryProject,
+          mode: null,
+          semanticAvailable: false,
+          notice: null,
+          selected: [],
+          prompt: "",
+        }
+      : await retrieveAutomaticMemory(agentDeps.memoryIndex, {
+          query: latestUserText,
+          channel: "chat",
+          currentSessionId: sessionId,
+          project: memoryProject,
+        });
 
     const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix
       + (resolvedVisualContext ? `${resolvedVisualContext.prompt}\n\n` : "")
@@ -881,6 +898,7 @@ export function chatRoutes(
           db,
           sessionId: sid,
           mode,
+          computerExecutionPlan,
           reasoningEffort,
           recordUsage: (usage) => {
             if (!missionRecorder) return;

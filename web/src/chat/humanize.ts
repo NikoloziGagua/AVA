@@ -44,6 +44,7 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "chrome_screenshot": return "Capturing the page";
     case "chrome_tabs": return "Checking tabs";
     case "computer_use": return a.task ? truncate(s(a.task), 50) : "Controlling the screen";
+    case "chrome_google_search": return a.query ? `Searching Google for ${truncate(s(a.query), 42)}` : "Searching Google";
     case "control_app": { const app = s(a.app) || s(a.name); return app ? `Controlling ${truncate(app, 30)}` : "Controlling an app"; }
     case "find_places": return a.query ? `Finding places: ${truncate(s(a.query), 36)}` : "Finding places";
     case "take_screenshot": return "Taking a screenshot";

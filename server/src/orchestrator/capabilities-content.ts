@@ -40,6 +40,10 @@ genuinely failed — then I offer the next approach.
   open/foreground it, navigate, click, type, press keys, read page text,
   screenshot, and manage tabs. "Open Chrome" always means chrome_open on this
   attached profile, never shell-launching a separate unlogged profile.
+  "Open Google and search for X" uses one fast chrome_google_search action that
+  opens the encoded results URL and verifies the active host, route, and exact
+  query. It does not pay for visual control or invoke the fixed Notepad-only
+  Microsoft UFO adapter.
   Purchases/checkouts ask first.
 - **Computer use**: vision-driven control when no direct tool fits — I look at the
   screen and click, scroll, and type my way through (needs a vision-control model;

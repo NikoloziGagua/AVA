@@ -20,6 +20,13 @@ describe("classifyRisk", () => {
     expect(classifyRisk("chrome_open", {}).tier).toBe("low");
     expect(classifyRisk("chrome_open", { url: "https://www.google.com" }).tier).toBe("low");
   });
+
+  it("low: a direct Google search is reversible browser navigation", () => {
+    expect(classifyRisk("chrome_google_search", { query: "AVA test" })).toEqual({
+      tier: "low",
+      reason: "direct reversible Google search in AVA Chrome",
+    });
+  });
   it("low: fs_write under allowlist root (caller still allowlist-checks separately)", () => {
     expect(classifyRisk("fs_write", { path: "C:/ai/x.txt" }).tier).toBe("low");
   });

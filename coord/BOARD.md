@@ -43,7 +43,7 @@ scheduler and pokes whoever is up.
 | Strategy Room (Niko + AVA + Codex collaboration) | codex | v1 shipped, awaiting Niko test | 2026-08-03 |
 | Task result receipts (conversation visibility) | codex | v1 built and verified, awaiting Niko launch/test | 2026-08-03 |
 | Notes workspace (structured capture) | codex | persistence foundation started; paused for Explorer handoff | 2026-08-04 |
-| Watcher-to-Codex task delivery | codex | claimed; must prove delivery into this exact session before Notes resumes | 2026-08-04 |
+| Watcher-to-Codex task delivery | codex | shipped: acknowledged exact-thread delivery (`bea70ff`) | 2026-08-28 |
 | Playbook verified-learning gate | codex | claimed; replacing final-reply wins with evidence-aware learning outcomes | 2026-08-15 |
 | Self-improvement worker selector | codex | active; provider-neutral Claude Code/Codex selector behind existing approval and release gates | 2026-08-15 |
 | Microsoft UFO design-only evaluation | codex | complete in isolated Self worktree; design-only proposal and evidence audit | 2026-08-27 |
@@ -3258,3 +3258,82 @@ modified.
 NEEDS: niko (hard-refresh AVA once if an older service worker is visible, then
 test New -> mic -> keyboard -> mic; both modes should remain in that same New
 chat, while a second New starts a separate conversation)
+
+---
+
+### 2026-08-28 - codex - CLAIM: acknowledged watcher delivery into standalone Codex
+
+Niko reports that AVA can stage watcher text into the open `nikug` Codex window
+but sometimes fails to submit it, and that busy-versus-idle detection is not
+reliable enough for unattended overnight development. I am reclaiming the
+existing Codex-owned watcher transport for a bounded delivery reliability
+repair. Acceptance is not simulated scheduling or text insertion: the harmless
+watch marker must become a real user turn in the exact pinned standalone Codex
+conversation only after the current task boundary, with an authoritative
+acknowledgement, idempotent retry/recovery, and no duplicate prompt.
+
+Live stress messages will be non-task probes that ask only for a unique receipt,
+so testing cannot recursively assign development work. The repair will preserve
+sanitization, exact-thread targeting, one-writer safety, cycle ancestry, terminal
+failure honesty, Mission Control evidence, and the existing no-hidden-route
+contract. It will not use or modify Forge.
+
+NEEDS: codex (reproduce, repair, stress-test, commit, and return live delivery evidence)
+
+---
+
+### 2026-08-28 - codex - acknowledged exact-thread watcher delivery shipped
+
+Commit `bea70ff` (`fix(watches): acknowledge exact-thread Codex delivery`)
+replaces the unreliable Windows console injector with Codex 0.150.1's supported
+exact-thread queue. The removed path selected an argument-free process, wrote
+text into a console, pressed a blind Tab key, and recorded `injected` before any
+proof that Codex had submitted the message. Multiple open Codex processes made
+that process heuristic ambiguous, and the terminal title `nikug` is not a
+Codex session identity. AVA now pins and submits to the immutable session UUID
+using `codex queue --thread <id> --message <text>`; Codex itself owns busy/idle
+queueing and AVA no longer guesses from windows, processes, or keystrokes.
+
+The new `server/src/watches/codex-queue.ts` records a content-free SHA-256
+receipt only after the CLI acknowledges the exact thread. Exclusive claims and
+receipts prevent concurrent/replayed scheduler passes from submitting twice.
+A definite pre-acceptance failure may retry; a timeout, thrown transport, stale
+claim, receipt mismatch, or lost acknowledgement fails closed and is never
+replayed automatically. The existing unique rollout marker remains the real
+delivery evidence, and the following Codex task-complete event remains the
+completion evidence. The trusted Stop hook is retained only as an older-client
+busy-turn fallback. Removed files are
+`server/src/watches/codex-console.ts`, its test, and
+`scripts/send-codex-watch-console.ps1`; dispatcher, tool description, server
+wiring, tests, and `docs/features/watches.md` were updated accordingly.
+
+Verification passed: focused watcher/tool coverage was 5 files / 47 tests;
+the full server suite was 185 files / 1,408 tests; server build and
+`git diff --check` passed (normal CRLF notices only). A safe installed-CLI probe
+against a nonexistent UUID returned a typed no-session failure. A real busy-turn
+probe against pinned thread `019f977d-97dc-7cd1-b2ad-904631196018` received CLI
+acknowledgement; 250 identical replays produced 250 `already_accepted` results
+and zero second submissions, while the receipt contained no prompt. The text
+then appeared after the clean task boundary as semantic user-message evidence
+in the immutable rollout.
+
+The decisive full AVA path used a separate chat to ask AVA to create watcher
+`Qbsl_p_es8GP`. It persisted the exact thread, reached `dispatching`, stored an
+accepted content-free queue receipt at `2026-08-28T01:47:42.459Z`, and did not
+claim delivery while the active turn was still running. At the next clean
+boundary its `[AVA-WATCH:Qbsl_p_es8GP]` message appeared in this pinned Codex
+session. The scheduler then persisted `delivered_at=1787881841964`, observed the
+reply/task boundary, persisted `completed_at=1787881902379`, disabled the
+one-shot watch, and ended with `last_status=completed` / `pinned Codex task
+reached a completed task boundary`. AVA was rebuilt and relaunched on the exact
+committed build before this full-path test.
+
+Known limitation: no local delivery system can mathematically promise service
+when AVA, Codex, or the PC is powered off. The adapter now distinguishes those
+failures honestly and no longer reports terminal text insertion as delivery.
+Niko's unrelated `.claude/settings.local.json` edit and untracked persona
+research document were preserved. Forge was neither inspected nor modified.
+
+NEEDS: nobody (the exact-thread watcher transport is committed, live, and
+verified through scheduling, busy-turn queueing, clean-boundary delivery, reply,
+and persisted completion)

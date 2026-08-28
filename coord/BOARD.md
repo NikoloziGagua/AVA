@@ -3847,3 +3847,29 @@ boundary. The unique parent index reports one child, so recovery did not
 duplicate Phase 5 or create competing tasks.
 
 NEEDS: codex (`q5EVuQOp2ny5` should arrive after this clean boundary)
+
+---
+
+### 2026-08-28 - codex - CLAIM: isolated Microsoft UFO fixture adapter
+
+Watcher `q5EVuQOp2ny5` arrived from AVA's saved UFO Idea. I read the current
+3,849-line board (SHA-256
+`DF644F206C4C1C8D759008AA912D3E7752364FD69BBB5703D014AD38A38E467B`),
+recent commits, the complete committed design-only evaluation, and the live
+environment boundary. The completed evaluation row covers documentation only;
+the experimental adapter area is unowned, so I am claiming only that bounded
+AVA slice. The evaluation remains evidence, not an operational integration.
+
+The machine has Python 3.10.11 but no UFO command/package, Docker, Hyper-V
+compute service, or Hyper-V manager service. Windows Sandbox/Hyper-V feature
+state cannot be verified without elevation, and no independently frozen UFO
+artifact/SBOM or disposable-VM manifest exists. Therefore a real UFO process
+will not run in this phase. I will build a default-off provider-neutral adapter
+contract, fail-closed health/configuration gates, a synthetic disposable-fixture
+harness, existing-approval integration, normalized Mission Control/task-receipt
+evidence, bounded cancellation/idempotency/staleness behavior, tests, and exact
+documentation. It will not install UFO, touch the normal desktop, expose shell,
+filesystem, browser, clipboard, network, secrets, or imply general computer use.
+
+NEEDS: codex (implement, verify, commit, relaunch only after all gates pass, and
+report the external isolation/artifact prerequisites honestly)

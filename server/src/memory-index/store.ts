@@ -3,15 +3,19 @@ import { nanoid } from "nanoid";
 import type { Db } from "../state/db.js";
 import { scrubSecrets } from "../security/scrub.js";
 import { MEMORY_CHECKPOINT_KINDS } from "./types.js";
+import { MemoryGovernanceStore, type GovernanceWriteBase, type GovernanceWriteResult } from "./governance.js";
 import type {
   CaptureMemoryInput,
   CaptureMemoryResult,
+  MemoryCorrection,
   MemoryEmbedder,
   MemoryEmbedding,
   MemoryCheckpointKind,
   MemoryIndexEntry,
   MemoryIndexKind,
   MemoryIndexResult,
+  MemoryGovernanceActor,
+  MemoryGovernanceMutation,
   MemoryMatchEvidence,
   MemoryPrivacyLevel,
   MemoryRetrievalMode,
@@ -240,10 +244,14 @@ function sourceReason(status: MemorySourceStatus, count: number): string {
 }
 
 export class MemoryIndexService {
+  private readonly governance: MemoryGovernanceStore;
+
   constructor(
     private readonly db: Db,
     private readonly embedder: MemoryEmbedder | null = null,
-  ) {}
+  ) {
+    this.governance = new MemoryGovernanceStore(db);
+  }
 
   private messagesForRange(sessionId: string, fromMessageId: number, throughMessageId: number): MessageRow[] {
     return this.db.prepare(`
@@ -307,9 +315,12 @@ export class MemoryIndexService {
       FROM memory_index_entries
       WHERE status = 'active' AND COALESCE(thread_id, id) = ?
     `).get(threadId) as { total: number; latest: number | null };
-    const entry = entryFromRow(row);
+    const originalEntry = entryFromRow(row);
+    const governed = this.governance.view(originalEntry);
+    const entry = governed.entry;
     return {
       entry,
+      originalEntry,
       source,
       match,
       lineage: {
@@ -320,6 +331,19 @@ export class MemoryIndexService {
         reason: entry.checkpointReason,
         totalCheckpoints: aggregate.total,
         isLatest: entry.checkpointSequence === (aggregate.latest ?? entry.checkpointSequence),
+      },
+      governance: {
+        threadVersion: governed.threadVersion,
+        pinned: governed.pinned,
+        state: governed.state,
+        retrievalEligible: governed.retrievalEligible,
+        corrected: governed.corrected,
+        correctionEventId: governed.correctionEventId,
+        correctionReason: governed.correctionReason,
+        supersededByThreadId: governed.supersededByThreadId,
+        conflictWithThreadIds: governed.conflictWithThreadIds,
+        updatedAt: governed.updatedAt,
+        events: governed.events,
       },
       usable: source.status === "verified",
     };
@@ -470,6 +494,7 @@ export class MemoryIndexService {
               last_verified_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, 'verified', ?)
           `).run(id, input.sessionId, sourceLabel, input.fromMessageId, input.throughMessageId, messages.length, hash, now);
+          this.governance.ensureCurrent(threadId, id, now);
           created = true;
         }
       })();
@@ -520,7 +545,7 @@ export class MemoryIndexService {
 
   async search(
     query: string,
-    options: { project?: string | null; limit?: number; latestOnly?: boolean } = {},
+    options: { project?: string | null; limit?: number; latestOnly?: boolean; includeHistory?: boolean } = {},
   ): Promise<MemorySearchResponse> {
     const cleanQuery = cleanInline(query, 1_000);
     if (!cleanQuery) throw new Error("memory search query is required");
@@ -536,7 +561,8 @@ export class MemoryIndexService {
     }
 
     const scored = rows.flatMap((row) => {
-      const entry = entryFromRow(row);
+      const governed = this.governance.view(entryFromRow(row));
+      const entry = governed.entry;
       const lexical = lexicalEvidence(cleanQuery, entry);
       let semanticScore: number | null = null;
       if (
@@ -548,10 +574,18 @@ export class MemoryIndexService {
       }
       if (lexical.score <= 0 && (semanticScore === null || semanticScore < 0.45)) return [];
       const score = lexical.score * 0.48 + Math.max(0, semanticScore ?? 0) * 0.52;
-      return [{ row, lexical, semanticScore, score }];
-    }).sort((left, right) => right.score - left.score || right.row.updated_at - left.row.updated_at || left.row.id.localeCompare(right.row.id));
+      return [{ row, lexical, semanticScore, score, governed }];
+    }).sort((left, right) =>
+      (right.score + (right.governed.pinned ? 0.03 : 0)) - (left.score + (left.governed.pinned ? 0.03 : 0))
+      || right.governed.updatedAt - left.governed.updatedAt
+      || left.row.id.localeCompare(right.row.id));
 
-    const results = scored.slice(0, limit).map(({ row, lexical, semanticScore }) => {
+    const visible = options.includeHistory
+      ? scored
+      : scored.filter((item) => item.governed.retrievalEligible);
+    const suppressedByGovernance = scored.length - visible.length;
+
+    const results = visible.slice(0, limit).map(({ row, lexical, semanticScore }) => {
       const usedSemantic = semanticScore !== null;
       const usedLexical = lexical.score > 0;
       const mode: MemoryRetrievalMode = usedSemantic && usedLexical ? "hybrid" : usedSemantic ? "semantic" : "lexical";
@@ -571,38 +605,48 @@ export class MemoryIndexService {
     const mode: MemoryRetrievalMode = queryEmbedding
       ? results.some((result) => result.match.lexicalScore > 0) ? "hybrid" : "semantic"
       : "lexical";
+    const governanceNotice = suppressedByGovernance
+      ? `${suppressedByGovernance} matching memory ${suppressedByGovernance === 1 ? "thread was" : "threads were"} excluded because it is superseded, historical, or has an unresolved conflict.`
+      : null;
     return {
       query: cleanQuery,
       project: projectKey(options.project).display,
       mode,
       semanticAvailable: queryEmbedding !== null,
-      notice,
+      notice: [notice, governanceNotice].filter(Boolean).join(" ") || null,
+      suppressedByGovernance,
       results,
     };
   }
 
   listRecent(options: { project?: string | null; limit?: number } = {}): MemorySearchResponse {
     const limit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 12)));
-    const results = this.candidateRows(options.project).slice(0, limit).map((row) => this.result(row, {
+    const results = this.candidateRows(options.project).map((row) => this.result(row, {
       mode: "recent",
       reason: "Recently captured. The source is verified separately before use.",
       semanticScore: null,
       lexicalScore: 0,
       sharedTerms: [],
-    }));
+    })).sort((left, right) =>
+      Number(right.governance.pinned) - Number(left.governance.pinned)
+      || Number(right.governance.retrievalEligible) - Number(left.governance.retrievalEligible)
+      || right.governance.updatedAt - left.governance.updatedAt)
+      .slice(0, limit);
     return {
       query: "",
       project: projectKey(options.project).display,
       mode: "recent",
       semanticAvailable: this.embedder !== null,
       notice: this.embedder ? null : "No embedding provider is configured; searches use exact and keyword matching.",
+      suppressedByGovernance: 0,
       results,
     };
   }
 
-  get(entryId: string): MemoryIndexResult | null {
+  get(entryId: string, options: { project?: string | null } = {}): MemoryIndexResult | null {
     const row = this.entryRow(entryId);
     if (!row) return null;
+    if (row.privacy_level === "project" && row.project_key !== projectKey(options.project).key) return null;
     return this.result(row, {
       mode: "recent",
       reason: "Opened by exact memory ID. The source is verified separately before use.",
@@ -679,6 +723,65 @@ export class MemoryIndexService {
         ? { ok: false, reason: "version_conflict", currentVersion: latest.version }
         : { ok: false, reason: "not_found", currentVersion: null };
     }
+    this.governance.reconcileAfterForget(current.thread_id ?? current.id, now);
     return { ok: true };
+  }
+
+  private governanceFailure(result: Exclude<GovernanceWriteResult, { ok: true }>): MemoryGovernanceMutation {
+    return { ...result };
+  }
+
+  private governedMutation(result: GovernanceWriteResult, project?: string | null): MemoryGovernanceMutation {
+    if (!result.ok) return this.governanceFailure(result);
+    const current = this.get(result.currentEntryId, { project });
+    if (!current) {
+      return { ok: false, reason: "not_found", currentVersion: null, message: "Governed memory is no longer available." };
+    }
+    return { ok: true, event: result.event, result: current };
+  }
+
+  async correct(input: GovernanceWriteBase & { entryId: string; correction: MemoryCorrection }): Promise<MemoryGovernanceMutation> {
+    const written = this.governance.correct(input);
+    if (!written.ok) return this.governanceFailure(written);
+    const current = this.get(written.currentEntryId, { project: input.project });
+    if (!current) return { ok: false, reason: "not_found", currentVersion: null, message: "Corrected memory is unavailable." };
+    await this.storeEmbedding(current.entry);
+    return this.governedMutation(written, input.project);
+  }
+
+  setPinned(input: GovernanceWriteBase & { pinned: boolean }): MemoryGovernanceMutation {
+    return this.governedMutation(this.governance.setPinned(input), input.project);
+  }
+
+  supersede(input: GovernanceWriteBase & { replacementThreadId: string; replacementExpectedVersion: number }): MemoryGovernanceMutation {
+    const replacementId = this.governance.currentEntryId(input.replacementThreadId, input.project);
+    const replacement = replacementId ? this.get(replacementId, { project: input.project }) : null;
+    if (!replacement?.usable || !replacement.governance.retrievalEligible) {
+      return {
+        ok: false,
+        reason: replacement ? "source_unverified" : "not_found",
+        currentVersion: replacement?.governance.threadVersion ?? null,
+        message: "Replacement memory must be current and source-verified.",
+      };
+    }
+    return this.governedMutation(this.governance.supersede(input), input.project);
+  }
+
+  openConflict(input: GovernanceWriteBase & { otherThreadId: string; otherExpectedVersion: number }): MemoryGovernanceMutation {
+    return this.governedMutation(this.governance.openConflict(input), input.project);
+  }
+
+  resolveConflict(input: GovernanceWriteBase & { losingThreadId: string; losingExpectedVersion: number }): MemoryGovernanceMutation {
+    const winnerId = this.governance.currentEntryId(input.threadId, input.project);
+    const winner = winnerId ? this.get(winnerId, { project: input.project }) : null;
+    if (!winner?.usable) {
+      return {
+        ok: false,
+        reason: winner ? "source_unverified" : "not_found",
+        currentVersion: winner?.governance.threadVersion ?? null,
+        message: "The winning memory must have a verified authoritative source.",
+      };
+    }
+    return this.governedMutation(this.governance.resolveConflict(input), input.project);
   }
 }

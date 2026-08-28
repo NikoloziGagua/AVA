@@ -411,8 +411,9 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 #### Source-linked index tools
 
 When a chat has an active SQLite session, the same builder also exposes
-`memory_index_capture`, `memory_index_search`, `memory_index_open`, and
-`memory_index_forget`.
+`memory_index_capture`, `memory_index_search`, `memory_index_open`,
+`memory_index_forget`, `memory_index_correct`, `memory_index_pin`,
+`memory_index_supersede`, and `memory_index_conflict`.
 
 - **Capture** persists a bounded sanitized summary and a fingerprinted reference
   to an exact conversation range. Repeating the same range and scope reuses the
@@ -425,12 +426,24 @@ When a chat has an active SQLite session, the same builder also exposes
   detail without copying transcripts into the index.
 - **Forget** requires the entry's current version, removes it from retrieval and
   deletes its embedding while leaving the source chat alone.
+- **Correct** appends a bounded overlay for the compact current view and keeps the
+  original checkpoint visible. It does not claim the source supports the edit.
+- **Pin** is a versioned priority hint among candidates that already match; it is
+  not a relevance bypass.
+- **Supersede** preserves an obsolete thread as history and points it to an exact,
+  source-verified replacement in the same privacy scope.
+- **Conflict** suppresses both contradictory threads until an explicit resolution
+  names the verified winner and supersedes the loser.
 
 Every returned source is rechecked against the canonical `messages` rows. A
 changed or unavailable source is `usable=false`; vector similarity alone is never
 proof. Project-scoped entries are returned only when that project is explicitly
 selected. The compact index is SQLite-backed and intentionally separate from the
 small Markdown blocks injected into every prompt.
+All four governance mutations require exact IDs, the current governance version,
+a reason and a stable retry key. Their append-only actor/time/reason history makes
+UI and agent changes inspectable; stale, replayed and cross-scope writes fail
+closed.
 
 ---
 

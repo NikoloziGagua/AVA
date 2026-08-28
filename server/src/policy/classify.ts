@@ -150,6 +150,8 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   if (
     tool === "memory_remember" || tool === "memory_forget"
     || tool === "memory_index_capture" || tool === "memory_index_forget"
+    || tool === "memory_index_correct" || tool === "memory_index_pin"
+    || tool === "memory_index_supersede" || tool === "memory_index_conflict"
   ) {
     return { tier: "low", reason: "memory mutation stays inside local AVA state" };
   }

@@ -112,6 +112,7 @@ export async function retrieveAutomaticMemory(
     const eligible = response.results.filter((result) =>
       result.lineage.isLatest
       && result.usable
+      && result.governance.retrievalEligible
       && result.source.status === "verified"
       && result.source.sessionId !== (input.currentSessionId ?? null)
       && isRelevant(result, explicitRecall));
@@ -141,7 +142,9 @@ export async function retrieveAutomaticMemory(
       if (!excerpt) continue;
       const compact = [
         `Memory ${selected.length + 1}: ${result.entry.title}`,
-        `Discovery summary (not authoritative by itself): ${result.entry.summary.slice(0, 900)}`,
+        result.governance.corrected
+          ? `User-governed correction (not source-verified by itself): ${result.entry.summary.slice(0, 900)}`
+          : `Discovery summary (not authoritative by itself): ${result.entry.summary.slice(0, 900)}`,
         result.entry.conclusions.length
           ? `Current conclusions: ${result.entry.conclusions.slice(0, 3).map((item) => item.slice(0, 240)).join(" | ")}`
           : "",

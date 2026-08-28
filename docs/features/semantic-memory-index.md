@@ -3,7 +3,8 @@
 ## Status
 
 Implemented as a conservative automatic-and-explicit beta with immutable linked
-Idea checkpoints and source-verified automatic recall across chat and voice. It is a retrieval
+Idea checkpoints, source-verified automatic recall across chat and voice, and
+append-only user governance. It is a retrieval
 layer for substantial research, developed ideas and decisions; it does not
 replace AVA's compact preference/observation memory or copy complete transcripts.
 
@@ -32,11 +33,17 @@ replace AVA's compact preference/observation memory or copy complete transcripts
    verification. Explicit `memory_index_open` remains available for deeper detail.
 7. Sir can say **"forget that indexed idea"**. AVA searches when needed, then
    calls `memory_index_forget` with the exact ID and current version.
+8. Sir can correct the compact current view, pin an important current thread,
+   mark one thread as explicitly replaced, or pause contradictory memories until
+   choosing a winner. These actions require the visible governance version and a
+   reason. They append history; they never rewrite the original checkpoint.
 
 The Memory screen's **Index** tab lists recent entries and supports query plus an
-optional project boundary. Each card shows the compact record, source health and
-checkpoint position, plus an expandable **Why AVA found this** explanation with
-thread, parent, change type and plain-language checkpoint reason.
+optional project boundary. Each card shows the compact record, source health,
+checkpoint position and current/history/conflict state. Current cards expose
+version-guarded **Pin**, **Correct**, **Mark obsolete** and **Mark conflict**
+controls. The expandable **Why AVA found this** section preserves the original
+record beside any correction and lists who changed governance, when and why.
 
 ## Data model and authority
 
@@ -52,6 +59,12 @@ SQLite remains canonical:
 - `memory_index_auto_events`: content-free, assistant-message-keyed processing
   receipt used to make automatic capture idempotent. It stores only category,
   status, bounded reason and resulting entry IDâ€”never a transcript or raw prompt.
+
+- `memory_index_thread_state`: versioned projection of the current checkpoint,
+  pin, explicit replacement and unresolved conflict state for one lineage.
+- `memory_index_governance_events`: append-only correction/pin/supersession/
+  conflict records with actor, bounded reason, stable request key, related thread,
+  resulting version and timestamp. Correction payloads are sanitized and bounded.
 
 Each entry also records whether capture was `explicit` or `automatic` and a
 sanitized provenance reason. The source range remains the authority in either
@@ -77,6 +90,29 @@ the compact record visible as unavailable evidence rather than silently turning 
 into truth. A matching fingerprint proves source integrity, not that a generated
 summary is semantically perfect; AVA should consult the linked source when detail
 or stakes make that distinction important.
+
+### Governance and conflicts
+
+The original `memory_index_entries` row and its source fingerprint remain
+immutable under governance. A correction is an overlay used for the compact
+current view and search embedding. The API always returns both `entry` (effective
+view) and `originalEntry`, and labels the correction as user/AVA governance rather
+than source evidence. If the source later changes or disappears, the corrected
+view remains visible in history but is unusable for automatic recall.
+
+Pinning adds only a small ordering hint after a candidate has already passed the
+relevance gate; it cannot make an unrelated memory relevant. Explicit
+supersession retains the old thread as inspectable history and makes the selected
+source-verified replacement current. Opening a conflict suppresses both threads
+from automatic recall. Resolution names one source-verified winner and
+supersedes the loser; AVA does not merge contradictory text. V1 conflicts are
+pairwise so a partially resolved multi-party graph cannot leave hidden stale
+edges.
+
+Every mutation includes `expectedVersion`, a stable replay key, actor and reason.
+Stale writes fail with the current version, repeated delivery of the same request
+returns the original event, and a replay key cannot be reused across threads or
+privacy scopes.
 
 ## Retrieval
 
@@ -145,6 +181,11 @@ Authenticated HTTP routes:
 - `POST /api/memory/index/search`
 - `GET /api/memory/index/:id`
 - `POST /api/memory/index/:id/forget`
+- `POST /api/memory/index/:id/correct`
+- `POST /api/memory/index/threads/:threadId/pin`
+- `POST /api/memory/index/threads/:threadId/supersede`
+- `POST /api/memory/index/threads/:threadId/conflict`
+- `POST /api/memory/index/threads/:threadId/resolve-conflict`
 
 Agent tools:
 
@@ -152,6 +193,15 @@ Agent tools:
 - `memory_index_search`
 - `memory_index_open`
 - `memory_index_forget`
+- `memory_index_correct`
+- `memory_index_pin`
+- `memory_index_supersede`
+- `memory_index_conflict`
+
+The agent tools require exact entry/thread IDs, visible governance versions and
+explicit reasons. Their executions flow through the normal tool/Mission Control
+observability seam. Direct UI changes remain visible in each card's append-only
+governance history rather than manufacturing a fake agent run.
 
 The tools are present only when the current persisted chat session and index
 service are available. They work through the same chat route used by text and
@@ -187,6 +237,13 @@ completion is marked skipped and linked to the checkpoint that already covers it
 Superficial turns never call the editor. Editor-declined change candidates produce
 only a content-free decision event.
 
+Governance request keys are globally unique but bound to the original memory
+thread. Replaying a completed mutation is idempotent; attempting to reuse that key
+for a different thread fails closed. Replacement and conflict-winner selection
+require matching privacy scope and verified source evidence. Normal search and
+automatic recall omit history, superseded threads and unresolved conflicts;
+explicit UI history search may show them with non-retrievable state labels.
+
 Current checkpoint routing deliberately follows the most recent verified
 automatic Idea thread in a source conversation. A sufficiently developed distinct
 Idea starts a new thread, but returning later to an older one of several Idea
@@ -198,7 +255,6 @@ The authoritative checkpoint source range also remains capped at 80 messages.
 - deterministic current-utterance semantic retrieval for Hume (connection-time
   chat-to-voice retrieval is implemented; the existing EVI bridge receives the
   transcript only after Hume has started the response);
-- user-governed correction, pinning and supersession controls for checkpoints;
 - Mem0 or another second canonical memory store;
 - background re-embedding and embedding-model migration UI;
 - a large memory administration dashboard;
@@ -214,16 +270,18 @@ Deterministic coverage lives in:
 - `server/src/memory-index/store.test.ts`
 - `server/src/memory-index/auto-capture.test.ts`
 - `server/src/memory-index/auto-retrieve.test.ts`
+- `server/src/memory-index/governance.test.ts`
 - `server/src/memory-index/embedding.test.ts`
 - `server/src/routes/memory.test.ts`
 - `server/src/routes/chat-memory-retrieval.test.ts`
 - `server/src/tools/memory-mcp.test.ts`
 - `web/src/memory/MemoryIndexSection.test.tsx`
 
-The repeatable manual boundary smoke is:
+The repeatable manual boundary smokes are:
 
 ```powershell
 npm.cmd -w server run smoke:memory-retrieval
+npm.cmd -w server run smoke:memory-governance
 ```
 
 It creates a temporary on-disk AVA database, captures personal and project
@@ -231,6 +289,9 @@ memories, closes and reopens SQLite, then exercises the shared gate as fresh
 chat, OpenAI voice and Hume voice. It also checks semantic paraphrase recall,
 irrelevant-memory suppression, project isolation and removal of all smoke data.
 No external credentials or consequential actions are used.
+The governance smoke appends a correction, pins/unpins, pauses and resolves a
+conflict, supersedes an obsolete thread, reopens SQLite, confirms source history
+and current state, then deletes its temporary database.
 
 The tests cover sanitized compact storage, semantic paraphrase recall, lexical
 fallback, source changes/deletion, project isolation, latest-lineage selection,
@@ -257,3 +318,10 @@ Manual acceptance:
    source. With no embedding provider, confirm it openly reports keyword fallback.
 6. Edit/delete the source in a test database or remove the source conversation;
    confirm the card becomes changed/unavailable and is not treated as usable.
+7. Correct a disposable card and confirm the original summary remains visible in
+   **Why AVA found this**. Refresh/restart and confirm the correction persists.
+8. Pin a relevant memory and confirm it moves ahead only for related results.
+9. Mark two disposable memories as conflicting; confirm neither is recalled in a
+   new chat. Resolve the conflict and confirm only the selected winner returns.
+10. Mark an obsolete memory as replaced and confirm normal recall omits it while
+    the Memory Index still shows it as preserved history.

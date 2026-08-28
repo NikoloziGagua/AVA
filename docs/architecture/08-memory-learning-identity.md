@@ -471,6 +471,14 @@ The runtime tools are:
   a detailed answer needs more than the compact locator summary.
 - `memory_index_forget` soft-deletes one exact version and immediately removes its
   vector. It does not delete the original conversation.
+- `memory_index_correct` appends a sanitized correction overlay while preserving
+  the original checkpoint beside it.
+- `memory_index_pin` adds or removes a bounded relevance-order hint on one current
+  thread.
+- `memory_index_supersede` explicitly links an obsolete thread to a verified
+  current replacement without deleting history.
+- `memory_index_conflict` pauses two contradictory threads, then records a chosen
+  source-verified winner without silently merging them.
 
 Every list, get and search result recomputes the authoritative range fingerprint.
 Only `source.status=verified` produces `usable=true`; changed or unavailable
@@ -495,7 +503,16 @@ bounded scrubbed authoritative excerpt and records why it did or did not use
 memory. OpenAI Realtime applies the gate per accepted utterance before
 `response.create`; Hume preloads it from the active chat's latest user context at
 connection because its transcript arrives after provider response generation has
-already begun. Explicit capture/search/open/forget remain available.
+already begun. Explicit capture/search/open/forget and governance remain available.
+
+Phase 5 adds an append-only governance log and a versioned thread-state
+projection. Corrections, pins, supersessions and conflict decisions all record
+actor, time, reason and stable replay key. The original compact checkpoint and
+source fingerprint are not rewritten. Normal and automatic retrieval use only
+current, non-conflicted threads; a correction never upgrades changed or missing
+source evidence. Project boundaries apply to both sides of every relationship,
+and stale versions or cross-thread request-key reuse fail closed. The Memory UI
+shows effective-versus-original content and the full bounded governance history.
 
 ### 2.11 Auto-learning from corrections
 

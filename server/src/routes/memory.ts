@@ -1,4 +1,4 @@
-import { Router, type RequestHandler } from "express";
+import { Router, type RequestHandler, type Response } from "express";
 import { z } from "zod";
 import { readMemoryView } from "../memory/file-view.js";
 import { editLine, deleteLine, appendLineTo } from "../memory/edit-lines.js";
@@ -35,11 +35,64 @@ const SearchIndexBody = z.object({
   query: z.string().min(1).max(1_000),
   project: z.string().max(80).nullish(),
   limit: z.number().int().min(1).max(20).optional(),
+  includeHistory: z.boolean().optional(),
 }).strict();
 
 const ForgetIndexBody = z.object({
   expectedVersion: z.number().int().positive(),
 }).strict();
+
+const GovernanceBase = {
+  expectedVersion: z.number().int().positive(),
+  reason: z.string().min(1).max(500),
+  requestId: z.string().min(8).max(160).regex(/^[A-Za-z0-9:_-]+$/),
+  project: z.string().max(80).nullish(),
+};
+
+const CorrectionBody = z.object({
+  ...GovernanceBase,
+  correction: z.object({
+    title: z.string().min(1).max(160).optional(),
+    summary: z.string().min(1).max(6_000).optional(),
+    conclusions: z.array(z.string().max(600)).max(12).optional(),
+    openQuestions: z.array(z.string().max(600)).max(12).optional(),
+    nextSteps: z.array(z.string().max(600)).max(12).optional(),
+    tags: z.array(z.string().max(80)).max(16).optional(),
+  }).strict().refine((value) => Object.keys(value).length > 0, { message: "correction is empty" }),
+}).strict();
+
+const PinBody = z.object({
+  ...GovernanceBase,
+  pinned: z.boolean(),
+}).strict();
+
+const SupersedeBody = z.object({
+  ...GovernanceBase,
+  replacementThreadId: z.string().min(1).max(160),
+  replacementExpectedVersion: z.number().int().positive(),
+}).strict();
+
+const ConflictBody = z.object({
+  ...GovernanceBase,
+  otherThreadId: z.string().min(1).max(160),
+  otherExpectedVersion: z.number().int().positive(),
+}).strict();
+
+const ResolveConflictBody = z.object({
+  ...GovernanceBase,
+  losingThreadId: z.string().min(1).max(160),
+  losingExpectedVersion: z.number().int().positive(),
+}).strict();
+
+function sendGovernance(res: Response, result: ReturnType<MemoryIndexService["setPinned"]>): void {
+  if (result.ok) { res.json(result); return; }
+  const status = result.reason === "not_found" || result.reason === "privacy_scope" ? 404 : 409;
+  res.status(status).json({
+    error: result.reason === "version_conflict" ? "stale_version" : result.reason,
+    currentVersion: result.currentVersion,
+    message: result.message,
+  });
+}
 
 export type MemoryRoutesDeps = { memoryDir: string; index?: MemoryIndexService };
 
@@ -89,6 +142,7 @@ export function memoryRoutes(auth: RequestHandler, deps: MemoryRoutesDeps): Rout
       res.json(await deps.index.search(parsed.data.query, {
         project: parsed.data.project,
         limit: parsed.data.limit,
+        includeHistory: parsed.data.includeHistory,
       }));
     } catch (error) {
       res.status(400).json({
@@ -101,9 +155,70 @@ export function memoryRoutes(auth: RequestHandler, deps: MemoryRoutesDeps): Rout
   r.get("/index/:id", auth, (req, res) => {
     if (!deps.index) { res.status(503).json({ error: "memory_index_unavailable" }); return; }
     const id = typeof req.params.id === "string" ? req.params.id : "";
-    const result = id ? deps.index.get(id) : null;
+    const project = typeof req.query.project === "string" ? req.query.project : undefined;
+    const result = id ? deps.index.get(id, { project }) : null;
     if (!result) { res.status(404).json({ error: "memory_not_found" }); return; }
     res.json({ result });
+  });
+
+  r.post("/index/:id/correct", auth, async (req, res) => {
+    if (!deps.index) { res.status(503).json({ error: "memory_index_unavailable" }); return; }
+    const id = typeof req.params.id === "string" ? req.params.id : "";
+    const parsed = CorrectionBody.safeParse(req.body);
+    if (!id || !parsed.success) { res.status(400).json({ error: "bad_request", details: parsed.success ? undefined : parsed.error.flatten() }); return; }
+    const current = deps.index.get(id, { project: parsed.data.project });
+    if (!current) { res.status(404).json({ error: "memory_not_found" }); return; }
+    const result = await deps.index.correct({
+      threadId: current.lineage.threadId,
+      entryId: id,
+      expectedVersion: parsed.data.expectedVersion,
+      actor: "user",
+      reason: parsed.data.reason,
+      requestKey: parsed.data.requestId,
+      project: parsed.data.project,
+      correction: parsed.data.correction,
+    });
+    sendGovernance(res, result);
+  });
+
+  r.post("/index/threads/:threadId/pin", auth, (req, res) => {
+    if (!deps.index) { res.status(503).json({ error: "memory_index_unavailable" }); return; }
+    const threadId = typeof req.params.threadId === "string" ? req.params.threadId : "";
+    const parsed = PinBody.safeParse(req.body);
+    if (!threadId || !parsed.success) { res.status(400).json({ error: "bad_request" }); return; }
+    sendGovernance(res, deps.index.setPinned({
+      threadId,
+      expectedVersion: parsed.data.expectedVersion,
+      actor: "user",
+      reason: parsed.data.reason,
+      requestKey: parsed.data.requestId,
+      project: parsed.data.project,
+      pinned: parsed.data.pinned,
+    }));
+  });
+
+  r.post("/index/threads/:threadId/supersede", auth, (req, res) => {
+    if (!deps.index) { res.status(503).json({ error: "memory_index_unavailable" }); return; }
+    const threadId = typeof req.params.threadId === "string" ? req.params.threadId : "";
+    const parsed = SupersedeBody.safeParse(req.body);
+    if (!threadId || !parsed.success) { res.status(400).json({ error: "bad_request" }); return; }
+    sendGovernance(res, deps.index.supersede({ threadId, actor: "user", ...parsed.data, requestKey: parsed.data.requestId }));
+  });
+
+  r.post("/index/threads/:threadId/conflict", auth, (req, res) => {
+    if (!deps.index) { res.status(503).json({ error: "memory_index_unavailable" }); return; }
+    const threadId = typeof req.params.threadId === "string" ? req.params.threadId : "";
+    const parsed = ConflictBody.safeParse(req.body);
+    if (!threadId || !parsed.success) { res.status(400).json({ error: "bad_request" }); return; }
+    sendGovernance(res, deps.index.openConflict({ threadId, actor: "user", ...parsed.data, requestKey: parsed.data.requestId }));
+  });
+
+  r.post("/index/threads/:threadId/resolve-conflict", auth, (req, res) => {
+    if (!deps.index) { res.status(503).json({ error: "memory_index_unavailable" }); return; }
+    const threadId = typeof req.params.threadId === "string" ? req.params.threadId : "";
+    const parsed = ResolveConflictBody.safeParse(req.body);
+    if (!threadId || !parsed.success) { res.status(400).json({ error: "bad_request" }); return; }
+    sendGovernance(res, deps.index.resolveConflict({ threadId, actor: "user", ...parsed.data, requestKey: parsed.data.requestId }));
   });
 
   r.post("/index/:id/forget", auth, (req, res) => {

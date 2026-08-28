@@ -298,4 +298,64 @@ describe("source-linked memory tools", () => {
     expect(buildMemoryTools({ memoryDir: dir }).map((tool) => tool.tool.name))
       .toEqual(["memory_read", "memory_remember", "memory_forget"]);
   });
+
+  it("governs a memory through explicit versioned tools with idempotent run evidence", async () => {
+    const db = openInMemoryDb();
+    const source = createSession(db, { title: "Governed launch plan" });
+    const first = appendMessage(db, { sessionId: source.id, role: "user", content: "Develop the launch plan." });
+    const last = appendMessage(db, { sessionId: source.id, role: "assistant", content: "Launch on Monday." });
+    const index = new MemoryIndexService(db, null);
+    const captured = await index.capture({
+      sessionId: source.id,
+      fromMessageId: first.id,
+      throughMessageId: last.id,
+      kind: "idea",
+      title: "Launch plan",
+      summary: "Launch on Monday.",
+    });
+    const tools = buildMemoryTools({ memoryDir: dir, db, index, sessionId: source.id });
+    expect(tools.map((tool) => tool.tool.name)).toEqual(expect.arrayContaining([
+      "memory_index_correct", "memory_index_pin", "memory_index_supersede", "memory_index_conflict",
+    ]));
+
+    const correct = tools.find((tool) => tool.tool.name === "memory_index_correct")!;
+    const corrected = await correct.run({
+      id: captured.result.entry.id,
+      expected_version: 1,
+      reason: "Sir corrected the approved day.",
+      summary: "Launch on Tuesday. token sk-abcdefghijklmnopqrstuvwxyz123456",
+    }, { runId: "governance-run" });
+    expect(corrected.ok).toBe(true);
+    const payload = JSON.parse(corrected.text);
+    expect(payload).toMatchObject({
+      event: { actor: "ava", kind: "corrected", resultingVersion: 2 },
+      governance: { corrected: true, threadVersion: 2 },
+    });
+    expect(corrected.text).not.toContain("abcdefghijklmnopqrstuvwxyz123456");
+    const replay = await correct.run({
+      id: captured.result.entry.id,
+      expected_version: 1,
+      reason: "Sir corrected the approved day.",
+      summary: "A replay must not replace the correction.",
+    }, { runId: "governance-run" });
+    expect(JSON.parse(replay.text).event.id).toBe(payload.event.id);
+
+    const pin = tools.find((tool) => tool.tool.name === "memory_index_pin")!;
+    const stale = await pin.run({
+      thread_id: captured.result.lineage.threadId,
+      expected_version: 1,
+      pinned: true,
+      reason: "Keep visible.",
+    }, { runId: "pin-run" });
+    expect(stale.ok).toBe(false);
+    expect(stale.text).toContain("version_conflict");
+    const pinned = await pin.run({
+      thread_id: captured.result.lineage.threadId,
+      expected_version: 2,
+      pinned: true,
+      reason: "Keep visible.",
+    }, { runId: "pin-run-current" });
+    expect(pinned.ok).toBe(true);
+    expect(JSON.parse(pinned.text)).toMatchObject({ governance: { pinned: true, threadVersion: 3 } });
+  });
 });

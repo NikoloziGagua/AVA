@@ -762,6 +762,7 @@ export type MemoryIndexEntry = {
 
 export type MemoryIndexResult = {
   entry: MemoryIndexEntry;
+  originalEntry: MemoryIndexEntry;
   source: {
     type: "conversation_range";
     label: string;
@@ -789,6 +790,29 @@ export type MemoryIndexResult = {
     totalCheckpoints: number;
     isLatest: boolean;
   };
+  governance: {
+    threadVersion: number;
+    pinned: boolean;
+    state: "current" | "history" | "superseded" | "conflicted";
+    retrievalEligible: boolean;
+    corrected: boolean;
+    correctionEventId: string | null;
+    correctionReason: string | null;
+    supersededByThreadId: string | null;
+    conflictWithThreadIds: string[];
+    updatedAt: number;
+    events: Array<{
+      id: string;
+      threadId: string;
+      entryId: string | null;
+      kind: "corrected" | "pinned" | "unpinned" | "superseded" | "conflict_opened" | "conflict_resolved";
+      actor: "user" | "ava";
+      reason: string;
+      targetThreadId: string | null;
+      resultingVersion: number;
+      createdAt: number;
+    }>;
+  };
   usable: boolean;
 };
 
@@ -798,6 +822,7 @@ export type MemoryIndexSearchResponse = {
   mode: "recent" | "lexical" | "semantic" | "hybrid";
   semanticAvailable: boolean;
   notice: string | null;
+  suppressedByGovernance: number;
   results: MemoryIndexResult[];
 };
 
@@ -811,12 +836,101 @@ export async function fetchMemoryIndex(project?: string): Promise<MemoryIndexSea
 export async function searchMemoryIndex(input: {
   query: string;
   project?: string;
+  includeHistory?: boolean;
 }): Promise<MemoryIndexSearchResponse> {
   return request<MemoryIndexSearchResponse>("/api/memory/index/search", {
     method: "POST",
     body: JSON.stringify({
       query: input.query,
       ...(input.project?.trim() ? { project: input.project.trim() } : {}),
+      ...(input.includeHistory ? { includeHistory: true } : {}),
+    }),
+  });
+}
+
+export async function correctMemoryIndexEntry(input: {
+  id: string;
+  expectedVersion: number;
+  reason: string;
+  summary: string;
+  project?: string | null;
+  requestId: string;
+}): Promise<{ ok: true; result: MemoryIndexResult }> {
+  return request(`/api/memory/index/${encodeURIComponent(input.id)}/correct`, {
+    method: "POST",
+    body: JSON.stringify({
+      expectedVersion: input.expectedVersion,
+      reason: input.reason,
+      requestId: input.requestId,
+      correction: { summary: input.summary },
+      ...(input.project ? { project: input.project } : {}),
+    }),
+  });
+}
+
+export async function pinMemoryIndexThread(input: {
+  threadId: string;
+  expectedVersion: number;
+  pinned: boolean;
+  reason: string;
+  project?: string | null;
+  requestId: string;
+}): Promise<{ ok: true; result: MemoryIndexResult }> {
+  return request(`/api/memory/index/threads/${encodeURIComponent(input.threadId)}/pin`, {
+    method: "POST",
+    body: JSON.stringify({
+      expectedVersion: input.expectedVersion,
+      pinned: input.pinned,
+      reason: input.reason,
+      requestId: input.requestId,
+      ...(input.project ? { project: input.project } : {}),
+    }),
+  });
+}
+
+export async function supersedeMemoryIndexThread(input: {
+  threadId: string;
+  expectedVersion: number;
+  replacementThreadId: string;
+  replacementExpectedVersion: number;
+  reason: string;
+  project?: string | null;
+  requestId: string;
+}): Promise<{ ok: true; result: MemoryIndexResult }> {
+  return request(`/api/memory/index/threads/${encodeURIComponent(input.threadId)}/supersede`, {
+    method: "POST",
+    body: JSON.stringify({
+      expectedVersion: input.expectedVersion,
+      replacementThreadId: input.replacementThreadId,
+      replacementExpectedVersion: input.replacementExpectedVersion,
+      reason: input.reason,
+      requestId: input.requestId,
+      ...(input.project ? { project: input.project } : {}),
+    }),
+  });
+}
+
+export async function setMemoryIndexConflict(input: {
+  mode: "open" | "resolve";
+  threadId: string;
+  expectedVersion: number;
+  otherThreadId: string;
+  otherExpectedVersion: number;
+  reason: string;
+  project?: string | null;
+  requestId: string;
+}): Promise<{ ok: true; result: MemoryIndexResult }> {
+  const path = input.mode === "resolve" ? "resolve-conflict" : "conflict";
+  return request(`/api/memory/index/threads/${encodeURIComponent(input.threadId)}/${path}`, {
+    method: "POST",
+    body: JSON.stringify({
+      expectedVersion: input.expectedVersion,
+      reason: input.reason,
+      requestId: input.requestId,
+      ...(input.mode === "resolve"
+        ? { losingThreadId: input.otherThreadId, losingExpectedVersion: input.otherExpectedVersion }
+        : { otherThreadId: input.otherThreadId, otherExpectedVersion: input.otherExpectedVersion }),
+      ...(input.project ? { project: input.project } : {}),
     }),
   });
 }

@@ -102,8 +102,9 @@ describe("memory index routes", () => {
     const auth = (req: any, res: any, next: any) => req.headers.authorization === "Bearer test"
       ? next()
       : res.status(401).json({ error: "unauthorized" });
-    app.use("/api/memory", memoryRoutes(auth, { memoryDir: dir, index: new MemoryIndexService(db, null) }));
-    return { app, db, session, first, last };
+    const index = new MemoryIndexService(db, null);
+    app.use("/api/memory", memoryRoutes(auth, { memoryDir: dir, index }));
+    return { app, db, session, first, last, index };
   }
 
   it("requires authentication for source-linked memory", async () => {
@@ -176,5 +177,161 @@ describe("memory index routes", () => {
       .expect(404);
     const count = db.prepare("SELECT COUNT(*) AS count FROM memory_index_entries").get() as { count: number };
     expect(count.count).toBe(0);
+  });
+
+  it("exposes versioned correction, pin and supersession endpoints without rewriting the entry", async () => {
+    const { app, db, session, first, last } = indexSetup();
+    const create = async (input: { title: string; summary: string; sessionId: string; from: number; through: number }) => {
+      const response = await request(app).post("/api/memory/index/capture")
+        .set("authorization", "Bearer test")
+        .send({
+          sessionId: input.sessionId,
+          fromMessageId: input.from,
+          throughMessageId: input.through,
+          kind: "idea",
+          title: input.title,
+          summary: input.summary,
+          tags: ["governance"],
+        })
+        .expect(201);
+      return response.body.result as any;
+    };
+    const firstMemory = await create({
+      title: "Old launch plan",
+      summary: "Launch on Monday.",
+      sessionId: session.id,
+      from: first.id,
+      through: last.id,
+    });
+    const secondSession = createSession(db, { title: "Replacement plan" });
+    const secondFrom = appendMessage(db, { sessionId: secondSession.id, role: "user", content: "Set the new launch plan." });
+    const secondThrough = appendMessage(db, { sessionId: secondSession.id, role: "assistant", content: "Launch on Tuesday." });
+    const secondMemory = await create({
+      title: "Current launch plan",
+      summary: "Launch on Tuesday.",
+      sessionId: secondSession.id,
+      from: secondFrom.id,
+      through: secondThrough.id,
+    });
+
+    await request(app).post(`/api/memory/index/${firstMemory.entry.id}/correct`)
+      .send({ expectedVersion: 1, reason: "missing auth", requestId: "route-no-auth", correction: { summary: "x" } })
+      .expect(401);
+    const corrected = await request(app).post(`/api/memory/index/${firstMemory.entry.id}/correct`)
+      .set("authorization", "Bearer test")
+      .send({
+        expectedVersion: 1,
+        reason: "Niko corrected the day before supersession.",
+        requestId: "route-correct-launch",
+        correction: { summary: "Launch on Tuesday after approval." },
+      })
+      .expect(200);
+    expect(corrected.body).toMatchObject({
+      ok: true,
+      result: {
+        entry: { summary: "Launch on Tuesday after approval." },
+        originalEntry: { summary: "Launch on Monday." },
+        governance: { corrected: true, threadVersion: 2 },
+      },
+    });
+    const stale = await request(app).post(`/api/memory/index/threads/${firstMemory.lineage.threadId}/pin`)
+      .set("authorization", "Bearer test")
+      .send({ expectedVersion: 1, pinned: true, reason: "stale", requestId: "route-pin-stale" })
+      .expect(409);
+    expect(stale.body).toMatchObject({ error: "stale_version", currentVersion: 2 });
+
+    const pinned = await request(app).post(`/api/memory/index/threads/${firstMemory.lineage.threadId}/pin`)
+      .set("authorization", "Bearer test")
+      .send({ expectedVersion: 2, pinned: true, reason: "Keep visible.", requestId: "route-pin-current" })
+      .expect(200);
+    expect(pinned.body.result.governance).toMatchObject({ pinned: true, threadVersion: 3 });
+
+    const superseded = await request(app).post(`/api/memory/index/threads/${firstMemory.lineage.threadId}/supersede`)
+      .set("authorization", "Bearer test")
+      .send({
+        expectedVersion: 3,
+        replacementThreadId: secondMemory.lineage.threadId,
+        replacementExpectedVersion: 1,
+        reason: "The current approved plan replaces the draft.",
+        requestId: "route-supersede-launch",
+      })
+      .expect(200);
+    expect(superseded.body.result.governance).toMatchObject({ state: "superseded", pinned: false });
+
+    const currentOnly = await request(app).post("/api/memory/index/search")
+      .set("authorization", "Bearer test")
+      .send({ query: "launch plan" })
+      .expect(200);
+    expect(currentOnly.body.results.map((item: any) => item.lineage.threadId)).toEqual([secondMemory.lineage.threadId]);
+    const history = await request(app).post("/api/memory/index/search")
+      .set("authorization", "Bearer test")
+      .send({ query: "launch plan", includeHistory: true })
+      .expect(200);
+    expect(history.body.results).toHaveLength(2);
+    expect(history.body.results.find((item: any) => item.lineage.threadId === firstMemory.lineage.threadId))
+      .toMatchObject({ governance: { state: "superseded" }, originalEntry: { summary: "Launch on Monday." } });
+  });
+
+  it("opens and resolves a conflict idempotently through the authenticated boundary", async () => {
+    const { app, db, index, session, first, last } = indexSetup();
+    const left = (await index.capture({
+      sessionId: session.id,
+      fromMessageId: first.id,
+      throughMessageId: last.id,
+      kind: "idea",
+      title: "Short cache policy",
+      summary: "Cache entries for five minutes.",
+    })).result;
+    const rightSession = createSession(db, { title: "Long cache policy" });
+    const rightFrom = appendMessage(db, { sessionId: rightSession.id, role: "user", content: "Set the cache duration." });
+    const rightThrough = appendMessage(db, { sessionId: rightSession.id, role: "assistant", content: "Cache entries for thirty minutes." });
+    const right = (await index.capture({
+      sessionId: rightSession.id,
+      fromMessageId: rightFrom.id,
+      throughMessageId: rightThrough.id,
+      kind: "idea",
+      title: "Long cache policy",
+      summary: "Cache entries for thirty minutes.",
+    })).result;
+
+    const opened = await request(app).post(`/api/memory/index/threads/${left.lineage.threadId}/conflict`)
+      .set("authorization", "Bearer test")
+      .send({
+        expectedVersion: 1,
+        otherThreadId: right.lineage.threadId,
+        otherExpectedVersion: 1,
+        reason: "These two cache durations contradict each other.",
+        requestId: "route-cache-conflict-open",
+      })
+      .expect(200);
+    expect(opened.body.result.governance).toMatchObject({ state: "conflicted", retrievalEligible: false, threadVersion: 2 });
+    const replay = await request(app).post(`/api/memory/index/threads/${left.lineage.threadId}/conflict`)
+      .set("authorization", "Bearer test")
+      .send({
+        expectedVersion: 1,
+        otherThreadId: right.lineage.threadId,
+        otherExpectedVersion: 1,
+        reason: "These two cache durations contradict each other.",
+        requestId: "route-cache-conflict-open",
+      })
+      .expect(200);
+    expect(replay.body.event.id).toBe(opened.body.event.id);
+
+    const rightCurrent = index.get(right.entry.id)!;
+    const resolved = await request(app).post(`/api/memory/index/threads/${left.lineage.threadId}/resolve-conflict`)
+      .set("authorization", "Bearer test")
+      .send({
+        expectedVersion: 2,
+        losingThreadId: right.lineage.threadId,
+        losingExpectedVersion: rightCurrent.governance.threadVersion,
+        reason: "Five minutes is the approved duration.",
+        requestId: "route-cache-conflict-resolve",
+      })
+      .expect(200);
+    expect(resolved.body.result.governance).toMatchObject({ state: "current", retrievalEligible: true, threadVersion: 3 });
+    expect(index.get(right.entry.id)?.governance).toMatchObject({
+      state: "superseded",
+      supersededByThreadId: left.lineage.threadId,
+    });
   });
 });

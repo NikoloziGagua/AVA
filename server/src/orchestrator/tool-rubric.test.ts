@@ -46,10 +46,12 @@ describe("TOOL_RUBRIC", () => {
     expect(TOOL_RUBRIC).toContain("memory_read");
   });
 
-  it("keeps semantic recall source-verified and explicit-capture only", () => {
+  it("keeps automatic and explicit semantic recall source-verified and governed", () => {
     expect(TOOL_RUBRIC).toContain("original conversation range re-verifies");
-    expect(TOOL_RUBRIC).toContain("automatic indexing is not enabled");
+    expect(TOOL_RUBRIC).toContain("offered to the\n  automatic capture gate");
     expect(TOOL_RUBRIC).toContain("exact/keyword matching");
+    expect(TOOL_RUBRIC).toContain("memory_index_conflict");
+    expect(TOOL_RUBRIC).toContain("never rewrite or manufacture support");
   });
 
   it("hard rules: .env paths blocked, no --dangerously-skip-permissions", () => {

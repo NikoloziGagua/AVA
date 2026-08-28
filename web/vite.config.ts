@@ -10,6 +10,11 @@ export default defineConfig({
       srcDir: "src",
       filename: "sw.ts",
       registerType: "autoUpdate",
+      injectManifest: {
+        // AVA's renderer-rich application shell is deliberately available offline.
+        // Keep this bounded rather than accepting Workbox's lower generic default.
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+      },
       manifest: {
         name: "Ava",
         short_name: "Ava",

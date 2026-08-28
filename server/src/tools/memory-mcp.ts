@@ -203,6 +203,42 @@ function stringList(value: unknown): string[] | undefined {
     : undefined;
 }
 
+function governanceRequestKey(
+  runId: string,
+  action: string,
+  target: string,
+  expectedVersion: number,
+  supplied: unknown,
+): string {
+  const explicit = typeof supplied === "string" ? supplied.trim() : "";
+  return explicit || `${runId}:memory:${action}:${target}:${expectedVersion}`;
+}
+
+function governanceToolResult(result: ReturnType<MemoryIndexService["setPinned"]>): { ok: boolean; text: string } {
+  if (!result.ok) {
+    return {
+      ok: false,
+      text: JSON.stringify({
+        error: result.reason,
+        currentVersion: result.currentVersion,
+        message: result.message,
+        instruction: result.reason === "version_conflict" ? "Search again and use the current governance version." : undefined,
+      }),
+    };
+  }
+  return {
+    ok: true,
+    text: JSON.stringify({
+      event: result.event,
+      id: result.result.entry.id,
+      threadId: result.result.lineage.threadId,
+      governance: result.result.governance,
+      source: result.result.source,
+      note: "The governance event is immutable. The original checkpoint and conversation source were not rewritten.",
+    }),
+  };
+}
+
 export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
   if (!deps.db || !deps.index || !deps.sessionId) return [];
   const db = deps.db;
@@ -405,6 +441,165 @@ export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
           };
         }
         return { ok: true, text: `Forgot semantic memory ${id}. Its embedding was removed; the original conversation was not deleted.` };
+      },
+    },
+    {
+      tool: {
+        name: "memory_index_correct",
+        description:
+          "Correct the compact current view of one exact indexed memory only after Sir explicitly asks. This appends an immutable user-governance event; it never rewrites the original checkpoint or claims the correction came from its source conversation. Search first and use the exact entry/thread governance version.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            expected_version: { type: "integer" },
+            reason: { type: "string" },
+            title: { type: "string" },
+            summary: { type: "string" },
+            conclusions: { type: "array", items: { type: "string" } },
+            open_questions: { type: "array", items: { type: "string" } },
+            next_steps: { type: "array", items: { type: "string" } },
+            tags: { type: "array", items: { type: "string" } },
+            project: { type: "string" },
+            request_id: { type: "string", description: "Optional stable retry key." },
+          },
+          required: ["id", "expected_version", "reason"],
+        },
+      },
+      run: async (args, context) => {
+        const id = String(args.id ?? "").trim();
+        const expectedVersion = Number(args.expected_version);
+        const project = typeof args.project === "string" ? args.project : null;
+        const current = index.get(id, { project });
+        if (!current) return { ok: false, text: "Indexed memory not found in this privacy scope." };
+        if (!id || !Number.isInteger(expectedVersion) || expectedVersion < 1) return { ok: false, text: "id and expected_version are required" };
+        const result = await index.correct({
+          threadId: current.lineage.threadId,
+          entryId: id,
+          expectedVersion,
+          actor: "ava",
+          reason: String(args.reason ?? ""),
+          requestKey: governanceRequestKey(context.runId, "correct", id, expectedVersion, args.request_id),
+          project,
+          correction: {
+            ...(typeof args.title === "string" ? { title: args.title } : {}),
+            ...(typeof args.summary === "string" ? { summary: args.summary } : {}),
+            ...(stringList(args.conclusions) !== undefined ? { conclusions: stringList(args.conclusions)! } : {}),
+            ...(stringList(args.open_questions) !== undefined ? { openQuestions: stringList(args.open_questions)! } : {}),
+            ...(stringList(args.next_steps) !== undefined ? { nextSteps: stringList(args.next_steps)! } : {}),
+            ...(stringList(args.tags) !== undefined ? { tags: stringList(args.tags)! } : {}),
+          },
+        });
+        return governanceToolResult(result);
+      },
+    },
+    {
+      tool: {
+        name: "memory_index_pin",
+        description:
+          "Pin or unpin one exact current memory thread after Sir asks. Pinning is a versioned priority hint among relevant matches; it never makes an unrelated memory relevant.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            thread_id: { type: "string" },
+            expected_version: { type: "integer" },
+            pinned: { type: "boolean" },
+            reason: { type: "string" },
+            project: { type: "string" },
+            request_id: { type: "string" },
+          },
+          required: ["thread_id", "expected_version", "pinned", "reason"],
+        },
+      },
+      run: async (args, context) => {
+        const threadId = String(args.thread_id ?? "").trim();
+        const expectedVersion = Number(args.expected_version);
+        if (!threadId || !Number.isInteger(expectedVersion) || typeof args.pinned !== "boolean") {
+          return { ok: false, text: "thread_id, expected_version and pinned are required" };
+        }
+        return governanceToolResult(index.setPinned({
+          threadId,
+          expectedVersion,
+          pinned: args.pinned,
+          actor: "ava",
+          reason: String(args.reason ?? ""),
+          requestKey: governanceRequestKey(context.runId, args.pinned ? "pin" : "unpin", threadId, expectedVersion, args.request_id),
+          project: typeof args.project === "string" ? args.project : null,
+        }));
+      },
+    },
+    {
+      tool: {
+        name: "memory_index_supersede",
+        description:
+          "Mark one obsolete memory thread as replaced by another exact current source-verified thread after Sir explicitly decides. Both threads must share the same privacy scope; history remains visible.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            thread_id: { type: "string" },
+            expected_version: { type: "integer" },
+            replacement_thread_id: { type: "string" },
+            replacement_expected_version: { type: "integer" },
+            reason: { type: "string" },
+            project: { type: "string" },
+            request_id: { type: "string" },
+          },
+          required: ["thread_id", "expected_version", "replacement_thread_id", "replacement_expected_version", "reason"],
+        },
+      },
+      run: async (args, context) => {
+        const threadId = String(args.thread_id ?? "").trim();
+        const replacementThreadId = String(args.replacement_thread_id ?? "").trim();
+        const expectedVersion = Number(args.expected_version);
+        const replacementExpectedVersion = Number(args.replacement_expected_version);
+        if (!threadId || !replacementThreadId || !Number.isInteger(expectedVersion) || !Number.isInteger(replacementExpectedVersion)) {
+          return { ok: false, text: "Both thread IDs and governance versions are required" };
+        }
+        return governanceToolResult(index.supersede({
+          threadId, expectedVersion, replacementThreadId, replacementExpectedVersion,
+          actor: "ava", reason: String(args.reason ?? ""),
+          requestKey: governanceRequestKey(context.runId, "supersede", threadId, expectedVersion, args.request_id),
+          project: typeof args.project === "string" ? args.project : null,
+        }));
+      },
+    },
+    {
+      tool: {
+        name: "memory_index_conflict",
+        description:
+          "Open or resolve an explicit contradiction between two exact memory threads after Sir decides. Unresolved conflicts suppress both memories from automatic use. Resolving keeps thread_id as the winner and supersedes other_thread_id; no content is silently merged.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            mode: { type: "string", enum: ["open", "resolve"] },
+            thread_id: { type: "string", description: "For resolve, this is the winning thread." },
+            expected_version: { type: "integer" },
+            other_thread_id: { type: "string", description: "For resolve, this is the losing thread." },
+            other_expected_version: { type: "integer" },
+            reason: { type: "string" },
+            project: { type: "string" },
+            request_id: { type: "string" },
+          },
+          required: ["mode", "thread_id", "expected_version", "other_thread_id", "other_expected_version", "reason"],
+        },
+      },
+      run: async (args, context) => {
+        const mode = args.mode === "resolve" ? "resolve" : "open";
+        const threadId = String(args.thread_id ?? "").trim();
+        const otherThreadId = String(args.other_thread_id ?? "").trim();
+        const expectedVersion = Number(args.expected_version);
+        const otherExpectedVersion = Number(args.other_expected_version);
+        if (!threadId || !otherThreadId || !Number.isInteger(expectedVersion) || !Number.isInteger(otherExpectedVersion)) {
+          return { ok: false, text: "Both thread IDs and governance versions are required" };
+        }
+        const common = {
+          threadId, expectedVersion, actor: "ava" as const, reason: String(args.reason ?? ""),
+          requestKey: governanceRequestKey(context.runId, `conflict-${mode}`, threadId, expectedVersion, args.request_id),
+          project: typeof args.project === "string" ? args.project : null,
+        };
+        return governanceToolResult(mode === "resolve"
+          ? index.resolveConflict({ ...common, losingThreadId: otherThreadId, losingExpectedVersion: otherExpectedVersion })
+          : index.openConflict({ ...common, otherThreadId, otherExpectedVersion }));
       },
     },
   ];

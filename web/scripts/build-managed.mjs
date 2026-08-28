@@ -65,6 +65,7 @@ const workerSource = resolve(dist, "sw-managed-source.js");
 await injectManifest({
   swSrc: workerSource,
   swDest: resolve(dist, "sw.js"),
+  maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
   globDirectory: dist,
   globPatterns: [
     "index.html",

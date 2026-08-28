@@ -1414,19 +1414,22 @@ const capabilities: ExplorerCapability[] = [
     domainId: "memory",
     name: "Source-linked research and idea recall",
     shortName: "Memory index",
-    description: "Captures compact research and Idea checkpoints, links material decisions and refinements without rewriting history, finds them across chats, and re-verifies the original conversation before AVA relies on them.",
+    description: "Captures compact research and Idea checkpoints, recalls them across chat and voice, and lets Sir correct, pin, supersede or resolve conflicts without rewriting their original evidence.",
     purpose: "Recover important developed work quickly without duplicating whole transcripts or treating vector similarity as truth.",
     stability: "beta",
     definition: {
       implementation: "implemented",
       sourceReferences: [
         source("server/src/memory-index/store.ts", "MemoryIndexService"),
+        source("server/src/memory-index/governance.ts", "MemoryGovernanceStore"),
         source("server/src/memory-index/auto-capture.ts", "AutoMemoryCaptureCoordinator"),
+        source("server/src/memory-index/auto-retrieve.ts", "retrieveAutomaticMemory"),
         source("server/src/memory-index/embedding.ts", "OpenAIMemoryEmbedder"),
         source("server/src/routes/memory.ts", "memoryRoutes", "route"),
         source("server/src/tools/memory-mcp.ts", "buildMemoryIndexTools"),
         source("web/src/memory/MemoryIndexSection.tsx", "MemoryIndexSection"),
         source("server/src/memory-index/store.test.ts", "semantic memory index", "test"),
+        source("server/src/memory-index/governance.test.ts", "semantic memory governance", "test"),
         source("server/src/memory-index/auto-capture.test.ts", "automatic semantic-memory capture", "test"),
       ],
     },
@@ -1439,6 +1442,7 @@ const capabilities: ExplorerCapability[] = [
     outputs: [
       { name: "source-linked memory", description: "A versioned SQLite checkpoint with immutable thread/parent lineage, a conversation fingerprint and replaceable embedding.", persistent: true },
       { name: "explained match", description: "Hybrid or fallback match evidence plus an independently rechecked source status." },
+      { name: "governed current view", description: "An append-only correction, pin, supersession or conflict decision with actor, reason, version and preserved original history.", persistent: true },
     ],
     dependencies: [
       { targetType: "data-store", targetId: "sqlite.memory-index", relationship: "writes-to", required: true, description: "SQLite owns summaries, source references and replaceable vector discovery data." },
@@ -1447,9 +1451,9 @@ const capabilities: ExplorerCapability[] = [
     ],
     readiness: readiness(["defined", "configured", "available", "healthy", "tested"], { recentSuccess: true }),
     verification: verification(
-      ["Automatic capture is offered only after completed research, a meaningfully developed Idea, or a material later Idea change.", "Material refinements append immutable thread/parent/sequence/type/reason lineage instead of rewriting older checkpoints.", "Capture stores no transcript body and records one exact message-range fingerprint.", "Every returned result rechecks the original message range before it is marked usable.", "Replay and concurrent completion cannot fork one checkpoint sequence."],
+      ["Automatic capture is offered only after completed research, a meaningfully developed Idea, or a material later Idea change.", "Material refinements append immutable thread/parent/sequence/type/reason lineage instead of rewriting older checkpoints.", "Capture stores no transcript body and records one exact message-range fingerprint.", "Every returned result rechecks the original message range before it is marked usable.", "Chat, OpenAI voice and Hume share the same bounded retrieval gate.", "Corrections and governance actions are append-only, version-guarded and replay-idempotent.", "Unresolved conflicts and superseded/history checkpoints are excluded from automatic recall."],
       ["api-response", "tool-result", "unit-test", "artifact"],
-      ["A completed read-only research turn can retain an honest unverified-evidence limitation; failed or contradicted work is excluded.", "A checkpoint thread is capped by the same 80-message authoritative source-range limit.", "Automatic retrieval injection is not enabled yet; AVA searches through the existing tools.", "User correction, pin and supersession controls are deferred.", "Embedding similarity helps locate evidence but never validates the remembered claim."],
+      ["A completed read-only research turn can retain an honest unverified-evidence limitation; failed or contradicted work is excluded.", "A checkpoint thread is capped by the same 80-message authoritative source-range limit.", "Hume preloads from the active chat because its provider starts responding before AVA receives the final spoken transcript.", "A user correction changes the compact current view but does not manufacture support in the original conversation.", "Embedding similarity helps locate evidence but never validates the remembered claim."],
     ),
     safety: safety("low", "never", ["Persists compact personal or project context for later retrieval."], {
       sensitiveData: ["Conversation summaries", "Research conclusions", "Project decisions"],
@@ -1457,9 +1461,9 @@ const capabilities: ExplorerCapability[] = [
       stopConditions: ["Do not use a result whose source is changed or unavailable.", "Do not search another project's memory without that project scope."],
     }),
     runtime: runtime(
-      ["memory_index_capture", "memory_index_search", "memory_index_open", "memory_index_forget"],
+      ["memory_index_capture", "memory_index_search", "memory_index_open", "memory_index_forget", "memory_index_correct", "memory_index_pin", "memory_index_supersede", "memory_index_conflict"],
       [],
-      ["/api/memory/index", "/api/memory/index/search"],
+      ["/api/memory/index", "/api/memory/index/search", "/api/memory/index/:id/correct", "/api/memory/index/threads/:threadId/pin", "/api/memory/index/threads/:threadId/supersede", "/api/memory/index/threads/:threadId/conflict", "/api/memory/index/threads/:threadId/resolve-conflict"],
     ),
   },
   {

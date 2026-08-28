@@ -156,6 +156,10 @@ The first slice covers:
     actual search mode, selected checkpoint/source provenance, and an honest reason
     when memory was suppressed or unavailable. Retrieved text and the user query
     are never copied into observability.
+13. Agent-driven memory correction, pin, supersession and conflict actions through
+    the existing normalized tool-call seam. Direct Memory UI mutations are not
+    represented as fake agent runs; their durable append-only governance events
+    expose actor, time, reason, target and resulting version on the memory card.
 
 Coverage is deliberately honest:
 

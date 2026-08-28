@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787885095298,
+  "generatedAt": 1787889475154,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -305,8 +305,20 @@
     },
     {
       "capability": "memory.semantic-index",
+      "path": "server/src/memory-index/governance.ts",
+      "symbol": "MemoryGovernanceStore",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.semantic-index",
       "path": "server/src/memory-index/auto-capture.ts",
       "symbol": "AutoMemoryCaptureCoordinator",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "path": "server/src/memory-index/auto-retrieve.ts",
+      "symbol": "retrieveAutomaticMemory",
       "kind": "implementation"
     },
     {
@@ -682,6 +694,26 @@
       "route": "/api/memory/index/search"
     },
     {
+      "capability": "memory.semantic-index",
+      "route": "/api/memory/index/:id/correct"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "route": "/api/memory/index/threads/:threadId/pin"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "route": "/api/memory/index/threads/:threadId/supersede"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "route": "/api/memory/index/threads/:threadId/conflict"
+    },
+    {
+      "capability": "memory.semantic-index",
+      "route": "/api/memory/index/threads/:threadId/resolve-conflict"
+    },
+    {
       "capability": "memory.structured-notes",
       "route": "/api/notes"
     },
@@ -893,6 +925,22 @@
     },
     {
       "name": "memory_index_forget",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_index_correct",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_index_pin",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_index_supersede",
+      "file": "server/src/tools/memory-mcp.ts"
+    },
+    {
+      "name": "memory_index_conflict",
       "file": "server/src/tools/memory-mcp.ts"
     },
     {

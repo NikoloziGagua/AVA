@@ -28,6 +28,8 @@ describe("openDb", () => {
     expect(names).toContain("explorer_events");
     expect(names).toContain("memory_index_entries");
     expect(names).toContain("memory_index_auto_events");
+    expect(names).toContain("memory_index_thread_state");
+    expect(names).toContain("memory_index_governance_events");
     expect(names).toContain("device_tokens");
     expect(names).toContain("pairing_codes");
     db.close();
@@ -102,6 +104,20 @@ describe("openDb", () => {
     });
     const indexes = migrated.prepare("PRAGMA index_list(memory_index_entries)").all() as Array<{ name: string }>;
     expect(indexes.some((index) => index.name === "idx_memory_index_thread_sequence")).toBe(true);
+    const state = migrated.prepare("SELECT * FROM memory_index_thread_state WHERE thread_id = 'legacy-memory'").get() as {
+      version: number;
+      pinned: number;
+      current_entry_id: string;
+      conflict_status: string;
+      conflict_with: string;
+    };
+    expect(state).toMatchObject({
+      version: 1,
+      pinned: 0,
+      current_entry_id: "legacy-memory",
+      conflict_status: "none",
+      conflict_with: "[]",
+    });
     migrated.close();
   });
 });
@@ -160,6 +176,27 @@ describe("db migrations: automatic semantic memory provenance", () => {
     expect(autoColumns.find((column) => column.name === "assistant_message_id")?.pk).toBe(1);
     const indexes = db.prepare("PRAGMA index_list(memory_index_entries)").all() as Array<{ name: string; unique: number }>;
     expect(indexes).toContainEqual(expect.objectContaining({ name: "idx_memory_index_thread_sequence", unique: 1 }));
+    db.close();
+  });
+});
+
+describe("db migrations: semantic memory governance", () => {
+  it("creates the append-only event log and versioned thread projection", () => {
+    const db = openDb(":memory:");
+    const stateColumns = db.prepare("PRAGMA table_info(memory_index_thread_state)").all() as Array<{ name: string; pk: number }>;
+    expect(stateColumns.find((column) => column.name === "thread_id")?.pk).toBe(1);
+    expect(stateColumns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      "version",
+      "pinned",
+      "current_entry_id",
+      "superseded_by_thread_id",
+      "conflict_status",
+      "conflict_with",
+      "updated_at",
+    ]));
+    const eventIndexes = db.prepare("PRAGMA index_list(memory_index_governance_events)").all() as Array<{ name: string; unique: number }>;
+    expect(eventIndexes).toContainEqual(expect.objectContaining({ name: "sqlite_autoindex_memory_index_governance_events_2", unique: 1 }));
+    expect(eventIndexes).toContainEqual(expect.objectContaining({ name: "idx_memory_index_governance_thread", unique: 0 }));
     db.close();
   });
 });

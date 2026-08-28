@@ -9,6 +9,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke:memory-retrieval": "tsx scripts/memory-retrieval-smoke.ts",
+    "smoke:memory-governance": "tsx scripts/memory-governance-smoke.ts",
     "pair": "tsx scripts/mint-pairing-code.ts",
     "self:loop": "tsx scripts/auto-improve-loop.ts"
   },

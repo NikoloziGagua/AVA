@@ -9,6 +9,19 @@ export type MemorySourceStatus = "verified" | "changed" | "unavailable";
 export type MemoryRetrievalMode = "recent" | "lexical" | "semantic" | "hybrid";
 export type MemoryCaptureMode = "explicit" | "automatic";
 
+export const MEMORY_GOVERNANCE_ACTORS = ["user", "ava"] as const;
+export type MemoryGovernanceActor = typeof MEMORY_GOVERNANCE_ACTORS[number];
+export const MEMORY_GOVERNANCE_EVENT_KINDS = [
+  "corrected",
+  "pinned",
+  "unpinned",
+  "superseded",
+  "conflict_opened",
+  "conflict_resolved",
+] as const;
+export type MemoryGovernanceEventKind = typeof MEMORY_GOVERNANCE_EVENT_KINDS[number];
+export type MemoryGovernanceRetrievalState = "current" | "history" | "superseded" | "conflicted";
+
 export const MEMORY_CHECKPOINT_KINDS = [
   "initial",
   "revision",
@@ -66,6 +79,8 @@ export type MemoryMatchEvidence = {
 
 export type MemoryIndexResult = {
   entry: MemoryIndexEntry;
+  /** Original immutable compact record before any user-governed correction. */
+  originalEntry: MemoryIndexEntry;
   source: MemorySourceEvidence;
   match: MemoryMatchEvidence;
   lineage: {
@@ -77,7 +92,32 @@ export type MemoryIndexResult = {
     totalCheckpoints: number;
     isLatest: boolean;
   };
+  governance: {
+    threadVersion: number;
+    pinned: boolean;
+    state: MemoryGovernanceRetrievalState;
+    retrievalEligible: boolean;
+    corrected: boolean;
+    correctionEventId: string | null;
+    correctionReason: string | null;
+    supersededByThreadId: string | null;
+    conflictWithThreadIds: string[];
+    updatedAt: number;
+    events: MemoryGovernanceEvent[];
+  };
   usable: boolean;
+};
+
+export type MemoryGovernanceEvent = {
+  id: string;
+  threadId: string;
+  entryId: string | null;
+  kind: MemoryGovernanceEventKind;
+  actor: MemoryGovernanceActor;
+  reason: string;
+  targetThreadId: string | null;
+  resultingVersion: number;
+  createdAt: number;
 };
 
 export type MemorySourceRead = {
@@ -93,7 +133,28 @@ export type MemorySearchResponse = {
   mode: MemoryRetrievalMode;
   semanticAvailable: boolean;
   notice: string | null;
+  suppressedByGovernance: number;
   results: MemoryIndexResult[];
+};
+
+export type MemoryCorrection = {
+  title?: string;
+  summary?: string;
+  conclusions?: string[];
+  openQuestions?: string[];
+  nextSteps?: string[];
+  tags?: string[];
+};
+
+export type MemoryGovernanceMutation = {
+  ok: true;
+  event: MemoryGovernanceEvent;
+  result: MemoryIndexResult;
+} | {
+  ok: false;
+  reason: "not_found" | "privacy_scope" | "version_conflict" | "invalid_state" | "source_unverified";
+  currentVersion: number | null;
+  message: string;
 };
 
 export type MemoryEmbedding = {

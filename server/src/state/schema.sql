@@ -101,6 +101,41 @@ CREATE TABLE IF NOT EXISTS memory_index_auto_events (
 CREATE INDEX IF NOT EXISTS idx_memory_index_auto_session
   ON memory_index_auto_events(session_id, updated_at DESC);
 
+-- Phase 5 governance is append-only. The projection below is only the current
+-- fast lookup state; every user/AVA decision is retained in the immutable event
+-- table with actor, reason, target and resulting version. Memory entry content
+-- and source fingerprints are never rewritten by governance actions.
+CREATE TABLE IF NOT EXISTS memory_index_thread_state (
+  thread_id TEXT PRIMARY KEY,
+  version INTEGER NOT NULL DEFAULT 1,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  current_entry_id TEXT REFERENCES memory_index_entries(id) ON DELETE SET NULL,
+  superseded_by_thread_id TEXT,
+  conflict_status TEXT NOT NULL DEFAULT 'none',
+  conflict_with TEXT NOT NULL DEFAULT '[]',
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_index_thread_governance
+  ON memory_index_thread_state(pinned DESC, conflict_status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_index_governance_events (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  entry_id TEXT REFERENCES memory_index_entries(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  target_thread_id TEXT,
+  payload TEXT NOT NULL DEFAULT '{}',
+  request_key TEXT NOT NULL UNIQUE,
+  resulting_version INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_index_governance_thread
+  ON memory_index_governance_events(thread_id, created_at DESC, id DESC);
+
 -- Sanitized task-result snapshots shown in conversation. Mission Control owns
 -- the full event history; this table stores only the bounded receipt JSON so
 -- the latest diagnostic card survives a server restart or later reopen.

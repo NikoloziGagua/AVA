@@ -30,6 +30,23 @@ export function openDb(path: string): Db {
   db.prepare("UPDATE memory_index_entries SET thread_id = id WHERE thread_id IS NULL").run();
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_index_thread_sequence
     ON memory_index_entries(thread_id, checkpoint_sequence) WHERE thread_id IS NOT NULL`);
+  // Semantic-memory Phase 5 governance projection. Backfill one versioned
+  // current pointer per legacy thread without modifying any checkpoint.
+  db.prepare(`
+    INSERT OR IGNORE INTO memory_index_thread_state (
+      thread_id, version, pinned, current_entry_id, superseded_by_thread_id,
+      conflict_status, conflict_with, updated_at
+    )
+    SELECT COALESCE(e.thread_id, e.id), 1, 0, e.id, NULL, 'none', '[]', e.updated_at
+    FROM memory_index_entries e
+    WHERE e.status = 'active'
+      AND e.checkpoint_sequence = (
+        SELECT MAX(latest.checkpoint_sequence)
+        FROM memory_index_entries latest
+        WHERE latest.status = 'active'
+          AND COALESCE(latest.thread_id, latest.id) = COALESCE(e.thread_id, e.id)
+      )
+  `).run();
   // Self worker selector: new intents record the selection visible at intake;
   // approval-gated intents lock the then-current selection when approved.
   tryAddColumn(db, "self_improvements", "worker_provider", "TEXT NOT NULL DEFAULT 'claude'");

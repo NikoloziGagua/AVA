@@ -101,6 +101,10 @@ describe("classifyRisk", () => {
     expect(classifyRisk("memory_index_open", { id: "memory_1" }).tier).toBe("read-only");
     expect(classifyRisk("memory_index_capture", { title: "Decision" }).tier).toBe("low");
     expect(classifyRisk("memory_index_forget", { id: "memory_1", expected_version: 1 }).tier).toBe("low");
+    expect(classifyRisk("memory_index_correct", { id: "memory_1", expected_version: 1 }).tier).toBe("low");
+    expect(classifyRisk("memory_index_pin", { thread_id: "memory_1", expected_version: 1 }).tier).toBe("low");
+    expect(classifyRisk("memory_index_supersede", { thread_id: "memory_1", replacement_thread_id: "memory_2" }).tier).toBe("low");
+    expect(classifyRisk("memory_index_conflict", { mode: "open", thread_id: "memory_1", other_thread_id: "memory_2" }).tier).toBe("low");
   });
   it("routes Notes reads and local mutations without a redundant approval stall", () => {
     expect(classifyRisk("notes_search", { query: "voice" }).tier).toBe("read-only");

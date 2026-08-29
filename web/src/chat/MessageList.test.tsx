@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 // Rendering rules for the conversation: Retry only on the LAST assistant
-// bubble, markdown markers stripped for display, and an honest event-gap notice.
+// bubble, safe rich Markdown for AVA only, and an honest event-gap notice.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import type { TaskReceipt } from "./task-receipt.js";
 import type { StreamEvent } from "./useChatStream.js";
@@ -10,8 +10,12 @@ import type { StreamEvent } from "./useChatStream.js";
 beforeEach(() => {
   // jsdom has no scrollIntoView; the list autoscrolls on every append.
   Element.prototype.scrollIntoView = vi.fn();
-  // Static rendering: WordReveal emits plain text, no ScrollTriggers.
+  // Static rendering: reduced motion avoids unrelated bubble transitions.
   localStorage.setItem("ava-motion", "reduced");
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: vi.fn().mockResolvedValue(undefined) },
+  });
 });
 
 afterEach(() => cleanup());
@@ -41,10 +45,38 @@ describe("MessageList", () => {
     expect(screen.getByTestId("final-message").contains(retries[0]!)).toBe(true);
   });
 
-  it("strips markdown markers from displayed assistant text", () => {
+  it("renders assistant Markdown semantically while user text stays literal", () => {
     render(<MessageList history={history} liveEvents={[]} />);
-    expect(screen.getByText("Average: 0ms, Sir.")).toBeTruthy();
+    expect(screen.getByText("0ms").tagName).toBe("STRONG");
     expect(screen.queryByText("Average: **0ms**, Sir.")).toBeNull();
+
+    cleanup();
+    render(<MessageList history={[{ id: "u-md", role: "user", text: "Keep **these markers** literal" }]} liveEvents={[]} />);
+    expect(screen.getByText("Keep **these markers** literal")).toBeTruthy();
+    expect(screen.queryByText("these markers")).toBeNull();
+  });
+
+  it("copies the original Markdown source rather than flattened display text", () => {
+    render(<MessageList history={history} liveEvents={[]} />);
+    fireEvent.click(screen.getAllByRole("button", { name: "Copy" })[1]!);
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith("Average: **0ms**, Sir.");
+  });
+
+  it("renders rich Markdown in the live final and a stopped partial stream", () => {
+    const finalEvents: StreamEvent[] = [
+      { id: 1, runEpoch: 1, kind: "final", payload: { text: "## Result\n\n- **Passed**\n- Inspectable" } },
+    ];
+    const { rerender } = render(<MessageList history={[]} liveEvents={finalEvents} />);
+    expect(screen.getByRole("heading", { level: 3, name: "Result" })).toBeTruthy();
+    expect(screen.getByText("Passed").tagName).toBe("STRONG");
+
+    const stoppedEvents: StreamEvent[] = [
+      { id: 2, runEpoch: 2, kind: "delta", payload: { text: "### Partial\n\n- one" } },
+      { id: 3, runEpoch: 2, kind: "killed", payload: {} },
+    ];
+    rerender(<MessageList history={[]} liveEvents={stoppedEvents} />);
+    expect(screen.getByTestId("stopped-partial").querySelector('[data-partial="true"]')).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 4, name: "Partial" })).toBeTruthy();
   });
 
   it("renders an honest event-gap notice (the Sessions screen is unreachable)", () => {

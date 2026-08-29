@@ -214,6 +214,22 @@ describe("ChatScreen send failure", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
   });
 
+  it("restores persisted assistant Markdown as semantic content after reload", async () => {
+    fetchSession.mockResolvedValue({
+      session,
+      messages: [
+        msg(1, "user", "show the saved result"),
+        msg(2, "assistant", "## Saved result\n\n- **Verified**\n- [Evidence](https://example.com/evidence)"),
+      ],
+    });
+
+    render(<ChatScreen sessionId="s1" {...noNav} />);
+
+    expect(await screen.findByRole("heading", { level: 3, name: "Saved result" })).toBeTruthy();
+    expect(screen.getByText("Verified").tagName).toBe("STRONG");
+    expect(screen.getByRole("link", { name: /Evidence/ }).getAttribute("href")).toBe("https://example.com/evidence");
+  });
+
   it("passes the server-assigned new-chat session to voice", async () => {
     const onEnterVoice = vi.fn();
     sendMessage.mockResolvedValue({ sessionId: "created-session", taskId: "task-1" });

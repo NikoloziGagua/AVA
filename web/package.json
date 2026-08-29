@@ -25,6 +25,8 @@
     "motion": "^11.18.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.6.1",
     "three": "^0.184.0",
     "topojson-client": "^3.1.0",

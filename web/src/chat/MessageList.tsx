@@ -3,13 +3,12 @@ import { gsap, useGSAP, ScrollTrigger } from "../lib/gsap.js";
 import { D, EASE, SHADOW, hoverLift } from "../lib/deckMotion.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { Orb } from "../components/ava/Orb.js";
-import { WordReveal } from "../components/ava/WordReveal.js";
 import { ThinkingIndicator, type ThinkingState } from "./ThinkingIndicator.js";
 import { ToolCallChip } from "./ToolCallChip.js";
 import { humanizeTool } from "./humanize.js";
 import { MessageActions } from "./MessageActions.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
-import { stripMarkdown } from "./strip-markdown.js";
+import { AssistantMarkdown } from "./AssistantMarkdown.js";
 import type { StreamEvent } from "./useChatStream.js";
 import { TaskReceiptCard } from "./TaskReceiptCard.js";
 import { VisualMessageCard, type VisualSemanticActionHandler } from "../visuals/VisualMessageCard.js";
@@ -126,9 +125,9 @@ export function MessageList({
   // No live token-by-token bubble. Reasoning models (gpt-5.5) "think" for seconds then
   // emit the WHOLE reply in a sub-100ms burst, so a live bubble either flashed past
   // unseen or (worse) rendered empty. Instead the thinking indicator stays up until the
-  // reply is ready, then the FINAL block reveals it WORD-BY-WORD (WordReveal) — exactly
-  // "it thinks, then outputs word by word". `streamingText` is still accumulated so a
-  // Stop mid-reply can show whatever was generated.
+  // reply is ready, then the FINAL block renders its complete Markdown tree in one
+  // stable pass. `streamingText` is still accumulated so Stop can show the partial
+  // answer without discarding headings, lists, or code that already arrived.
 
   // Caption: backward-walk the live stream (verified mechanism). Before any
   // liveEvent (the optimistic window) it seeds "thinking…", then upgrades the
@@ -146,7 +145,7 @@ export function MessageList({
       ? "responding"
       : "thinking";
 
-  // Thinking row shows from send until the final reply arrives (then WordReveal takes over).
+  // Thinking row shows from send until the final reply arrives.
   const showThinking = optimisticThinking && !lastFinal && !runTerminated;
 
   // ── Single source of truth for bubble reveals: ScrollTrigger.batch ──
@@ -232,15 +231,7 @@ export function MessageList({
             </div>
           ) : (
             <AvaBubble reduced={reduced}>
-              <div
-                className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
-                }}
-              >
-                {stripMarkdown(m.text)}
-              </div>
+              <AssistantMarkdown text={m.text} />
               <MessageActions
                 text={m.text}
                 onRetry={!lastFinal && m.id === lastAssistantHistoryId ? onRetry : undefined}
@@ -304,12 +295,7 @@ export function MessageList({
               {showPartial && (
                 <div className="flex justify-start" data-testid="stopped-partial">
                   <AvaBubble reduced={reduced}>
-                    <WordReveal
-                      text={stripMarkdown(streamingText)}
-                      animate={false}
-                      className="text-[15px] leading-[1.65] whitespace-pre-wrap"
-                      gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
-                    />
+                    <AssistantMarkdown text={streamingText} partial />
                   </AvaBubble>
                 </div>
               )}
@@ -331,13 +317,8 @@ export function MessageList({
       {lastFinal && (
         <div className="flex justify-start" data-testid="final-message">
           <AvaBubble reduced={reduced}>
-            <WordReveal
-              text={stripMarkdown(lastFinal.payload.text)}
-              // Always reveal the reply word-by-word — there's no live bubble to hand
-              // off from, so this IS the reveal the owner asked for.
-              animate
-              className="text-[15px] leading-[1.65] whitespace-pre-wrap"
-              gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
+            <AssistantMarkdown
+              text={lastFinal.payload.text}
             />
             <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
           </AvaBubble>

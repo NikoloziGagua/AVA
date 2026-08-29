@@ -54,6 +54,7 @@ export function SegmentedTabs<T extends string>({
         const active = opt.value === value;
         return (
           <button
+            type="button"
             key={opt.value}
             ref={(el) => { tabRefs.current[opt.value] = el; }}
             onClick={() => onChange(opt.value)}

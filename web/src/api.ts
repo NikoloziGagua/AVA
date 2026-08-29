@@ -1091,6 +1091,31 @@ export async function fetchWatches(): Promise<WatchRow[]> {
   return j.watches ?? [];
 }
 
+export type CreateWatchInput = {
+  prompt: string;
+  intervalMinutes?: number;
+  once?: boolean;
+  runAt?: number;
+  dailyAt?: string;
+  kind?: "check" | "reminder";
+};
+
+/** Create an ordinary AVA check or reminder through the existing watch API. */
+export async function createWatchApi(input: CreateWatchInput): Promise<WatchRow> {
+  const j = await request<{ watch: WatchRow }>("/api/watches", {
+    method: "POST",
+    body: JSON.stringify({
+      prompt: input.prompt,
+      ...(input.intervalMinutes !== undefined ? { interval_minutes: input.intervalMinutes } : {}),
+      ...(input.once !== undefined ? { once: input.once } : {}),
+      ...(input.runAt !== undefined ? { run_at: input.runAt } : {}),
+      ...(input.dailyAt !== undefined ? { daily_at: input.dailyAt } : {}),
+      ...(input.kind !== undefined ? { kind: input.kind } : {}),
+    }),
+  });
+  return j.watch;
+}
+
 // ── People map (GET /api/people) — Ava's identity-resolution layer, read-only here.
 
 /** Per-app identity plus the last thread observed after exact identity routing. */

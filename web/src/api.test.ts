@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   api,
   ApiError,
+  createWatchApi,
   fetchExplorerLive,
   fetchExplorerTask,
   fetchMissionExport,
@@ -99,6 +100,35 @@ describe("composer dictation API", () => {
     })) as unknown as typeof fetch;
     await expect(transcribeAudio(new Blob(["audio"], { type: "audio/webm" })))
       .rejects.toMatchObject({ code: "empty_transcription" });
+  });
+});
+
+describe("watch management API", () => {
+  it("maps the typed form contract to the existing authenticated watch route", async () => {
+    setToken("watch-token");
+    const watch = { id: "watch-new", prompt: "Watch status", interval_minutes: 30 };
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ watch }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+
+    await expect(createWatchApi({
+      prompt: "Watch status",
+      intervalMinutes: 30,
+      once: true,
+      kind: "check",
+    })).resolves.toMatchObject({ id: "watch-new" });
+
+    const [path, init] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/watches");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer watch-token");
+    expect(JSON.parse(String(init.body))).toEqual({
+      prompt: "Watch status",
+      interval_minutes: 30,
+      once: true,
+      kind: "check",
+    });
   });
 });
 

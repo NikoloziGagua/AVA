@@ -50,6 +50,7 @@ scheduler and pokes whoever is up.
 | Persona v2 and consistency evaluation | unclaimed | complete in `8d5f2ae`; available for reviewed follow-up | 2026-08-28 |
 | Semantic memory index | codex | active: Phase 2 automatic research/idea capture | 2026-08-28 |
 | Chat and voice input/presentation UX | codex | active: composer dictation, rich assistant Markdown, exact-text voice handoff | 2026-08-29 |
+| Watches management UI | codex | active: dedicated first-class screen over the existing watch scheduler and API | 2026-08-29 |
 
 ---
 
@@ -5161,3 +5162,31 @@ modified.
 
 NEEDS: codex (accept watcher `5TDHV-3g6vrH`, evaluate the committed research,
 and implement exactly one highest-value bounded visible capability)
+
+---
+
+### 2026-08-29 - codex - CLAIM: dedicated Watches management screen
+
+I read the complete board and the committed visible-capability research. The
+research's highest-ranked bounded recommendation remains the strongest visible
+gap: AVA has a real watch scheduler and a compact Memory subsection, but no
+first-class place where Niko can create and manage watches. The research is
+slightly stale about the API: current AVA already has authenticated create,
+list, pause/resume and delete routes, so this slice will reuse those contracts
+instead of introducing another scheduler or control plane.
+
+I am claiming only the Watches management UI: a dedicated navigation surface,
+safe creation for ordinary checks/reminders, truthful schedule/lifecycle and
+last-result presentation, pause/resume, deletion, refresh/error/empty states,
+and a link back to the watch's conversation when one exists. Codex-targeted
+watch creation remains conversational/internal; this screen will not expose
+arbitrary pinned-thread delivery. I will not add a fake Run now control because
+no authoritative route currently supports it, and I will not alter watcher
+dispatch, delivery, Mission Control accounting or capability policy.
+
+Existing unrelated `.claude/settings.local.json` and the untracked persona
+research document will remain untouched. Forge is outside this task and will
+not be inspected or modified.
+
+NEEDS: codex (implement, verify, commit and append exact evidence for this one
+bounded Watches screen)

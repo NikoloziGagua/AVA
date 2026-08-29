@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Plus, List, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen, Presentation } from "lucide-react";
+import { Home, Plus, List, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen, Presentation, AlarmClock } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
 import { TubelightNav, type TubelightItem } from "./components/ava/TubelightNav.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
@@ -19,6 +19,7 @@ import { ExplorerScreen } from "./explorer/ExplorerScreen.js";
 import { MissionControlScreen } from "./mission-control/MissionControlScreen.js";
 import { StrategyRoomScreen } from "./strategy/StrategyRoomScreen.js";
 import { VisualsScreen } from "./visuals/VisualsScreen.js";
+import { WatchesScreen } from "./watches/WatchesScreen.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 
@@ -29,6 +30,7 @@ type View =
   | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
   | { name: "memory" }
   | { name: "notes" }
+  | { name: "watches" }
   | { name: "rules" }
   | { name: "self" }
   | { name: "strategy"; sourceSessionId?: string }
@@ -51,6 +53,7 @@ function navForView(v: View): string | undefined {
     case "chat": return v.sessionId === null ? "New" : "Chats";
     case "memory": return "Memory";
     case "notes": return "Notes";
+    case "watches": return "Watches";
     case "rules": return "Rules";
     case "self": return "Self";
     case "strategy": return "Room";
@@ -135,6 +138,7 @@ export function App() {
     { name: "Chats", icon: List, onSelect: () => setView({ name: "list" }) },
     { name: "Memory", icon: Brain, onSelect: () => setView({ name: "memory" }) },
     { name: "Notes", icon: NotebookPen, onSelect: () => setView({ name: "notes" }) },
+    { name: "Watches", icon: AlarmClock, onSelect: () => setView({ name: "watches" }) },
     { name: "Explore", icon: Radar, onSelect: () => setView({ name: "capabilities" }) },
     { name: "Visuals", icon: Presentation, onSelect: () => setView({ name: "visuals" }) },
     { name: "Room", icon: MessagesSquare, onSelect: () => setView({ name: "strategy" }) },
@@ -316,6 +320,20 @@ export function App() {
               sourceSessionId={view.sourceSessionId ?? null}
               onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
             />
+          </motion.div>
+        )}
+        {view.name === "watches" && (
+          <motion.div
+            key="watches"
+            data-view="watches"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            exit={exitTo}
+            transition={enterT}
+          >
+            <WatchesScreen onOpenChat={(sessionId) => setView({ name: "chat", sessionId })} />
           </motion.div>
         )}
         {view.name === "visuals" && (

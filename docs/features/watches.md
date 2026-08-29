@@ -41,9 +41,20 @@ interval, and confirms it created the watch. From then on it is hands-off:
   each watch, its interval, and its latest status.
 - **Sir can cancel one** — *"stop watching the GPU price"* → `watch_delete`.
 
-The Memory surface includes a **Standing watches** section for schedule, status,
-latest result, pause/resume, and deletion. Each ordinary check also owns a chat
-session (linked on its first run), so its history appears in the Chats list.
+The primary navigation includes a dedicated **Watches** workspace. It shows
+active, paused and attention-needed counts; lets Sir create an ordinary AVA
+check or reminder on an interval, at one future time, or at a daily time; and
+provides search, filtering, refresh, pause/resume, deletion and a direct link to
+the watch's chat history after its first run. The compact **Standing watches**
+section remains in Memory as an at-a-glance read surface over the same API and
+SQLite records. It is not a second scheduler.
+
+The screen deliberately has no **Run now** button: the authoritative watch API
+does not currently expose that action, and treating a local UI transition as a
+real scheduler run would be false. Codex-targeted watch creation also remains an
+internal/conversational path because it requires a pinned thread identity; the
+general form creates only `check` and `reminder` watches. Each ordinary check
+owns a chat session after its first run, so its full history is inspectable.
 Pinned task watches additionally show whether delivery is waiting, dispatching,
 delivered, running, completed, or failed. For continuous Codex cycles, task
 completion and successor planning are separate visible states: a planner outage
@@ -139,7 +150,7 @@ audit. It is the same trick the voice pipeline uses for `do_on_computer`.
 | Exact-thread queue | `server/src/watches/codex-queue.ts` | Supported Codex CLI queue acknowledgement, exact thread identity, content-free prompt-hash receipts, and fail-closed uncertainty. |
 | In-thread handoff | `server/src/watches/codex-handoff.ts`, `scripts/codex-watch-stop-hook.mjs`, `.codex/hooks.json` | Sanitized atomic inbox, same-writer Stop-hook delivery, completion receipt, and bounded successor wait. |
 | Boot singleton | `server/src/process/server-lock.ts` | Atomic process ownership claim in AVA's data root, acquired before shared boot state can change. |
-| UI | `web/src/memory/WatchesSection.tsx` | Read/manage surface with ordinary and targeted lifecycle visibility. |
+| UI | `web/src/watches/WatchesScreen.tsx`, `web/src/memory/WatchesSection.tsx` | First-class create/manage workspace plus compact Memory read surface, both over the same authenticated routes. |
 | Boot wiring | `server/src/index.ts` | Scheduler and internal credentials start **only after this process owns the port** and only when an LLM provider exists. |
 
 ### Frugality guidance (baked into the tool)
@@ -201,7 +212,7 @@ HTTP route caps it at 24 h.
   billing the check touches, e.g. a browser run). A watch on a 5-minute interval is
   ~288 agent runs/day. There is no spend cap — frugality is enforced only by the
   prompt guidance and Sir's judgment.
-- **No editing.** A watch can be created, listed, and deleted, but not edited —
+- **No editing.** A watch can be created, listed, paused/resumed, and deleted, but not edited —
   change the interval or condition by deleting and re-creating.
 - **Per-check wall clock.** A single check is capped at 240 s (`checkTimeoutMs`,
   `scheduler.ts:51`); a timeout is recorded as an `error` status and the scheduler
@@ -269,8 +280,9 @@ any watch is deletable, so a given row won't necessarily still be present later.
   process means zero extra infrastructure and it shares the DB/browser directly;
   the accepted trade-off is that watches only run while Ava is running (documented
   above), which fits the "one PC, always-on when in use" model.
-- **Ava creates the watch itself, mid-conversation.** Rather than a form, the
-  agent translates *"notify me if …"* into a self-contained check prompt in the
-  same turn. It keeps the interaction natural, but the quality of the check depends
-  on Ava writing a genuinely self-contained prompt — it runs later with **no**
+- **Conversation and form share one contract.** Ava can still translate
+  *"notify me if …"* into a self-contained check prompt in the same turn. The
+  dedicated Watches form is the visible alternative when Sir wants explicit
+  schedule control. Both paths write the same table and run through the same
+  scheduler. A check prompt is still self-contained and runs later with **no**
   conversation context, so an under-specified watch can drift.

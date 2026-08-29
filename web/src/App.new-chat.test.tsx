@@ -84,6 +84,9 @@ vi.mock("./strategy/StrategyRoomScreen.js", () => ({
 vi.mock("./visuals/VisualsScreen.js", () => ({
   VisualsScreen: ({ initialVisualId }: { initialVisualId?: string | null }) => <div>visual-id-{initialVisualId ?? "none"}</div>,
 }));
+vi.mock("./watches/WatchesScreen.js", () => ({
+  WatchesScreen: () => <div>watch-management-screen</div>,
+}));
 
 import { App } from "./App.js";
 
@@ -135,5 +138,11 @@ describe("App New-chat navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
     expect(screen.getByText("voice-session-none-fresh-false")).toBeTruthy();
+  });
+
+  it("opens the first-class Watches workspace from primary navigation", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Watches" }));
+    expect(screen.getByText("watch-management-screen")).toBeTruthy();
   });
 });

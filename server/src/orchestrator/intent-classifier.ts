@@ -19,6 +19,7 @@ const ACTION_PATTERNS: RegExp[] = [
   /\bmemory_(remember|forget|read)\b/i,
   /\bmemory_index_(capture|search|open|forget)\b/i,
   /\bnotes?_(capture|search|update|promote)\b/i,
+  /\bautomation_(system_report|operations_brief|status)\b/i,
   /\bchrome_(open|open_url|google_search|youtube_search|navigate|click|type|read_page|screenshot|tabs|press_key)\b/i,
 
   // URLs.
@@ -59,6 +60,12 @@ const ACTION_PATTERNS: RegExp[] = [
   // classifier would otherwise strip tools from "put this in notes".
   /\b(put|save|add|capture|write)\b.{0,50}\b(?:in|to)\s+(?:my\s+|the\s+)?notes?\b/i,
   /\bmake\s+(?:a\s+)?note\s+(?:of|about)\b/i,
+
+  // Pinned automation playbooks. Possessive spoken phrasing such as "create
+  // AVA's operations brief" does not match the generic imperative+article
+  // rule above, but it must still reach the tool-capable agent in voice mode.
+  /\b(create|generate|run|prepare|produce)\b.{0,60}\b(system\s+health\s+report|operations\s+brief)\b/i,
+  /\b(check|show|list)\b.{0,40}\b(activepieces|automation)\b.{0,30}\b(status|availability|playbooks?|workflows?)\b/i,
 
   // Direct "use X" phrasing — pulls bare "chrome"/"shell" into action mode
   // when the user explicitly invokes them.

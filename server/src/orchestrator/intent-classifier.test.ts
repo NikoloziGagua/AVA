@@ -66,6 +66,13 @@ describe("classifyIntent", () => {
     expect(classifyIntent("make a note about the browser issue")).toBe("action");
   });
 
+  it("keeps pinned Activepieces playbooks available to conservative voice routing", () => {
+    expect(classifyIntent("Create AVA's operations brief for the last 24 hours.")).toBe("action");
+    expect(classifyIntent("Generate the system health report now")).toBe("action");
+    expect(classifyIntent("Show Activepieces automation status")).toBe("action");
+    expect(classifyIntent("use automation_operations_brief")).toBe("action");
+  });
+
   it("treats file ops imperatives as action", () => {
     expect(classifyIntent("read the package.json file")).toBe("action");
     expect(classifyIntent("write a hello world to scratch.txt")).toBe("action");

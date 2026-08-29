@@ -4770,3 +4770,92 @@ research document were preserved. Forge was neither inspected nor modified.
 
 NEEDS: niko (test in AVA with `Create AVA's operations brief for the last 24
 hours`, by chat or voice, and `Which Activepieces playbooks are available?`)
+
+---
+
+### 2026-08-29 - codex - CLAIM: approval-gated automatic Activepieces playbook builder
+
+Niko authorized the next Activepieces increment and selected `open Lasha's
+Instagram chat` as the real acceptance workflow. I am continuing the unowned
+Activepieces area while coordinating with the existing Codex-owned verified
+learning gate. This work will add an AVA-owned proposal lifecycle that can turn
+a repeated, already-supported AVA procedure into a typed candidate playbook,
+require explicit approval, validate/provision it, run bounded verification,
+and expose it only after evidence passes. A proposal or generated definition
+must never become runnable merely because a model suggested it.
+
+The acceptance workflow is read-only: resolve Lasha through the authoritative
+people field list, open `_princi150`'s Instagram profile and use the profile
+Message action to open the verified thread. It must not search the Direct
+inbox and must not type or send any message. Existing Instagram identity,
+browser lease, approval, receipts, Mission Control, redaction, registry and
+verified-learning boundaries will be reused. Existing unrelated working-tree
+changes will be preserved; Forge remains outside scope.
+
+NEEDS: codex (inspect, implement, test deterministically and through live AVA,
+commit the complete increment, and record exact evidence)
+
+---
+
+### 2026-08-29 - codex - COMPLETE: approval-gated automatic Activepieces playbook builder
+
+Product commit `48173ed69c1f0763a264577a3881ef84d14faf84` adds the first
+approval-gated automatically learned playbook path. AVA now observes eligible
+verified procedures, ignores failed/unverified attempts and duplicate task
+IDs, proposes a candidate after two distinct verified uses, requires the
+existing explicit high-risk approval card with a stale-version guard, validates
+the candidate through genuine Activepieces, and only then exposes it as an
+active playbook. Candidate state and immutable evidence survive restart.
+
+The deliberately bounded v1 compiler supports one safe procedure family:
+`instagram_open_chat`. It binds an authoritative people-map person ID and exact
+expected username, revalidates that identity during activation and every run,
+and fails closed if it changes. Activepieces owns only the bounded plan-render
+step; AVA retains browser control, identity verification, receipts, Mission
+Control and the actual profile-first Instagram action. Generated plan artifacts
+are retained as operational evidence but are not indexed as durable memory, so
+routine plans do not pollute retrieval.
+
+The Lasha acceptance created active playbook
+`ava.learned.instagram-open-chat.a6537b417352`, candidate
+`automation_candidate_a6537b4173522708f7`, bound to exact username
+`_princi150`. Two independently verified observation tasks created one
+candidate; a standard approval event activated it through genuine
+Activepieces run `automation_bCZeID6lUEVnrILN4J`. Its first active execution
+used real run `automation_2KRK5KjCk4-6rpakh7`; after a cold AVA restart the
+same persisted playbook ran again as `automation_PJJe-4hBW154RpJ0CY`.
+Both executions opened and independently verified Lasha's thread through the
+existing `instagram_thread_identity` verifier. The live harness asserted there
+was no send/type/press/click tool call and reports `communicationSent: false`.
+
+Activepieces 0.88.3 now retains three pinned flows: system health
+`L9huWL2OlQcewwTs2A1q3`, operations brief `fYKBF5YMYY6UYAF1DqwO0`, and
+approved action-plan renderer `fDqr66W0PevoMCJA6ZlfZ`. Existing automation
+black-box acceptance passed with all three present; both genuine reports still
+verified, persisted, indexed and appeared in Mission Control. The general
+improvement-index replay/restart smoke also passed with 479 indexed records,
+479 idempotently reused on replay, zero failures and restart persistence true.
+
+Tracked areas changed: Activepieces configuration/docs/provisioner/live smoke;
+automatic candidate service, SQLite schema and tests; typed playbook registry;
+automation tools; server composition; policy, timeout, intent, chat and voice
+routing; and Explorer registry/manifest/tests. Focused server acceptance passed
+84 tests across 8 files, generated-playbook follow-up passed 6/6, and Explorer
+focus passed 17 tests. Full server passed 201 files / 1,554 tests; full web
+passed 91 files / 414 tests. Server TypeScript and production web/PWA builds
+passed. Explorer contract/reality passed at 35 capabilities, 78/78 tools,
+29/29 routes and 122 verified source references. `git diff --check`, the real
+Activepieces provisioner, committed-head boot/relaunch, cold-restart playbook
+execution and bounded privacy/communication checks all passed.
+
+Known boundary: v1 learns only this single-action open-chat procedure family;
+it does not yet compile arbitrary or multi-step procedures and cannot type or
+send messages. A denied or expired activation remains a non-runnable proposal
+that may be retried rather than becoming a separate rejected state. The
+Activepieces plan is verified before AVA acts; action success remains grounded
+in the outer AVA tool receipt and Instagram identity verifier. Unrelated
+`.claude/settings.local.json` and the untracked persona research document were
+preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (use `Open Lasha's Instagram chat` normally; AVA will now run the
+active learned playbook automatically. No immediate action is otherwise needed.)

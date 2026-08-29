@@ -5030,3 +5030,65 @@ modified.
 
 NEEDS: codex (continue with the queued rich-Markdown phase, test it independently,
 commit it, then arrange the exact-spelling voice-input successor)
+
+---
+
+### 2026-08-29 - codex - COMPLETE: safe rich Markdown in assistant chat
+
+Product commit `3285a292d5e87be08f16d0b76436bed08d0f62ea` delivers the
+second approved usability phase. AVA replies now render as semantic Markdown
+inside the existing assistant bubble instead of flattening formatting. The
+shared renderer covers demoted headings, paragraphs, bold/emphasis/strike,
+ordered and unordered lists, disabled task lists, quotes, separators, inline
+and fenced code, GitHub-Flavoured Markdown tables and external links. Persisted
+history, live finals and stopped partial output all use the same component;
+user messages remain literal and Copy preserves the original Markdown source.
+VisualMessage cards, receipts, approvals, retry and activity remain independent
+sibling content.
+
+The boundary is explicit: raw HTML is skipped, images are not rendered, the
+element set is allowlisted, and only absolute HTTP(S) destinations become
+links. Unsupported, relative, `javascript:`, `data:`, `file:` and custom URLs
+are rendered without a clickable destination. Links open with
+`noopener noreferrer nofollow`. Code and table overflow is contained in
+labelled keyboard-focusable regions; Markdown introduces no animation, and
+AVA's reduced-motion preference remains authoritative. The renderer and GFM
+parser are bundled for offline use; no CDN or generated HTML/JavaScript is
+executed.
+
+Changed product areas are `web/src/chat/AssistantMarkdown.tsx` and its focused
+tests, `MessageList` and its integration tests, persisted-chat reopen coverage,
+the removal of the obsolete strip-only renderer, `web/package.json`, the root
+lockfile, and `docs/features/rich-assistant-markdown.md`. Focused chat coverage
+passed 4 files / 27 tests; web TypeScript passed; the complete web suite passed
+92 files / 419 tests. Server TypeScript/build and the production web/PWA build
+passed. `git diff --check` passed before commit. The repository's production
+dependency audit still reports 13 pre-existing advisories in unrelated runtime
+packages; neither `react-markdown` nor `remark-gfm` appears in that advisory
+set.
+
+Committed-HEAD runtime build `5ae4af27-0dda-40be-b731-05cce96536e9` matched
+live health. A real authenticated `/api/chat` turn made AVA generate the
+`Nightly Markdown Proof` heading, bold text, a list, table, JavaScript block and
+safe link. Playwright inspected the deployed chat and found the expected `h3`,
+`strong`, table row, `pre code`, HTTPS link and `_blank` target with no raw
+Markdown markers. At 390px the document scroll width remained exactly 390px.
+Under reduced motion the Markdown subtree had zero animations. Reopening the
+persisted chat after reload restored the heading, table and code. The temporary
+session and device token were then soft-deleted/revoked. AVA automatically
+indexed this shipped change as durable memory
+`memory_improvement_3285a292d5e87be0`.
+
+Through AVA's real chat/tool path, AVA called `watch_create` exactly once and
+created successor watcher `_3rtJF3wUffM`, pinned to this exact Codex thread,
+with parent `pIgydC933OjS`. It requests only the remaining exact-spelling
+voice-mode input phase and includes the subsequent research handoff. Its
+automatic continuation flag is off so no competing scheduler-created
+successor can appear. Known boundary: v1 intentionally omits raw HTML, remote
+images, footnotes and syntax highlighting, and renders the final Markdown tree
+as one stable result instead of animating individual tokens. Existing unrelated
+`.claude/settings.local.json` and the untracked persona research document were
+preserved. Forge was neither inspected nor modified.
+
+NEEDS: codex (accept watcher `_3rtJF3wUffM` and implement the exact-spelling
+voice-mode input phase at the next clean task boundary)

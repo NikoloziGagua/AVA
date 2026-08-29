@@ -50,7 +50,7 @@ scheduler and pokes whoever is up.
 | Persona v2 and consistency evaluation | unclaimed | complete in `8d5f2ae`; available for reviewed follow-up | 2026-08-28 |
 | Semantic memory index | codex | active: Phase 2 automatic research/idea capture | 2026-08-28 |
 | Chat and voice input/presentation UX | codex | active: composer dictation, rich assistant Markdown, exact-text voice handoff | 2026-08-29 |
-| Watches management UI | codex | active: dedicated first-class screen over the existing watch scheduler and API | 2026-08-29 |
+| Watches management UI | codex | shipped in `f8fcd3e`: dedicated screen over the existing scheduler/API; awaiting Niko use | 2026-08-29 |
 
 ---
 
@@ -5190,3 +5190,73 @@ not be inspected or modified.
 
 NEEDS: codex (implement, verify, commit and append exact evidence for this one
 bounded Watches screen)
+
+---
+
+### 2026-08-29 - codex - COMPLETE: first-class Watches workspace
+
+Commit `f8fcd3eb0321f444af0d59b12a7620035c0a08c4` implements the
+highest-ranked bounded recommendation from
+`docs/research/visible-useful-capabilities-2026-08-29.md`. AVA now has a
+dedicated Watches destination in primary navigation instead of hiding its real
+scheduler behind conversation and a compact Memory subsection.
+
+The new `web/src/watches/WatchesScreen.tsx` is a first-class workspace over the
+existing authenticated watch routes and the same authoritative SQLite records.
+It shows total/active/attention counts; active, paused and attention filters;
+search; refresh and endpoint failures; schedule, kind, lifecycle and last-result
+evidence; pause/resume; a two-step delete; and an Open history action when a
+watch has an agent session. Its form creates only ordinary AVA checks and direct
+reminders with interval, one-time or daily schedules. It defaults to stopping
+after a trigger, makes recurring behavior explicit, warns that AVA checks spend
+model/tool time, constrains form intervals to 5 minutes through 24 hours, and
+never exposes Codex pinned-thread creation. There is deliberately no fake Run
+now button because the authoritative API has no such action.
+
+Integration changes are `web/src/App.tsx` and its navigation test, the typed
+`createWatchApi` mapping and API test, horizontally scrollable narrow-width
+primary navigation, and the existing shared segmented tabs. Focused testing
+found that segmented tabs were implicit submit buttons when nested in a form;
+`SegmentedTabs` now declares `type=button`, preventing schedule/type changes
+from accidentally submitting. `docs/features/watches.md` now describes the
+conversation and explicit-form paths as two entrances to one scheduler. A new
+server route suite proves authenticated create/list/pause/resume/delete,
+one-time/daily reminder shapes, validation, and that this general route rejects
+Codex watch creation.
+
+Verification evidence:
+
+- Focused web: 4 files / 32 tests passed (`WatchesScreen`, compact Memory
+  watches, App navigation and API mapping).
+- Focused server: watch route and scheduler suites, 2 files / 24 tests passed.
+- Complete web: 95 files / 439 tests passed.
+- Complete server: 203 files / 1,569 tests passed. The first parallel run had
+  one `chrome-click` setup timeout under simultaneous web/server load; its
+  isolated 4-test rerun passed, then the complete sequential server rerun passed
+  all 203 files.
+- Server TypeScript/build and production web/PWA build passed from both the
+  working tree and committed HEAD. `git diff --check` passed.
+- The manual authenticated AVA-Chrome black-box opened Watches from primary
+  navigation, created a disposable one-time reminder scheduled in 2030, showed
+  it, paused it, rendered the truthful Paused state, verified the unsupported
+  Run now control was absent, checked a 390px viewport with no body overflow and
+  scrollable navigation, then confirmed deletion. The disposable watch and
+  device token were removed.
+- Committed-head AVA was relaunched. Disk and live health both report build
+  `b230eb01-be68-4951-9c65-aa72c0f4500e`, with `ok=true`, `ready=true`.
+- Boot reconciliation indexed `f8fcd3e` in AVA's durable improvement memory.
+
+Known boundaries are explicit: v1 does not edit an existing schedule or provide
+Run now; change by delete/re-create. Pause/resume/delete reuse the current
+versionless watch endpoints, so concurrent writes are last-writer-wins and the
+screen refreshes after a reported failure. Watches run only while AVA is online,
+and each ordinary check remains a real potentially billable agent task. The
+existing compact Memory view remains available over the same data.
+
+Only AVA files listed above plus this append-only coordination record were
+changed. Existing unrelated `.claude/settings.local.json` and the untracked
+persona research document were preserved. Forge and every other repository were
+neither inspected nor modified.
+
+NEEDS: niko (use the new Watches item in AVA; no successor implementation is
+scheduled by this bounded research watcher)

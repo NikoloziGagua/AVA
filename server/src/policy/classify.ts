@@ -97,6 +97,12 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   if (tool === "automation_system_report" || tool === "automation_operations_brief") {
     return { tier: "low", reason: "pinned read-only aggregate snapshot to a verified local report" };
   }
+  if (tool === "automation_run_playbook") {
+    return { tier: "low", reason: "explicitly approved generated playbook with bounded revalidation" };
+  }
+  if (tool === "automation_playbook_activate") {
+    return { tier: "high", reason: "persistent automation activation requires explicit approval" };
+  }
 
   // Mutates live store products — keep Sir's veto window.
   if (tool === "shopify_update_product") return { tier: "medium", reason: "mutates live Shopify products" };

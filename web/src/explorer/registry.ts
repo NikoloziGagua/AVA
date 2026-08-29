@@ -1766,7 +1766,7 @@ const capabilities: ExplorerCapability[] = [
     domainId: "automation",
     name: "Activepieces deterministic playbooks",
     shortName: "Activepieces",
-    description: "Runs a small registry of pinned, versioned playbooks on a genuine local Activepieces runtime while AVA retains routing, evidence, verification and memory authority.",
+    description: "Runs pinned playbooks and approval-gated generated action plans on a genuine local Activepieces runtime while AVA retains routing, identity, execution, evidence, verification and memory authority.",
     purpose: "Move mature repetitive procedures into a fast deterministic executor without creating a second AVA orchestrator.",
     stability: "experimental",
     definition: {
@@ -1774,6 +1774,7 @@ const capabilities: ExplorerCapability[] = [
       sourceReferences: [
         source("server/src/automations/activepieces.ts", "ActivepiecesWebhookExecutor"),
         source("server/src/automations/playbooks.ts", "AutomationPlaybookService"),
+        source("server/src/automations/generated-playbooks.ts", "GeneratedPlaybookService"),
         source("server/src/automations/snapshots.ts", "buildOperationsBriefSnapshot"),
         source("server/src/tools/automations-mcp.ts", "buildAutomationTools"),
         source("server/src/automations/playbooks.test.ts", "AVA-owned pinned automation playbooks", "test"),
@@ -1783,11 +1784,12 @@ const capabilities: ExplorerCapability[] = [
         source("docs/features/activepieces-automations.md", "Activepieces deterministic playbooks", "documentation"),
       ],
     },
-    examples: ["Run AVA's system health report.", "Create AVA's operations brief for the last 24 hours.", "Which Activepieces playbooks are available?"],
-    inputs: [{ name: "bounded aggregate snapshot", description: "Non-secret readiness or operational counts for the selected pinned playbook.", required: true }],
+    examples: ["Run AVA's system health report.", "Create AVA's operations brief for the last 24 hours.", "Open Lasha's Instagram chat.", "Which Activepieces playbooks are available?"],
+    inputs: [{ name: "bounded workflow snapshot", description: "Non-secret aggregate data or one explicitly approved single-action definition with evidence fingerprint.", required: true }],
     outputs: [
       { name: "verified Markdown report", description: "A local report AVA read-backs and hash-verifies.", persistent: true },
       { name: "automation trace", description: "AVA-owned run, step, failure and verification evidence.", persistent: true },
+      { name: "generated playbook candidate", description: "A versioned observing, proposed, validating, active or failed bounded definition.", persistent: true },
     ],
     dependencies: [
       { targetType: "service", targetId: "activepieces.webhook", relationship: "depends-on", required: true, description: "Requires a configured Activepieces Community Edition instance and the selected pinned workflow webhook." },
@@ -1795,16 +1797,16 @@ const capabilities: ExplorerCapability[] = [
     ],
     readiness: readiness(["defined", "configured", "available", "healthy", "tested"], { recentSuccess: true }),
     verification: verification(
-      ["The response echoes the exact request, workflow and version.", "AVA writes, reads back and SHA-256 verifies the artifact before success.", "A duplicate request reuses the same run and memory entry."],
+      ["The response echoes the exact request, workflow and version.", "AVA writes, reads back and SHA-256 verifies the artifact before success.", "Two distinct verified task receipts are required before a generated candidate is proposed.", "A duplicate request or task observation is idempotent."],
       ["tool-result", "artifact", "task-event", "unit-test"],
-      ["Configured endpoint health is reported per workflow and is not execution proof; the black-box smoke requires real completed invocations.", "The local source runtime is a pinned experimental integration, not a general arbitrary-flow executor."],
+      ["Configured endpoint health is reported per workflow and is not execution proof; the black-box smoke requires real completed invocations.", "Generated playbooks currently support only profile-first Instagram thread opening; messages and arbitrary flows are excluded.", "The local source runtime is a pinned experimental integration, not a general arbitrary-flow executor."],
     ),
     safety: safety("low", "never", ["Sends bounded readiness metadata to one configured webhook.", "Writes a local report and memory locator."], {
       sensitiveData: ["No raw memory, credentials or authentication state are allowed."],
       redactions: ["Inputs, outputs and errors are scrubbed before persistence."],
       stopConditions: ["Stop on identity mismatch, invalid schema, timeout, cancellation or failed read-back verification."],
     }),
-    runtime: runtime(["automation_system_report", "automation_operations_brief", "automation_status"], [], []),
+    runtime: runtime(["automation_system_report", "automation_operations_brief", "automation_status", "automation_playbook_activate", "automation_run_playbook"], [], []),
   },
   {
     id: "notifications.push-approvals",
@@ -2752,12 +2754,17 @@ const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
   ),
   "automation.activepieces": defineWorkflow(
     "automation.activepieces",
-    "Select, run and verify a pinned deterministic playbook",
-    "AVA chooses only a registered workflow, delegates bounded deterministic steps, then independently verifies and indexes the artifact.",
+    "Select, approve, run and verify a deterministic playbook",
+    "AVA chooses a registered workflow or an explicitly approved generated definition, delegates bounded planning, then independently verifies evidence and executes only allowlisted local actions.",
     [
       { key: "request", name: "Request a playbook", description: "AVA selects only a declared workflow and stable version.", kind: "request" },
       { key: "health", parent: "request", name: "System health report", description: "Collect readiness booleans and durable-state counts.", kind: "operation", toolName: "automation_system_report" },
       { key: "operations", parent: "request", name: "Operations brief", description: "Collect 24-hour run, verification, approval, Self, watch, Notes and memory counts.", kind: "operation", toolName: "automation_operations_brief" },
+      { key: "observe", parent: "request", name: "Observe verified repetition", description: "Fingerprint only eligible procedures from independently verified task receipts; replayed task IDs do not count twice.", kind: "operation" },
+      { key: "propose", parent: "observe", name: "Propose bounded playbook", description: "After two distinct verified uses, expose a versioned candidate without activating it.", kind: "decision", toolName: "automation_status" },
+      { key: "approve", parent: "propose", capabilityId: "notifications.push-approvals", name: "Approve exact revision", description: "Require Sir's explicit approval and reject stale candidate versions.", kind: "decision", toolName: "automation_playbook_activate", producesEvidence: ["task-event"] },
+      { key: "plan", parent: "approve", name: "Validate approved plan", description: "Activepieces renders the exact allowlisted definition and evidence fingerprint for AVA read-back verification.", kind: "verification", producesEvidence: ["artifact", "task-event"] },
+      { key: "execute", parent: "plan", name: "Execute active playbook", description: "Revalidate the current people-map identity and run the existing profile-first action through AVA.", kind: "external-action", toolName: "automation_run_playbook", producesEvidence: ["tool-result"] },
       { key: "snapshot", parent: "request", name: "Build bounded snapshot", description: "Collect only the selected playbook's aggregate fields without secrets or content bodies.", kind: "operation" },
       { key: "delegate", parent: "request", name: "Invoke pinned webhook", description: "Send the versioned contract with a stable request key and bounded timeout.", kind: "operation", producesEvidence: ["task-event"] },
       { key: "validate", parent: "request", name: "Validate result identity", description: "Reject the wrong request, workflow, version, malformed steps or unsupported output.", kind: "verification", producesEvidence: ["tool-result"] },
@@ -2768,6 +2775,11 @@ const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
     [
       { from: "request", to: "health", kind: "branch", label: "health" },
       { from: "request", to: "operations", kind: "branch", label: "operations" },
+      { from: "request", to: "observe", kind: "branch", label: "repeated verified task" },
+      { from: "observe", to: "propose", kind: "branch", label: "two distinct observations" },
+      { from: "propose", to: "approve" },
+      { from: "approve", to: "plan" },
+      { from: "plan", to: "execute", kind: "verification" },
       { from: "health", to: "snapshot" },
       { from: "operations", to: "snapshot" },
       { from: "snapshot", to: "delegate" },

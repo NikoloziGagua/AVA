@@ -662,6 +662,34 @@ CREATE TABLE IF NOT EXISTS automation_artifact_records (
 CREATE INDEX IF NOT EXISTS idx_automation_artifacts_created
   ON automation_artifact_records(created_at DESC, id);
 
+-- Automatically discovered Activepieces playbook candidates. A candidate is
+-- append-evidenced and cannot run until an explicit approval drives it through
+-- Activepieces plan validation into `active`. Definitions are bounded JSON;
+-- raw prompts, provider payloads and tool output are deliberately absent.
+CREATE TABLE IF NOT EXISTS automation_playbook_candidates (
+  id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL UNIQUE,
+  playbook_id TEXT NOT NULL UNIQUE,
+  revision INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'observing',
+  version INTEGER NOT NULL DEFAULT 1,
+  display_name TEXT NOT NULL,
+  trigger_phrases TEXT NOT NULL,
+  definition TEXT NOT NULL,
+  evidence_task_ids TEXT NOT NULL DEFAULT '[]',
+  evidence_count INTEGER NOT NULL DEFAULT 0,
+  validation_run_id TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  approved_at INTEGER,
+  activated_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_automation_candidates_status
+  ON automation_playbook_candidates(status, updated_at DESC, id);
+
 -- Legacy visual explanations remain readable for migration. New revisions use
 -- the renderer-neutral visual_message_revisions table below; rendered HTML,
 -- SVG, and PNG remain disposable browser artifacts and are never persisted.

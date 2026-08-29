@@ -206,18 +206,24 @@ describe("Explorer capability registry", () => {
     expect(ufo.workflow?.edges.some((edge) => edge.kind === "stop")).toBe(true);
   });
 
-  it("shows both pinned Activepieces playbooks without an arbitrary-flow surface", () => {
+  it("shows pinned and approval-gated Activepieces playbooks without an arbitrary-flow surface", () => {
     const automation = getCapability("automation.activepieces")!;
     expect(automation.runtime?.toolNames).toEqual([
       "automation_system_report",
       "automation_operations_brief",
       "automation_status",
+      "automation_playbook_activate",
+      "automation_run_playbook",
     ]);
     expect(automation.workflow?.nodes.find((node) => node.toolName === "automation_system_report")?.name)
       .toBe("System health report");
     expect(automation.workflow?.nodes.find((node) => node.toolName === "automation_operations_brief")?.name)
       .toBe("Operations brief");
-    expect(automation.description).toMatch(/registry of pinned/i);
+    expect(automation.workflow?.nodes.find((node) => node.toolName === "automation_playbook_activate")?.name)
+      .toBe("Approve exact revision");
+    expect(automation.workflow?.nodes.find((node) => node.toolName === "automation_run_playbook")?.name)
+      .toBe("Execute active playbook");
+    expect(automation.description).toMatch(/approval-gated/i);
     expect(automation.description).not.toMatch(/arbitrary/i);
   });
 

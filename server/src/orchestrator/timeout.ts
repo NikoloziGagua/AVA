@@ -32,6 +32,8 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   automation_status: 10_000,
   automation_system_report: 45_000,
   automation_operations_brief: 45_000,
+  automation_playbook_activate: 45_000,
+  automation_run_playbook: 90_000,
   ufo_runtime_run: 610_000,
 };
 

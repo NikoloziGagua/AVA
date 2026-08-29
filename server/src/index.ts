@@ -67,7 +67,9 @@ import { OpenAIMemoryEmbedder } from "./memory-index/embedding.js";
 import { AutoMemoryCaptureCoordinator } from "./memory-index/auto-capture.js";
 import { ActivepiecesWebhookExecutor } from "./automations/activepieces.js";
 import { AutomationPlaybookService, buildAutomationWorkflowRegistrations } from "./automations/playbooks.js";
+import { GeneratedPlaybookService } from "./automations/generated-playbooks.js";
 import { buildOperationsBriefSnapshot } from "./automations/snapshots.js";
+import { openThread as openInstagramThread } from "./apps/instagram.js";
 import { GitImprovementCommitSource, ImprovementIndexCoordinator } from "./memory-index/improvement-index.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
@@ -677,6 +679,7 @@ const activepiecesExecutor = new ActivepiecesWebhookExecutor({
   enabled: cfg.activepiecesEnabled,
   systemReportWebhookUrl: cfg.activepiecesSystemReportWebhookUrl,
   operationsBriefWebhookUrl: cfg.activepiecesOperationsBriefWebhookUrl,
+  approvedActionPlanWebhookUrl: cfg.activepiecesApprovedActionPlanWebhookUrl,
   webhookToken: cfg.activepiecesWebhookToken,
   timeoutMs: cfg.activepiecesTimeoutMs,
 });
@@ -705,6 +708,30 @@ const automationService = new AutomationPlaybookService(db, activepiecesExecutor
     operationsBriefSnapshot: async () => buildOperationsBriefSnapshot(db, await buildSystemAutomationSnapshot()),
   }), observability, async (recordId) => (await memoryIndex.captureAutomationArtifact({ recordId })).result.entry.id);
 agentDeps.automationService = automationService;
+const generatedPlaybooks = new GeneratedPlaybookService(
+  db,
+  automationService,
+  cfg.memoryDir,
+  async (definition, signal) => {
+    if (signal?.aborted) return { ok: false, text: "AVA cancelled the approved playbook before local execution." };
+    const result = await openInstagramThread({
+      chrome: await agentDeps.getChrome(),
+      memoryDir: cfg.memoryDir,
+    }, definition.action.displayName);
+    if (signal?.aborted) return { ok: false, text: "AVA cancelled the approved playbook before outcome verification." };
+    return {
+      ok: result.ok,
+      text: result.detail,
+      ...(result.ok ? { verification: {
+        state: "verified" as const,
+        scope: "task_outcome" as const,
+        method: "instagram_thread_identity",
+        summary: "The conversation opened through the current exact people-map identity and verified Instagram profile.",
+      } } : {}),
+    };
+  },
+);
+agentDeps.generatedPlaybooks = generatedPlaybooks;
 
 app.use("/api", healthRoutes(startedAt, {
   provider: provider?.name ?? null,

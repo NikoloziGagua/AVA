@@ -1,7 +1,7 @@
 export const AUTOMATION_SCHEMA_VERSION = 1 as const;
 
 export type AutomationWorkflowDefinition = {
-  id: "ava.system-report" | "ava.operations-brief";
+  id: "ava.system-report" | "ava.operations-brief" | "ava.approved-action-plan";
   version: 1;
   displayName: string;
   artifactSlug: string;
@@ -30,7 +30,24 @@ export const OPERATIONS_BRIEF_WORKFLOW = {
   risk: "read_only",
 } as const satisfies AutomationWorkflowDefinition;
 
-export const AUTOMATION_WORKFLOWS = [SYSTEM_REPORT_WORKFLOW, OPERATIONS_BRIEF_WORKFLOW] as const;
+/** Internal compiler/validation flow used by approved generated playbooks.
+ * It never performs the local action itself and is not a user-authored
+ * arbitrary-flow surface. AVA validates the returned plan before dispatch. */
+export const APPROVED_ACTION_PLAN_WORKFLOW = {
+  id: "ava.approved-action-plan",
+  version: 1,
+  displayName: "AVA approved action plan",
+  artifactSlug: "approved-action-plan",
+  artifactSummary: "Verified Activepieces plan for one explicitly approved AVA action playbook.",
+  trigger: "manual",
+  risk: "read_only",
+} as const satisfies AutomationWorkflowDefinition;
+
+export const AUTOMATION_WORKFLOWS = [
+  SYSTEM_REPORT_WORKFLOW,
+  OPERATIONS_BRIEF_WORKFLOW,
+  APPROVED_ACTION_PLAN_WORKFLOW,
+] as const;
 export type AutomationWorkflowId = (typeof AUTOMATION_WORKFLOWS)[number]["id"];
 
 export function automationWorkflow(id: string): AutomationWorkflowDefinition | null {
@@ -139,7 +156,28 @@ export type AutomationOperationsSnapshot = {
   };
 };
 
-export type AutomationWorkflowSnapshot = AutomationSystemSnapshot | AutomationOperationsSnapshot;
+export type AutomationApprovedActionSnapshot = {
+  generatedAt: number;
+  generatedAtIso: string;
+  playbookId: string;
+  revision: number;
+  displayName: string;
+  action: {
+    tool: "instagram_open_chat";
+    targetLabel: string;
+    targetIdentity: string;
+  };
+  approval: {
+    state: "approved";
+    evidenceTaskCount: number;
+    evidenceFingerprint: string;
+  };
+};
+
+export type AutomationWorkflowSnapshot =
+  | AutomationSystemSnapshot
+  | AutomationOperationsSnapshot
+  | AutomationApprovedActionSnapshot;
 
 export type AutomationExecutorStep = {
   id: string;

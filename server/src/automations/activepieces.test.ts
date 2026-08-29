@@ -20,7 +20,8 @@ describe("Activepieces pinned webhook adapter", () => {
 
   it("fails closed when disabled and sends only the pinned bounded contract when configured", async () => {
     const disabled = new ActivepiecesWebhookExecutor({ enabled: false, systemReportWebhookUrl: null,
-      operationsBriefWebhookUrl: null, webhookToken: null, timeoutMs: 5_000 });
+      operationsBriefWebhookUrl: null, approvedActionPlanWebhookUrl: null,
+      webhookToken: null, timeoutMs: 5_000 });
     await expect(disabled.execute({ ...expected, snapshot: snapshot(), signal: new AbortController().signal }))
       .rejects.toMatchObject({ code: "activepieces_unavailable" });
     const fetcher = vi.fn(async (_url: URL, init?: RequestInit) => {
@@ -30,7 +31,9 @@ describe("Activepieces pinned webhook adapter", () => {
       return new Response(JSON.stringify(response), { status: 200 });
     });
     const active = new ActivepiecesWebhookExecutor({ enabled: true, systemReportWebhookUrl: "http://127.0.0.1:8080/hook",
-      operationsBriefWebhookUrl: "http://127.0.0.1:8080/brief", webhookToken: "token-secret", timeoutMs: 5_000 }, fetcher as typeof fetch);
+      operationsBriefWebhookUrl: "http://127.0.0.1:8080/brief",
+      approvedActionPlanWebhookUrl: "http://127.0.0.1:8080/plan",
+      webhookToken: "token-secret", timeoutMs: 5_000 }, fetcher as typeof fetch);
     await expect(active.execute({ ...expected, snapshot: snapshot(), signal: new AbortController().signal }))
       .resolves.toMatchObject({ status: "succeeded", externalRunId: "ap-1" });
   });
@@ -46,22 +49,25 @@ describe("Activepieces pinned webhook adapter", () => {
     const active = new ActivepiecesWebhookExecutor({ enabled: true,
       systemReportWebhookUrl: "http://127.0.0.1:8080/system",
       operationsBriefWebhookUrl: "http://127.0.0.1:8080/operations",
+      approvedActionPlanWebhookUrl: "http://127.0.0.1:8080/plan",
       webhookToken: null, timeoutMs: 5_000 }, fetcher as typeof fetch);
     await active.execute({ requestKey: "brief", workflowId: "ava.operations-brief", workflowVersion: 1,
       snapshot: operationsSnapshot(), signal: new AbortController().signal });
     expect(String(fetcher.mock.calls[0]![0])).toBe("http://127.0.0.1:8080/operations");
     expect(active.health()).toMatchObject({ configured: true, available: true,
-      workflows: [{ configured: true }, { configured: true }] });
+      workflows: [{ configured: true }, { configured: true }, { configured: true }] });
   });
 
   it("reports availability per workflow instead of hiding a missing endpoint", async () => {
     const partial = new ActivepiecesWebhookExecutor({ enabled: true,
       systemReportWebhookUrl: "http://127.0.0.1:8080/system",
-      operationsBriefWebhookUrl: null, webhookToken: null, timeoutMs: 5_000 });
+      operationsBriefWebhookUrl: null, approvedActionPlanWebhookUrl: null,
+      webhookToken: null, timeoutMs: 5_000 });
     expect(partial.health()).toMatchObject({ configured: true, available: true,
       workflows: [
         { workflow: { id: "ava.system-report" }, configured: true, available: true },
         { workflow: { id: "ava.operations-brief" }, configured: false, available: false },
+        { workflow: { id: "ava.approved-action-plan" }, configured: false, available: false },
       ] });
     await expect(partial.execute({ requestKey: "brief", workflowId: "ava.operations-brief", workflowVersion: 1,
       snapshot: operationsSnapshot(), signal: new AbortController().signal }))

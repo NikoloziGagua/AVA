@@ -15,12 +15,13 @@ const adminPassword = process.env.ACTIVEPIECES_LOCAL_ADMIN_PASSWORD || randomByt
 const webhookToken = process.env.ACTIVEPIECES_WEBHOOK_TOKEN || randomBytes(32).toString("base64url");
 type Json = Record<string, unknown>;
 type WorkflowSpec = {
-  id: "ava.system-report" | "ava.operations-brief";
+  id: "ava.system-report" | "ava.operations-brief" | "ava.approved-action-plan";
   version: 1;
   flowName: string;
   triggerName: string;
   reportTitle: string;
-  envKey: "ACTIVEPIECES_SYSTEM_REPORT_WEBHOOK_URL" | "ACTIVEPIECES_OPERATIONS_BRIEF_WEBHOOK_URL";
+  envKey: "ACTIVEPIECES_SYSTEM_REPORT_WEBHOOK_URL" | "ACTIVEPIECES_OPERATIONS_BRIEF_WEBHOOK_URL" |
+    "ACTIVEPIECES_APPROVED_ACTION_PLAN_WEBHOOK_URL";
   steps: Array<{ id: string; summary: string }>;
   markdown: string;
 };
@@ -159,6 +160,30 @@ const operationsBriefMarkdown = [
   "This brief was assembled by the pinned Activepieces workflow from bounded AVA counts. No prompts, note bodies, memory content, credentials, or raw logs were supplied.",
 ].join("\n");
 
+const approvedActionPlanMarkdown = [
+  "# AVA Approved Action Plan",
+  "",
+  "Generated: {{trigger['body']['snapshot']['generatedAtIso']}}",
+  "",
+  "## Definition",
+  "",
+  "- Playbook: {{trigger['body']['snapshot']['playbookId']}}",
+  "- Revision: {{trigger['body']['snapshot']['revision']}}",
+  "- Name: {{trigger['body']['snapshot']['displayName']}}",
+  "",
+  "## Approved steps",
+  "",
+  "- {{trigger['body']['snapshot']['action']['tool']}}: {{trigger['body']['snapshot']['action']['targetLabel']}} (@{{trigger['body']['snapshot']['action']['targetIdentity']}})",
+  "",
+  "## Evidence boundary",
+  "",
+  "- Approval: {{trigger['body']['snapshot']['approval']['state']}}",
+  "- Verified source tasks: {{trigger['body']['snapshot']['approval']['evidenceTaskCount']}}",
+  "- Evidence fingerprint: {{trigger['body']['snapshot']['approval']['evidenceFingerprint']}}",
+  "",
+  "Activepieces validated this bounded plan. AVA still owns identity revalidation, local execution, and outcome verification.",
+].join("\n");
+
 const workflows: WorkflowSpec[] = [
   {
     id: "ava.system-report", version: 1, flowName: "AVA System Health Report",
@@ -179,6 +204,16 @@ const workflows: WorkflowSpec[] = [
       { id: "build_report", summary: "Built the pinned Markdown operations brief." },
     ],
     markdown: operationsBriefMarkdown,
+  },
+  {
+    id: "ava.approved-action-plan", version: 1, flowName: "AVA Approved Action Plan",
+    triggerName: "AVA approved-action-plan webhook", reportTitle: "AVA Approved Action Plan",
+    envKey: "ACTIVEPIECES_APPROVED_ACTION_PLAN_WEBHOOK_URL",
+    steps: [
+      { id: "accept_approved_definition", summary: "Accepted AVA's bounded approved playbook definition." },
+      { id: "build_action_plan", summary: "Built the pinned action plan for AVA verification." },
+    ],
+    markdown: approvedActionPlanMarkdown,
   },
 ];
 

@@ -73,6 +73,11 @@ describe("classifyIntent", () => {
     expect(classifyIntent("use automation_operations_brief")).toBe("action");
   });
 
+  it("keeps exact Instagram thread opening on the voice action path", () => {
+    expect(classifyIntent("Open Lasha's Instagram chat")).toBe("action");
+    expect(classifyIntent("Open the Instagram conversation with Lasha")).toBe("action");
+  });
+
   it("treats file ops imperatives as action", () => {
     expect(classifyIntent("read the package.json file")).toBe("action");
     expect(classifyIntent("write a hello world to scratch.txt")).toBe("action");

@@ -33,7 +33,7 @@ describe("automation agent tools", () => {
     expect(JSON.parse(result.text)).toMatchObject({ workflowId: "ava.operations-brief", status: "completed" });
     const status = JSON.parse((await tools[2]!.run({}, { runId: "task-2" })).text);
     expect(status.health.workflows.map((item: { workflow: { id: string } }) => item.workflow.id))
-      .toEqual(["ava.system-report", "ava.operations-brief"]);
+      .toEqual(["ava.system-report", "ava.operations-brief", "ava.approved-action-plan"]);
     await rm(root, { recursive: true, force: true });
     db.close();
   });

@@ -26,7 +26,27 @@ brief with Readiness, Last 24 hours, Attention, and Work and knowledge sections.
 It follows the same atomic write, read-back SHA-256 verification, immutable
 artifact, memory-index and Mission Control path as the system report.
 
-The registry is implemented by `AutomationPlaybookService` plus two typed
+`ava.approved-action-plan` version 1 is an internal compiler/validation flow for
+generated playbooks. It receives only an already-approved, schema-validated
+single-action definition, its revision, exact target identity and a fingerprint
+of the source-task evidence. It returns a bounded plan artifact; AVA reads back
+and hash-verifies that artifact, revalidates current identity data, and only then
+runs the local action. Activepieces never receives arbitrary tool arguments and
+never controls the browser itself.
+
+The first generated-playbook compiler deliberately supports one procedure:
+`instagram_open_chat`. After two distinct task receipts independently verify the
+same exact people-map route, AVA creates a **proposed** candidate. It does not
+activate from observation alone. `automation_playbook_activate` requires the
+candidate's current version and a high-tier explicit approval card. Activation
+binds the revision to the stable people-map person ID and current username. The
+active playbook is then available through `automation_run_playbook`; every run
+validates the Activepieces plan and current username again before using AVA's
+existing profile-first Instagram workflow. If the username changed, it fails
+closed and requires fresh verified observations. Inbox search, message typing
+and message sending are outside this generated definition.
+
+The registry is implemented by `AutomationPlaybookService` plus three typed
 workflow registrations. The executor receives an exact workflow ID/version and
 uses only that workflow's configured endpoint. Request-key reuse across
 different workflows is rejected. `automation_status` reports configuration and
@@ -57,7 +77,7 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-
 The setup script clones only the official repository into ignored local runtime
 data, checks the exact commit, runs the official development setup, applies the
 tracked Windows file-URL compatibility patch, starts the genuine runtime and
-idempotently provisions both pinned synchronous webhook flows. Provisioning writes the local
+idempotently provisions all three pinned synchronous webhook flows. Provisioning writes the local
 credentials and AVA webhook configuration only to the ignored root `.env`; it
 does not print secrets.
 
@@ -74,6 +94,7 @@ The provisioner owns these AVA settings:
 ACTIVEPIECES_ENABLED=true
 ACTIVEPIECES_SYSTEM_REPORT_WEBHOOK_URL=http://127.0.0.1:3000/api/v1/webhooks/<flow-id>/sync
 ACTIVEPIECES_OPERATIONS_BRIEF_WEBHOOK_URL=http://127.0.0.1:3000/api/v1/webhooks/<flow-id>/sync
+ACTIVEPIECES_APPROVED_ACTION_PLAN_WEBHOOK_URL=http://127.0.0.1:3000/api/v1/webhooks/<flow-id>/sync
 ACTIVEPIECES_WEBHOOK_TOKEN=<local shared bearer token>
 ACTIVEPIECES_TIMEOUT_SECONDS=30
 ```
@@ -90,7 +111,10 @@ through authenticated `/api/chat`. It fails unless AVA selects the correct tool
 for both action requests, both live runs identify `activepieces`, both artifacts
 pass read-back SHA-256, both immutable records enter memory with verified
 provenance, both receipts are verified, Mission Control contains the correlated
-terminal evidence, and status shows both workflows configured. This smoke
+terminal evidence, and status shows all workflows configured. The generated
+playbook smoke separately proves observation, approval, plan verification,
+profile-first execution and duplicate suppression with Lasha's saved
+`_princi150` identity. These smokes
 deliberately cannot pass against the deterministic fixture.
 
 The runtime was stopped completely, relaunched through the tracked startup
@@ -114,3 +138,26 @@ Future workflows must be added as pinned, versioned registry entries with their
 own bounded snapshot producer, artifact contract, webhook configuration,
 deterministic tests and independent acceptance evidence. Arbitrary workflow
 execution is intentionally not part of this foundation.
+
+## Automatic playbook lifecycle
+
+1. A completed task receipt must contain task-outcome verification and an
+   eligible, entirely successful tool sequence.
+2. The compiler fingerprints a bounded semantic definition, not a transcript.
+   Duplicate/replayed task IDs do not increase evidence.
+3. One observation is `observing`; two distinct verified tasks become
+   `proposed`.
+4. Sir explicitly approves `automation_playbook_activate`. Stale candidate
+   versions are rejected.
+5. Activepieces validates the exact approved revision. AVA independently
+   verifies its artifact and publishes the playbook as `active`.
+6. A matching future request is steered to `automation_run_playbook`. The
+   Activepieces plan and authoritative people-map identity are checked again,
+   then the existing AVA tool performs and verifies the real action.
+
+Candidates and active definitions survive restart in SQLite. A validation that
+was in flight at restart becomes failed and is never silently resumed. Failed
+or unverified tasks do not teach candidates. Generated plan artifacts are kept
+as operational evidence but are not indexed as durable user knowledge, avoiding
+memory clutter. V1 does not infer multi-step workflows, messaging, arbitrary
+browser actions or user-authored Activepieces flows.

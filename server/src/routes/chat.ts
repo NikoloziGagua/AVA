@@ -59,6 +59,7 @@ import { buildPlacesTools } from "../tools/places-mcp.js";
 import { buildUfoExperimentTools } from "../tools/ufo-experiment-mcp.js";
 import { buildAutomationTools } from "../tools/automations-mcp.js";
 import type { AutomationPlaybookService } from "../automations/playbooks.js";
+import type { GeneratedPlaybookService } from "../automations/generated-playbooks.js";
 import type { UfoExperimentService } from "../ufo/experiment.js";
 import type { CodexWatchTarget } from "../watches/codex-dispatch.js";
 import { getReasoningLevel } from "../state/reasoning-pref.js";
@@ -223,6 +224,7 @@ export type AgentDeps = {
   /** Default-off experimental UFO boundary; never represents host capability. */
   ufoExperiment?: UfoExperimentService;
   automationService?: AutomationPlaybookService;
+  generatedPlaybooks?: GeneratedPlaybookService;
 };
 
 export type Metered = { anthropic: Anthropic | null; openai: OpenAI | null };
@@ -494,7 +496,15 @@ export function chatRoutes(
           project: memoryProject,
         });
 
-    const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix
+    const generatedPlaybook = mode === "action"
+      ? agentDeps.generatedPlaybooks?.matchActive(latestUserText) ?? null
+      : null;
+    const generatedPlaybookPrefix = generatedPlaybook
+      ? `[APPROVED ACTIVEPIECES PLAYBOOK]\nThis request matches ${generatedPlaybook.displayName}. ` +
+        `Use automation_run_playbook with playbookId ${generatedPlaybook.playbookId}. ` +
+        `Do not substitute the ordinary app tool unless the approved playbook reports unavailable.\n[/APPROVED ACTIVEPIECES PLAYBOOK]\n\n`
+      : "";
+    const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix + generatedPlaybookPrefix
       + (resolvedVisualContext ? `${resolvedVisualContext.prompt}\n\n` : "")
       + (memoryRetrieval.prompt ? `${memoryRetrieval.prompt}\n\n` : "")
       + latestUserText;
@@ -622,6 +632,16 @@ export function chatRoutes(
         const learningOutcome = learningOutcomeFromReceipt(receipt);
         const evidence = learningEvidenceFromReceipt(receipt);
         const durationSecs = Math.max(0, (at - runStartMs) / 1000);
+        try {
+          agentDeps.generatedPlaybooks?.observeVerifiedRun({
+            taskId: receipt.taskId,
+            goal: objectiveForRun,
+            steps: runSteps,
+            outcome: learningOutcome,
+          });
+        } catch (err) {
+          console.warn("[automations] generated playbook observation failed:", err instanceof Error ? err.message : err);
+        }
         if (finalTextForLearning && agentDeps.provider) {
           void maybeCapture({
             memoryDir: agentDeps.memoryDir,
@@ -819,7 +839,9 @@ export function chatRoutes(
         const ufoExperimentTools = agentDeps.ufoExperiment
           ? buildUfoExperimentTools(agentDeps.ufoExperiment)
           : [];
-        const automationTools = agentDeps.automationService ? buildAutomationTools(agentDeps.automationService) : [];
+        const automationTools = agentDeps.automationService
+          ? buildAutomationTools(agentDeps.automationService, agentDeps.generatedPlaybooks)
+          : [];
         // Discuss-with-Claude is available in BOTH modes (Sir may ask by voice):
         // it queues a background, read-only consult bound to THIS session (sid),
         // returns immediately, and can recount past discussions. Only wired when

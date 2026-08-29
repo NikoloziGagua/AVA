@@ -325,6 +325,8 @@ describe("Explorer read API", () => {
     expect(capabilityIdsForTool("automation_system_report")).toEqual(["automation.activepieces"]);
     expect(capabilityIdsForTool("automation_operations_brief")).toEqual(["automation.activepieces"]);
     expect(capabilityIdsForTool("automation_status")).toEqual(["automation.activepieces"]);
+    expect(capabilityIdsForTool("automation_playbook_activate")).toEqual(["automation.activepieces"]);
+    expect(capabilityIdsForTool("automation_run_playbook")).toEqual(["automation.activepieces"]);
   });
 
   it("returns real learned playbooks with provenance and recall metrics", async () => {

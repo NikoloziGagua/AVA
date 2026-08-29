@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787962512184,
+  "generatedAt": 1787965713065,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -445,6 +445,12 @@
       "capability": "automation.activepieces",
       "path": "server/src/automations/playbooks.ts",
       "symbol": "AutomationPlaybookService",
+      "kind": "implementation"
+    },
+    {
+      "capability": "automation.activepieces",
+      "path": "server/src/automations/generated-playbooks.ts",
+      "symbol": "GeneratedPlaybookService",
       "kind": "implementation"
     },
     {
@@ -919,6 +925,14 @@
     },
     {
       "name": "automation_status",
+      "file": "server/src/tools/automations-mcp.ts"
+    },
+    {
+      "name": "automation_playbook_activate",
+      "file": "server/src/tools/automations-mcp.ts"
+    },
+    {
+      "name": "automation_run_playbook",
       "file": "server/src/tools/automations-mcp.ts"
     },
     {

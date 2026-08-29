@@ -61,6 +61,10 @@ const ACTION_PATTERNS: RegExp[] = [
   /\b(put|save|add|capture|write)\b.{0,50}\b(?:in|to)\s+(?:my\s+|the\s+)?notes?\b/i,
   /\bmake\s+(?:a\s+)?note\s+(?:of|about)\b/i,
 
+  // Exact app-thread navigation remains a tool action in conservative voice
+  // mode even when the person's possessive name replaces the usual article.
+  /\bopen\b.{0,60}\binstagram\s+(chat|conversation|dm|messages?)\b/i,
+
   // Pinned automation playbooks. Possessive spoken phrasing such as "create
   // AVA's operations brief" does not match the generic imperative+article
   // rule above, but it must still reach the tool-capable agent in voice mode.

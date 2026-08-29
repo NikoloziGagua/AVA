@@ -50,6 +50,7 @@ export type Config = {
   activepiecesEnabled: boolean;
   activepiecesSystemReportWebhookUrl: string | null;
   activepiecesOperationsBriefWebhookUrl: string | null;
+  activepiecesApprovedActionPlanWebhookUrl: string | null;
   activepiecesWebhookToken: string | null;
   activepiecesTimeoutMs: number;
 };
@@ -153,6 +154,7 @@ export function loadConfig(): Config {
     activepiecesEnabled: /^(1|true|yes)$/i.test(process.env.ACTIVEPIECES_ENABLED ?? ""),
     activepiecesSystemReportWebhookUrl: process.env.ACTIVEPIECES_SYSTEM_REPORT_WEBHOOK_URL?.trim() || null,
     activepiecesOperationsBriefWebhookUrl: process.env.ACTIVEPIECES_OPERATIONS_BRIEF_WEBHOOK_URL?.trim() || null,
+    activepiecesApprovedActionPlanWebhookUrl: process.env.ACTIVEPIECES_APPROVED_ACTION_PLAN_WEBHOOK_URL?.trim() || null,
     activepiecesWebhookToken: process.env.ACTIVEPIECES_WEBHOOK_TOKEN?.trim() || null,
     activepiecesTimeoutMs: Math.max(5_000, Math.min(30_000,
       Math.round(Number(process.env.ACTIVEPIECES_TIMEOUT_SECONDS ?? 20) * 1_000) || 20_000)),

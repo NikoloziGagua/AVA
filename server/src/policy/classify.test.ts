@@ -72,6 +72,10 @@ describe("classifyRisk", () => {
     expect(classifyRisk("automation_system_report", {}).tier).toBe("low");
     expect(classifyRisk("automation_operations_brief", {}).tier).toBe("low");
   });
+  it("requires explicit approval to publish learned playbooks but lets approved read-only actions run", () => {
+    expect(classifyRisk("automation_playbook_activate", { candidateId: "candidate", expectedVersion: 2 }).tier).toBe("high");
+    expect(classifyRisk("automation_run_playbook", { playbookId: "ava.learned.instagram-open-chat.x" }).tier).toBe("low");
+  });
   it("low: dedicated Instagram profile opening", () => {
     expect(classifyRisk("instagram_open_profile", { person: "Lasha" }).tier).toBe("low");
   });

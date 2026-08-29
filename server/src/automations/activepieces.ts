@@ -2,7 +2,9 @@ import { scrubSecrets } from "../security/scrub.js";
 import {
   AUTOMATION_WORKFLOWS,
   AUTOMATION_SCHEMA_VERSION,
+  APPROVED_ACTION_PLAN_WORKFLOW,
   OPERATIONS_BRIEF_WORKFLOW,
+  type AutomationApprovedActionSnapshot,
   type AutomationExecutor,
   type AutomationExecutorResult,
   type AutomationOperationsSnapshot,
@@ -17,6 +19,7 @@ export type ActivepiecesConfig = {
   enabled: boolean;
   systemReportWebhookUrl: string | null;
   operationsBriefWebhookUrl: string | null;
+  approvedActionPlanWebhookUrl: string | null;
   webhookToken: string | null;
   timeoutMs: number;
 };
@@ -139,6 +142,7 @@ export class ActivepiecesWebhookExecutor implements AutomationExecutor {
     this.webhookUrls = {
       "ava.system-report": validatedWebhookUrl(config.systemReportWebhookUrl),
       "ava.operations-brief": validatedWebhookUrl(config.operationsBriefWebhookUrl),
+      "ava.approved-action-plan": validatedWebhookUrl(config.approvedActionPlanWebhookUrl),
     };
   }
 
@@ -306,6 +310,32 @@ export function renderFixtureOperationsBrief(snapshot: AutomationOperationsSnaps
   ].join("\n");
 }
 
+export function renderFixtureApprovedActionPlan(snapshot: AutomationApprovedActionSnapshot): string {
+  return [
+    "# AVA Approved Action Plan",
+    "",
+    `Generated: ${snapshot.generatedAtIso}`,
+    "",
+    "## Definition",
+    "",
+    `- Playbook: ${snapshot.playbookId}`,
+    `- Revision: ${snapshot.revision}`,
+    `- Name: ${snapshot.displayName}`,
+    "",
+    "## Approved steps",
+    "",
+    `- ${snapshot.action.tool}: ${snapshot.action.targetLabel} (@${snapshot.action.targetIdentity})`,
+    "",
+    "## Evidence boundary",
+    "",
+    `- Approval: ${snapshot.approval.state}`,
+    `- Verified source tasks: ${snapshot.approval.evidenceTaskCount}`,
+    `- Evidence fingerprint: ${snapshot.approval.evidenceFingerprint}`,
+    "",
+    "Activepieces validated this bounded plan. AVA still owns identity revalidation, local execution, and outcome verification.",
+  ].join("\n");
+}
+
 /** Deterministic real-shaped executor used only by tests and the opt-in smoke. */
 export class DeterministicAutomationFixtureExecutor implements AutomationExecutor {
   readonly id = "deterministic_fixture" as const;
@@ -333,15 +363,18 @@ export class DeterministicAutomationFixtureExecutor implements AutomationExecuto
         usage: "not_reported", cost: "not_reported" };
     }
     const isOperations = input.workflowId === OPERATIONS_BRIEF_WORKFLOW.id;
-    const report = isOperations
-      ? { title: "AVA Operations Brief", markdown: renderFixtureOperationsBrief(input.snapshot as AutomationOperationsSnapshot) }
-      : { title: "AVA System Health Report", markdown: renderFixtureSystemReport(input.snapshot as AutomationSystemSnapshot) };
+    const isApprovedAction = input.workflowId === APPROVED_ACTION_PLAN_WORKFLOW.id;
+    const report = isApprovedAction
+      ? { title: "AVA Approved Action Plan", markdown: renderFixtureApprovedActionPlan(input.snapshot as AutomationApprovedActionSnapshot) }
+      : isOperations
+        ? { title: "AVA Operations Brief", markdown: renderFixtureOperationsBrief(input.snapshot as AutomationOperationsSnapshot) }
+        : { title: "AVA System Health Report", markdown: renderFixtureSystemReport(input.snapshot as AutomationSystemSnapshot) };
     return { schemaVersion: 1, workflowId: input.workflowId, workflowVersion: input.workflowVersion,
       requestKey: input.requestKey, externalRunId: "fixture-run-success", providerVersion: "fixture-v1",
       status: "succeeded",
       steps: [
         { id: "accept_snapshot", status: "completed", summary: "Accepted the bounded AVA snapshot.", durationMs: 1 },
-        { id: "build_report", status: "completed", summary: `Built the deterministic ${isOperations ? "operations brief" : "health report"}.`, durationMs: 1 },
+        { id: "build_report", status: "completed", summary: `Built the deterministic ${isApprovedAction ? "approved action plan" : isOperations ? "operations brief" : "health report"}.`, durationMs: 1 },
       ],
       report,
       error: null, usage: "not_reported", cost: "not_reported" };

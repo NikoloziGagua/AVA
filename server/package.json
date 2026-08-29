@@ -18,6 +18,7 @@
     "setup:activepieces": "tsx scripts/provision-activepieces-system-report.ts",
     "setup:activepieces-report": "tsx scripts/provision-activepieces-system-report.ts",
     "smoke:activepieces-playbooks": "tsx scripts/activepieces-system-report-live-smoke.ts",
+    "smoke:activepieces-generated": "tsx scripts/activepieces-generated-playbook-live-smoke.ts",
     "smoke:activepieces-report": "tsx scripts/activepieces-system-report-live-smoke.ts",
     "pair": "tsx scripts/mint-pairing-code.ts",
     "self:loop": "tsx scripts/auto-improve-loop.ts"

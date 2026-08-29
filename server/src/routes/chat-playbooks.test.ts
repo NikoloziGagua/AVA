@@ -13,7 +13,7 @@ import { listPlaybooks, writePlaybook } from "../playbooks/store.js";
 import { listMessages } from "../state/messages.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function setup(over: { provider?: LLMProvider; runAgentImpl?: (opts: any) => Promise<void> } = {}) {
+function setup(over: { provider?: LLMProvider; runAgentImpl?: (opts: any) => Promise<void>; generatedPlaybooks?: any } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "ava-pbwire-"));
   const memoryDir = mkdtempSync(join(tmpdir(), "ava-pbwire-mem-"));
   const db = openDb(join(dir, "x.db"));
@@ -38,9 +38,10 @@ function setup(over: { provider?: LLMProvider; runAgentImpl?: (opts: any) => Pro
   const app = express(); app.use(express.json());
   app.use((req: any, _res, next) => { req.deviceId = "d"; next(); });
   app.use("/api/chat", chatRoutes(db, new ActiveRuns(), (_q, _s, n) => n(),
-    { pidfiles: { register() {}, unregister() {} } as any, fsRoots: [], memoryDir, dataDir: dir, getChrome: async () => ({} as any), provider, runAgentImpl },
+    { pidfiles: { register() {}, unregister() {} } as any, fsRoots: [], memoryDir, dataDir: dir,
+      getChrome: async () => ({} as any), provider, runAgentImpl, generatedPlaybooks: over.generatedPlaybooks },
     { anthropic: null, openai: null }));
-  return { app, memoryDir, db };
+  return { app, memoryDir, db, runAgentImpl };
 }
 
 describe("chat playbook capture", () => {
@@ -137,5 +138,46 @@ describe("chat playbook capture", () => {
     const msgs = listMessages(db, sid);
     const assistant = msgs.find((m) => m.role === "assistant");
     expect(assistant?.content).toContain("exceeded your current quota");
+  });
+
+  it("offers only evidence-backed completed tool runs to automatic playbook observation", async () => {
+    const observeVerifiedRun = vi.fn();
+    const { app } = setup({
+      generatedPlaybooks: { matchActive: () => null, observeVerifiedRun, list: () => [], active: () => [] },
+      runAgentImpl: async (opts) => {
+        opts.emit({ kind: "tool_call", payload: { tool: "instagram_open_chat", args: { person: "Lasha" } } });
+        opts.emit({ kind: "tool_result", payload: { tool: "instagram_open_chat", ok: true, result: "opened", verification: {
+          state: "verified", scope: "task_outcome", method: "instagram_thread_identity", summary: "Matched @\u005fprinci150",
+        } } });
+        opts.emit({ kind: "final", payload: { text: "Opened Lasha's chat." } });
+        opts.emit({ kind: "done", payload: {} });
+      },
+    });
+    await request(app).post("/api/chat").send({ text: "Open Lasha's Instagram chat" }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(observeVerifiedRun).toHaveBeenCalledTimes(1);
+    expect(observeVerifiedRun).toHaveBeenCalledWith(expect.objectContaining({
+      goal: "Open Lasha's Instagram chat", outcome: "verified",
+      steps: [{ tool: "instagram_open_chat", args: { person: "Lasha" }, ok: true }],
+    }));
+  });
+
+  it("injects an approved generated playbook hint for matching chat requests", async () => {
+    const runAgentImpl = vi.fn(async (opts: any) => {
+      opts.emit({ kind: "final", payload: { text: "done" } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const { app } = setup({
+      runAgentImpl,
+      generatedPlaybooks: {
+        matchActive: () => ({ playbookId: "ava.learned.instagram-open-chat.fixture", displayName: "Open Lasha's Instagram chat" }),
+        observeVerifiedRun: () => null, list: () => [], active: () => [],
+      },
+    });
+    await request(app).post("/api/chat").send({ text: "Open Lasha's Instagram chat" }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runAgentImpl).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("Use automation_run_playbook with playbookId ava.learned.instagram-open-chat.fixture"),
+    }));
   });
 });

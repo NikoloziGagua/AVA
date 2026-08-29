@@ -94,8 +94,8 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   if (tool === "visual_explanation_create" || tool === "research_visual_create") {
     return { tier: "low", reason: "validated local visual revision" };
   }
-  if (tool === "automation_system_report") {
-    return { tier: "low", reason: "pinned read-only system snapshot to a verified local report" };
+  if (tool === "automation_system_report" || tool === "automation_operations_brief") {
+    return { tier: "low", reason: "pinned read-only aggregate snapshot to a verified local report" };
   }
 
   // Mutates live store products — keep Sir's veto window.

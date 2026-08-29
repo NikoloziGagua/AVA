@@ -323,6 +323,7 @@ describe("Explorer read API", () => {
 
   it("links Activepieces task events back to the canonical automation capability", () => {
     expect(capabilityIdsForTool("automation_system_report")).toEqual(["automation.activepieces"]);
+    expect(capabilityIdsForTool("automation_operations_brief")).toEqual(["automation.activepieces"]);
     expect(capabilityIdsForTool("automation_status")).toEqual(["automation.activepieces"]);
   });
 

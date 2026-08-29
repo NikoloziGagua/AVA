@@ -1,12 +1,12 @@
 /**
- * Opt-in black-box acceptance test for AVA's genuine Activepieces workflow.
+ * Opt-in black-box acceptance test for AVA's genuine Activepieces playbooks.
  *
  * Preconditions:
  * - AVA is running with ACTIVEPIECES_ENABLED=true.
- * - The genuine local Activepieces runtime and pinned system-report flow are up.
+ * - The genuine local Activepieces runtime and both pinned playbook flows are up.
  *
  * Run from the repository root:
- *   npm.cmd -w server run smoke:activepieces-report
+ *   npm.cmd -w server run smoke:activepieces-playbooks
  */
 import "dotenv/config";
 import { createHash } from "node:crypto";
@@ -168,7 +168,8 @@ async function main(): Promise<void> {
     assert(statusResult?.ok === true && typeof statusResult.result === "string",
       "automation_status did not return a readable result");
     const statusPayload = JSON.parse(statusResult.result) as {
-      health?: { configured?: boolean; available?: boolean; runtimeEvidence?: string };
+      health?: { configured?: boolean; available?: boolean; runtimeEvidence?: string;
+        workflows?: Array<{ workflow?: { id?: string }; configured?: boolean; available?: boolean }> };
       runs?: Array<{ id?: string; executor?: string; status?: string }>;
     };
     assert(statusPayload.health?.configured === true && statusPayload.health.available === true,
@@ -177,6 +178,58 @@ async function main(): Promise<void> {
       "automation_status mislabeled live configuration evidence");
     assert(statusPayload.runs?.some((item) => item.id === run.id && item.executor === "activepieces" && item.status === "completed"),
       "automation_status omitted the completed genuine Activepieces run");
+    assert(statusPayload.health.workflows?.every((workflow) => workflow.configured && workflow.available),
+      "automation_status did not report both pinned playbooks available");
+
+    const briefStarted = await fetch(`${base}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...auth },
+      body: JSON.stringify({
+        sessionId: start.sessionId,
+        text: "Create AVA's operations brief for the last 24 hours.",
+        voice: true,
+        persist: false,
+      }),
+    });
+    const briefStart = await briefStarted.json() as { taskId?: string; sessionId?: string; error?: string };
+    assert(briefStarted.ok && briefStart.taskId && briefStart.sessionId,
+      `operations brief chat failed (${briefStarted.status}): ${briefStart.error ?? "unknown"}`);
+    const briefEvents = await readSse(await fetch(
+      `${base}/api/chat/${encodeURIComponent(briefStart.sessionId)}/stream?taskId=${encodeURIComponent(briefStart.taskId)}`,
+      { headers: auth },
+    ));
+    const briefCalls = briefEvents.filter((event) => event.event === "tool_call");
+    assert(briefCalls.length === 1 && briefCalls[0]!.data.tool === "automation_operations_brief",
+      `AVA selected ${String(briefCalls[0]?.data.tool)} instead of automation_operations_brief`);
+    const briefResult = briefEvents.find((event) => event.event === "tool_result")?.data;
+    const briefVerification = briefResult?.verification as { state?: string; method?: string; scope?: string } | undefined;
+    assert(briefResult?.ok === true && briefVerification?.state === "verified" &&
+      briefVerification.method === "filesystem_readback_sha256" && briefVerification.scope === "task_outcome",
+    "operations brief was not independently verified");
+    const briefRun = db.prepare("SELECT * FROM automation_runs WHERE request_key=?")
+      .get(`${briefStart.taskId}:ava.operations-brief:v1`) as {
+        id: string; executor: string; status: string; verification_state: string; artifact_path: string | null;
+        artifact_hash: string | null; memory_entry_id: string | null; observability_run_id: string;
+      } | undefined;
+    assert(briefRun?.executor === "activepieces" && briefRun.status === "completed" &&
+      briefRun.verification_state === "verified" && briefRun.artifact_path && briefRun.artifact_hash,
+    "operations brief did not persist as a verified genuine Activepieces run");
+    const briefArtifact = await readFile(briefRun.artifact_path, "utf8");
+    assert(sha256(briefArtifact) === briefRun.artifact_hash, "operations brief artifact hash no longer matches");
+    assert(briefArtifact.includes("# AVA Operations Brief") && briefArtifact.includes("## Last 24 hours") &&
+      briefArtifact.includes("## Attention") && briefArtifact.includes("## Work and knowledge"),
+    "operations brief artifact omitted its pinned sections");
+    assert(!briefArtifact.includes("{{trigger") && /Generated: \d{4}-\d{2}-\d{2}T/.test(briefArtifact),
+      "operations brief contained unresolved template data or an unreadable timestamp");
+    assert(briefRun.memory_entry_id, "operations brief was not indexed in AVA memory");
+    const briefMission = await fetch(
+      `${base}/api/mission-control/runs/${encodeURIComponent(briefRun.observability_run_id)}`,
+      { headers: auth },
+    );
+    assert(briefMission.ok, `operations brief Mission Control lookup failed (${briefMission.status})`);
+    const briefMissionBody = await briefMission.json() as { run?: { title?: string; status?: string; verificationStatus?: string } };
+    assert(briefMissionBody.run?.title === "AVA operations brief" && briefMissionBody.run.status === "completed" &&
+      briefMissionBody.run.verificationStatus === "verified", "operations brief Mission Control trace was incomplete");
 
     console.log(JSON.stringify({
       ok: true,
@@ -193,6 +246,13 @@ async function main(): Promise<void> {
       statusTool: statusCalls[0]!.data.tool,
       configured: statusPayload.health.configured,
       available: statusPayload.health.available,
+      workflowCount: statusPayload.health.workflows?.length,
+      operationsBriefTaskId: briefStart.taskId,
+      operationsBriefRunId: briefRun.id,
+      operationsBriefArtifactPath: briefRun.artifact_path,
+      operationsBriefArtifactHash: briefRun.artifact_hash,
+      operationsBriefMemoryEntryId: briefRun.memory_entry_id,
+      operationsBriefMissionControlRunId: briefRun.observability_run_id,
     }, null, 2));
   } finally {
     if (sessionId) softDeleteSession(db, sessionId);

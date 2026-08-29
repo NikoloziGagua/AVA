@@ -65,10 +65,10 @@ if ($LASTEXITCODE -ne 0) { throw "Activepieces installed but did not start." }
 
 Push-Location $repoRoot
 try {
-  & npm.cmd -w server run setup:activepieces-report
-  if ($LASTEXITCODE -ne 0) { throw "The pinned AVA system-report flow could not be provisioned." }
+  & npm.cmd -w server run setup:activepieces
+  if ($LASTEXITCODE -ne 0) { throw "The pinned AVA playbook flows could not be provisioned." }
 } finally {
   Pop-Location
 }
 
-Write-Output "Genuine Activepieces runtime and AVA system-report flow are installed and configured."
+Write-Output "Genuine Activepieces runtime and AVA pinned playbook flows are installed and configured."

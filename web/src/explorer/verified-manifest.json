@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787959535433,
+  "generatedAt": 1787962512184,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -443,8 +443,14 @@
     },
     {
       "capability": "automation.activepieces",
-      "path": "server/src/automations/system-report.ts",
-      "symbol": "SystemReportAutomationService",
+      "path": "server/src/automations/playbooks.ts",
+      "symbol": "AutomationPlaybookService",
+      "kind": "implementation"
+    },
+    {
+      "capability": "automation.activepieces",
+      "path": "server/src/automations/snapshots.ts",
+      "symbol": "buildOperationsBriefSnapshot",
       "kind": "implementation"
     },
     {
@@ -905,6 +911,10 @@
     },
     {
       "name": "automation_system_report",
+      "file": "server/src/tools/automations-mcp.ts"
+    },
+    {
+      "name": "automation_operations_brief",
       "file": "server/src/tools/automations-mcp.ts"
     },
     {

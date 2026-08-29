@@ -1,11 +1,11 @@
 # Activepieces deterministic playbooks
 
-AVA now has one deliberately narrow automation seam for mature, repeatable
-playbooks. AVA still owns intent, routing, approval policy, receipts, Mission
-Control, independent verification and memory. Activepieces owns only the pinned
-deterministic execution steps.
+AVA has a deliberately narrow automation seam for mature, repeatable playbooks.
+AVA still owns intent, routing, approval policy, receipts, Mission Control,
+independent verification and memory. Activepieces owns only the deterministic
+steps of workflows declared in AVA's typed registry.
 
-## V1 workflow
+## Registered V1 workflows
 
 `ava.system-report` version 1 is manually invoked from chat or voice with
 `automation_system_report`. AVA builds a bounded capability-readiness snapshot,
@@ -14,6 +14,25 @@ exact request/workflow/version, writes the returned Markdown locally, then reads
 it back and verifies its SHA-256 hash. Only that final evidence produces a
 verified task outcome. The immutable artifact record is indexed into AVA memory;
 repeating the same tool request is idempotent.
+
+`ava.operations-brief` version 1 is manually invoked with
+`automation_operations_brief`. Its snapshot contains only aggregate counts:
+current core readiness; Mission Control run status and verification totals for
+the last 24 hours; pending approval, blocked Self and watcher-successor counts;
+Notes workflow counts; Self and watch counts; and active/verified memory-index
+counts. It never includes prompts, task titles, errors, note bodies, memory
+content, tool arguments or logs. The result is a structured Markdown operations
+brief with Readiness, Last 24 hours, Attention, and Work and knowledge sections.
+It follows the same atomic write, read-back SHA-256 verification, immutable
+artifact, memory-index and Mission Control path as the system report.
+
+The registry is implemented by `AutomationPlaybookService` plus two typed
+workflow registrations. The executor receives an exact workflow ID/version and
+uses only that workflow's configured endpoint. Request-key reuse across
+different workflows is rejected. `automation_status` reports configuration and
+availability separately for every registered playbook; one configured workflow
+cannot make a missing sibling appear available. There is no arbitrary flow ID,
+payload or execution API.
 
 The endpoint cannot select an arbitrary flow. Inputs contain readiness flags and
 counts, never credentials, raw memories or authentication state. Outputs and
@@ -38,7 +57,7 @@ powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-
 The setup script clones only the official repository into ignored local runtime
 data, checks the exact commit, runs the official development setup, applies the
 tracked Windows file-URL compatibility patch, starts the genuine runtime and
-provisions the pinned synchronous webhook flow. Provisioning writes the local
+idempotently provisions both pinned synchronous webhook flows. Provisioning writes the local
 credentials and AVA webhook configuration only to the ignored root `.env`; it
 does not print secrets.
 
@@ -54,6 +73,7 @@ The provisioner owns these AVA settings:
 ```text
 ACTIVEPIECES_ENABLED=true
 ACTIVEPIECES_SYSTEM_REPORT_WEBHOOK_URL=http://127.0.0.1:3000/api/v1/webhooks/<flow-id>/sync
+ACTIVEPIECES_OPERATIONS_BRIEF_WEBHOOK_URL=http://127.0.0.1:3000/api/v1/webhooks/<flow-id>/sync
 ACTIVEPIECES_WEBHOOK_TOKEN=<local shared bearer token>
 ACTIVEPIECES_TIMEOUT_SECONDS=30
 ```
@@ -63,13 +83,15 @@ Docker/WSL is not required for this local source-runtime configuration.
 
 ## Acceptance evidence
 
-`npm.cmd -w server run smoke:activepieces-report` sends the literal request
-`Run AVA's system health report.` through authenticated `/api/chat`. It fails
-unless AVA selects `automation_system_report`, the live executor is
-`activepieces`, the workflow completes, the report file passes SHA-256
-read-back, the immutable artifact is indexed with verified provenance, the task
-receipt is verified and Mission Control contains delegation and terminal
-evidence. This smoke deliberately cannot pass against the deterministic fixture.
+`npm.cmd -w server run smoke:activepieces-playbooks` sends the literal requests
+`Run AVA's system health report.`, `Is Activepieces automation configured and
+available now?`, and `Create AVA's operations brief for the last 24 hours.`
+through authenticated `/api/chat`. It fails unless AVA selects the correct tool
+for both action requests, both live runs identify `activepieces`, both artifacts
+pass read-back SHA-256, both immutable records enter memory with verified
+provenance, both receipts are verified, Mission Control contains the correlated
+terminal evidence, and status shows both workflows configured. This smoke
+deliberately cannot pass against the deterministic fixture.
 
 The runtime was stopped completely, relaunched through the tracked startup
 script, and the black-box smoke passed again. This is the restart acceptance
@@ -77,7 +99,7 @@ boundary; a configured endpoint alone remains insufficient proof.
 
 ## Failure and restart behavior
 
-- Missing/invalid configuration fails closed as `unavailable`.
+- Missing/invalid configuration fails closed per workflow as `unavailable`.
 - Webhook responses over 100 KB, wrong identities, invalid steps, or claimed
   success without a complete report fail validation.
 - Calls are bounded to 5-30 seconds and follow the AVA task abort signal.
@@ -88,6 +110,7 @@ boundary; a configured endpoint alone remains insufficient proof.
   the automation invocation then reports the genuine runtime error rather than
   pretending the playbook ran.
 
-Future workflows should be added as pinned, versioned registry entries with
-their own input/output schemas and independent verification; arbitrary workflow
+Future workflows must be added as pinned, versioned registry entries with their
+own bounded snapshot producer, artifact contract, webhook configuration,
+deterministic tests and independent acceptance evidence. Arbitrary workflow
 execution is intentionally not part of this foundation.

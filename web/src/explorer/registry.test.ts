@@ -206,6 +206,21 @@ describe("Explorer capability registry", () => {
     expect(ufo.workflow?.edges.some((edge) => edge.kind === "stop")).toBe(true);
   });
 
+  it("shows both pinned Activepieces playbooks without an arbitrary-flow surface", () => {
+    const automation = getCapability("automation.activepieces")!;
+    expect(automation.runtime?.toolNames).toEqual([
+      "automation_system_report",
+      "automation_operations_brief",
+      "automation_status",
+    ]);
+    expect(automation.workflow?.nodes.find((node) => node.toolName === "automation_system_report")?.name)
+      .toBe("System health report");
+    expect(automation.workflow?.nodes.find((node) => node.toolName === "automation_operations_brief")?.name)
+      .toBe("Operations brief");
+    expect(automation.description).toMatch(/registry of pinned/i);
+    expect(automation.description).not.toMatch(/arbitrary/i);
+  });
+
   it("keeps every nested workflow node inside its own workflow without parent cycles", () => {
     let nestedNodes = 0;
     for (const capability of EXPLORER_CAPABILITIES) {

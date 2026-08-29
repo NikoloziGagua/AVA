@@ -68,6 +68,10 @@ describe("classifyRisk", () => {
   it("low: Strategy Room handoff starts discussion but cannot execute", () => {
     expect(classifyRisk("strategy_room_open", {}).tier).toBe("low");
   });
+  it("low: pinned read-only Activepieces playbooks", () => {
+    expect(classifyRisk("automation_system_report", {}).tier).toBe("low");
+    expect(classifyRisk("automation_operations_brief", {}).tier).toBe("low");
+  });
   it("low: dedicated Instagram profile opening", () => {
     expect(classifyRisk("instagram_open_profile", { person: "Lasha" }).tier).toBe("low");
   });

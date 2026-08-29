@@ -13,9 +13,17 @@ const apiBase = (process.env.ACTIVEPIECES_LOCAL_API_URL || "http://127.0.0.1:300
 const adminEmail = process.env.ACTIVEPIECES_LOCAL_ADMIN_EMAIL || "ava.activepieces@local.test";
 const adminPassword = process.env.ACTIVEPIECES_LOCAL_ADMIN_PASSWORD || randomBytes(24).toString("base64url");
 const webhookToken = process.env.ACTIVEPIECES_WEBHOOK_TOKEN || randomBytes(32).toString("base64url");
-const flowName = "AVA System Health Report";
-
 type Json = Record<string, unknown>;
+type WorkflowSpec = {
+  id: "ava.system-report" | "ava.operations-brief";
+  version: 1;
+  flowName: string;
+  triggerName: string;
+  reportTitle: string;
+  envKey: "ACTIVEPIECES_SYSTEM_REPORT_WEBHOOK_URL" | "ACTIVEPIECES_OPERATIONS_BRIEF_WEBHOOK_URL";
+  steps: Array<{ id: string; summary: string }>;
+  markdown: string;
+};
 
 async function request(path: string, init: RequestInit = {}, token?: string): Promise<{ status: number; body: Json }> {
   const response = await fetch(`${apiBase}${path}`, {
@@ -73,11 +81,10 @@ async function authenticate(): Promise<{ token: string; projectId: string }> {
   return { token: response.body.token, projectId: response.body.projectId };
 }
 
-function workflowTemplate(pieceVersion: string): Json {
-  const markdown = [
+const systemReportMarkdown = [
     "# AVA System Health Report",
     "",
-    "Generated: {{trigger['body']['snapshot']['generatedAt']}}",
+    "Generated: {{trigger['body']['snapshot']['generatedAtIso']}}",
     "",
     "## Core",
     "",
@@ -104,16 +111,87 @@ function workflowTemplate(pieceVersion: string): Json {
     "- Activepieces: true",
     "",
     "This report was assembled by the pinned Activepieces workflow from AVA's bounded readiness snapshot. No credentials or raw memories were supplied.",
-  ].join("\n");
+].join("\n");
+
+const operationsBriefMarkdown = [
+  "# AVA Operations Brief",
+  "",
+  "Generated: {{trigger['body']['snapshot']['generatedAtIso']}}",
+  "Window: last {{trigger['body']['snapshot']['windowHours']}} hours",
+  "",
+  "## Readiness",
+  "",
+  "- Overall ready: {{trigger['body']['snapshot']['readiness']['ready']}}",
+  "- Provider: {{trigger['body']['snapshot']['readiness']['provider']}}",
+  "- Brain ready: {{trigger['body']['snapshot']['readiness']['brainReady']}}",
+  "- Voice ready: {{trigger['body']['snapshot']['readiness']['voiceReady']}}",
+  "- Browser ready: {{trigger['body']['snapshot']['readiness']['browserReady']}}",
+  "- Memory ready: {{trigger['body']['snapshot']['readiness']['memoryReady']}}",
+  "",
+  "## Last 24 hours",
+  "",
+  "- Runs: {{trigger['body']['snapshot']['recentRuns']['total']}}",
+  "- Active: {{trigger['body']['snapshot']['recentRuns']['active']}}",
+  "- Completed: {{trigger['body']['snapshot']['recentRuns']['completed']}}",
+  "- Failed: {{trigger['body']['snapshot']['recentRuns']['failed']}}",
+  "- Cancelled: {{trigger['body']['snapshot']['recentRuns']['cancelled']}}",
+  "- Timed out: {{trigger['body']['snapshot']['recentRuns']['timedOut']}}",
+  "- Verified: {{trigger['body']['snapshot']['recentRuns']['verified']}}",
+  "- Not verified: {{trigger['body']['snapshot']['recentRuns']['notVerified']}}",
+  "",
+  "## Attention",
+  "",
+  "- Pending approvals: {{trigger['body']['snapshot']['attention']['pendingApprovals']}}",
+  "- Blocked Self improvements: {{trigger['body']['snapshot']['attention']['blockedSelfImprovements']}}",
+  "- Blocked watcher successors: {{trigger['body']['snapshot']['attention']['blockedWatcherSuccessors']}}",
+  "",
+  "## Work and knowledge",
+  "",
+  "- Pinned notes: {{trigger['body']['snapshot']['work']['pinnedNotes']}}",
+  "- Notes doing: {{trigger['body']['snapshot']['work']['notesDoing']}}",
+  "- Notes in review: {{trigger['body']['snapshot']['work']['notesInReview']}}",
+  "- Active Self improvements: {{trigger['body']['snapshot']['work']['activeSelfImprovements']}}",
+  "- Shipped Self improvements: {{trigger['body']['snapshot']['work']['shippedSelfImprovements']}}",
+  "- Enabled watches: {{trigger['body']['snapshot']['work']['enabledWatches']}}",
+  "- Active memory entries: {{trigger['body']['snapshot']['knowledge']['activeMemoryEntries']}}",
+  "- Verified memory sources: {{trigger['body']['snapshot']['knowledge']['verifiedMemorySources']}}",
+  "",
+  "This brief was assembled by the pinned Activepieces workflow from bounded AVA counts. No prompts, note bodies, memory content, credentials, or raw logs were supplied.",
+].join("\n");
+
+const workflows: WorkflowSpec[] = [
+  {
+    id: "ava.system-report", version: 1, flowName: "AVA System Health Report",
+    triggerName: "AVA system-report webhook", reportTitle: "AVA System Health Report",
+    envKey: "ACTIVEPIECES_SYSTEM_REPORT_WEBHOOK_URL",
+    steps: [
+      { id: "accept_snapshot", summary: "Accepted AVA's bounded readiness snapshot." },
+      { id: "build_report", summary: "Built the pinned Markdown health report." },
+    ],
+    markdown: systemReportMarkdown,
+  },
+  {
+    id: "ava.operations-brief", version: 1, flowName: "AVA Operations Brief",
+    triggerName: "AVA operations-brief webhook", reportTitle: "AVA Operations Brief",
+    envKey: "ACTIVEPIECES_OPERATIONS_BRIEF_WEBHOOK_URL",
+    steps: [
+      { id: "accept_snapshot", summary: "Accepted AVA's bounded operational-count snapshot." },
+      { id: "build_report", summary: "Built the pinned Markdown operations brief." },
+    ],
+    markdown: operationsBriefMarkdown,
+  },
+];
+
+function workflowTemplate(pieceVersion: string, workflow: WorkflowSpec): Json {
 
   return {
-    displayName: flowName,
+    displayName: workflow.flowName,
     schemaVersion: null,
     notes: [],
     trigger: {
       name: "trigger",
       valid: true,
-      displayName: "AVA system-report webhook",
+      displayName: workflow.triggerName,
       type: "PIECE_TRIGGER",
       settings: {
         pieceName: "@activepieces/piece-webhook",
@@ -145,16 +223,13 @@ function workflowTemplate(pieceVersion: string): Json {
               body: {
                 schemaVersion: 1,
                 workflowId: "{{trigger['body']['workflowId']}}",
-                workflowVersion: 1,
+                workflowVersion: workflow.version,
                 requestKey: "{{trigger['body']['requestKey']}}",
                 externalRunId: null,
                 providerVersion: "0.88.3",
                 status: "succeeded",
-                steps: [
-                  { id: "accept_snapshot", status: "completed", summary: "Accepted AVA's bounded readiness snapshot.", durationMs: null },
-                  { id: "build_report", status: "completed", summary: "Built the pinned Markdown health report.", durationMs: null },
-                ],
-                report: { title: "AVA System Health Report", markdown },
+                steps: workflow.steps.map((step) => ({ ...step, status: "completed", durationMs: null })),
+                report: { title: workflow.reportTitle, markdown: workflow.markdown },
                 error: null,
               },
             },
@@ -211,46 +286,48 @@ async function main(): Promise<void> {
   const list = await request(`/api/v1/flows?projectId=${encodeURIComponent(auth.projectId)}&limit=100`, {}, auth.token);
   if (list.status !== 200) throw new Error(`Could not list Activepieces flows (HTTP ${list.status})`);
   const candidates = Array.isArray(list.body.data) ? list.body.data as Json[] : [];
-  let flow = candidates.find((candidate) => candidate.version && (candidate.version as Json).displayName === flowName);
-  if (!flow) {
-    const created = await request(`/api/v1/flows?projectId=${encodeURIComponent(auth.projectId)}`, {
-      method: "POST",
-      body: JSON.stringify({ displayName: flowName, projectId: auth.projectId }),
-    }, auth.token);
-    if (created.status !== 201 || typeof created.body.id !== "string") {
-      throw new Error(`Could not create Activepieces flow (HTTP ${created.status})`);
-    }
-    flow = created.body;
-  }
-  const flowId = flow.id;
-  if (typeof flowId !== "string") throw new Error("Activepieces returned an invalid flow identifier");
-  const imported = await request(`/api/v1/flows/${flowId}?projectId=${encodeURIComponent(auth.projectId)}`, {
-    method: "POST",
-    body: JSON.stringify({ type: "IMPORT_FLOW", request: workflowTemplate(pieceVersion) }),
-  }, auth.token);
-  if (imported.status !== 200) throw new Error(`Could not import the pinned system-report flow (HTTP ${imported.status} ${responseDiagnostic(imported.body)})`);
-  const published = await request(`/api/v1/flows/${flowId}?projectId=${encodeURIComponent(auth.projectId)}`, {
-    method: "POST",
-    body: JSON.stringify({ type: "LOCK_AND_PUBLISH", request: { status: "ENABLED" } }),
-  }, auth.token);
-  if (published.status !== 200) throw new Error(`Could not publish the pinned system-report flow (HTTP ${published.status} ${responseDiagnostic(published.body)})`);
-  const webhookUrl = `${apiBase}/api/v1/webhooks/${flowId}/sync`;
-  updateLocalEnvironment({
+  const provisioned: Array<{ workflowId: string; workflowVersion: number; flowId: string; webhookUrl: string }> = [];
+  const environment: Record<string, string> = {
     ACTIVEPIECES_ENABLED: "true",
-    ACTIVEPIECES_SYSTEM_REPORT_WEBHOOK_URL: webhookUrl,
     ACTIVEPIECES_WEBHOOK_TOKEN: webhookToken,
     ACTIVEPIECES_TIMEOUT_SECONDS: "30",
     ACTIVEPIECES_LOCAL_API_URL: apiBase,
     ACTIVEPIECES_LOCAL_ADMIN_EMAIL: adminEmail,
     ACTIVEPIECES_LOCAL_ADMIN_PASSWORD: adminPassword,
-  });
+  };
+  for (const workflow of workflows) {
+    let flow = candidates.find((candidate) => candidate.version && (candidate.version as Json).displayName === workflow.flowName);
+    if (!flow) {
+      const created = await request(`/api/v1/flows?projectId=${encodeURIComponent(auth.projectId)}`, {
+        method: "POST",
+        body: JSON.stringify({ displayName: workflow.flowName, projectId: auth.projectId }),
+      }, auth.token);
+      if (created.status !== 201 || typeof created.body.id !== "string") {
+        throw new Error(`Could not create Activepieces flow ${workflow.id} (HTTP ${created.status})`);
+      }
+      flow = created.body;
+    }
+    const flowId = flow.id;
+    if (typeof flowId !== "string") throw new Error(`Activepieces returned an invalid flow identifier for ${workflow.id}`);
+    const imported = await request(`/api/v1/flows/${flowId}?projectId=${encodeURIComponent(auth.projectId)}`, {
+      method: "POST",
+      body: JSON.stringify({ type: "IMPORT_FLOW", request: workflowTemplate(pieceVersion, workflow) }),
+    }, auth.token);
+    if (imported.status !== 200) throw new Error(`Could not import ${workflow.id} (HTTP ${imported.status} ${responseDiagnostic(imported.body)})`);
+    const published = await request(`/api/v1/flows/${flowId}?projectId=${encodeURIComponent(auth.projectId)}`, {
+      method: "POST",
+      body: JSON.stringify({ type: "LOCK_AND_PUBLISH", request: { status: "ENABLED" } }),
+    }, auth.token);
+    if (published.status !== 200) throw new Error(`Could not publish ${workflow.id} (HTTP ${published.status} ${responseDiagnostic(published.body)})`);
+    const webhookUrl = `${apiBase}/api/v1/webhooks/${flowId}/sync`;
+    environment[workflow.envKey] = webhookUrl;
+    provisioned.push({ workflowId: workflow.id, workflowVersion: workflow.version, flowId, webhookUrl });
+  }
+  updateLocalEnvironment(environment);
   console.log(JSON.stringify({
     activepiecesReady: true,
     runtimeVersion: "0.88.3",
-    workflowId: "ava.system-report",
-    workflowVersion: 1,
-    flowId,
-    webhookUrl,
+    workflows: provisioned,
     authentication: "shared_header",
   }, null, 2));
 }

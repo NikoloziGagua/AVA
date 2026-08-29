@@ -15,7 +15,9 @@
     "setup:ufo-runtime": "tsx scripts/install-ufo-runtime.ts",
     "smoke:ufo-runtime": "tsx scripts/ufo-runtime-smoke.ts",
     "smoke:computer-routing": "tsx scripts/computer-execution-smoke.ts",
+    "setup:activepieces": "tsx scripts/provision-activepieces-system-report.ts",
     "setup:activepieces-report": "tsx scripts/provision-activepieces-system-report.ts",
+    "smoke:activepieces-playbooks": "tsx scripts/activepieces-system-report-live-smoke.ts",
     "smoke:activepieces-report": "tsx scripts/activepieces-system-report-live-smoke.ts",
     "pair": "tsx scripts/mint-pairing-code.ts",
     "self:loop": "tsx scripts/auto-improve-loop.ts"

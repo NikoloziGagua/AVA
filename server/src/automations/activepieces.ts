@@ -1,16 +1,22 @@
 import { scrubSecrets } from "../security/scrub.js";
 import {
+  AUTOMATION_WORKFLOWS,
   AUTOMATION_SCHEMA_VERSION,
-  SYSTEM_REPORT_WORKFLOW,
+  OPERATIONS_BRIEF_WORKFLOW,
   type AutomationExecutor,
   type AutomationExecutorResult,
+  type AutomationOperationsSnapshot,
   type AutomationProviderHealth,
   type AutomationSystemSnapshot,
+  type AutomationWorkflowDefinition,
+  type AutomationWorkflowHealth,
+  type AutomationWorkflowId,
 } from "./types.js";
 
 export type ActivepiecesConfig = {
   enabled: boolean;
   systemReportWebhookUrl: string | null;
+  operationsBriefWebhookUrl: string | null;
   webhookToken: string | null;
   timeoutMs: number;
 };
@@ -124,17 +130,22 @@ function validatedWebhookUrl(raw: string | null): URL | null {
 
 export class ActivepiecesWebhookExecutor implements AutomationExecutor {
   readonly id = "activepieces" as const;
-  private readonly webhookUrl: URL | null;
+  private readonly webhookUrls: Record<AutomationWorkflowId, URL | null>;
 
   constructor(
     private readonly config: ActivepiecesConfig,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {
-    this.webhookUrl = validatedWebhookUrl(config.systemReportWebhookUrl);
+    this.webhookUrls = {
+      "ava.system-report": validatedWebhookUrl(config.systemReportWebhookUrl),
+      "ava.operations-brief": validatedWebhookUrl(config.operationsBriefWebhookUrl),
+    };
   }
 
   health(): AutomationProviderHealth {
-    const configured = this.config.enabled && this.webhookUrl !== null;
+    const workflows = AUTOMATION_WORKFLOWS.map((workflow) => this.workflowHealth(workflow));
+    const configuredCount = workflows.filter((workflow) => workflow.configured).length;
+    const configured = configuredCount > 0;
     return {
       schemaVersion: AUTOMATION_SCHEMA_VERSION,
       provider: "activepieces",
@@ -143,10 +154,10 @@ export class ActivepiecesWebhookExecutor implements AutomationExecutor {
       executionMode: configured ? "sync_webhook" : "unavailable",
       reason: !this.config.enabled
         ? "Activepieces automation is disabled."
-        : !this.webhookUrl
-          ? "The pinned AVA system-report webhook is not configured or is invalid."
-          : "The pinned Activepieces webhook is configured; availability is confirmed by each bounded invocation.",
-      workflow: SYSTEM_REPORT_WORKFLOW,
+        : configuredCount === workflows.length
+          ? `All ${workflows.length} pinned Activepieces playbooks are configured; availability is confirmed by each bounded invocation.`
+          : `${configuredCount} of ${workflows.length} pinned Activepieces playbooks are configured.`,
+      workflows,
       timeoutMs: this.config.timeoutMs,
       runtimeEvidence: configured ? "configured_endpoint" : "missing_configuration",
       usage: "not_reported",
@@ -154,9 +165,28 @@ export class ActivepiecesWebhookExecutor implements AutomationExecutor {
     };
   }
 
+  workflowHealth(workflow: AutomationWorkflowDefinition): AutomationWorkflowHealth {
+    const webhook = this.webhookUrls[workflow.id];
+    const configured = this.config.enabled && webhook !== null;
+    return {
+      workflow,
+      configured,
+      available: configured,
+      reason: !this.config.enabled
+        ? "Activepieces automation is disabled."
+        : !webhook
+          ? `The pinned ${workflow.id} webhook is not configured or is invalid.`
+          : `The pinned ${workflow.id} webhook is configured; availability is confirmed by each bounded invocation.`,
+      runtimeEvidence: configured ? "configured_endpoint" : "missing_configuration",
+    };
+  }
+
   async execute(input: Parameters<AutomationExecutor["execute"]>[0]): Promise<AutomationExecutorResult> {
-    const health = this.health();
-    if (!health.available || !this.webhookUrl) {
+    const workflow = AUTOMATION_WORKFLOWS.find((candidate) => candidate.id === input.workflowId);
+    if (!workflow) throw new AutomationExecutorError("workflow_not_registered", "AVA rejected an unregistered automation workflow");
+    const health = this.workflowHealth(workflow);
+    const webhookUrl = this.webhookUrls[workflow.id];
+    if (!health.available || !webhookUrl) {
       throw new AutomationExecutorError("activepieces_unavailable", health.reason);
     }
     const controller = new AbortController();
@@ -165,7 +195,7 @@ export class ActivepiecesWebhookExecutor implements AutomationExecutor {
     if (input.signal.aborted) abort();
     else input.signal.addEventListener("abort", abort, { once: true });
     try {
-      const response = await this.fetchImpl(this.webhookUrl, {
+      const response = await this.fetchImpl(webhookUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -184,7 +214,7 @@ export class ActivepiecesWebhookExecutor implements AutomationExecutor {
       if (!response.ok) {
         throw new AutomationExecutorError(
           response.status === 408 ? "activepieces_timeout" : "activepieces_http_error",
-          `Activepieces system-report webhook returned HTTP ${response.status}`,
+          `Activepieces ${workflow.id} webhook returned HTTP ${response.status}`,
         );
       }
       const text = await response.text();
@@ -213,7 +243,7 @@ export function renderFixtureSystemReport(snapshot: AutomationSystemSnapshot): s
   return [
     "# AVA System Health Report",
     "",
-    `Generated: ${new Date(snapshot.generatedAt).toISOString()}`,
+    `Generated: ${snapshot.generatedAtIso}`,
     "",
     "## Core",
     "",
@@ -240,17 +270,58 @@ export function renderFixtureSystemReport(snapshot: AutomationSystemSnapshot): s
   ].join("\n");
 }
 
+export function renderFixtureOperationsBrief(snapshot: AutomationOperationsSnapshot): string {
+  return [
+    "# AVA Operations Brief",
+    "",
+    `Generated: ${snapshot.generatedAtIso}`,
+    "",
+    "## Readiness",
+    "",
+    `- Overall ready: ${snapshot.readiness.ready}`,
+    `- Provider: ${snapshot.readiness.provider ?? "not configured"}`,
+    `- Brain / voice / browser / memory: ${snapshot.readiness.brainReady} / ${snapshot.readiness.voiceReady} / ${snapshot.readiness.browserReady} / ${snapshot.readiness.memoryReady}`,
+    "",
+    "## Last 24 hours",
+    "",
+    `- Runs: ${snapshot.recentRuns.total}`,
+    `- Active / completed / failed: ${snapshot.recentRuns.active} / ${snapshot.recentRuns.completed} / ${snapshot.recentRuns.failed}`,
+    `- Cancelled / timed out: ${snapshot.recentRuns.cancelled} / ${snapshot.recentRuns.timedOut}`,
+    `- Verified / not verified: ${snapshot.recentRuns.verified} / ${snapshot.recentRuns.notVerified}`,
+    "",
+    "## Attention",
+    "",
+    `- Pending approvals: ${snapshot.attention.pendingApprovals}`,
+    `- Blocked Self improvements: ${snapshot.attention.blockedSelfImprovements}`,
+    `- Blocked watcher successors: ${snapshot.attention.blockedWatcherSuccessors}`,
+    "",
+    "## Work and knowledge",
+    "",
+    `- Pinned / Doing / Review notes: ${snapshot.work.pinnedNotes} / ${snapshot.work.notesDoing} / ${snapshot.work.notesInReview}`,
+    `- Active / shipped Self improvements: ${snapshot.work.activeSelfImprovements} / ${snapshot.work.shippedSelfImprovements}`,
+    `- Enabled watches: ${snapshot.work.enabledWatches}`,
+    `- Active memory entries / verified sources: ${snapshot.knowledge.activeMemoryEntries} / ${snapshot.knowledge.verifiedMemorySources}`,
+    "",
+    "This brief contains bounded operational counts supplied by AVA. Activepieces does not receive prompts, note bodies, memory content, credentials, or raw logs.",
+  ].join("\n");
+}
+
 /** Deterministic real-shaped executor used only by tests and the opt-in smoke. */
 export class DeterministicAutomationFixtureExecutor implements AutomationExecutor {
   readonly id = "deterministic_fixture" as const;
   constructor(private readonly behavior: "success" | "failure" = "success") {}
   health(): AutomationProviderHealth {
+    const workflows = AUTOMATION_WORKFLOWS.map((workflow) => this.workflowHealth(workflow));
     return {
       schemaVersion: 1, provider: "activepieces", configured: true, available: true,
       executionMode: "sync_webhook", reason: "Deterministic test fixture available.",
-      workflow: SYSTEM_REPORT_WORKFLOW, timeoutMs: 1_000,
+      workflows, timeoutMs: 1_000,
       runtimeEvidence: "deterministic_fixture", usage: "not_reported", cost: "not_reported",
     };
+  }
+  workflowHealth(workflow: AutomationWorkflowDefinition): AutomationWorkflowHealth {
+    return { workflow, configured: true, available: true, reason: "Deterministic test fixture available.",
+      runtimeEvidence: "deterministic_fixture" };
   }
   async execute(input: Parameters<AutomationExecutor["execute"]>[0]): Promise<AutomationExecutorResult> {
     if (input.signal.aborted) throw new AutomationExecutorError("cancelled", "Fixture workflow was cancelled");
@@ -261,14 +332,18 @@ export class DeterministicAutomationFixtureExecutor implements AutomationExecuto
         report: null, error: { code: "fixture_failure", message: "Fixture workflow failed deliberately." },
         usage: "not_reported", cost: "not_reported" };
     }
+    const isOperations = input.workflowId === OPERATIONS_BRIEF_WORKFLOW.id;
+    const report = isOperations
+      ? { title: "AVA Operations Brief", markdown: renderFixtureOperationsBrief(input.snapshot as AutomationOperationsSnapshot) }
+      : { title: "AVA System Health Report", markdown: renderFixtureSystemReport(input.snapshot as AutomationSystemSnapshot) };
     return { schemaVersion: 1, workflowId: input.workflowId, workflowVersion: input.workflowVersion,
       requestKey: input.requestKey, externalRunId: "fixture-run-success", providerVersion: "fixture-v1",
       status: "succeeded",
       steps: [
-        { id: "accept_snapshot", status: "completed", summary: "Accepted the bounded AVA readiness snapshot.", durationMs: 1 },
-        { id: "build_report", status: "completed", summary: "Built the deterministic Markdown health report.", durationMs: 1 },
+        { id: "accept_snapshot", status: "completed", summary: "Accepted the bounded AVA snapshot.", durationMs: 1 },
+        { id: "build_report", status: "completed", summary: `Built the deterministic ${isOperations ? "operations brief" : "health report"}.`, durationMs: 1 },
       ],
-      report: { title: "AVA System Health Report", markdown: renderFixtureSystemReport(input.snapshot) },
+      report,
       error: null, usage: "not_reported", cost: "not_reported" };
   }
 }

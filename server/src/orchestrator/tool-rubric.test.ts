@@ -14,6 +14,8 @@ describe("TOOL_RUBRIC", () => {
     expect(TOOL_RUBRIC).toContain("memory_index_search");
     expect(TOOL_RUBRIC).toContain("memory_index_open");
     expect(TOOL_RUBRIC).toContain("memory_index_forget");
+    expect(TOOL_RUBRIC).toContain("automation_system_report");
+    expect(TOOL_RUBRIC).toContain("automation_operations_brief");
     expect(TOOL_RUBRIC).toContain("self_improve");
     expect(TOOL_RUBRIC).toContain("focus-default-window.ps1");
     expect(TOOL_RUBRIC).toContain("WinSta0\\Default");

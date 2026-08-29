@@ -66,7 +66,8 @@ import { MemoryIndexService } from "./memory-index/store.js";
 import { OpenAIMemoryEmbedder } from "./memory-index/embedding.js";
 import { AutoMemoryCaptureCoordinator } from "./memory-index/auto-capture.js";
 import { ActivepiecesWebhookExecutor } from "./automations/activepieces.js";
-import { SystemReportAutomationService } from "./automations/system-report.js";
+import { AutomationPlaybookService, buildAutomationWorkflowRegistrations } from "./automations/playbooks.js";
+import { buildOperationsBriefSnapshot } from "./automations/snapshots.js";
 import { GitImprovementCommitSource, ImprovementIndexCoordinator } from "./memory-index/improvement-index.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
@@ -675,13 +676,15 @@ const capabilityRouteDeps: CapabilityRouteDeps = {
 const activepiecesExecutor = new ActivepiecesWebhookExecutor({
   enabled: cfg.activepiecesEnabled,
   systemReportWebhookUrl: cfg.activepiecesSystemReportWebhookUrl,
+  operationsBriefWebhookUrl: cfg.activepiecesOperationsBriefWebhookUrl,
   webhookToken: cfg.activepiecesWebhookToken,
   timeoutMs: cfg.activepiecesTimeoutMs,
 });
-const automationService = new SystemReportAutomationService(db, activepiecesExecutor, cfg.dataDir, async () => {
+const buildSystemAutomationSnapshot = async () => {
   const current = await buildCapabilitySnapshot(capabilityRouteDeps);
   return {
     generatedAt: current.generatedAt,
+    generatedAtIso: new Date(current.generatedAt).toISOString(),
     ready: current.core.brain.ready && current.core.memory.ready,
     provider: current.core.brain.provider,
     core: { brainReady: current.core.brain.ready, voiceReady: current.core.voice.ready,
@@ -695,7 +698,12 @@ const automationService = new SystemReportAutomationService(db, activepiecesExec
       microsoftUfoAvailable: current.integrations.microsoftUfo.runtime.dependency === "available"
         && current.integrations.microsoftUfo.runtime.adapter === "microsoft_ufo" },
   };
-}, observability, async (recordId) => (await memoryIndex.captureAutomationArtifact({ recordId })).result.entry.id);
+};
+const automationService = new AutomationPlaybookService(db, activepiecesExecutor, cfg.dataDir,
+  buildAutomationWorkflowRegistrations({
+    systemReportSnapshot: buildSystemAutomationSnapshot,
+    operationsBriefSnapshot: async () => buildOperationsBriefSnapshot(db, await buildSystemAutomationSnapshot()),
+  }), observability, async (recordId) => (await memoryIndex.captureAutomationArtifact({ recordId })).result.entry.id);
 agentDeps.automationService = automationService;
 
 app.use("/api", healthRoutes(startedAt, {

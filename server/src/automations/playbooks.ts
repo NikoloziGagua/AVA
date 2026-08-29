@@ -1,12 +1,22 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { nanoid } from "nanoid";
-import type { Db } from "../state/db.js";
-import { scrubSecrets } from "../security/scrub.js";
 import type { ObservabilityService } from "../observability/store.js";
-import { automationArtifactFingerprint, sha256, type AutomationArtifactRecord } from "./artifact-record.js";
+import { scrubSecrets } from "../security/scrub.js";
+import type { Db } from "../state/db.js";
 import { AutomationExecutorError } from "./activepieces.js";
-import { SYSTEM_REPORT_WORKFLOW, type AutomationExecutor, type AutomationRun, type AutomationSystemSnapshot } from "./types.js";
+import { automationArtifactFingerprint, sha256, type AutomationArtifactRecord } from "./artifact-record.js";
+import {
+  OPERATIONS_BRIEF_WORKFLOW,
+  SYSTEM_REPORT_WORKFLOW,
+  type AutomationExecutor,
+  type AutomationOperationsSnapshot,
+  type AutomationRun,
+  type AutomationSystemSnapshot,
+  type AutomationWorkflowDefinition,
+  type AutomationWorkflowId,
+  type AutomationWorkflowSnapshot,
+} from "./types.js";
 
 type RunRow = {
   id: string; request_key: string; workflow_id: string; workflow_version: number; executor: string;
@@ -15,6 +25,13 @@ type RunRow = {
   artifact_path: string | null; artifact_hash: string | null; memory_entry_id: string | null;
   verification_state: AutomationRun["verificationState"]; verification_method: string | null;
   error_code: string | null; error_message: string | null; created_at: number; updated_at: number; completed_at: number | null;
+};
+
+export type AutomationWorkflowRegistration = {
+  workflow: AutomationWorkflowDefinition;
+  snapshot: () => Promise<AutomationWorkflowSnapshot>;
+  summarizeInput: (snapshot: AutomationWorkflowSnapshot) => unknown;
+  validateReport: (report: { title: string; markdown: string }) => void;
 };
 
 function safeJson(value: string): unknown { try { return JSON.parse(value); } catch { return null; } }
@@ -29,13 +46,66 @@ function mapRun(row: RunRow): AutomationRun {
     createdAt: row.created_at, updatedAt: row.updated_at, completedAt: row.completed_at };
 }
 
-export class SystemReportAutomationService {
+function requireReportShape(
+  report: { title: string; markdown: string },
+  expectedTitle: string,
+  headings: string[],
+): void {
+  if (report.title !== expectedTitle || !report.markdown.startsWith(`# ${expectedTitle}\n`)) {
+    throw new AutomationExecutorError("artifact_contract_mismatch", `The ${expectedTitle} artifact title did not match its pinned contract`);
+  }
+  for (const heading of headings) {
+    if (!report.markdown.includes(`\n## ${heading}\n`)) {
+      throw new AutomationExecutorError("artifact_contract_mismatch", `The ${expectedTitle} artifact omitted its ${heading} section`);
+    }
+  }
+}
+
+export function buildAutomationWorkflowRegistrations(input: {
+  systemReportSnapshot: () => Promise<AutomationSystemSnapshot>;
+  operationsBriefSnapshot: () => Promise<AutomationOperationsSnapshot>;
+}): AutomationWorkflowRegistration[] {
+  return [
+    {
+      workflow: SYSTEM_REPORT_WORKFLOW,
+      snapshot: input.systemReportSnapshot,
+      summarizeInput: (value) => {
+        const snapshot = value as AutomationSystemSnapshot;
+        return { workflow: SYSTEM_REPORT_WORKFLOW.id, generatedAt: snapshot.generatedAt,
+          ready: snapshot.ready, counts: snapshot.counts };
+      },
+      validateReport: (report) => requireReportShape(report, "AVA System Health Report", ["Core", "Durable state", "Integrations"]),
+    },
+    {
+      workflow: OPERATIONS_BRIEF_WORKFLOW,
+      snapshot: input.operationsBriefSnapshot,
+      summarizeInput: (value) => {
+        const snapshot = value as AutomationOperationsSnapshot;
+        return { workflow: OPERATIONS_BRIEF_WORKFLOW.id, generatedAt: snapshot.generatedAt,
+          windowHours: snapshot.windowHours, recentRuns: snapshot.recentRuns,
+          attention: snapshot.attention, work: snapshot.work, knowledge: snapshot.knowledge };
+      },
+      validateReport: (report) => requireReportShape(report, "AVA Operations Brief",
+        ["Readiness", "Last 24 hours", "Attention", "Work and knowledge"]),
+    },
+  ];
+}
+
+export class AutomationPlaybookService {
   private readonly artifactDir: string;
-  constructor(private readonly db: Db, private readonly executor: AutomationExecutor,
-    dataDir: string, private readonly snapshot: () => Promise<AutomationSystemSnapshot>,
+  private readonly registrations: Map<AutomationWorkflowId, AutomationWorkflowRegistration>;
+
+  constructor(
+    private readonly db: Db,
+    private readonly executor: AutomationExecutor,
+    dataDir: string,
+    registrations: AutomationWorkflowRegistration[],
     private readonly observability: ObservabilityService | null = null,
-    private readonly indexArtifact: ((recordId: string) => Promise<string | null>) | null = null) {
+    private readonly indexArtifact: ((recordId: string) => Promise<string | null>) | null = null,
+  ) {
     this.artifactDir = join(dataDir, "automation-artifacts");
+    this.registrations = new Map(registrations.map((registration) => [registration.workflow.id, registration]));
+    if (this.registrations.size !== registrations.length) throw new Error("duplicate automation workflow registration");
     const now = Date.now();
     db.prepare(`UPDATE automation_runs SET status='failed', verification_state='unavailable',
       error_code='interrupted_by_restart', error_message='AVA restarted before the workflow returned.',
@@ -43,6 +113,11 @@ export class SystemReportAutomationService {
   }
 
   health() { return this.executor.health(); }
+  workflowHealth(id: AutomationWorkflowId) {
+    const registration = this.registrations.get(id);
+    if (!registration) throw new Error(`automation workflow is not registered: ${id}`);
+    return this.executor.workflowHealth(registration.workflow);
+  }
   get(id: string): AutomationRun | null {
     const row = this.db.prepare("SELECT * FROM automation_runs WHERE id=?").get(id) as RunRow | undefined;
     return row ? mapRun(row) : null;
@@ -52,47 +127,59 @@ export class SystemReportAutomationService {
       .all(Math.max(1, Math.min(100, limit))) as RunRow[]).map(mapRun);
   }
 
-  async run(input: { requestKey: string; parentRunId?: string | null; signal?: AbortSignal }): Promise<AutomationRun> {
+  async run(
+    workflowId: AutomationWorkflowId,
+    input: { requestKey: string; parentRunId?: string | null; signal?: AbortSignal },
+  ): Promise<AutomationRun> {
+    const registration = this.registrations.get(workflowId);
+    if (!registration) throw new Error(`automation workflow is not registered: ${workflowId}`);
     const requestKey = scrubSecrets(input.requestKey).trim().slice(0, 180);
     if (!requestKey) throw new Error("automation request key is required");
     const prior = this.db.prepare("SELECT * FROM automation_runs WHERE request_key=?").get(requestKey) as RunRow | undefined;
-    if (prior) return mapRun(prior);
-    const health = this.executor.health();
+    if (prior) {
+      if (prior.workflow_id !== workflowId || prior.workflow_version !== registration.workflow.version) {
+        throw new Error("automation request key belongs to another workflow");
+      }
+      return mapRun(prior);
+    }
+
+    const workflow = registration.workflow;
+    const health = this.executor.workflowHealth(workflow);
     const now = Date.now();
     const id = `automation_${nanoid(18)}`;
     const obsId = `automation-run-${id}`;
-    const systemSnapshot = await this.snapshot();
-    const inputSummary = { workflow: SYSTEM_REPORT_WORKFLOW.id, generatedAt: systemSnapshot.generatedAt,
-      ready: systemSnapshot.ready, counts: systemSnapshot.counts };
+    const snapshot = await registration.snapshot();
+    const inputSummary = registration.summarizeInput(snapshot);
     this.db.prepare(`INSERT INTO automation_runs (id,request_key,input_fingerprint,workflow_id,workflow_version,
       executor,observability_run_id,status,version,input_summary,output_summary,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?, ?,1,?,'{}',?,?)`).run(id, requestKey, sha256(JSON.stringify(systemSnapshot)),
-        SYSTEM_REPORT_WORKFLOW.id, SYSTEM_REPORT_WORKFLOW.version, this.executor.id, obsId,
+      VALUES (?,?,?,?,?,?,?, ?,1,?,'{}',?,?)`).run(id, requestKey, sha256(JSON.stringify(snapshot)),
+        workflow.id, workflow.version, this.executor.id, obsId,
         health.available ? "queued" : "unavailable", JSON.stringify(inputSummary), now, now);
     if (!health.available) {
       this.db.prepare(`UPDATE automation_runs SET error_code='executor_unavailable',error_message=?,
         verification_state='unavailable',completed_at=?,version=version+1 WHERE id=?`).run(health.reason, now, id);
       return this.get(id)!;
     }
+
     const parent = input.parentRunId ? this.observability?.getRun(input.parentRunId) : null;
     if (this.observability) {
       this.observability.startRun({ id: obsId, traceId: parent?.traceId, parentRunId: parent?.id ?? null,
         rootTaskId: parent?.rootTaskId ?? parent?.id ?? null, sessionId: parent?.sessionId ?? null,
         runKind: "automation_workflow", runtimeType: "external_adapter", ownerType: "ava",
-        ownerId: "automation-router", ownerRole: "orchestration", title: "AVA system health report",
-        objective: "Run the pinned Activepieces playbook and independently verify its artifact.", privacyLevel: "normal" });
+        ownerId: "automation-router", ownerRole: "orchestration", title: workflow.displayName,
+        objective: `Run the pinned ${workflow.id} playbook and independently verify its artifact.`, privacyLevel: "normal" });
       this.observability.record(obsId, { eventId: `${id}:delegated`, type: "automation.delegated", status: "queued",
-        title: "Pinned workflow delegated", summary: "AVA sent a bounded readiness snapshot to the configured executor.",
-        actionId: id, actionOwner: "router", payload: { workflowId: SYSTEM_REPORT_WORKFLOW.id,
-          workflowVersion: SYSTEM_REPORT_WORKFLOW.version, usage: "not_reported", cost: "not_reported" } });
+        title: "Pinned workflow delegated", summary: `AVA sent the bounded ${workflow.displayName} snapshot to the configured executor.`,
+        actionId: id, actionOwner: "router", payload: { workflowId: workflow.id,
+          workflowVersion: workflow.version, usage: "not_reported", cost: "not_reported" } });
     }
     this.db.prepare("UPDATE automation_runs SET status='running',version=version+1,updated_at=? WHERE id=?").run(Date.now(), id);
     const controller = new AbortController();
     const abort = () => controller.abort(input.signal?.reason);
     if (input.signal?.aborted) abort(); else input.signal?.addEventListener("abort", abort, { once: true });
     try {
-      const result = await this.executor.execute({ requestKey, workflowId: SYSTEM_REPORT_WORKFLOW.id,
-        workflowVersion: SYSTEM_REPORT_WORKFLOW.version, snapshot: systemSnapshot, signal: controller.signal });
+      const result = await this.executor.execute({ requestKey, workflowId: workflow.id,
+        workflowVersion: workflow.version, snapshot, signal: controller.signal });
       if (result.status !== "succeeded" || !result.report) {
         const completedAt = Date.now();
         this.db.prepare(`UPDATE automation_runs SET status='failed', external_run_id=?,step_count=?,output_summary=?,
@@ -102,10 +189,11 @@ export class SystemReportAutomationService {
         this.recordTerminal(obsId, id, "failed", result.error?.message ?? "Workflow failed", result.externalRunId);
         return this.get(id)!;
       }
+      registration.validateReport(result.report);
       await mkdir(this.artifactDir, { recursive: true });
       const markdown = scrubSecrets(result.report.markdown).trim();
       const hash = sha256(markdown);
-      const finalPath = join(this.artifactDir, `${id}.md`);
+      const finalPath = join(this.artifactDir, `${workflow.artifactSlug}-${id}.md`);
       const tempPath = `${finalPath}.tmp`;
       await writeFile(tempPath, markdown, { encoding: "utf8", flag: "wx" });
       await rename(tempPath, finalPath);
@@ -113,8 +201,8 @@ export class SystemReportAutomationService {
       if (sha256(readback) !== hash) throw new AutomationExecutorError("artifact_verification_failed", "AVA read-back did not match the workflow artifact");
       const createdAt = Date.now();
       const recordBase: Omit<AutomationArtifactRecord, "record_fingerprint"> = { id: `artifact_${id}`, run_id: id,
-        workflow_id: SYSTEM_REPORT_WORKFLOW.id, workflow_version: SYSTEM_REPORT_WORKFLOW.version,
-        title: scrubSecrets(result.report.title).slice(0, 160), summary: "Verified AVA system health report generated by the pinned automation workflow.",
+        workflow_id: workflow.id, workflow_version: workflow.version,
+        title: scrubSecrets(result.report.title).slice(0, 160), summary: workflow.artifactSummary,
         artifact_path: finalPath, artifact_hash: hash, verification_method: "filesystem_readback_sha256", created_at: createdAt };
       const record = { ...recordBase, record_fingerprint: automationArtifactFingerprint(recordBase) };
       this.db.prepare(`INSERT INTO automation_artifact_records (id,run_id,workflow_id,workflow_version,title,summary,
@@ -127,7 +215,7 @@ export class SystemReportAutomationService {
         completed_at=?,updated_at=?,version=version+1 WHERE id=? AND status='running'`).run(result.externalRunId,
           result.steps.length, JSON.stringify({ title: record.title, steps: result.steps, usage: result.usage, cost: result.cost }),
           finalPath, hash, memoryEntryId, createdAt, createdAt, id);
-      this.recordTerminal(obsId, id, "completed", "AVA independently read back and hash-verified the generated report.", result.externalRunId);
+      this.recordTerminal(obsId, id, "completed", `AVA independently read back and hash-verified the ${workflow.displayName} artifact.`, result.externalRunId);
       return this.get(id)!;
     } catch (error) {
       const completedAt = Date.now();

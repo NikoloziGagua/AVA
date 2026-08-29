@@ -49,6 +49,7 @@ scheduler and pokes whoever is up.
 | Microsoft UFO design-only evaluation | codex | complete in isolated Self worktree; design-only proposal and evidence audit | 2026-08-27 |
 | Persona v2 and consistency evaluation | unclaimed | complete in `8d5f2ae`; available for reviewed follow-up | 2026-08-28 |
 | Semantic memory index | codex | active: Phase 2 automatic research/idea capture | 2026-08-28 |
+| Chat and voice input/presentation UX | codex | active: composer dictation, rich assistant Markdown, exact-text voice handoff | 2026-08-29 |
 
 ---
 
@@ -4958,3 +4959,74 @@ inspected nor modified.
 
 NEEDS: niko (use the learned compound request normally, or repeat another safe
 supported routine twice and approve its candidate when AVA presents it)
+
+---
+
+### 2026-08-29 - codex - CLAIM: chat and voice input/presentation usability sequence
+
+Niko assigned three visible AVA usability improvements from the shared Notes:
+chat-composer speech-to-text, rich Markdown presentation for assistant chat
+messages, and an exact-spelling text-input pop-up inside voice mode. I read the
+complete 4,960-line board; no other active agent owns this combined chat/voice
+input and presentation sequence, while the existing realtime voice row is
+already Codex-owned. I am claiming the smallest complete implementation of all
+three, delivered as separate tested and committed boundaries so failures remain
+easy to isolate.
+
+Each phase will first inspect and reuse AVA's existing chat, canonical-session,
+voice transcription, persistence, accessibility, receipt and design-system
+contracts. Acceptance includes deterministic focused tests, relevant complete
+suites, production builds, committed-HEAD smoke and manual black-box checks
+through the running AVA application. Exact-text input must remain in the same
+canonical conversation and must not create a parallel voice transcript. A
+single exact-thread continuation watcher will carry the next incomplete phase
+at clean task boundaries; after all three are complete it will be disabled and
+AVA will be asked to produce the separately requested visible-functionality
+research brief. Existing unrelated settings and persona-research changes remain
+untouched. Forge remains outside scope and will not be inspected or modified.
+
+NEEDS: codex (inspect Notes and current implementation, establish the durable
+continuation watcher, then implement and verify each phase sequentially)
+
+---
+
+### 2026-08-29 - codex - COMPLETE: editable chat-composer dictation
+
+Product commit `8e8df81077d85ae76a2485d187bbf8680c603df4` delivers the
+first usability phase. Chat now has a dedicated dictation microphone beside
+the existing Voice orb. It records only after browser permission, shows
+requesting/listening/transcribing/error states, supports stop and cancel,
+uploads bounded audio through AVA's authenticated `/api/transcribe` route, and
+appends the transcript to any existing draft. Dictation never sends the message
+or opens Voice mode; Sir can inspect and edit the exact text before sending.
+Tracks, timers, object state and in-flight uploads are released on cancel,
+completion and unmount. A 90-second ceiling prevents an accidental unbounded
+recording.
+
+Changed product files are `web/src/api.ts`, `web/src/chat/Composer.tsx`,
+`web/src/api.test.ts`, `web/src/chat/Composer.dictation.test.tsx`, and
+`docs/features/chat-composer-dictation.md`. Focused composer/API/chat tests
+passed 23/23 after a regression check restored the existing Voice button's
+accessible name. The complete web suite passed 92 files / 421 tests. The real
+server transcription suite passed 15/15. Server TypeScript and the production
+web/PWA build passed. The relaunched committed build ID
+`5dd4e102-c2b9-4296-8563-2be5356c2a35` matched disk and live health.
+
+Manual evidence used AVA's real authenticated speech routes: `/api/speak`
+produced 46,848 bytes of MPEG for `composer dictation blue lantern`, and
+`/api/transcribe` returned `Composer, dictation, blue lantern.` A second
+Playwright-over-AVA-Chrome smoke loaded the committed UI at 390x844, used a
+disposable microphone fixture, observed the listening state and multipart
+upload, preserved `Existing draft`, inserted `blue lantern dictated`, kept the
+Voice control separate, enabled Send, and created zero chat messages. Disposable
+tokens/pages were removed. AVA automatically recorded this commit as durable
+improvement `improvement_8e8df81077d85ae76a24`.
+
+Continuation watcher `pIgydC933OjS` is persisted for this exact pinned Codex
+thread and will request only the next clean phase: rich Markdown assistant
+messages. Existing unrelated `.claude/settings.local.json` and the untracked
+persona-research document were preserved. Forge was neither inspected nor
+modified.
+
+NEEDS: codex (continue with the queued rich-Markdown phase, test it independently,
+commit it, then arrange the exact-spelling voice-input successor)

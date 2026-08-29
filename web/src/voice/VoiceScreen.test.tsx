@@ -42,4 +42,15 @@ describe("recentVoiceTurns", () => {
     ]);
     expect(turns.map((turn) => turn.text)).toEqual(["hello"]);
   });
+
+  it("restores the persisted exact-text source marker", () => {
+    const turns = recentVoiceTurns([{
+      id: 1,
+      role: "user",
+      content: "@Exact_Name",
+      created_at: 1,
+      metadata: { inputSource: "voice_exact_text" },
+    }]);
+    expect(turns[0]).toMatchObject({ text: "@Exact_Name", inputSource: "voice_exact_text" });
+  });
 });

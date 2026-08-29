@@ -53,6 +53,24 @@ describe("api 401 recovery", () => {
   });
 });
 
+describe("exact voice text API", () => {
+  it("preserves exact characters and sends the bounded voice provenance marker", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ sessionId: "shared-session" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+    const exact = "  @_princi150/path?q=A_B%20C\nCode();  ";
+    await api.sendMessage("shared-session", exact, { voice: true, inputSource: "voice_exact_text" });
+    const [, init] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      sessionId: "shared-session",
+      text: exact,
+      voice: true,
+      inputSource: "voice_exact_text",
+    });
+  });
+});
+
 describe("composer dictation API", () => {
   it("uploads authenticated multipart audio without forcing a JSON content type", async () => {
     setToken("dictation-token");

@@ -171,10 +171,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ code, label }),
     }),
-  sendMessage: (sessionId: string | null, text: string, opts?: { voice?: boolean; visualContext?: VisualMessageContext }) =>
+  sendMessage: (sessionId: string | null, text: string, opts?: {
+    voice?: boolean;
+    visualContext?: VisualMessageContext;
+    inputSource?: "voice_exact_text";
+  }) =>
     request<{ sessionId: string; taskId?: string }>("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ sessionId, text, voice: opts?.voice, visualContext: opts?.visualContext }),
+      body: JSON.stringify({
+        sessionId,
+        text,
+        voice: opts?.voice,
+        visualContext: opts?.visualContext,
+        inputSource: opts?.inputSource,
+      }),
     }),
   kill: (sessionId: string) =>
     request<{ aborted: boolean; cancelledImprovements: number }>(`/api/chat/${sessionId}/kill`, { method: "POST" }),
@@ -212,7 +222,7 @@ export async function fetchSession(id: string): Promise<{
     content: string;
     created_at: number;
     visualMessages?: VisualMessage[];
-    metadata?: { visualContext?: VisualMessageContext };
+    metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" };
   }>;
 }> {
   return request<{
@@ -223,7 +233,7 @@ export async function fetchSession(id: string): Promise<{
       content: string;
       created_at: number;
       visualMessages?: VisualMessage[];
-      metadata?: { visualContext?: VisualMessageContext };
+      metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" };
     }>;
   }>(`/api/sessions/${id}`);
 }

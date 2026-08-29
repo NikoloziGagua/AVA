@@ -100,6 +100,9 @@ const Body = z.object({
   // Voice turns ask for minimal reasoning so spoken replies come back fast.
   // Capability is unchanged — the full tool stack still runs.
   voice: z.boolean().optional(),
+  // Explicit keyboard input submitted without leaving voice mode. This is
+  // presentation/provenance metadata only; it never changes the agent/tool gate.
+  inputSource: z.literal("voice_exact_text").optional(),
   // When false, this run executes tools but persists NO messages. Used by the
   // HYBRID voice proxy's do_on_computer handoff: the realtime proxy already owns
   // the voice-turn storage (user transcript + spoken result), so the internal
@@ -262,6 +265,13 @@ export function chatRoutes(
       res.status(400).json({ error: "bad_request", details: parsed.error.flatten() });
       return;
     }
+    if (parsed.data.inputSource === "voice_exact_text" && (parsed.data.voice !== true || parsed.data.persist === false)) {
+      res.status(400).json({
+        error: "invalid_input_source",
+        message: "voice_exact_text requires a persisted voice turn",
+      });
+      return;
+    }
     if (!agentDeps.provider) {
       res.status(503).json({ error: "no_llm_provider" });
       return;
@@ -337,11 +347,15 @@ export function chatRoutes(
     // the realtime proxy is the single source of truth for voice turns.
     let persistedUserMessageId: number | null = null;
     if (parsed.data.persist !== false) {
+      const metadata = {
+        ...(resolvedVisualContext ? { visualContext: resolvedVisualContext.context } : {}),
+        ...(parsed.data.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
+      };
       const storedUser = appendMessage(db, {
         sessionId,
         role: "user",
         content: parsed.data.text,
-        ...(resolvedVisualContext ? { metadata: { visualContext: resolvedVisualContext.context } } : {}),
+        ...(Object.keys(metadata).length ? { metadata } : {}),
       });
       persistedUserMessageId = storedUser.id;
     }

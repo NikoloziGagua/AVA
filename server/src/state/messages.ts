@@ -25,6 +25,8 @@ export type MessageVisualContext = MessageVisualReference & {
 export type MessageMetadata = {
   visualMessages?: MessageVisualReference[];
   visualContext?: MessageVisualContext;
+  /** The owner typed this wording inside voice mode because exact characters mattered. */
+  inputSource?: "voice_exact_text";
 };
 
 type MessageRow = Omit<Message, "metadata"> & { metadata: string };
@@ -57,6 +59,9 @@ function parseMetadata(raw: string): MessageMetadata {
         Array.isArray(selected) && selected.length <= 14 &&
         selected.every((id) => typeof id === "string" && STABLE_ID.test(id))
       ) metadata.visualContext = context as MessageVisualContext;
+    }
+    if (value.inputSource === "voice_exact_text") {
+      metadata.inputSource = "voice_exact_text";
     }
     return metadata;
   } catch { return {}; }

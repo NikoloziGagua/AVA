@@ -8,7 +8,8 @@ import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { gsap, useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { useRealtimeVoice, type RealtimeState } from "./useRealtimeVoice.js";
-import { Mic, Keyboard, MicOff, Square, X, MessageSquarePlus, PanelsTopLeft } from "lucide-react";
+import { VoiceExactTextDialog } from "./VoiceExactTextDialog.js";
+import { Mic, Keyboard, MicOff, Square, X, MessageSquarePlus, PanelsTopLeft, Type } from "lucide-react";
 
 export interface VoiceScreenProps {
   initialSessionId: string | null;
@@ -31,11 +32,23 @@ export function shouldShowVoiceStop(state: RealtimeState, actionPending: boolean
 export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSwitchToKeyboard }: VoiceScreenProps) {
   const v = useRealtimeVoice({ initialSessionId, startFresh });
   const [secs, setSecs] = useState(0);
+  const [exactTextOpen, setExactTextOpen] = useState(false);
+  const mutedBeforeExactText = useRef(false);
+  const exactTextTriggerRef = useRef<HTMLButtonElement>(null);
   const chromeScope = useRef<HTMLDivElement>(null);
   const reduced = useReducedMotion();
   const ptt = v.inputMode === "enter_push_to_talk";
   const capturing = v.capturing;
   const showStop = shouldShowVoiceStop(v.state, v.actionPending);
+  const setExactTextDialogOpen = (open: boolean) => {
+    if (open) {
+      mutedBeforeExactText.current = v.muted;
+      v.setMuted(true);
+    } else {
+      v.setMuted(mutedBeforeExactText.current);
+    }
+    setExactTextOpen(open);
+  };
   const leaveVoice = (destination: "exit" | "keyboard") => {
     // The session hello updates a ref synchronously and React state on the next
     // render. Read the authoritative ref so an immediate Exit/Keyboard tap
@@ -79,6 +92,7 @@ export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSw
 
   // Compact uppercase HUD (top-left) — honest about PTT idle (mic closed).
   const hudLabel =
+    exactTextOpen           ? "EXACT TEXT · MIC PAUSED" :
     v.actionPending         ? "AVA · WORKING" :
     v.state === "connecting" ? "CONNECTING" :
     v.state === "thinking"   ? "THINKING" :
@@ -88,6 +102,7 @@ export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSw
 
   // Friendly status chip under the orb.
   const statusLabel =
+    exactTextOpen           ? "Typing exact wording · nothing sent yet" :
     v.actionPending         ? "Working on your task…" :
     v.state === "connecting" ? "Connecting…" :
     v.state === "thinking"   ? "Thinking…" :
@@ -194,7 +209,11 @@ export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSw
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             >
-              <div className="hud mb-1 text-[9px] text-white/40">{v.interim.who === "you" ? "you" : "ava"}</div>
+              <div className="hud mb-1 text-[9px] text-white/40">
+                {v.interim.who === "you"
+                  ? (v.interim.inputSource === "voice_exact_text" ? "you · exact text" : "you")
+                  : "ava"}
+              </div>
               <div
                 className="mx-auto overflow-hidden text-[clamp(18px,2.2vw,26px)] leading-snug text-white/80"
                 style={{
@@ -245,9 +264,9 @@ export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSw
         <div className="flex flex-wrap items-center justify-center gap-3">
           <div
             className="glass rounded-full px-3 py-1.5 text-[10px] text-white/55"
-            aria-label="OpenAI GPT Realtime 2.1 voice"
+            aria-label={v.voiceEngine === "hume" ? "Hume EVI voice" : "OpenAI GPT Realtime 2.1 voice"}
           >
-            OPENAI · REALTIME 2.1
+            {v.voiceEngine === "hume" ? "HUME · EVI" : "OPENAI · REALTIME 2.1"}
           </div>
 
           {/* Input-mode toggle: hands-free VAD ↔ hold-to-talk. Persisted. */}
@@ -337,6 +356,17 @@ export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSw
             </div>
           )}
           <button
+            ref={exactTextTriggerRef}
+            aria-label="type exact text in voice"
+            aria-haspopup="dialog"
+            aria-expanded={exactTextOpen}
+            onClick={() => setExactTextDialogOpen(true)}
+            className="flex h-12 w-12 items-center justify-center rounded-full border border-violet-200/20 bg-violet-300/[0.07] text-violet-100 transition-all hover:bg-violet-300/[0.12] active:scale-95"
+            title="Type an exact name, username, URL, code, or correction"
+          >
+            <Type size={18} />
+          </button>
+          <button
             aria-label="keyboard"
             onClick={() => leaveVoice("keyboard")}
             className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white transition-all active:scale-95"
@@ -350,6 +380,13 @@ export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSw
           <div className="hud text-[9px] text-white/30">Hold the mic or Space to talk · release to send</div>
         )}
       </div>
+      <VoiceExactTextDialog
+        open={exactTextOpen}
+        onOpenChange={setExactTextDialogOpen}
+        onSubmit={v.submitExactText}
+        sessionReady={v.sessionId !== null && v.state !== "connecting"}
+        returnFocusRef={exactTextTriggerRef}
+      />
     </div>
   );
 }

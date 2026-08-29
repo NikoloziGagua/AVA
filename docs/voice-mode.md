@@ -125,6 +125,34 @@ transcripts through `/api/chat` instead.
   and action bridge, but the explicit owner-chosen boundary bypasses incomplete
   fragment accumulation. Use it in noisy rooms.
 
+## Exact text inside voice
+
+The `Type exact text` control keeps the owner in the current voice screen while
+allowing names, usernames, URLs, code, quoted wording, and corrections to be
+entered without speech recognition changing a character.
+
+- Opening the modal pauses the microphone and reports that state in the voice
+  HUD. Cancel/Escape restores the prior mute state and returns keyboard focus to
+  the opener.
+- Plain Enter inserts a newline. Only `Send to AVA` or Ctrl/Cmd+Enter submits;
+  empty text and duplicate clicks cannot create a turn.
+- Submission uses the current canonical session ID and the normal authenticated
+  `POST /api/chat` voice path. It is not a second conversation or a separate
+  agent. If AVA is already answering, the existing session-scoped interruption
+  boundary retires that turn before the exact replacement is sent.
+- Exact characters are preserved. The stored user message carries only the
+  bounded `inputSource: voice_exact_text` provenance marker, which becomes an
+  `Exact text · entered in voice` label when the conversation is opened in chat.
+  Unknown metadata is discarded on read.
+- OpenAI and Hume use the same browser-side submission path and persistent
+  conversation. OpenAI's ordered high-water refresh imports the new stored rows
+  before the next spoken turn. Hume receives them on its next reconnect (the
+  current Hume bridge has no proven live text-item insertion contract).
+
+The dialog is native React/Radix content, works at narrow widths, follows the
+application's reduced-motion preference, has labelled dialog/textarea/status
+regions, and keeps a failed draft visible for retry.
+
 ## Env knobs
 
 All optional; defaults are sane. Documented in `.env.example`.

@@ -56,6 +56,14 @@ describe("MessageList", () => {
     expect(screen.queryByText("these markers")).toBeNull();
   });
 
+  it("keeps exact text entered in voice visibly distinguishable after reload", () => {
+    render(<MessageList history={[
+      { id: "u-exact", role: "user", text: "@Exact_Name", inputSource: "voice_exact_text" },
+    ]} liveEvents={[]} />);
+    expect(screen.getByText("@Exact_Name")).toBeTruthy();
+    expect(screen.getByText("Exact text · entered in voice")).toBeTruthy();
+  });
+
   it("copies the original Markdown source rather than flattened display text", () => {
     render(<MessageList history={history} liveEvents={[]} />);
     fireEvent.click(screen.getAllByRole("button", { name: "Copy" })[1]!);

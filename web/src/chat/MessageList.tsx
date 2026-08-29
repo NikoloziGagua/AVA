@@ -15,7 +15,7 @@ import { VisualMessageCard, type VisualSemanticActionHandler } from "../visuals/
 import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
 
 export type ChatMessage =
-  | { role: "user"; text: string; id: string; visualContext?: VisualMessageContext }
+  | { role: "user"; text: string; id: string; visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" }
   | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[] }
   // `system` rows are server notices (e.g. the "Server restarted…" recovery
   // message) — rendered as a centered notice, never attributed to Ava.
@@ -223,6 +223,11 @@ export function MessageList({
           {m.role === "user" ? (
             <div className="flex max-w-[78%] flex-col items-end gap-1.5">
               <OwnerBubble text={m.text} reduced={reduced} />
+              {m.inputSource === "voice_exact_text" && (
+                <span className="rounded-full border border-violet-300/20 bg-violet-300/[0.07] px-2.5 py-1 text-[10px] text-violet-100/65">
+                  Exact text · entered in voice
+                </span>
+              )}
               {m.visualContext && (
                 <span className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.06] px-2.5 py-1 text-[10px] text-cyan-100/60">
                   Visual context · rev {m.visualContext.revision} · {m.visualContext.selectedElementIds.length || "scene"}

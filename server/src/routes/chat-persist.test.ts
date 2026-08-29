@@ -131,4 +131,30 @@ describe("chat persist flag", () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(listMessages(db, sessionId).map((m) => m.role)).toEqual(["user", "assistant"]);
   });
+
+  it("persists exact voice input in the same session with a bounded provenance marker", async () => {
+    const { app, db } = setup();
+    const session = createSession(db, { title: "Shared voice chat" });
+    const exact = "  @_princi150/path?q=A_B%20C  ";
+    await request(app)
+      .post("/api/chat")
+      .send({ sessionId: session.id, text: exact, voice: true, inputSource: "voice_exact_text" })
+      .expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const user = listMessages(db, session.id)[0];
+    expect(user?.content).toBe(exact);
+    expect(user?.metadata).toEqual({ inputSource: "voice_exact_text" });
+  });
+
+  it("rejects the voice-only marker on text or non-persisting handoffs", async () => {
+    const { app } = setup();
+    await request(app)
+      .post("/api/chat")
+      .send({ text: "wrong channel", inputSource: "voice_exact_text" })
+      .expect(400, { error: "invalid_input_source", message: "voice_exact_text requires a persisted voice turn" });
+    await request(app)
+      .post("/api/chat")
+      .send({ text: "transient", voice: true, persist: false, inputSource: "voice_exact_text" })
+      .expect(400);
+  });
 });

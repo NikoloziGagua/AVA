@@ -26,6 +26,20 @@ describe("messages repo", () => {
     expect(list.map((m) => m.content)).toEqual(["1", "2", "3"]);
   });
 
+  it("round-trips the bounded exact-text voice provenance and drops unknown metadata", () => {
+    const stored = appendMessage(db, {
+      sessionId,
+      role: "user",
+      content: "@Exact_Name",
+      metadata: { inputSource: "voice_exact_text" },
+    });
+    db.prepare("UPDATE messages SET metadata = ? WHERE id = ?").run(
+      JSON.stringify({ inputSource: "voice_exact_text", secretPayload: "must-not-surface" }),
+      stored.id,
+    );
+    expect(listMessages(db, sessionId)[0]?.metadata).toEqual({ inputSource: "voice_exact_text" });
+  });
+
   it("isolates by session_id", () => {
     const otherSession = createSession(db, { title: null }).id;
     appendMessage(db, { sessionId, role: "user", content: "mine" });

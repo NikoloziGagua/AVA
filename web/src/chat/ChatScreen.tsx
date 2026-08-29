@@ -116,6 +116,7 @@ export function ChatScreen({
           // reopen dedupe below.
           role: m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant",
           text: m.content,
+          ...(m.role === "user" && m.metadata?.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
           ...(m.role === "user" && m.metadata?.visualContext ? { visualContext: m.metadata.visualContext } : {}),
           ...(m.role === "assistant" && m.visualMessages?.length ? { visualMessages: m.visualMessages } : {}),
         }));

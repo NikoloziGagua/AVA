@@ -81,6 +81,23 @@ class FakeWebSocket {
   }
 }
 
+class FakeEventSource {
+  static last: FakeEventSource | null = null;
+  readonly listeners = new Map<string, Array<(event: Event) => void>>();
+  closed = false;
+
+  constructor(readonly url: string) {
+    FakeEventSource.last = this;
+  }
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    const callback = typeof listener === "function" ? listener : (event: Event) => listener.handleEvent(event);
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), callback]);
+  }
+
+  close() { this.closed = true; }
+}
+
 // Fake <audio> for the TTS clips. play() resolves; the clip's await only ends
 // when onended/onerror fires OR interrupt() calls the captured `done`.
 class FakeAudio {
@@ -149,11 +166,13 @@ beforeEach(() => {
   FakeAudio.created = [];
   FakeAudioContext.created = [];
   FakeAudioWorkletNode.last = null;
+  FakeEventSource.last = null;
   killSpy.mockClear();
   sendSpy.mockClear();
 
   const g = globalThis as Record<string, unknown>;
   g.WebSocket = FakeWebSocket as unknown;
+  g.EventSource = FakeEventSource as unknown;
   g.Audio = FakeAudio as unknown;
   g.AudioContext = FakeAudioContext as unknown;
   g.AudioWorkletNode = FakeAudioWorkletNode as unknown;
@@ -266,6 +285,32 @@ describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
   it("connects, latches hybrid, and lands in listening", async () => {
     const { hook } = await bootHybrid();
     expect(hook.result.current.state).toBe("listening");
+  });
+
+  it("submits exact typed wording through the canonical voice session once", async () => {
+    const { hook } = await bootHybrid();
+    const exact = "  @_princi150/path?q=A_B%20C\nconst ID = `Case-Sensitive`;  ";
+    let accepted = false;
+    await act(async () => { accepted = await hook.result.current.submitExactText(exact); });
+
+    expect(accepted).toBe(true);
+    expect(sendSpy).toHaveBeenCalledTimes(1);
+    expect(sendSpy).toHaveBeenCalledWith("s0", exact, {
+      voice: true,
+      inputSource: "voice_exact_text",
+    });
+    expect(hook.result.current.getSessionId()).toBe("srv-session");
+    expect(hook.result.current.turns.at(-1)).toMatchObject({
+      who: "you",
+      text: exact,
+      inputSource: "voice_exact_text",
+    });
+    expect(hook.result.current.interim).toMatchObject({
+      who: "you",
+      text: exact,
+      inputSource: "voice_exact_text",
+    });
+    expect(FakeEventSource.last?.url).toContain("/api/chat/srv-session/stream");
   });
 
   it("closes the realtime socket when voice unmounts for keyboard/chat mode", async () => {

@@ -155,6 +155,7 @@ export type RealtimeState = "idle" | "connecting" | "listening" | "thinking" | "
 export interface RealtimeCaption {
   who: "you" | "ava";
   text: string;
+  inputSource?: "voice_exact_text";
 }
 
 // A committed conversation turn shown in the voice transcript scrollback. `id` is
@@ -164,12 +165,19 @@ export interface VoiceTurn {
   who: "you" | "ava";
   text: string;
   createdAt?: number;
+  inputSource?: "voice_exact_text";
 }
 
 export const VOICE_HISTORY_LIMIT = 10;
 
 export function recentVoiceTurns(
-  messages: Array<{ id: number; role: string; content: string; created_at: number }>,
+  messages: Array<{
+    id: number;
+    role: string;
+    content: string;
+    created_at: number;
+    metadata?: { inputSource?: "voice_exact_text" };
+  }>,
   limit = VOICE_HISTORY_LIMIT,
 ): VoiceTurn[] {
   return messages
@@ -180,6 +188,7 @@ export function recentVoiceTurns(
       who: m.role === "user" ? "you" : "ava",
       text: m.content,
       createdAt: m.created_at,
+      ...(m.metadata?.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
     }));
 }
 
@@ -364,6 +373,7 @@ export function useRealtimeVoice({
   const pttRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // stuck-in-thinking recovery (PTT)
   const pttBytesRef = useRef(0); // bytes forwarded in the current push-to-talk turn (Fix 3)
   const turnSeqRef = useRef(0); // monotonic id source for committed transcript turns
+  const exactSubmitPendingRef = useRef(false); // explicit-submit dedupe gate
   const seededSessionRef = useRef<string | null>(null); // session whose history we've already seeded
   const lastAmpTsRef = useRef(0); // throttle the amplitude state updates (~audio-callback rate is too fast)
   // Barge-in epoch (Item 1). interrupt() bumps interruptEpochRef AND sends
@@ -431,17 +441,21 @@ export function useRealtimeVoice({
 
   // Append a committed turn to the transcript scrollback, skipping empties and an
   // immediate exact duplicate of the last row (a streamed turn that's also flushed).
-  const commitTurn = useCallback((who: "you" | "ava", text: string) => {
-    const t = text.trim();
-    if (!t) return;
+  const commitTurn = useCallback((
+    who: "you" | "ava",
+    text: string,
+    inputSource?: "voice_exact_text",
+  ) => {
+    if (!text.trim()) return;
     setTurns((prev) => {
       const last = prev[prev.length - 1];
-      if (last && last.who === who && last.text === t) return prev;
+      if (last && last.who === who && last.text === text && last.inputSource === inputSource) return prev;
       return [...prev, {
         id: `vt-${turnSeqRef.current++}`,
         who,
-        text: t,
+        text,
         createdAt: Date.now(),
+        ...(inputSource ? { inputSource } : {}),
       }].slice(-VOICE_HISTORY_LIMIT);
     });
   }, []);
@@ -555,20 +569,19 @@ export function useRealtimeVoice({
   // Route an ACCEPTED transcript through the exact same backend path as a typed
   // message: POST /api/chat → full tool-using agent → SSE stream of the run. We
   // adopt the session id the server returns and speak the final reply.
-  const runAgentTurn = useCallback((text: string) => {
+  const runAgentTurn = useCallback(async (
+    text: string,
+    inputSource?: "voice_exact_text",
+  ): Promise<boolean> => {
     stopAgentStream();
     // The server accepted our turn → the PTT commit succeeded; disarm the recovery
     // net and drop any stale hint. Commit the user turn to the scrollback so it
     // stays visible when Ava replies.
     clearPttRecovery();
     setHint(null);
-    setCaption({ who: "you", text });
-    commitTurn("you", text);
-    setInterim(null);
     setState("thinking");
 
-    void (async () => {
-      // Per-turn streaming state.
+    // Per-turn streaming state.
       let replyText = "";
       let firstSpoken = "";
       let acked = false;
@@ -576,14 +589,21 @@ export function useRealtimeVoice({
       try {
         // voice:true → minimal reasoning on the server for a faster spoken reply
         // (full tool stack is unchanged).
-        const r = await api.sendMessage(sessionIdRef.current, text, { voice: true });
+        const r = await api.sendMessage(sessionIdRef.current, text, { voice: true, inputSource });
         sid = r.sessionId;
       } catch (err) {
         setErrorMsg(err instanceof Error ? err.message : "send failed");
+        setInterim(null);
         setState("listening");
-        return;
+        return false;
       }
       setSessionId(sid);
+      // Only surface/commit the owner turn after the authoritative API accepted
+      // it. A rejected request remains in the dialog draft instead of becoming a
+      // ghost transcript row that never existed in persisted conversation.
+      setCaption({ who: "you", text, ...(inputSource ? { inputSource } : {}) });
+      commitTurn("you", text, inputSource);
+      setInterim({ who: "you", text, ...(inputSource ? { inputSource } : {}) });
 
       const token = getToken() ?? "";
       const es = new EventSource(`/api/chat/${sid}/stream?t=${encodeURIComponent(token)}`);
@@ -656,7 +676,7 @@ export function useRealtimeVoice({
       const finish = () => { stopAgentStream(); if (stateRef.current === "thinking") setState("listening"); };
       es.addEventListener("done", finish);
       es.addEventListener("killed", finish);
-    })();
+      return true;
   }, [enqueueSpeak, stopAgentStream, commitTurn, clearPttRecovery]);
 
   const clearSettle = useCallback(() => {
@@ -759,7 +779,7 @@ export function useRealtimeVoice({
         commitTurn("you", eff.text);
         setInterim(null);
         setState("thinking");
-        return;
+        return false;
       case "caption_user_pending":
         // Automatic VAD ended too early, but the structural gate knows the
         // sentence is unfinished. Show what AVA heard without committing it,
@@ -1267,9 +1287,9 @@ export function useRealtimeVoice({
 
   // Barge-in: stop Ava speaking / abort the in-flight agent run and return to
   // listening. Kills the server-side run too so tools don't keep executing.
-  const interrupt = useCallback(() => {
+  const interrupt = useCallback(async (): Promise<void> => {
     const sid = sessionIdRef.current;
-    if (sid) void api.kill(sid).catch(() => {});
+    const kill = sid ? api.kill(sid).catch(() => ({ aborted: false, cancelledImprovements: 0 })) : Promise.resolve();
     stopAgentStream();
     // Item 1 (CRITICAL): in hybrid chit-chat Ava's voice IS the realtime model
     // streaming audio deltas. Stopping the local player/queue is not enough —
@@ -1296,7 +1316,29 @@ export function useRealtimeVoice({
     avaCaptionRef.current = "";
     setInterim(null);
     setState("listening");
+    await kill;
   }, [stopAgentStream, stopSpokenOutput, truncatePlayedResponse, clearPttRecovery]);
+
+  // Exact typed wording is still a normal AVA voice turn. It uses the canonical
+  // session and /api/chat orchestration, but carries a tiny provenance marker so
+  // chat history can distinguish it after reload. Awaiting interrupt retirement
+  // closes the run-in-progress race; the ref closes double-click/shortcut races.
+  const submitExactText = useCallback(async (text: string): Promise<boolean> => {
+    if (!text.trim() || exactSubmitPendingRef.current) return false;
+    if (!sessionIdRef.current) {
+      setErrorMsg("The shared voice session is still connecting. Try again in a moment.");
+      return false;
+    }
+    exactSubmitPendingRef.current = true;
+    try {
+      if (shouldInterruptForNewTurn(stateRef.current) || actionPendingRef.current) {
+        await interrupt();
+      }
+      return await runAgentTurn(text, "voice_exact_text");
+    } finally {
+      exactSubmitPendingRef.current = false;
+    }
+  }, [interrupt, runAgentTurn]);
 
   // ─── Enter push-to-talk turn-taking ────────────────────────────────────────
   // Start a turn: re-open the mic, and — because pressing Enter is an EXPLICIT
@@ -1456,6 +1498,7 @@ export function useRealtimeVoice({
     start,
     stop,
     interrupt,
+    submitExactText,
     newConversation,
     // Input-mode (endpointing) controls.
     inputMode,

@@ -96,6 +96,22 @@ describe("committed improvement indexing", () => {
     expect(row.summary).not.toContain(secret);
     expect(JSON.stringify(await memory.search("UFO fixture"))).not.toContain(secret);
   });
+
+  it("labels Activepieces and generated-playbook commits as automation improvements", async () => {
+    const sha = "4".repeat(40);
+    const commits = new FixtureCommits();
+    commits.commits.set(sha, committed(sha, {
+      subject: "feat(automations): learn verified multi-step playbooks",
+      files: ["server/src/automations/generated-playbooks.ts", "web/src/explorer/registry.ts"],
+      featureDocumentation: null,
+    }));
+    const db = openInMemoryDb();
+    const memory = new MemoryIndexService(db, null, (candidate) => commits.existsOnCurrentBranch(candidate));
+    await new ImprovementIndexCoordinator(memory, commits).indexCommit(sha);
+    const row = db.prepare("SELECT capabilities FROM improvement_records WHERE commit_sha=?")
+      .get(sha) as { capabilities: string };
+    expect(JSON.parse(row.capabilities)).toEqual(["Automation playbooks", "Explorer"]);
+  });
 });
 
 const temporaryRepositories: string[] = [];

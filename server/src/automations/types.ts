@@ -38,7 +38,7 @@ export const APPROVED_ACTION_PLAN_WORKFLOW = {
   version: 1,
   displayName: "AVA approved action plan",
   artifactSlug: "approved-action-plan",
-  artifactSummary: "Verified Activepieces plan for one explicitly approved AVA action playbook.",
+  artifactSummary: "Verified Activepieces plan for one explicitly approved ordered AVA playbook.",
   trigger: "manual",
   risk: "read_only",
 } as const satisfies AutomationWorkflowDefinition;
@@ -157,22 +157,45 @@ export type AutomationOperationsSnapshot = {
 };
 
 export type AutomationApprovedActionSnapshot = {
+  schemaVersion: 2;
   generatedAt: number;
   generatedAtIso: string;
   playbookId: string;
   revision: number;
   displayName: string;
-  action: {
-    tool: "instagram_open_chat";
-    targetLabel: string;
-    targetIdentity: string;
+  sequence: {
+    kind: "tool_sequence";
+    stepCount: number;
+    steps: Array<{
+      id: string;
+      tool:
+        | "chrome_open_url"
+        | "chrome_google_search"
+        | "chrome_youtube_search"
+        | "instagram_open_chat"
+        | "instagram_read_chat";
+      targetLabel: string;
+      targetFingerprint: string;
+    }>;
+    /** A deterministic projection of `steps` for the pinned Activepieces
+     * renderer. It contains no raw tool arguments. */
+    renderedSteps: string;
   };
   approval: {
     state: "approved";
     evidenceTaskCount: number;
     evidenceFingerprint: string;
+    definitionFingerprint: string;
   };
 };
+
+export type AutomationApprovedStep = AutomationApprovedActionSnapshot["sequence"]["steps"][number];
+
+export function renderApprovedStepManifest(steps: AutomationApprovedStep[]): string {
+  return steps.map((step, index) =>
+    `- ${index + 1}. ${step.id} | ${step.tool} | ${step.targetLabel} | ${step.targetFingerprint}`,
+  ).join("\n");
+}
 
 export type AutomationWorkflowSnapshot =
   | AutomationSystemSnapshot

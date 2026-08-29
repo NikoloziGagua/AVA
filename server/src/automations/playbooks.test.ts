@@ -7,7 +7,8 @@ import { ObservabilityService } from "../observability/store.js";
 import { openInMemoryDb } from "../state/db.js";
 import { DeterministicAutomationFixtureExecutor } from "./activepieces.js";
 import { AutomationPlaybookService, buildAutomationWorkflowRegistrations } from "./playbooks.js";
-import { OPERATIONS_BRIEF_WORKFLOW, SYSTEM_REPORT_WORKFLOW } from "./types.js";
+import { APPROVED_ACTION_PLAN_WORKFLOW, OPERATIONS_BRIEF_WORKFLOW, SYSTEM_REPORT_WORKFLOW,
+  renderApprovedStepManifest, type AutomationApprovedActionSnapshot } from "./types.js";
 
 const systemSnapshot = async () => ({ generatedAt: 1, generatedAtIso: "1970-01-01T00:00:00.001Z", ready: true, provider: "openai", core: { brainReady: true,
   voiceReady: true, browserReady: true, memoryReady: true }, counts: { preferences: 1, observations: 2,
@@ -24,6 +25,21 @@ const operationsSnapshot = async () => ({ generatedAt: 2, generatedAtIso: "1970-
 
 function registrations() {
   return buildAutomationWorkflowRegistrations({ systemReportSnapshot: systemSnapshot, operationsBriefSnapshot: operationsSnapshot });
+}
+
+function approvedPlanSnapshot(): AutomationApprovedActionSnapshot {
+  const steps: AutomationApprovedActionSnapshot["sequence"]["steps"] = [
+    { id: "step-1", tool: "chrome_google_search", targetLabel: "Google search",
+      targetFingerprint: "a".repeat(64) },
+    { id: "step-2", tool: "instagram_open_chat", targetLabel: "Open a verified Instagram conversation",
+      targetFingerprint: "b".repeat(64) },
+  ];
+  return { schemaVersion: 2, generatedAt: 2, generatedAtIso: "1970-01-01T00:00:00.002Z",
+    playbookId: "ava.learned.sequence.test-plan", revision: 1, displayName: "Read-only proof",
+    sequence: { kind: "tool_sequence", stepCount: steps.length, steps,
+      renderedSteps: renderApprovedStepManifest(steps) },
+    approval: { state: "approved", evidenceTaskCount: 2,
+      evidenceFingerprint: "c".repeat(64), definitionFingerprint: "d".repeat(64) } };
 }
 
 describe("AVA-owned pinned automation playbooks", () => {
@@ -70,6 +86,23 @@ describe("AVA-owned pinned automation playbooks", () => {
     await service.run(SYSTEM_REPORT_WORKFLOW.id, { requestKey: "same" });
     await expect(service.run(OPERATIONS_BRIEF_WORKFLOW.id, { requestKey: "same" }))
       .rejects.toThrow("belongs to another workflow");
+    await rm(root, { recursive: true, force: true }); db.close();
+  });
+
+  it("validates the complete ordered plan and rejects a tampered projection before dispatch", async () => {
+    const root = await mkdtemp(join(tmpdir(), "ava-automation-")); const db = openInMemoryDb();
+    const service = new AutomationPlaybookService(db, new DeterministicAutomationFixtureExecutor(), root, registrations());
+    const completed = await service.run(APPROVED_ACTION_PLAN_WORKFLOW.id, {
+      requestKey: "valid-plan", snapshot: approvedPlanSnapshot(),
+    });
+    expect(completed).toMatchObject({ status: "completed", verificationState: "verified",
+      inputSummary: { sequence: { stepCount: 2 } } });
+    const tampered = approvedPlanSnapshot();
+    tampered.sequence.renderedSteps = tampered.sequence.renderedSteps.replace("Google search", "YouTube search");
+    await expect(service.run(APPROVED_ACTION_PLAN_WORKFLOW.id, {
+      requestKey: "tampered-plan", snapshot: tampered,
+    })).rejects.toMatchObject({ code: "invalid_generated_playbook" });
+    expect(service.list()).toHaveLength(1);
     await rm(root, { recursive: true, force: true }); db.close();
   });
 

@@ -680,7 +680,10 @@ export function chatRoutes(
           runSteps.push({ tool: e.payload.tool, args: e.payload.args, ok: true });
         } else if (e.kind === "tool_result") {
           const s = runSteps[runSteps.length - 1];
-          if (s && s.tool === e.payload.tool) s.ok = e.payload.ok;
+          if (s && s.tool === e.payload.tool) {
+            s.ok = e.payload.ok;
+            if (e.payload.verification) s.verification = e.payload.verification;
+          }
           if (e.payload.ok && (e.payload.tool === "visual_explanation_create" || e.payload.tool === "research_visual_create")) {
             try {
               const result = JSON.parse(e.payload.result) as {

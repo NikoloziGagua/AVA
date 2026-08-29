@@ -13,6 +13,7 @@ import {
   type AutomationApprovedActionSnapshot,
   type AutomationExecutor,
   type AutomationOperationsSnapshot,
+  renderApprovedStepManifest,
   type AutomationRun,
   type AutomationSystemSnapshot,
   type AutomationWorkflowDefinition,
@@ -100,28 +101,39 @@ export function buildAutomationWorkflowRegistrations(input: {
       validateSnapshot: (value) => {
         const snapshot = value as AutomationApprovedActionSnapshot;
         if (!/^ava\.learned\.[a-z0-9][a-z0-9.-]{2,96}$/.test(snapshot.playbookId) ||
+            snapshot.schemaVersion !== 2 ||
             !Number.isInteger(snapshot.revision) || snapshot.revision < 1 || snapshot.revision > 1_000 ||
             !snapshot.displayName || snapshot.displayName.length > 120 ||
-            snapshot.action?.tool !== "instagram_open_chat" ||
-            !/^[A-Za-z0-9._]{1,30}$/.test(snapshot.action.targetIdentity) ||
-            !snapshot.action.targetLabel || snapshot.action.targetLabel.length > 100 ||
+            snapshot.sequence?.kind !== "tool_sequence" ||
+            !Number.isInteger(snapshot.sequence.stepCount) || snapshot.sequence.stepCount < 1 || snapshot.sequence.stepCount > 6 ||
+            !Array.isArray(snapshot.sequence.steps) || snapshot.sequence.steps.length !== snapshot.sequence.stepCount ||
+            snapshot.sequence.steps.some((step, index) =>
+              step.id !== `step-${index + 1}` ||
+              !["chrome_open_url", "chrome_google_search", "chrome_youtube_search",
+                "instagram_open_chat", "instagram_read_chat"].includes(step.tool) ||
+              !step.targetLabel || step.targetLabel.length > 160 ||
+              !/^[a-f0-9]{64}$/.test(step.targetFingerprint)) ||
+            new Set(snapshot.sequence.steps.map((step) => step.id)).size !== snapshot.sequence.steps.length ||
+            snapshot.sequence.renderedSteps !== renderApprovedStepManifest(snapshot.sequence.steps) ||
             snapshot.approval?.state !== "approved" ||
             snapshot.approval.evidenceTaskCount < 2 ||
-            !/^[a-f0-9]{64}$/.test(snapshot.approval.evidenceFingerprint)) {
-          throw new AutomationExecutorError("invalid_generated_playbook", "The approved action snapshot failed AVA's bounded schema");
+            !/^[a-f0-9]{64}$/.test(snapshot.approval.evidenceFingerprint) ||
+            !/^[a-f0-9]{64}$/.test(snapshot.approval.definitionFingerprint)) {
+          throw new AutomationExecutorError("invalid_generated_playbook", "The approved sequence snapshot failed AVA's bounded schema");
         }
       },
       summarizeInput: (value) => {
         const snapshot = value as AutomationApprovedActionSnapshot;
         return { workflow: APPROVED_ACTION_PLAN_WORKFLOW.id, generatedAt: snapshot.generatedAt,
           playbookId: snapshot.playbookId, revision: snapshot.revision,
-          action: snapshot.action, approval: snapshot.approval };
+          sequence: snapshot.sequence, approval: snapshot.approval };
       },
       validateReport: (report, value) => {
         const snapshot = value as AutomationApprovedActionSnapshot;
         requireReportShape(report, "AVA Approved Action Plan", ["Definition", "Approved steps", "Evidence boundary"]);
         for (const expected of [snapshot.playbookId, `- Revision: ${snapshot.revision}`,
-          snapshot.action.tool, `@${snapshot.action.targetIdentity}`, snapshot.approval.evidenceFingerprint]) {
+          snapshot.sequence.renderedSteps, snapshot.approval.evidenceFingerprint,
+          snapshot.approval.definitionFingerprint]) {
           if (!report.markdown.includes(expected)) {
             throw new AutomationExecutorError("artifact_contract_mismatch", "The approved action plan did not preserve its validated identity and evidence");
           }

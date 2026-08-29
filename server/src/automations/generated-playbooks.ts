@@ -6,7 +6,7 @@ import { listPeople, resolvePerson } from "../apps/people.js";
 import { scrubSecrets } from "../security/scrub.js";
 import type { Db } from "../state/db.js";
 import type { AutomationPlaybookService } from "./playbooks.js";
-import type { AutomationApprovedActionSnapshot } from "./types.js";
+import { renderApprovedStepManifest, type AutomationApprovedActionSnapshot } from "./types.js";
 
 export type GeneratedPlaybookStatus = "observing" | "proposed" | "validating" | "active" | "failed";
 
@@ -21,6 +21,33 @@ export type GeneratedActionDefinition = {
   };
 };
 
+export type GeneratedSequenceStep =
+  | {
+      id: string;
+      tool: "chrome_open_url";
+      url: string;
+    }
+  | {
+      id: string;
+      tool: "chrome_google_search" | "chrome_youtube_search";
+      query: string;
+    }
+  | {
+      id: string;
+      tool: "instagram_open_chat" | "instagram_read_chat";
+      personId: string;
+      displayName: string;
+      expectedUsername: string;
+    };
+
+export type GeneratedSequenceDefinition = {
+  schemaVersion: 2;
+  kind: "tool_sequence";
+  steps: GeneratedSequenceStep[];
+};
+
+export type GeneratedPlaybookDefinition = GeneratedActionDefinition | GeneratedSequenceDefinition;
+
 export type GeneratedPlaybookCandidate = {
   id: string;
   fingerprint: string;
@@ -30,7 +57,7 @@ export type GeneratedPlaybookCandidate = {
   version: number;
   displayName: string;
   triggerPhrases: string[];
-  definition: GeneratedActionDefinition;
+  definition: GeneratedPlaybookDefinition;
   evidenceTaskIds: string[];
   evidenceCount: number;
   validationRunId: string | null;
@@ -55,6 +82,13 @@ export type GeneratedPlaybookActionResult = {
   ok: boolean;
   text: string;
   verification?: ToolVerificationEvidence;
+  steps?: Array<{
+    id: string;
+    tool: GeneratedSequenceStep["tool"];
+    ok: boolean;
+    summary: string;
+    verification?: ToolVerificationEvidence;
+  }>;
 };
 
 export class GeneratedPlaybookError extends Error {
@@ -75,23 +109,79 @@ function safeArray(value: string): string[] {
   } catch { return []; }
 }
 
-function parseDefinition(value: string): GeneratedActionDefinition {
+function safeString(value: unknown, max: number): string {
+  return typeof value === "string" ? scrubSecrets(value).replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+
+function cleanLiteral(value: unknown, max: number): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim().slice(0, max) : "";
+}
+
+function parseInstagramStep(value: unknown, id: string, tools: readonly string[]): GeneratedSequenceStep | null {
+  if (!value || typeof value !== "object") return null;
+  const step = value as Record<string, unknown>;
+  if (!tools.includes(String(step.tool)) || step.id !== id || typeof step.personId !== "string" || !step.personId ||
+      typeof step.displayName !== "string" || !step.displayName || step.displayName.length > 100 ||
+      typeof step.expectedUsername !== "string" || !/^[A-Za-z0-9._]{1,30}$/.test(step.expectedUsername)) return null;
+  return {
+    id,
+    tool: step.tool as "instagram_open_chat" | "instagram_read_chat",
+    personId: step.personId.slice(0, 80),
+    displayName: scrubSecrets(step.displayName).slice(0, 100),
+    expectedUsername: step.expectedUsername.toLowerCase(),
+  };
+}
+
+function parseSequenceStep(value: unknown, index: number): GeneratedSequenceStep | null {
+  if (!value || typeof value !== "object") return null;
+  const step = value as Record<string, unknown>;
+  const id = `step-${index + 1}`;
+  const instagram = parseInstagramStep(step, id, ["instagram_open_chat", "instagram_read_chat"]);
+  if (instagram) return instagram;
+  if (step.id !== id) return null;
+  if (step.tool === "chrome_open_url") {
+    const raw = cleanLiteral(step.url, 2_048);
+    try {
+      const url = new URL(raw);
+      if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname || url.username || url.password ||
+          scrubSecrets(url.toString()) !== url.toString()) return null;
+      return { id, tool: "chrome_open_url", url: url.toString() };
+    } catch { return null; }
+  }
+  if (step.tool === "chrome_google_search" || step.tool === "chrome_youtube_search") {
+    const query = cleanLiteral(step.query, 500);
+    if (!query || scrubSecrets(query) !== query) return null;
+    return { id, tool: step.tool, query };
+  }
+  return null;
+}
+
+function parseDefinition(value: string): GeneratedPlaybookDefinition {
   let parsed: unknown;
   try { parsed = JSON.parse(value); }
   catch { throw new GeneratedPlaybookError("invalid_definition", "The generated playbook definition is not valid JSON"); }
-  const definition = parsed as Partial<GeneratedActionDefinition>;
-  const action = definition?.action as Partial<GeneratedActionDefinition["action"]> | undefined;
-  if (definition.schemaVersion !== 1 || definition.kind !== "tool_action" ||
-      action?.tool !== "instagram_open_chat" || typeof action.personId !== "string" || !action.personId ||
-      typeof action.displayName !== "string" || !action.displayName || action.displayName.length > 100 ||
-      typeof action.expectedUsername !== "string" || !/^[A-Za-z0-9._]{1,30}$/.test(action.expectedUsername)) {
-    throw new GeneratedPlaybookError("invalid_definition", "The generated playbook definition failed its bounded schema");
+  const definition = parsed as Partial<GeneratedPlaybookDefinition>;
+  if (definition.schemaVersion === 1 && definition.kind === "tool_action") {
+    const action = definition.action as Partial<GeneratedActionDefinition["action"]> | undefined;
+    if (action?.tool !== "instagram_open_chat" || typeof action.personId !== "string" || !action.personId ||
+        typeof action.displayName !== "string" || !action.displayName || action.displayName.length > 100 ||
+        typeof action.expectedUsername !== "string" || !/^[A-Za-z0-9._]{1,30}$/.test(action.expectedUsername)) {
+      throw new GeneratedPlaybookError("invalid_definition", "The generated playbook definition failed its bounded schema");
+    }
+    return { schemaVersion: 1, kind: "tool_action", action: {
+      tool: "instagram_open_chat", personId: action.personId.slice(0, 80),
+      displayName: scrubSecrets(action.displayName).slice(0, 100),
+      expectedUsername: action.expectedUsername.toLowerCase(),
+    } };
   }
-  return { schemaVersion: 1, kind: "tool_action", action: {
-    tool: "instagram_open_chat", personId: action.personId.slice(0, 80),
-    displayName: scrubSecrets(action.displayName).slice(0, 100),
-    expectedUsername: action.expectedUsername.toLowerCase(),
-  } };
+  if (definition.schemaVersion === 2 && definition.kind === "tool_sequence" &&
+      Array.isArray(definition.steps) && definition.steps.length >= 1 && definition.steps.length <= 6) {
+    const steps = definition.steps.map((step, index) => parseSequenceStep(step, index));
+    if (steps.every((step): step is GeneratedSequenceStep => step !== null)) {
+      return { schemaVersion: 2, kind: "tool_sequence", steps };
+    }
+  }
+  throw new GeneratedPlaybookError("invalid_definition", "The generated playbook definition failed its bounded schema");
 }
 
 function mapCandidate(row: CandidateRow): GeneratedPlaybookCandidate {
@@ -111,35 +201,99 @@ function normalize(value: string): string {
   return value.toLowerCase().replace(/[^\p{L}\p{N}@._]+/gu, " ").trim();
 }
 
-function compileCandidate(memoryDir: string, goal: string, steps: RunStep[]): {
-  fingerprint: string; playbookId: string; displayName: string; triggerPhrases: string[];
-  definition: GeneratedActionDefinition;
-} | null {
-  if (!steps.length || steps.some((step) => !step.ok)) return null;
-  const meaningful = steps.filter((step) => !["person_list", "instagram_status"].includes(step.tool));
-  if (meaningful.length !== 1 || meaningful[0]!.tool !== "instagram_open_chat") return null;
-  const rawArgs = meaningful[0]!.args;
+function verifiedForLearning(step: RunStep): boolean {
+  return step.ok && step.verification?.state === "verified";
+}
+
+function compileInstagramStep(memoryDir: string, step: RunStep, index: number): GeneratedSequenceStep | null {
+  if (step.tool !== "instagram_open_chat" && step.tool !== "instagram_read_chat") return null;
+  const rawArgs = step.args;
   const query = rawArgs && typeof rawArgs === "object" && "person" in rawArgs &&
     typeof (rawArgs as { person?: unknown }).person === "string"
     ? (rawArgs as { person: string }).person.trim() : "";
-  const resolved = resolvePerson(memoryDir, query);
-  const person = resolved.person;
+  const person = resolvePerson(memoryDir, query).person;
   const username = person?.instagram?.username?.toLowerCase().replace(/^@/, "") ?? "";
   if (!person || !username || !/^[A-Za-z0-9._]{1,30}$/.test(username)) return null;
-  const definition: GeneratedActionDefinition = { schemaVersion: 1, kind: "tool_action", action: {
-    tool: "instagram_open_chat", personId: person.id, displayName: person.name, expectedUsername: username,
-  } };
+  return { id: `step-${index + 1}`, tool: step.tool, personId: person.id,
+    displayName: person.name, expectedUsername: username };
+}
+
+function compileBrowserStep(step: RunStep, index: number): GeneratedSequenceStep | null {
+  const args = step.args && typeof step.args === "object" ? step.args as Record<string, unknown> : {};
+  const id = `step-${index + 1}`;
+  if (step.tool === "chrome_google_search" || step.tool === "chrome_youtube_search") {
+    const query = cleanLiteral(args.query, 500);
+    return query && scrubSecrets(query) === query ? { id, tool: step.tool, query } : null;
+  }
+  if (step.tool === "chrome_open_url") {
+    const raw = cleanLiteral(args.url, 2_048);
+    try {
+      const url = new URL(raw);
+      if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname || url.username || url.password ||
+          scrubSecrets(url.toString()) !== url.toString()) return null;
+      return { id, tool: "chrome_open_url", url: url.toString() };
+    } catch { return null; }
+  }
+  return null;
+}
+
+export function generatedDefinitionSteps(definition: GeneratedPlaybookDefinition): GeneratedSequenceStep[] {
+  if (definition.schemaVersion === 2) return definition.steps;
+  return [{ id: "step-1", ...definition.action }];
+}
+
+export function generatedStepArgs(step: GeneratedSequenceStep): Record<string, unknown> {
+  if (step.tool === "chrome_open_url") return { url: step.url };
+  if ("query" in step) return { query: step.query };
+  return { person: step.displayName };
+}
+
+function targetLabel(step: GeneratedSequenceStep): string {
+  // Activepieces only needs an inspectable operation class plus the argument
+  // fingerprint. Raw queries and people-map labels remain inside AVA.
+  if ("displayName" in step) return step.tool === "instagram_open_chat"
+    ? "Open a verified Instagram conversation"
+    : "Read a verified Instagram conversation";
+  if (step.tool === "chrome_open_url") return `Open ${new URL(step.url).hostname}`;
+  return step.tool === "chrome_google_search" ? "Google search" : "YouTube search";
+}
+
+function compileCandidate(memoryDir: string, goal: string, steps: RunStep[]): {
+  fingerprint: string; playbookId: string; displayName: string; triggerPhrases: string[];
+  definition: GeneratedPlaybookDefinition;
+} | null {
+  if (!steps.length || steps.some((step) => !step.ok)) return null;
+  const meaningful = steps.filter((step) => !["person_list", "instagram_status"].includes(step.tool));
+  if (meaningful.length < 1 || meaningful.length > 6 || !meaningful.every(verifiedForLearning)) return null;
+  const compiledSteps = meaningful.map((step, index) =>
+    compileInstagramStep(memoryDir, step, index) ?? compileBrowserStep(step, index));
+  if (!compiledSteps.every((step): step is GeneratedSequenceStep => step !== null)) return null;
+  // Preserve the schema-v1 fingerprint/ID for the already-active Lasha family.
+  // Every other supported procedure uses the general ordered sequence model.
+  const only = compiledSteps[0];
+  const definition: GeneratedPlaybookDefinition = compiledSteps.length === 1 && only?.tool === "instagram_open_chat"
+    ? { schemaVersion: 1, kind: "tool_action", action: {
+        tool: "instagram_open_chat", personId: only.personId,
+        displayName: only.displayName, expectedUsername: only.expectedUsername,
+      } }
+    : { schemaVersion: 2, kind: "tool_sequence", steps: compiledSteps };
   const fingerprint = sha256(JSON.stringify(definition));
   const triggerPhrases = [...new Set([
     scrubSecrets(goal).trim().slice(0, 160),
-    `Open ${person.name}'s Instagram chat`,
-    `Open Instagram chat with ${person.name}`,
-    `Open @${username}'s Instagram chat`,
+    ...(definition.schemaVersion === 1 ? [
+      `Open ${definition.action.displayName}'s Instagram chat`,
+      `Open Instagram chat with ${definition.action.displayName}`,
+      `Open @${definition.action.expectedUsername}'s Instagram chat`,
+    ] : []),
   ].filter(Boolean))].slice(0, 6);
   return {
     fingerprint,
-    playbookId: `ava.learned.instagram-open-chat.${fingerprint.slice(0, 12)}`,
-    displayName: `Open ${person.name}'s Instagram chat`,
+    playbookId: definition.schemaVersion === 1
+      ? `ava.learned.instagram-open-chat.${fingerprint.slice(0, 12)}`
+      : `ava.learned.sequence.${fingerprint.slice(0, 12)}`,
+    displayName: definition.schemaVersion === 1
+      ? `Open ${definition.action.displayName}'s Instagram chat`
+      : safeString(goal, 120) || `${compiledSteps.length}-step approved automation`,
     triggerPhrases,
     definition,
   };
@@ -151,8 +305,9 @@ export class GeneratedPlaybookService {
     private readonly automation: AutomationPlaybookService,
     private readonly memoryDir: string,
     private readonly executeAction: (
-      definition: GeneratedActionDefinition,
+      definition: GeneratedPlaybookDefinition,
       signal?: AbortSignal,
+      executionId?: string,
     ) => Promise<GeneratedPlaybookActionResult>,
   ) {
     const now = Date.now();
@@ -211,14 +366,16 @@ export class GeneratedPlaybookService {
   }
 
   private revalidateIdentity(candidate: GeneratedPlaybookCandidate): void {
-    const action = candidate.definition.action;
-    const person = listPeople(this.memoryDir).find((item) => item.id === action.personId);
-    const currentUsername = person?.instagram?.username?.toLowerCase().replace(/^@/, "") ?? "";
-    if (!person || currentUsername !== action.expectedUsername) {
-      throw new GeneratedPlaybookError(
-        "identity_changed",
-        `The people-map identity for ${action.displayName} changed after this playbook was learned; a fresh verified observation is required.`,
-      );
+    for (const step of generatedDefinitionSteps(candidate.definition)) {
+      if (step.tool !== "instagram_open_chat" && step.tool !== "instagram_read_chat") continue;
+      const person = listPeople(this.memoryDir).find((item) => item.id === step.personId);
+      const currentUsername = person?.instagram?.username?.toLowerCase().replace(/^@/, "") ?? "";
+      if (!person || currentUsername !== step.expectedUsername) {
+        throw new GeneratedPlaybookError(
+          "identity_changed",
+          `The people-map identity for ${step.displayName} changed after this playbook was learned; a fresh verified observation is required.`,
+        );
+      }
     }
   }
 
@@ -227,13 +384,22 @@ export class GeneratedPlaybookService {
       definition: candidate.definition,
       taskIds: [...candidate.evidenceTaskIds].sort(),
     }));
+    const definitionFingerprint = sha256(JSON.stringify(candidate.definition));
+    const steps = generatedDefinitionSteps(candidate.definition).map((step) => ({
+      id: step.id,
+      tool: step.tool,
+      targetLabel: targetLabel(step),
+      targetFingerprint: sha256(JSON.stringify(step)),
+    }));
     return {
+      schemaVersion: 2,
       generatedAt: Date.now(), generatedAtIso: new Date().toISOString(),
       playbookId: candidate.playbookId, revision: candidate.revision,
       displayName: candidate.displayName,
-      action: { tool: candidate.definition.action.tool, targetLabel: candidate.definition.action.displayName,
-        targetIdentity: candidate.definition.action.expectedUsername },
-      approval: { state: "approved", evidenceTaskCount: candidate.evidenceCount, evidenceFingerprint },
+      sequence: { kind: "tool_sequence", stepCount: steps.length, steps,
+        renderedSteps: renderApprovedStepManifest(steps) },
+      approval: { state: "approved", evidenceTaskCount: candidate.evidenceCount,
+        evidenceFingerprint, definitionFingerprint },
     };
   }
 
@@ -297,15 +463,24 @@ export class GeneratedPlaybookService {
       throw new GeneratedPlaybookError("activepieces_plan_failed", plan.errorMessage ?? `Activepieces plan ended ${plan.status}`);
     }
     this.revalidateIdentity(candidate);
-    const result = await this.executeAction(candidate.definition, input.signal);
+    const result = await this.executeAction(candidate.definition, input.signal, plan.id);
     return { candidate, planRunId: plan.id, result };
   }
 
   matchActive(prompt: string): GeneratedPlaybookCandidate | null {
     const query = normalize(prompt);
     if (!query) return null;
+    const compoundRequest = /\b(?:and|then|after that|followed by)\b/.test(query);
     let best: { candidate: GeneratedPlaybookCandidate; score: number } | null = null;
     for (const candidate of this.active()) {
+      const stepCount = generatedDefinitionSteps(candidate.definition).length;
+      // A learned one-step procedure must never swallow an explicitly
+      // compound request. The normal agent path needs to observe the complete
+      // sequence before that sequence can become its own approved playbook.
+      // Conversely, a multi-step procedure must never add its extra actions to
+      // a simple one-action request merely because that request is a subset of
+      // the longer learned trigger.
+      if ((compoundRequest && stepCount === 1) || (!compoundRequest && stepCount > 1)) continue;
       const scores = candidate.triggerPhrases.map((phrase) => {
         const trigger = normalize(phrase);
         if (!trigger) return 0;

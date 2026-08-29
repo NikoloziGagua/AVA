@@ -68,8 +68,10 @@ import { AutoMemoryCaptureCoordinator } from "./memory-index/auto-capture.js";
 import { ActivepiecesWebhookExecutor } from "./automations/activepieces.js";
 import { AutomationPlaybookService, buildAutomationWorkflowRegistrations } from "./automations/playbooks.js";
 import { GeneratedPlaybookService } from "./automations/generated-playbooks.js";
+import { buildGeneratedPlaybookExecutor } from "./automations/generated-playbook-executor.js";
 import { buildOperationsBriefSnapshot } from "./automations/snapshots.js";
-import { openThread as openInstagramThread } from "./apps/instagram.js";
+import { buildChromeTools } from "./tools/chrome-mcp.js";
+import { buildInstagramTools } from "./apps/instagram-mcp.js";
 import { GitImprovementCommitSource, ImprovementIndexCoordinator } from "./memory-index/improvement-index.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
@@ -712,24 +714,10 @@ const generatedPlaybooks = new GeneratedPlaybookService(
   db,
   automationService,
   cfg.memoryDir,
-  async (definition, signal) => {
-    if (signal?.aborted) return { ok: false, text: "AVA cancelled the approved playbook before local execution." };
-    const result = await openInstagramThread({
-      chrome: await agentDeps.getChrome(),
-      memoryDir: cfg.memoryDir,
-    }, definition.action.displayName);
-    if (signal?.aborted) return { ok: false, text: "AVA cancelled the approved playbook before outcome verification." };
-    return {
-      ok: result.ok,
-      text: result.detail,
-      ...(result.ok ? { verification: {
-        state: "verified" as const,
-        scope: "task_outcome" as const,
-        method: "instagram_thread_identity",
-        summary: "The conversation opened through the current exact people-map identity and verified Instagram profile.",
-      } } : {}),
-    };
-  },
+  buildGeneratedPlaybookExecutor([
+    ...buildChromeTools({ getChrome: agentDeps.getChrome, emit: () => {} }),
+    ...buildInstagramTools({ getChrome: agentDeps.getChrome, memoryDir: cfg.memoryDir }),
+  ]),
 );
 agentDeps.generatedPlaybooks = generatedPlaybooks;
 

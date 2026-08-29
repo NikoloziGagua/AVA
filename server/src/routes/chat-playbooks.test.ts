@@ -158,7 +158,38 @@ describe("chat playbook capture", () => {
     expect(observeVerifiedRun).toHaveBeenCalledTimes(1);
     expect(observeVerifiedRun).toHaveBeenCalledWith(expect.objectContaining({
       goal: "Open Lasha's Instagram chat", outcome: "verified",
-      steps: [{ tool: "instagram_open_chat", args: { person: "Lasha" }, ok: true }],
+      steps: [{ tool: "instagram_open_chat", args: { person: "Lasha" }, ok: true,
+        verification: expect.objectContaining({ state: "verified", method: "instagram_thread_identity" }) }],
+    }));
+  });
+
+  it("forwards per-step verification so heterogeneous procedures can compile safely", async () => {
+    const observeVerifiedRun = vi.fn();
+    const { app } = setup({
+      generatedPlaybooks: { matchActive: () => null, observeVerifiedRun, list: () => [], active: () => [] },
+      runAgentImpl: async (opts) => {
+        opts.emit({ kind: "tool_call", payload: { tool: "chrome_google_search", args: { query: "AVA proof" } } });
+        opts.emit({ kind: "tool_result", payload: { tool: "chrome_google_search", ok: true, result: "opened",
+          verification: { state: "verified", scope: "task_outcome", method: "chrome_google_search_url",
+            summary: "Exact Google query URL matched." } } });
+        opts.emit({ kind: "tool_call", payload: { tool: "instagram_open_chat", args: { person: "Lasha" } } });
+        opts.emit({ kind: "tool_result", payload: { tool: "instagram_open_chat", ok: true, result: "opened",
+          verification: { state: "verified", scope: "task_outcome", method: "instagram_thread_identity",
+            summary: "Exact profile identity matched." } } });
+        opts.emit({ kind: "final", payload: { text: "Done." } });
+        opts.emit({ kind: "done", payload: {} });
+      },
+    });
+    await request(app).post("/api/chat").send({ text: "Search Google then open Lasha's Instagram chat" }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(observeVerifiedRun).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: "verified",
+      steps: [
+        expect.objectContaining({ tool: "chrome_google_search", verification: expect.objectContaining({
+          method: "chrome_google_search_url" }) }),
+        expect.objectContaining({ tool: "instagram_open_chat", verification: expect.objectContaining({
+          method: "instagram_thread_identity" }) }),
+      ],
     }));
   });
 

@@ -34,7 +34,10 @@ async function fixture(behavior: "success" | "failure" = "success") {
   return { root, db, automation, execute, service };
 }
 
-const verifiedStep = [{ tool: "instagram_open_chat", args: { person: "Lasha" }, ok: true }];
+const verified = (method: string) => ({ state: "verified" as const, scope: "task_outcome" as const,
+  method, summary: "The deterministic fixture independently verified this step." });
+const verifiedStep = [{ tool: "instagram_open_chat", args: { person: "Lasha" }, ok: true,
+  verification: verified("instagram_thread_identity") }];
 
 describe("approval-gated generated automation playbooks", () => {
   it("requires two distinct verified observations, deduplicates replay, and binds the people-map identity", async () => {
@@ -71,7 +74,44 @@ describe("approval-gated generated automation playbooks", () => {
     expect(f.execute).toHaveBeenCalledTimes(1);
     expect(f.execute).toHaveBeenCalledWith(expect.objectContaining({ action: expect.objectContaining({
       tool: "instagram_open_chat", displayName: "Lasha", expectedUsername: "_princi150",
-    }) }), undefined);
+    }) }), undefined, expect.stringMatching(/^automation_/));
+    expect(f.service.matchActive("Search Google for AVA proof and open Lasha's Instagram chat")).toBeNull();
+    await rm(f.root, { recursive: true, force: true }); f.db.close();
+  });
+
+  it("compiles, approves, and runs a heterogeneous ordered sequence", async () => {
+    const f = await fixture();
+    const steps = [
+      { tool: "chrome_google_search", args: { query: "AVA multi step proof" }, ok: true,
+        verification: verified("chrome_google_search_url") },
+      ...verifiedStep,
+    ];
+    const first = f.service.observeVerifiedRun({ taskId: "sequence-one",
+      goal: "Search Google for AVA multi step proof then open Lasha's Instagram chat", steps, outcome: "verified" });
+    expect(first).toMatchObject({ status: "observing", definition: { schemaVersion: 2, kind: "tool_sequence",
+      steps: [
+        { id: "step-1", tool: "chrome_google_search", query: "AVA multi step proof" },
+        { id: "step-2", tool: "instagram_open_chat", displayName: "Lasha", expectedUsername: "_princi150" },
+      ] } });
+    const proposed = f.service.observeVerifiedRun({ taskId: "sequence-two",
+      goal: "Search Google for AVA multi step proof then open Lasha's Instagram chat", steps, outcome: "verified" })!;
+    const active = await f.service.activate({ candidateId: proposed.id, expectedVersion: proposed.version });
+    expect(f.service.matchActive("Open Lasha's Instagram chat")).toBeNull();
+    expect(f.service.matchActive("Search Google for AVA multi step proof then open Lasha's Instagram chat"))
+      .toMatchObject({ id: active.id });
+    const plan = f.automation.get(active.validationRunId!);
+    expect(plan?.inputSummary).toMatchObject({ sequence: { stepCount: 2, steps: [
+      { id: "step-1", tool: "chrome_google_search", targetLabel: "Google search",
+        targetFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      { id: "step-2", tool: "instagram_open_chat", targetLabel: "Open a verified Instagram conversation",
+        targetFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) },
+    ] } });
+    const run = await f.service.run({ playbookId: active.playbookId, requestKey: "sequence-run" });
+    expect(run.result.ok).toBe(true);
+    expect(f.execute).toHaveBeenCalledWith(expect.objectContaining({ schemaVersion: 2, kind: "tool_sequence",
+      steps: expect.arrayContaining([expect.objectContaining({ tool: "chrome_google_search" }),
+        expect.objectContaining({ tool: "instagram_open_chat" })]) }), undefined,
+      expect.stringMatching(/^automation_/));
     await rm(f.root, { recursive: true, force: true }); f.db.close();
   });
 
@@ -100,14 +140,22 @@ describe("approval-gated generated automation playbooks", () => {
     await rm(f.root, { recursive: true, force: true }); f.db.close();
   });
 
-  it("does not compile failed, compound, or unsupported procedures", async () => {
+  it("does not compile failed, unverified, excessive, consequential, or unsupported procedures", async () => {
     const f = await fixture();
     expect(f.service.observeVerifiedRun({ taskId: "task-one", goal: "Open chat",
       steps: [{ ...verifiedStep[0]!, ok: false }], outcome: "verified" })).toBeNull();
     expect(f.service.observeVerifiedRun({ taskId: "task-two", goal: "Open and send",
-      steps: [...verifiedStep, { tool: "instagram_send", args: { text: "hi" }, ok: true }], outcome: "verified" })).toBeNull();
+      steps: [...verifiedStep, { tool: "instagram_send", args: { text: "hi" }, ok: true,
+        verification: verified("instagram_message_dom") }], outcome: "verified" })).toBeNull();
     expect(f.service.observeVerifiedRun({ taskId: "task-three", goal: "Read a file",
-      steps: [{ tool: "fs_read", args: { path: "x" }, ok: true }], outcome: "verified" })).toBeNull();
+      steps: [{ tool: "fs_read", args: { path: "x" }, ok: true,
+        verification: verified("fs_readback") }], outcome: "verified" })).toBeNull();
+    expect(f.service.observeVerifiedRun({ taskId: "task-four", goal: "Unverified search",
+      steps: [{ tool: "chrome_google_search", args: { query: "AVA" }, ok: true }], outcome: "verified" })).toBeNull();
+    expect(f.service.observeVerifiedRun({ taskId: "task-five", goal: "Too many searches",
+      steps: Array.from({ length: 7 }, (_, i) => ({ tool: "chrome_google_search",
+        args: { query: `AVA ${i}` }, ok: true, verification: verified("chrome_google_search_url") })),
+      outcome: "verified" })).toBeNull();
     await rm(f.root, { recursive: true, force: true }); f.db.close();
   });
 
@@ -120,6 +168,12 @@ describe("approval-gated generated automation playbooks", () => {
     expect(serialized).not.toContain(secret);
     expect(serialized).toContain("sk-***");
     expect(serialized).not.toContain("Opened Lasha's verified Instagram thread");
+    expect(f.service.observeVerifiedRun({ taskId: "task-secret-query", goal: "Search safely",
+      steps: [{ tool: "chrome_google_search", args: { query: secret }, ok: true,
+        verification: verified("chrome_google_search_url") }], outcome: "verified" })).toBeNull();
+    expect(f.service.observeVerifiedRun({ taskId: "task-secret-url", goal: "Open safely",
+      steps: [{ tool: "chrome_open_url", args: { url: "https://user:password@example.com/private" }, ok: true,
+        verification: verified("chrome_open_url") }], outcome: "verified" })).toBeNull();
     await rm(f.root, { recursive: true, force: true }); f.db.close();
   });
 });

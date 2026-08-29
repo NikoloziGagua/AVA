@@ -87,7 +87,7 @@ export function buildAutomationTools(
       {
         tool: {
           name: "automation_run_playbook",
-          description: "Run one active, explicitly approved generated playbook by its exact playbook ID. Activepieces first returns a verified bounded plan; AVA then revalidates current identity data, runs the allowlisted local action, and reports the action's own evidence.",
+          description: "Run one active, explicitly approved generated playbook by its exact playbook ID. Activepieces first returns a verified bounded ordered plan; AVA then revalidates current identity and arguments, executes each allowlisted step in order, stops on the first failure, and reports actual per-step evidence.",
           inputSchema: {
             type: "object",
             properties: { playbookId: { type: "string", pattern: "^ava\\.learned\\.[a-z0-9][a-z0-9.-]{2,96}$" } },
@@ -108,6 +108,7 @@ export function buildAutomationTools(
               revision: execution.candidate.revision,
               planRunId: execution.planRunId,
               result: execution.result.text,
+              steps: execution.result.steps ?? [],
             }), ...(execution.result.verification ? { verification: execution.result.verification } : {}) };
           } catch (error) {
             const code = error instanceof GeneratedPlaybookError ? error.code : "playbook_run_failed";

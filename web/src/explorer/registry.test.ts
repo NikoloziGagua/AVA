@@ -206,7 +206,7 @@ describe("Explorer capability registry", () => {
     expect(ufo.workflow?.edges.some((edge) => edge.kind === "stop")).toBe(true);
   });
 
-  it("shows pinned and approval-gated Activepieces playbooks without an arbitrary-flow surface", () => {
+  it("shows pinned and approval-gated multi-step playbooks without an arbitrary-flow surface", () => {
     const automation = getCapability("automation.activepieces")!;
     expect(automation.runtime?.toolNames).toEqual([
       "automation_system_report",
@@ -223,6 +223,10 @@ describe("Explorer capability registry", () => {
       .toBe("Approve exact revision");
     expect(automation.workflow?.nodes.find((node) => node.toolName === "automation_run_playbook")?.name)
       .toBe("Execute active playbook");
+    expect(automation.workflow?.nodes.find((node) => node.toolName === "automation_run_playbook")?.description)
+      .toMatch(/run existing AVA tools in order.*first failed or unverified step/i);
+    expect(automation.verification.successCriteria.join(" ")).toMatch(/every retained source step/i);
+    expect(automation.verification.limitations.join(" ")).toMatch(/direct URL\/search.*Instagram open\/read/i);
     expect(automation.description).toMatch(/approval-gated/i);
     expect(automation.description).not.toMatch(/arbitrary/i);
   });

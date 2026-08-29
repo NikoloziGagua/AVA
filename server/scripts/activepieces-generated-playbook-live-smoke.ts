@@ -1,8 +1,9 @@
 /**
  * Opt-in black-box acceptance for approval-gated generated playbooks.
  *
- * This deliberately performs one read-only real action: open Lasha's Instagram
- * chat through the saved `_princi150` profile. It never types or sends content.
+ * This deliberately performs only read-only real actions: it proves the
+ * legacy Lasha chat opener, then learns and replays an ordered Google-search +
+ * Lasha-chat sequence. It never types or sends content.
  */
 import "dotenv/config";
 import { loadConfig } from "../src/config.js";
@@ -100,7 +101,17 @@ async function chat(text: string, sessionId: string | null = null, approve = fal
 function candidate(): CandidateRow | null {
   return db.prepare(`SELECT id,playbook_id,status,version,evidence_count,definition,validation_run_id
     FROM automation_playbook_candidates
-    WHERE definition LIKE '%"expectedUsername":"_princi150"%'
+    WHERE definition LIKE '%"schemaVersion":1%'
+      AND definition LIKE '%"expectedUsername":"_princi150"%'
+    ORDER BY updated_at DESC LIMIT 1`).get() as CandidateRow | undefined ?? null;
+}
+
+function sequenceCandidate(): CandidateRow | null {
+  return db.prepare(`SELECT id,playbook_id,status,version,evidence_count,definition,validation_run_id
+    FROM automation_playbook_candidates
+    WHERE definition LIKE '%"schemaVersion":2%'
+      AND definition LIKE '%"chrome_google_search"%'
+      AND definition LIKE '%"expectedUsername":"_princi150"%'
     ORDER BY updated_at DESC LIMIT 1`).get() as CandidateRow | undefined ?? null;
 }
 
@@ -116,6 +127,21 @@ function assertOpenOnly(events: StreamEvent[]): void {
   const verification = result.verification as { state?: string; method?: string } | undefined;
   assert(verification?.state === "verified" && verification.method === "instagram_thread_identity",
     `chat-opening evidence was not exact thread-identity verification (${verification?.method ?? "none"})`);
+}
+
+function assertObservedSequence(events: StreamEvent[]): void {
+  const calls = events.filter((event) => event.event === "tool_call")
+    .map((event) => String(event.data.tool));
+  const relevant = calls.filter((tool) => tool === "chrome_google_search" || tool === "instagram_open_chat");
+  assert(JSON.stringify(relevant) === JSON.stringify(["chrome_google_search", "instagram_open_chat"]),
+    `AVA did not execute the expected ordered source sequence: ${calls.join(", ")}`);
+  assert(!calls.some((tool) => /send|type|press|click/i.test(tool)),
+    `read-only sequence unexpectedly used a communication/input tool: ${calls.join(", ")}`);
+  const results = events.filter((event) => event.event === "tool_result" &&
+    relevant.includes(String(event.data.tool)));
+  assert(results.length === 2 && results.every((event) => event.data.ok === true &&
+    (event.data.verification as { state?: string } | undefined)?.state === "verified"),
+  "both source steps did not return independent verification");
 }
 
 async function main(): Promise<void> {
@@ -184,6 +210,62 @@ async function main(): Promise<void> {
       .get(active.id) as { count: number };
     assert(duplicateCount.count === 1, "repeated observations created duplicate candidates");
 
+    const sequencePrompt = "Search Google for AVA multi step playbook proof and then open Lasha's Instagram chat.";
+    let sequence = sequenceCandidate();
+    while (!sequence || sequence.evidence_count < 2) {
+      const observed = await chat(sequencePrompt, sessionId);
+      sessionId = observed.sessionId;
+      assertObservedSequence(observed.events);
+      const receipt = observed.events.find((event) => event.event === "receipt")?.data;
+      assert(receipt?.outcome === "verified" && receipt.verificationScope === "task_outcome",
+        "the observed multi-step task did not end with task-outcome verification");
+      sequence = sequenceCandidate();
+    }
+    assert(sequence.status === "proposed" || sequence.status === "failed" || sequence.status === "active",
+      `sequence candidate stayed ${sequence.status} after ${sequence.evidence_count} verified tasks`);
+
+    if (sequence.status !== "active") {
+      const activation = await chat(
+        `Use automation_playbook_activate now with candidateId ${sequence.id} and expectedVersion ${sequence.version}.`,
+        sessionId,
+        true,
+      );
+      sessionId = activation.sessionId;
+      assert(activation.events.some((event) => event.event === "tool_call" &&
+        event.data.tool === "automation_playbook_activate"), "AVA did not activate the ordered sequence");
+      assert(activation.events.some((event) => event.event === "approval_required"),
+        "sequence activation did not cross explicit approval");
+      sequence = sequenceCandidate();
+      assert(sequence?.status === "active" && sequence.validation_run_id,
+        `sequence candidate did not become active (status=${sequence?.status ?? "missing"})`);
+    }
+
+    const sequenceReplay = await chat(sequencePrompt, sessionId);
+    const sequenceCalls = sequenceReplay.events.filter((event) => event.event === "tool_call");
+    assert(sequenceCalls.length === 1 && sequenceCalls[0]!.data.tool === "automation_run_playbook",
+      `active sequence bypassed its generated playbook (${sequenceCalls.map((event) => event.data.tool).join(", ")})`);
+    const sequenceToolResult = sequenceReplay.events.find((event) => event.event === "tool_result")?.data;
+    const sequencePayload = JSON.parse(String(sequenceToolResult?.result ?? "{}")) as {
+      playbookId?: string; planRunId?: string;
+      steps?: Array<{ id?: string; tool?: string; ok?: boolean; verification?: { state?: string } }>;
+    };
+    assert(sequencePayload.playbookId === sequence.playbook_id && sequencePayload.planRunId,
+      "generated sequence did not identify its exact playbook and Activepieces plan run");
+    assert(sequencePayload.steps?.length === 2 && sequencePayload.steps.every((step) =>
+      step.ok === true && step.verification?.state === "verified"),
+    "generated sequence did not report two independently verified ordered steps");
+    assert(JSON.stringify(sequencePayload.steps.map((step) => step.tool)) ===
+      JSON.stringify(["chrome_google_search", "instagram_open_chat"]),
+    "generated sequence changed the approved tool order");
+    const sequenceRuns = db.prepare(`SELECT id,executor,status,verification_state FROM automation_runs
+      WHERE workflow_id='ava.approved-action-plan' AND id IN (?,?)`)
+      .all(sequence.validation_run_id, sequencePayload.planRunId) as Array<{
+        id: string; executor: string; status: string; verification_state: string;
+      }>;
+    assert(sequenceRuns.length === 2 && sequenceRuns.every((run) => run.executor === "activepieces" &&
+      run.status === "completed" && run.verification_state === "verified"),
+    "ordered activation and execution were not both validated by genuine Activepieces");
+
     console.log(JSON.stringify({
       ok: true,
       playbookId: active.playbook_id,
@@ -196,6 +278,10 @@ async function main(): Promise<void> {
       executor: "activepieces",
       actionTool: "automation_run_playbook",
       verification: "instagram_thread_identity",
+      orderedSequencePlaybookId: sequence.playbook_id,
+      orderedSequenceEvidenceCount: sequence.evidence_count,
+      orderedSequenceTools: sequencePayload.steps.map((step) => step.tool),
+      orderedSequencePlanRunId: sequencePayload.planRunId,
       communicationSent: false,
     }, null, 2));
   } finally {
@@ -206,4 +292,3 @@ async function main(): Promise<void> {
 }
 
 await main();
-

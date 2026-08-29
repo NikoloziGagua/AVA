@@ -75,6 +75,7 @@ function capabilitiesFor(commit: CommittedImprovement): string[] {
     [/visual/, "Visual explanations"],
     [/notes?\//, "Notes"],
     [/strategy/, "Strategy Room"],
+    [/automations?|activepieces|playbooks?/, "Automation playbooks"],
     [/explorer|capabilit/, "Explorer"],
     [/browser|chrome/, "Browser automation"],
   ];

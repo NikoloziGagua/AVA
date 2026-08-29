@@ -116,6 +116,55 @@ async function request<T>(
   return body as T;
 }
 
+/**
+ * Upload one bounded browser recording for speech-to-text dictation.
+ *
+ * This deliberately does not use the JSON request helper: the browser must set
+ * the multipart boundary itself. The result is text only; callers decide
+ * whether to place it in a draft, and this function never submits a chat turn.
+ */
+export async function transcribeAudio(audio: Blob, signal?: AbortSignal): Promise<string> {
+  const form = new FormData();
+  const mime = audio.type.split(";", 1)[0]?.toLowerCase() || "audio/webm";
+  const extension = mime === "audio/ogg" ? "ogg"
+    : mime === "audio/mp4" || mime === "audio/m4a" || mime === "audio/x-m4a" ? "m4a"
+      : mime === "audio/mpeg" ? "mp3"
+        : mime === "audio/wav" || mime === "audio/x-wav" ? "wav"
+          : "webm";
+  form.append("audio", audio, `dictation.${extension}`);
+
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set("authorization", `Bearer ${token}`);
+
+  let response: Response;
+  try {
+    response = await fetch("/api/transcribe", {
+      method: "POST",
+      headers,
+      body: form,
+      signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    const action = "Check AVA's connection and try dictation again.";
+    throw new ApiError(0, `AVA could not transcribe the recording. ${action}`, "server_unreachable", action, "/api/transcribe");
+  }
+
+  const raw = await response.text();
+  let body: { text?: unknown; error?: unknown } = {};
+  try { body = raw ? JSON.parse(raw) as typeof body : {}; } catch { /* handled below */ }
+  if (!response.ok) {
+    if (response.status === 401) handleUnauthorized();
+    const message = typeof body.error === "string" ? body.error : `transcription returned HTTP ${response.status}`;
+    throw new ApiError(response.status, message, "transcription_failed", "Try recording again.", "/api/transcribe");
+  }
+  if (typeof body.text !== "string" || !body.text.trim()) {
+    throw new ApiError(502, "AVA could not hear any clear speech in that recording.", "empty_transcription", "Try recording again.", "/api/transcribe");
+  }
+  return body.text.trim();
+}
+
 export const api = {
   pair: (code: string, label: string) =>
     request<{ token: string; deviceId: string }>("/api/auth/pair", {

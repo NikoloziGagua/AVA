@@ -8,6 +8,7 @@ import {
   fetchMissionExport,
   fetchSessions,
   saveMissionExport,
+  transcribeAudio,
   type MissionEvidenceExport,
 } from "./api.js";
 import { setToken, getToken } from "./auth/tokens.js";
@@ -49,6 +50,37 @@ describe("api 401 recovery", () => {
     } finally {
       window.removeEventListener("ava:unauthorized", seen);
     }
+  });
+});
+
+describe("composer dictation API", () => {
+  it("uploads authenticated multipart audio without forcing a JSON content type", async () => {
+    setToken("dictation-token");
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ text: "exact spoken words" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+
+    await expect(transcribeAudio(new Blob(["audio"], { type: "audio/webm" })))
+      .resolves.toBe("exact spoken words");
+
+    const mock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const [path, init] = mock.mock.calls[0] as [string, RequestInit];
+    const headers = new Headers(init.headers);
+    expect(path).toBe("/api/transcribe");
+    expect(init.method).toBe("POST");
+    expect(headers.get("authorization")).toBe("Bearer dictation-token");
+    expect(headers.has("content-type")).toBe(false);
+    expect(init.body).toBeInstanceOf(FormData);
+  });
+
+  it("rejects an empty transcription instead of inserting fake draft text", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ text: "   " }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+    await expect(transcribeAudio(new Blob(["audio"], { type: "audio/webm" })))
+      .rejects.toMatchObject({ code: "empty_transcription" });
   });
 });
 

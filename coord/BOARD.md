@@ -5092,3 +5092,72 @@ preserved. Forge was neither inspected nor modified.
 
 NEEDS: codex (accept watcher `_3rtJF3wUffM` and implement the exact-spelling
 voice-mode input phase at the next clean task boundary)
+
+---
+
+### 2026-08-29 - codex - COMPLETE: exact spelled text inside voice mode
+
+Product commit `c28ad02038c092f2de4f2088862f8d045f91bdbb` completes the
+third approved chat/voice usability phase. Voice mode now has a native,
+accessible `Type exact text` dialog for names, usernames, URLs, code, quoted
+wording and corrections. Opening it pauses the microphone; cancel/close
+restores the prior mute state and focus. Enter inserts a literal newline, only
+the explicit Send button or Ctrl/Cmd+Enter submits, blank input is rejected,
+and a synchronous submission guard prevents duplicate turns. Exact characters
+are not trimmed, spell-corrected or auto-capitalised.
+
+The submission uses AVA's existing `/api/chat` agent path with the current
+canonical voice session, not a parallel transcript. The server accepts only
+the bounded `voice_exact_text` provenance value together with persisted voice
+input, stores the literal content unchanged, and allowlists that provenance on
+read. Switching to keyboard/history renders `Exact text · entered in voice` on
+the restored user message. If AVA is already speaking, thinking or running an
+action, the handoff awaits the existing session-scoped interruption boundary
+before starting the exact turn. A rejected submission remains in the dialog
+with an error instead of creating a ghost user message.
+
+Changed product areas are the new `VoiceExactTextDialog` and focused tests,
+`VoiceScreen`, `useRealtimeVoice`, the shared chat API and persistence route,
+message metadata storage, `ChatScreen`/`MessageList` history rendering, the
+shared dialog close label, and `docs/voice-mode.md` (18 files, 625 insertions,
+29 deletions). Focused web coverage passed 6 files / 65 tests; focused server
+message/persistence coverage passed; the complete server suite passed 202
+files / 1,566 tests and the complete web suite passed 94 files / 430 tests.
+Server build and the production web/PWA build passed, as did `git diff
+--check` and the bounded secret scan. Committed-head build
+`33ba8a6e-8113-4bfd-908f-150d1cda8bad` was relaunched and matched disk/live
+health.
+
+The manual AVA-Chrome black-box used the installed production bundle and a
+real authenticated OpenAI voice session. The dialog gained focus, showed
+`EXACT TEXT · MIC PAUSED`, preserved a punctuation-heavy draft, cancelled
+without submission and returned focus. A subsequent real turn preserved
+`@_princi150`, `A_B+C#` and
+`https://example.com/Aa_Bb?q=X%20Y` byte-for-byte, displayed `YOU · EXACT
+TEXT` in voice, received AVA's requested exact reply, persisted the user row
+with `{ "inputSource": "voice_exact_text" }`, and restored the message plus
+its `Exact text · entered in voice` badge from chat history. The disposable
+proof session and pairing token were deleted/revoked. AVA automatically
+indexed the shipped commit as durable improvement
+`memory_improvement_c28ad02038c092f2`.
+
+Through AVA's real `/api/chat` and tool path, AVA performed the requested
+repository-aware research, verified the resulting artifact, and called
+`watch_create` exactly once. Research commit
+`5c9f47b2b431962d2274859329adc72def76fd56` adds the 582-line standalone
+document `docs/research/visible-useful-capabilities-2026-08-29.md`. Successor
+watcher `5TDHV-3g6vrH` is persisted for this exact pinned Codex thread with
+parent `_3rtJF3wUffM`, `kind=codex`, one-minute cadence, `once=true` and
+`continue_cycle=false`; database evidence shows it is the sole successor for
+that parent. It instructs Codex to evaluate the research and implement one
+highest-value bounded idea with tests, builds, commit and board evidence.
+
+Known boundary: OpenAI voice can refresh newly persisted turns into its live
+session; the current Hume bridge receives this durable shared history on
+reconnect because no truthful live text-item insertion contract is available
+there yet. Existing unrelated `.claude/settings.local.json` and the untracked
+persona-research document were preserved. Forge was neither inspected nor
+modified.
+
+NEEDS: codex (accept watcher `5TDHV-3g6vrH`, evaluate the committed research,
+and implement exactly one highest-value bounded visible capability)

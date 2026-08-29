@@ -4859,3 +4859,102 @@ preserved. Forge was neither inspected nor modified.
 
 NEEDS: niko (use `Open Lasha's Instagram chat` normally; AVA will now run the
 active learned playbook automatically. No immediate action is otherwise needed.)
+
+---
+
+### 2026-08-29 - codex - CLAIM: verified multi-step automatic playbook compiler
+
+Niko authorized expanding the just-shipped single-action Activepieces learner.
+The Activepieces/automatic-playbook area remains Codex-owned and no other active
+claim covers this successor increment. I am extending the canonical candidate
+definition from one hard-coded Instagram action to a versioned ordered sequence
+whose supported step types are declared through a bounded compiler/executor
+registry rather than provider-authored code or arbitrary flow IDs.
+
+The first sequence registry will cover independently verifiable deterministic
+browser destinations/searches plus profile-first Instagram open/read operations.
+Every retained source step must have its own successful verification evidence;
+failed, uncertain, unverified, secret-bearing, unsupported, excessive, or
+consequential send/type/click/shell/file-write steps will not compile. Two
+distinct verified runs and Niko's existing explicit activation approval remain
+mandatory. Activepieces will validate and hash-preserve the complete ordered
+plan; AVA will revalidate live identities/arguments, execute each step through
+the existing authoritative tool implementation, stop on the first failure, and
+aggregate only actual step evidence. Existing schema-1 Lasha playbooks will
+remain runnable. Acceptance includes deterministic heterogeneous/multi-step,
+restart/replay/stale/partial-failure/privacy tests and a harmless live AVA test
+that opens Lasha's chat without typing or sending anything. Unrelated local
+changes will be preserved; Forge remains outside scope.
+
+NEEDS: codex (implement, test through genuine Activepieces and live AVA, commit,
+and append exact acceptance evidence)
+
+---
+
+### 2026-08-29 - codex - COMPLETE: verified multi-step automatic playbook compiler
+
+Product commit `fbccf0eff486ecf256d7ccc413db7043deb918c9` expands the
+automatic Activepieces learner from one hard-coded Instagram action to a
+versioned, ordered one-to-six-step plan. The closed registry currently accepts
+`chrome_open_url`, `chrome_google_search`, `chrome_youtube_search`,
+`instagram_open_chat`, and `instagram_read_chat`. It reuses those tools'
+authoritative implementations; generated definitions cannot supply code,
+selectors, flow IDs, sends, typing, clicks, shell, or file mutation.
+
+Every retained source step now carries its own typed verifier from the real
+tool-result boundary. Failed, unverified, unsupported, excessive,
+credential-bearing, or malformed procedures do not become candidates. Two
+distinct verified task IDs and Niko's explicit, stale-version-protected
+approval are still required. Activepieces receives only generic operation
+labels plus SHA-256 argument/definition/evidence fingerprints, validates the
+stable step order, and returns a plan artifact that AVA reads back and
+hash-verifies. Raw search queries, URLs, people identities, and result content
+remain inside AVA. Local execution uses unique run/step owner IDs, stops on the
+first failed or unverified step, and exposes bounded per-step evidence.
+
+Schema-1 Lasha playbooks remain compatible. Matching now separates simple and
+compound requests in both directions: a one-step playbook cannot swallow a
+compound request, and a multi-step playbook cannot add extra actions to a
+simple request. The committed restart smoke caught the latter regression and
+the final matcher plus regression test fixed it before completion.
+
+The genuine Activepieces 0.88.3 flow was reprovisioned successfully. Live AVA
+observed `Search Google for AVA multi step playbook proof and then open Lasha's
+Instagram chat` twice, produced candidate
+`automation_candidate_1f081138196b5f8daf`, crossed explicit approval, and
+activated `ava.learned.sequence.1f081138196b` through plan run
+`automation_zaB0QeGwSvwPj_9aC4`. After restart, the final black-box smoke proved
+the legacy Lasha request executed only its one approved step (plan run
+`automation_VOEs2maCcmmq8cnqqm`) while the compound request executed exactly
+`chrome_google_search -> instagram_open_chat` in order (plan run
+`automation_6YG0A1JnUCv6fRfScO`). Both sequence steps returned independent
+verification; the harness rejected communication/input tools and reported
+`communicationSent: false`.
+
+Changed areas: generated candidate schema/compiler/matcher; a new data-driven
+executor and tests; chat evidence capture; Activepieces typed snapshot,
+renderer, validator and genuine provisioner; server composition and automation
+tools; system prompt; live acceptance harness; documentation; Explorer
+registry/tests/verified manifest; and improvement-index capability labeling.
+The final commit was automatically indexed as verified improvement
+`improvement_fbccf0eff486ecf256d7` with Semantic memory, Automation playbooks,
+and Explorer capability labels.
+
+Verification: final focused matcher/chat tests passed 17/17; generated
+executor/compiler/plan/index focus passed 21/21; complete server passed 202
+files / 1,563 tests; complete web passed 91 files / 414 tests; server TypeScript
+and production web/PWA builds passed. Explorer contract/reality passed at 35
+capabilities, 78/78 tools, 29/29 routes, 123 verified source references and
+zero broken references. Genuine Activepieces provisioning, two committed-head
+relaunches with exact build-ID matches, live learning/approval/execution,
+restart persistence, `git diff --check`, and the bounded secret scan passed.
+
+Known boundary: automatic compilation is deliberately data-driven but still a
+closed registry; adding a new step family requires an authoritative AVA tool,
+an independent verifier, and tests. Messaging and arbitrary Activepieces flows
+remain outside this learner. Existing unrelated `.claude/settings.local.json`
+and the untracked persona research document were preserved. Forge was neither
+inspected nor modified.
+
+NEEDS: niko (use the learned compound request normally, or repeat another safe
+supported routine twice and approve its candidate when AVA presents it)

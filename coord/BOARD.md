@@ -4672,3 +4672,101 @@ automation configured and available now?`; both should now use the real runtime)
 ADDENDUM: the ordinary committed-head boot reconciler also indexed product
 commit `160611d...` as verified durable improvement record
 `improvement_160611d2fd5b39364a4e` (`Run genuine Activepieces report`).
+
+---
+
+### 2026-08-29 - codex - CLAIM: reusable Activepieces playbooks and operations brief
+
+Niko authorized continuing beyond the single genuine system-health report. I
+read the complete board and inspected current ownership: the Activepieces area
+is unowned by another active agent, so I am continuing the existing Codex-owned
+automation slice. This increment will turn the one-off pinned path into a small
+typed workflow registry and add exactly one second useful playbook: a read-only
+AVA operations brief assembled from bounded non-secret operational facts.
+
+AVA remains the only request, routing, policy, evidence, receipt, Mission
+Control, artifact-verification and memory-index authority. Activepieces may run
+only declared workflow IDs and versions; arbitrary flow execution and arbitrary
+payloads remain unavailable. Acceptance requires both workflows to execute in
+the genuine local Activepieces runtime, independent artifact/hash verification,
+idempotency, restart behavior, honest status per workflow, complete focused and
+broader tests/builds, a committed-HEAD boot, and authenticated black-box AVA
+requests. Existing unrelated settings and persona-research changes will be
+preserved. Forge is outside scope and will not be inspected or modified.
+
+NEEDS: codex (implement, test through real AVA and Activepieces, commit, and
+record exact completion evidence)
+
+---
+
+### 2026-08-29 - codex - COMPLETE: reusable Activepieces playbooks and operations brief
+
+Product commits `5d49ba07764ec2680e413d3d9a0ce3a79894f47b` and
+`306a96169f670dbf4a3beef9139857fda557be44` turn the one-off report path into
+a small typed playbook system and add one second genuine workflow,
+`ava.operations-brief` v1. AVA now owns a registry of exact workflow IDs and
+versions, separate per-workflow health and endpoints, bounded typed snapshots,
+artifact-shape validation, request-key idempotency, filesystem readback/hash
+verification, Mission Control evidence and durable memory indexing. Arbitrary
+Activepieces flow IDs and arbitrary payloads remain unavailable.
+
+The new operations brief sends only aggregate operational counts (24-hour
+Mission Control outcomes/verification, approvals, blocked work, Notes board,
+Self, watches and verified memory-source counts). It never sends task prompts,
+titles, message content, raw errors or credentials. Activepieces renders the
+pinned `# AVA Operations Brief` artifact with Last 24 hours, Attention, and
+Work and knowledge sections. AVA independently reads and hashes the result,
+records the immutable artifact, indexes it as a verified memory source, and
+projects the child run into Mission Control. The existing system-health report
+uses the same generic service and remains backward compatible.
+
+Tracked areas changed: `.env.example`; Activepieces feature documentation and
+setup launcher; server package commands; the idempotent two-flow provisioner
+and black-box smoke; automation types, generic executor, playbook service,
+bounded snapshot builder and tests; server composition/config; policy,
+timeout, intent classifier and tool rubric; the three automation tools; and
+Explorer registry/tests/verified manifest. The setup idempotently retained
+system flow `L9huWL2OlQcewwTs2A1q3` and created operations-brief flow
+`fYKBF5YMYY6UYAF1DqwO0` in genuine Activepieces 0.88.3.
+
+Verification: automation/policy/Explorer focus passed 7 files / 60 tests;
+voice-routing follow-up passed 3 files / 28 tests; complete server passed 200
+files / 1,544 tests; complete web passed 91 files / 414 tests; server TypeScript
+and production web/PWA builds passed. Explorer contract/reality passed at 35
+capabilities, 76/76 tools, 29/29 routes, 121 verified source references and
+zero broken references. `git diff --check` and bounded secret/privacy scans
+passed. The only matching scan lines were expected empty environment
+placeholders, runtime header construction, and a deliberately fake redaction
+test value.
+
+The first committed-head black-box run deliberately exposed a real regression:
+typed chat reached the new tool, but conservative voice routing classified
+`Create AVA's operations brief...` as conversation and produced no tool call.
+Commit `306a961...` added explicit pinned-playbook voice intent patterns and
+regression tests; the smoke was not weakened. After that fix, committed HEAD
+booted with matching build identity and the genuine test passed. Activepieces'
+entire API/engine/worker process set was then stopped, restarted from its pinned
+source runtime, and the same test passed again.
+
+Final cold-restart evidence: system task `vfaZE8A_lRf8` created real run
+`automation_Dd3PECCYu1ntXXCpGF`, verified artifact SHA-256
+`42940ec291ba1b8bc5cb3fde5b8b886d4d65669fc954548094bc4a4c3e5fdf77`,
+memory entry `memory_artifact_Dd3PECCYu1ntXXCpGF`, and Mission Control child
+`automation-run-automation_Dd3PECCYu1ntXXCpGF`. The voice-origin operations
+brief task `bTvXLN5irB6P` created real run
+`automation__7VuNa7uljFbOlZMQT`, verified SHA-256
+`8ff2ebbc7d6fed97bda9349cedefd678dfd04a1e098ed07944267631bcff7126`,
+memory entry `memory_artifact_n7VuNa7uljFbOlZMQT`, and Mission Control child
+`automation-run-automation__7VuNa7uljFbOlZMQT`. Status reported both pinned
+workflows configured and available. Ordinary boot reconciliation also indexed
+both product commits as verified durable AVA improvements.
+
+Known boundary: this is intentionally a reusable *declared-playbook* system,
+not permission to execute any arbitrary Activepieces flow. New workflows can
+now be added through one typed registry/contract path. Synchronous AP webhooks
+still do not report trustworthy provider cost/usage, so AVA leaves those fields
+unavailable. Unrelated `.claude/settings.local.json` and the untracked persona
+research document were preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (test in AVA with `Create AVA's operations brief for the last 24
+hours`, by chat or voice, and `Which Activepieces playbooks are available?`)

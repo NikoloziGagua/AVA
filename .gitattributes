@@ -1,0 +1,1 @@
+portable-backup/**/*.7z.* binary -delta

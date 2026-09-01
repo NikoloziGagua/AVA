@@ -184,7 +184,7 @@ describe("Explorer learned workflow integration", () => {
       expect(apiMocks.fetchExplorerLearnedWorkflows).toHaveBeenCalledTimes(1);
     });
 
-    expect(screen.getByText(/One conversation\. Your computer, accounts, memory and projects/i)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: /AVA CAN ACT\. REMEMBER\. PROVE\./i })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Map" }));
     fireEvent.click(screen.getByRole("button", { name: "Drill into browser" }));
     expect(screen.getByTestId("atlas-selection").textContent).toContain(

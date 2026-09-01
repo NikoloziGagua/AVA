@@ -46,6 +46,49 @@ You ask -> AVA routes -> AVA acts -> AVA checks
 
 This is an explanation of observable execution, not hidden reasoning.
 
+## 2026-09 newcomer remodel
+
+The verified model above remains intact, but the entrance no longer presents
+every idea as an equally weighted dashboard card. The remodel adopts a guided
+editorial structure:
+
+1. **Editorial promise** - an asymmetric opening frame explains that AVA can
+   act, remember and show evidence, with four concrete defining abilities in
+   the first viewport.
+2. **Live system portrait** - a lightweight CSS/SVG constellation connects AVA
+   to the five outcome areas. Node labels and status summaries come from the
+   same registry/runtime adapter as the rest of Explorer; the connector graphic
+   is decorative and never substitutes for textual status.
+3. **Real starting actions** - four examples launch through normal AVA chat.
+   Known setup-required or unavailable examples open their capability evidence
+   instead of pretending they can run.
+4. **Progressive capability chapters** - one of the five outcome stories is
+   visible at a time. Each chapter shows a plain-language operational flow,
+   exact registry capabilities with live readiness and launchable examples.
+5. **Evidence ladder** - declared capabilities, mapped workflows, runtime
+   checks and task records are presented as different evidence levels. A task
+   count is explicitly not described as verified success.
+
+The full Atlas, Activity and Health views remain the deeper operational system.
+The remodel changes hierarchy and comprehension, not the source of truth.
+
+The design research and rejected alternatives are recorded in
+`docs/reviews/2026-09-01-explorer-remodel-design-research.md`.
+
+## Interaction and accessibility
+
+- Outcome selection uses a real tablist/tab/tabpanel relationship.
+- Arrow keys move to adjacent outcomes; Home and End move to the first and last.
+- Orbit nodes are optional shortcuts to the same chapters and have complete
+  accessible labels including their summarized readiness.
+- No content auto-advances.
+- Ambient connector movement is CSS-only and stops under
+  `prefers-reduced-motion: reduce`; AVA's in-app reduced setting also parks the
+  shared panel animation in its final state.
+- At narrow widths the hero, actions, chapters and evidence sections reflow to
+  one column. The 2D system portrait stays contained inside its own card and
+  does not cause page-level horizontal scrolling.
+
 ## Truth and privacy boundaries
 
 - A source declaration is not shown as proof of successful use.

@@ -18,6 +18,22 @@ and every other file present while AVA was quiesced.
   GitHub's ordinary per-file limit after the repository's LFS budget rejected
   the direct upload
 
+## Final current-state delta — 2026-09-01
+
+The baseline upload took long enough that runtime state advanced and one new
+Codex agent file appeared afterward. AVA was quiesced again and every file
+created or modified since the baseline cutoff was captured in a second
+AES-256 archive with encrypted filenames:
+
+- Changed or created files: `2,223`
+- Uncompressed bytes: `176,467,684`
+- Encrypted delta bytes: `37,199,460`
+- Integrity result: 7-Zip reported `Everything is Ok` for all 2,223 entries
+- Checksum: `DELTA-SHA256SUMS.txt`
+
+Apply this delta after extracting the baseline to obtain the final captured
+runtime data and coordination state.
+
 The encryption key is intentionally not stored in GitHub. Keep the separately
 provided key. Without it, neither the inner archive's filenames nor contents
 can be recovered.
@@ -38,6 +54,12 @@ can be recovered.
 
    ```powershell
    & 'C:\Program Files\7-Zip\7z.exe' x '.\inner\AVA-full-20260830.7z.001' '-pYOUR-SEPARATE-KEY' '-oC:\Users\nikug\ai'
+   ```
+
+6. Overlay the encrypted final delta into the restored AVA directory:
+
+   ```powershell
+   & 'C:\Program Files\7-Zip\7z.exe' x '.\AVA-delta-20260901.7z.001' '-pYOUR-SEPARATE-KEY' '-oC:\Users\nikug\ai\AVA' -aoa
    ```
 
 The final extraction creates the top-level `AVA` directory, including its

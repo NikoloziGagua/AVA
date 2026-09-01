@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -24,7 +24,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { ApiError } from "../api.js";
+import { ApiError, fetchMemoryIndex, type MemoryIndexSearchResponse } from "../api.js";
 import { BorderGlow } from "../components/ava/BorderGlow.js";
 import { PanelShell } from "../components/ava/PanelShell.js";
 import { Button } from "../components/ui/button.js";
@@ -47,6 +47,7 @@ import {
   type NoteStage,
   type NotesSnapshot,
 } from "./api.js";
+import { ProjectBrief } from "./ProjectBrief.js";
 
 const STAGE = {
   ideas: { label: "Ideas", icon: Lightbulb, color: "#f6c76c", hint: "Captured and ready to shape" },
@@ -92,7 +93,7 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
   );
 }
 
-export function NotesScreen({ onStartTask }: { onStartTask: (prompt: string) => void }) {
+export function NotesScreen({ onStartTask, onOpenChat }: { onStartTask: (prompt: string) => void; onOpenChat?: (sessionId: string) => void }) {
   const [snapshot, setSnapshot] = useState<NotesSnapshot | null>(null);
   const [selected, setSelected] = useState("general");
   const [query, setQuery] = useState("");
@@ -103,6 +104,10 @@ export function NotesScreen({ onStartTask }: { onStartTask: (prompt: string) => 
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [projectMemory, setProjectMemory] = useState<MemoryIndexSearchResponse | null>(null);
+  const [projectMemoryLoading, setProjectMemoryLoading] = useState(false);
+  const [projectMemoryError, setProjectMemoryError] = useState<string | null>(null);
+  const projectMemoryRequest = useRef(0);
 
   const load = async (quiet = false) => {
     try {
@@ -124,13 +129,45 @@ export function NotesScreen({ onStartTask }: { onStartTask: (prompt: string) => 
   }, []);
 
   const project = snapshot ? selectedProject(snapshot, selected) : null;
-  const spaceNotes = useMemo(() => {
+
+  const loadProjectMemory = async (projectName: string) => {
+    const request = ++projectMemoryRequest.current;
+    setProjectMemoryLoading(true);
+    setProjectMemoryError(null);
+    try {
+      const result = await fetchMemoryIndex(projectName);
+      if (request === projectMemoryRequest.current) setProjectMemory(result);
+    }
+    catch (cause) {
+      if (request === projectMemoryRequest.current) {
+        setProjectMemory(null);
+        setProjectMemoryError(cause instanceof Error ? cause.message : "Indexed project knowledge could not be loaded.");
+      }
+    } finally {
+      if (request === projectMemoryRequest.current) setProjectMemoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!project) {
+      projectMemoryRequest.current += 1;
+      setProjectMemory(null);
+      setProjectMemoryError(null);
+      setProjectMemoryLoading(false);
+      return;
+    }
+    setProjectMemory(null);
+    void loadProjectMemory(project.name);
+  }, [project?.id, project?.name]);
+  const projectNotes = useMemo(() => {
     if (!snapshot) return [];
+    return snapshot.notes.filter((note) => note.status !== "archived" && noteMatchesSpace(note, selected));
+  }, [snapshot, selected]);
+  const spaceNotes = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
-    return snapshot.notes.filter((note) => note.status !== "archived" && noteMatchesSpace(note, selected))
-      .filter((note) => !needle || [note.title, note.content, note.kind, ...note.tags]
+    return projectNotes.filter((note) => !needle || [note.title, note.content, note.kind, ...note.tags]
         .join(" ").toLocaleLowerCase().includes(needle));
-  }, [snapshot, selected, query]);
+  }, [projectNotes, query]);
 
   const perform = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -279,6 +316,17 @@ export function NotesScreen({ onStartTask }: { onStartTask: (prompt: string) => 
         </div>
 
         {project && (
+          <>
+          <ProjectBrief
+            project={project}
+            notes={projectNotes}
+            memory={projectMemory}
+            memoryLoading={projectMemoryLoading}
+            memoryError={projectMemoryError}
+            onRetryMemory={() => void loadProjectMemory(project.name)}
+            onOpenNote={(note) => setEditor({ note, projectId: note.projectId, section: note.section })}
+            onOpenChat={onOpenChat}
+          />
           <div className="mb-5 grid grid-cols-2 gap-2 xl:grid-cols-4">
             {NOTE_SECTIONS.map((section) => {
               const meta = SECTION[section];
@@ -294,6 +342,7 @@ export function NotesScreen({ onStartTask }: { onStartTask: (prompt: string) => 
               );
             })}
           </div>
+          </>
         )}
 
         {pinned.length > 0 && (

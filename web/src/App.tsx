@@ -356,7 +356,7 @@ export function App() {
             exit={exitTo}
             transition={enterT}
           >
-            <NotesScreen onStartTask={(text) => openNewChat(text)} />
+            <NotesScreen onStartTask={(text) => openNewChat(text)} onOpenChat={(sessionId) => openChat(sessionId)} />
           </motion.div>
         )}
         {view.name === "strategy" && (

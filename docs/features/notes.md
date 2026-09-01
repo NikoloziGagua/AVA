@@ -22,6 +22,27 @@ arranged for project work.
 Each note may contain a title, rich plain-text content, kind, section, stage,
 tags, safe HTTP(S) links, pinned state, source metadata and a bounded change log.
 
+## Connected project brief
+
+Selecting a project opens a collapsible **Project brief** above its existing
+template and Kanban board. The Brief is a read-only composition over data AVA
+already owns:
+
+- priorities, open work, decisions and stable context come from the current
+  project Notes;
+- indexed knowledge comes from the existing authenticated memory-index route,
+  explicitly scoped to the project's name;
+- a second client-side scope check excludes personal and other-project entries;
+- every memory shows verified, changed, unavailable or governance-excluded
+  status, with its evidence reason in collapsed details;
+- conversation-backed memory can return directly to its source chat.
+
+The Brief does not generate an AI summary, copy records into a new project
+database, or make memory-governance changes. A failure in memory retrieval is
+shown locally and never hides or disables project Notes. Async responses are
+versioned in the client so a slow result from a previously selected project
+cannot appear in the current workspace.
+
 ## Working with AVA
 
 AVA exposes four Notes tools in text and voice task runs:

@@ -5260,3 +5260,45 @@ neither inspected nor modified.
 
 NEEDS: niko (use the new Watches item in AVA; no successor implementation is
 scheduled by this bounded research watcher)
+
+---
+
+### 2026-09-01 - codex - COMPLETE: encrypted full-folder GitHub backup
+
+Niko requested a portable copy of the complete local AVA folder, including
+ignored runtime state, `.env`, databases, browser/session data, dependencies,
+logs and Git metadata. Repository verification found that the configured
+GitHub repository was public rather than private, so no raw credentials or
+session material were committed. AVA was quiesced and the complete folder was
+captured in an AES-256 7z archive with encrypted filenames; AVA and the pinned
+Activepieces runtime were then restarted and both returned healthy.
+
+The quiesced source contained 68,773 folders and 379,609 files totalling
+9,574,632,618 bytes. The encrypted archive is 5,151,029,352 bytes across three
+inner volumes. A full 7-Zip integrity pass re-read all 379,609 files and
+reported `Everything is Ok`. SHA-256 checksums were recorded for the encrypted
+inner volumes. Because GitHub rejected the direct LFS upload with `repository
+exceeded its LFS budget`, the already-encrypted archive was wrapped without
+recompression into 55 ordinary Git-safe chunks of at most 90 MiB, with a
+second complete SHA-256 manifest and tested wrapper integrity.
+
+The normal `master` history was first synchronized from local commit
+`c86c1a2c34a631dc97d3258957e6b3d721df86cc`; this pushed all 337 commits that
+were absent from GitHub. The full portable snapshot is on remote branch
+`backup/full-20260830-git` at commit
+`0966187742d3a54ff51d928716098959d4738a5b`. A post-push fetch and `ls-remote`
+comparison proved the advertised remote ref equals the local completed head;
+the remote tree contains the exact contiguous 001-055 chunk inventory plus
+`README.md`, `SHA256SUMS.txt` and `INNER-SHA256SUMS.txt`. Restore instructions
+are committed with the snapshot. The decryption key is deliberately stored
+only outside the repository and will be handed directly to Niko.
+
+Existing unrelated `.claude/settings.local.json`, `.codex/agents/`, and the
+untracked persona-research document were not committed to `master`; their
+state at snapshot time is carried only inside the encrypted full-folder
+archive. No raw `.env`, token, cookie, credential or browser session was added
+to ordinary Git history.
+
+NEEDS: niko (save the separately supplied archive key somewhere reachable
+abroad and change the GitHub repository visibility if a private source remote
+is still desired)

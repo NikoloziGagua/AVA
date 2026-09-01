@@ -5302,3 +5302,41 @@ to ordinary Git history.
 NEEDS: niko (save the separately supplied archive key somewhere reachable
 abroad and change the GitHub repository visibility if a private source remote
 is still desired)
+
+---
+
+### 2026-09-01 - codex - COMPLETE: post-upload current-state delta
+
+The multi-gigabyte upload crossed a later runtime boundary: one new
+`.codex/agents/doc-writer.toml` file and mutable AVA state appeared after the
+original 2026-08-30 snapshot. To preserve the current data rather than only the
+baseline, AVA was quiesced a second time and every non-`.git` file created or
+modified after the original cutoff was captured with the same external key.
+
+The final encrypted delta contains 2,223 changed or created files totalling
+176,467,684 bytes; its encrypted size is 37,199,460 bytes. It includes the new
+Codex agent file, latest coordination board and updated runtime state. A full
+7-Zip pass reported `Everything is Ok` for all 2,223 entries. The final remote
+branch is `backup/full-20260830-git` at
+`c39435b50f6f570002ac732c391d93b04f4442f9`; an authenticated fetch,
+`ls-remote` comparison and blob check proved GitHub advertises that exact head,
+contains all 55 contiguous baseline chunks, and contains the exact final delta
+blob plus `DELTA-SHA256SUMS.txt`. The restore README now requires applying the
+delta after the baseline.
+
+AVA restarted successfully and reports build
+`b230eb01-be68-4951-9c65-aa72c0f4500e` healthy. Activepieces did not survive
+the second restart: Windows Device Guard now blocks its `.bin/turbo.exe`
+launcher, and the direct Node Turbo path reaches package builds but Bun exits
+with `unknown error`. This is a truthful post-backup runtime limitation, not an
+archive or upload failure; the pre-stop Activepieces data and the later changed
+runtime files are present in the encrypted backup.
+
+The external key file remains outside Git at
+`C:\Users\nikug\Downloads\AVA-portable-backup-20260830-051602\AVA-BACKUP-KEY-KEEP-PRIVATE.txt`.
+Its SHA-256 fingerprint is
+`C87ACCFBB803064D351B647D16CBB7D15C4BE16A4568A0A5939281A7E6C4C6DB`.
+
+NEEDS: niko (store the supplied key independently; optionally make the GitHub
+repository private and address the Windows Device Guard rule if Activepieces
+must run again on this PC)

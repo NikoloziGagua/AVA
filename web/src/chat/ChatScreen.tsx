@@ -17,7 +17,7 @@ export interface ChatScreenProps {
   sessionId: string | null;
   /** When opening a fresh chat from the home command bar: auto-send this once. */
   initialText?: string;
-  // Navigation now lives in the persistent TubelightNav (App.tsx). These props
+  // Navigation now lives in the persistent AppSidebar (App.tsx). These props
   // are kept inert so the App.tsx call site doesn't need to change.
   onOpenSessions: () => void;
   onOpenRules: () => void;
@@ -25,6 +25,8 @@ export interface ChatScreenProps {
   onOpenList?: () => void;
   /** Continue this exact canonical conversation using speech input. */
   onEnterVoice?: (sessionId: string | null) => void;
+  /** Reports the canonical server session once a fresh draft becomes durable. */
+  onSessionChange?: (sessionId: string) => void;
   onOpenStrategy?: (sessionId: string) => void;
   onOpenVisual?: (visualId: string) => void;
 }
@@ -56,6 +58,7 @@ export function ChatScreen({
   sessionId: requestedSessionId,
   initialText,
   onEnterVoice,
+  onSessionChange,
   onOpenStrategy,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -125,6 +128,7 @@ export function ChatScreen({
         seededLastAssistantRef.current = latestAssistantAfterLastUser(data.messages);
         setHistory(loaded);
         setSessionId(requestedSessionId);
+        onSessionChange?.(requestedSessionId);
         setRunEpoch(0);
         setTaskId(null);
         setVisualsByEpoch({});
@@ -138,7 +142,7 @@ export function ChatScreen({
         setLoadError(e);
       });
     return () => { cancelled = true; };
-  }, [requestedSessionId, reloadNonce]);
+  }, [onSessionChange, requestedSessionId, reloadNonce]);
 
   // Promote a completed run's final into history exactly once.
   // Bug fix: previously the lastFinal lived in `events` only; on the next
@@ -332,6 +336,7 @@ export function ChatScreen({
     try {
       const r = await api.sendMessage(sessionId, text, { visualContext });
       setSessionId(r.sessionId);
+      onSessionChange?.(r.sessionId);
       setTaskId(r.taskId ?? null);
       setRunEpoch((n) => n + 1);
       if (visualContext && attachedVisualContext === visualContext) setAttachedVisualContext(null);

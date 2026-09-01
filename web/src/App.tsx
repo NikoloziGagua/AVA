@@ -1,8 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Plus, List, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen, Presentation, AlarmClock } from "lucide-react";
+import { Home, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen, Presentation, AlarmClock } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
-import { TubelightNav, type TubelightItem } from "./components/ava/TubelightNav.js";
+import { AppSidebar, type AppSidebarItem } from "./components/ava/AppSidebar.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
 import { useReducedMotion } from "./lib/useReducedMotion.js";
 import { getToken } from "./auth/tokens.js";
@@ -43,8 +43,23 @@ type View =
 // otherwise entering chat would capture the still-exiting orbit orb and the next
 // orb view would Flip from a stale snapshot.
 const VIEWS_WITH_ORB = ["splash", "orbit", "voice"];
+const LAST_CHAT_STORAGE_KEY = "ava:last-chat-session";
+const SIDEBAR_STORAGE_KEY = "ava:sidebar-expanded";
 
-/** Which nav lamp to light for a view. Voice/splash return undefined (no nav). */
+function readStoredChat(): string | null {
+  try { return window.localStorage.getItem(LAST_CHAT_STORAGE_KEY); }
+  catch { return null; }
+}
+
+function readSidebarPreference(): boolean {
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
+    if (stored !== null) return stored === "true";
+  } catch { /* storage can be unavailable in hardened browsers */ }
+  return window.innerWidth >= 1024;
+}
+
+/** Which sidebar destination to mark for a view. Voice/splash return undefined. */
 function navForView(v: View): string | undefined {
   switch (v.name) {
     case "orbit": return "Home";
@@ -71,7 +86,29 @@ export function App() {
   // receives a server session. Incrementing this key makes a second press of
   // New genuinely discard that draft and mount a clean conversation.
   const [newChatRevision, setNewChatRevision] = useState(0);
+  const [lastChatSessionId, setLastChatSessionId] = useState<string | null>(readStoredChat);
+  const [sidebarExpanded, setSidebarExpanded] = useState(readSidebarPreference);
   const reduced = useReducedMotion();
+
+  const rememberChat = useCallback((sessionId: string) => {
+    setLastChatSessionId(sessionId);
+    try { window.localStorage.setItem(LAST_CHAT_STORAGE_KEY, sessionId); } catch { /* non-critical */ }
+  }, []);
+
+  const openChat = useCallback((sessionId: string | null) => {
+    if (sessionId) rememberChat(sessionId);
+    setView({ name: "chat", sessionId });
+  }, [rememberChat]);
+
+  const setSidebarOpen = useCallback((expanded: boolean) => {
+    setSidebarExpanded(expanded);
+    try { window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(expanded)); } catch { /* non-critical */ }
+  }, []);
+
+  const forgetUnavailableChat = useCallback(() => {
+    setLastChatSessionId(null);
+    try { window.localStorage.removeItem(LAST_CHAT_STORAGE_KEY); } catch { /* non-critical */ }
+  }, []);
 
   const openNewChat = (initialText?: string) => {
     setNewChatRevision((revision) => revision + 1);
@@ -130,20 +167,18 @@ export function App() {
     try { flipStateRef.current = Flip.getState(orb); } catch { flipStateRef.current = null; }
   }, [view.name, reduced]);
 
-  // Persistent deck nav — the bar stays put while panels swap, tracks the current
-  // view, and lets you jump straight between Home / Chats / Memory / Rules / Self.
-  const navItems: TubelightItem[] = [
-    { name: "Home", icon: Home, onSelect: () => setView({ name: "orbit" }) },
-    { name: "New", icon: Plus, onSelect: () => openNewChat() },
-    { name: "Chats", icon: List, onSelect: () => setView({ name: "list" }) },
-    { name: "Memory", icon: Brain, onSelect: () => setView({ name: "memory" }) },
-    { name: "Notes", icon: NotebookPen, onSelect: () => setView({ name: "notes" }) },
-    { name: "Watches", icon: AlarmClock, onSelect: () => setView({ name: "watches" }) },
-    { name: "Explore", icon: Radar, onSelect: () => setView({ name: "capabilities" }) },
-    { name: "Visuals", icon: Presentation, onSelect: () => setView({ name: "visuals" }) },
-    { name: "Room", icon: MessagesSquare, onSelect: () => setView({ name: "strategy" }) },
-    { name: "Rules", icon: Settings2, onSelect: () => setView({ name: "rules" }) },
-    { name: "Self", icon: Sparkles, onSelect: () => setView({ name: "self" }) },
+  // Persistent product destinations live in the sidebar. Recent conversations
+  // are fetched by that component, while this array remains routing-only.
+  const navItems: AppSidebarItem[] = [
+    { name: "Home", label: "Home", icon: Home, group: "main", onSelect: () => setView({ name: "orbit" }) },
+    { name: "Explore", label: "Explore AVA", icon: Radar, group: "main", onSelect: () => setView({ name: "capabilities" }) },
+    { name: "Notes", label: "Notes", icon: NotebookPen, group: "work", onSelect: () => setView({ name: "notes" }) },
+    { name: "Watches", label: "Watches", icon: AlarmClock, group: "work", onSelect: () => setView({ name: "watches" }) },
+    { name: "Memory", label: "Memory", icon: Brain, group: "work", onSelect: () => setView({ name: "memory" }) },
+    { name: "Room", label: "Strategy Room", icon: MessagesSquare, group: "work", onSelect: () => setView({ name: "strategy" }) },
+    { name: "Visuals", label: "Visual explanations", icon: Presentation, group: "work", onSelect: () => setView({ name: "visuals" }) },
+    { name: "Rules", label: "Settings & rules", icon: Settings2, group: "system", onSelect: () => setView({ name: "rules" }) },
+    { name: "Self", label: "Self development", icon: Sparkles, group: "system", onSelect: () => setView({ name: "self" }) },
   ];
   const activeNav = navForView(view);
   const showNav = activeNav !== undefined;
@@ -163,6 +198,24 @@ export function App() {
   return (
     <div className="relative w-full h-full overflow-hidden bg-black text-white">
       <GlassFilter />
+      <AppSidebar
+        items={navItems}
+        activeName={activeNav}
+        visible={showNav}
+        expanded={sidebarExpanded}
+        activeChatSessionId={lastChatSessionId}
+        onExpandedChange={setSidebarOpen}
+        onNewChat={() => openNewChat()}
+        onOpenCurrentChat={() => lastChatSessionId ? openChat(lastChatSessionId) : setView({ name: "list" })}
+        onOpenChat={(sessionId) => openChat(sessionId)}
+        onOpenAllChats={() => setView({ name: "list" })}
+        onCurrentChatUnavailable={forgetUnavailableChat}
+      />
+      <div
+        className="ava-app-stage"
+        data-sidebar-visible={showNav || undefined}
+        data-sidebar-expanded={(showNav && sidebarExpanded) || undefined}
+      >
       {/* No mode="wait": the home/voice screens have infinite CSS animations
           (nebula drift, orb morph) that never "finish", so mode="wait" would
           wait forever for exit-complete and never mount the next view. Default
@@ -210,6 +263,7 @@ export function App() {
             <ChatScreen
               sessionId={view.sessionId}
               initialText={view.initialText}
+              onSessionChange={rememberChat}
               onOpenSessions={() => setView({ name: "orbit" })}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenMemory={() => setView({ name: "memory" })}
@@ -239,10 +293,10 @@ export function App() {
               // most recently used voice thread.
               startFresh={view.from === "chat" && view.sessionId === null}
               onExit={(sid) => {
-                if (view.from === "chat") setView({ name: "chat", sessionId: sid });
+                if (view.from === "chat") openChat(sid);
                 else setView({ name: "orbit" });
               }}
-              onSwitchToKeyboard={(sid) => setView({ name: "chat", sessionId: sid })}
+              onSwitchToKeyboard={(sid) => openChat(sid)}
             />
           </motion.div>
         )}
@@ -259,7 +313,7 @@ export function App() {
           >
             <MemoryScreen
               onClose={() => setView({ name: "orbit" })}
-              onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
+              onOpenChat={(sessionId) => openChat(sessionId)}
             />
           </motion.div>
         )}
@@ -318,7 +372,7 @@ export function App() {
           >
             <StrategyRoomScreen
               sourceSessionId={view.sourceSessionId ?? null}
-              onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
+              onOpenChat={(sessionId) => openChat(sessionId)}
             />
           </motion.div>
         )}
@@ -382,28 +436,13 @@ export function App() {
           >
             <ChatListScreen
               onClose={() => setView({ name: "orbit" })}
-              onOpenChat={(sid) => setView({ name: "chat", sessionId: sid })}
+              onOpenChat={(sid) => openChat(sid)}
             />
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Persistent deck nav: stays mounted (so the cyan lamp springs smoothly
-          between panels) and fades out on the immersive hero views (splash/voice).
-          Chat joins the deck — the lamp lights "New" for a fresh chat, "Chats"
-          for an existing one. */}
-      <motion.div
-        className="absolute left-1/2 z-30 -translate-x-1/2"
-        animate={{ opacity: showNav ? 1 : 0, y: showNav ? 0 : -14 }}
-        transition={{ duration: 0.3, ease: "easeOut" }}
-        style={{
-          pointerEvents: showNav ? "auto" : "none",
-          // top-6 plus the notch/status-bar inset on phones (env() is 0 on desktop).
-          top: "calc(env(safe-area-inset-top, 0px) + 1.5rem)",
-        }}
-      >
-        <TubelightNav items={navItems} activeName={activeNav} />
-      </motion.div>
+      </div>
     </div>
   );
 }

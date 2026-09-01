@@ -233,7 +233,7 @@ transition={{ duration: reduced ? 0.15 : 0.3, ease: [0.22, 1, 0.36, 1] }}
 So a panel **fades in** in place (the rich entrance is the `PanelShell` timeline inside it), and **fades + shrinks + blurs out** on the way to its next view, on the cinematic ease. The black-background class was dropped because `PanelShell` paints its own backdrop. Reduced motion shortens the duration to `0.15s`.
 
 Two things were deliberately preserved:
-- **The persistent deck nav.** `TubelightNav` stays mounted at the top (`App.tsx:205`–`212`); it fades/lifts out only on the immersive views (splash/chat/voice) and tracks the active view via `NAV_FOR_VIEW`. Because it never unmounts across panel swaps, the cyan lamp springs smoothly between items. Panels no longer render their own back button — the nav handles navigation (`ChatListScreen.tsx:11`–`13`).
+- **The persistent app sidebar.** `AppSidebar` stays mounted at the left edge, collapses to a compact rail, and expands into recent chats and grouped workspaces. It is hidden/inert only for immersive Splash and Voice. Panels no longer render duplicate back controls; the shell owns navigation.
 - **The orb Flip.** The shared-orb GSAP Flip (`App.tsx:39`–`59`) is unchanged: it still only runs for the orb-owning surfaces (`splash/orbit/chat/voice`) and explicitly skips panels, so the materialize doesn't fight the orb.
 
 ---

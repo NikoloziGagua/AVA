@@ -35,15 +35,18 @@ vi.mock("./splash/Splash.js", () => ({ Splash: () => <div>Splash</div> }));
 vi.mock("./chat/ChatScreen.js", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatScreen: ({ onOpenStrategy, onOpenVisual, onEnterVoice }: {
+    ChatScreen: ({ sessionId, onOpenStrategy, onOpenVisual, onEnterVoice, onSessionChange }: {
+      sessionId?: string | null;
       onOpenStrategy?: (sessionId: string) => void;
       onOpenVisual?: (visualId: string) => void;
       onEnterVoice?: (sessionId: string | null) => void;
+      onSessionChange?: (sessionId: string) => void;
     }) => {
       const mount = React.useRef(++state.nextChatMount);
       return (
         <div data-testid="mock-chat">
-          chat-{mount.current}
+          chat-{mount.current}-session-{sessionId ?? "new"}
+          <button onClick={() => onSessionChange?.("internal-chat-17")}>mock establish session</button>
           <button onClick={() => onOpenStrategy?.("internal-chat-17")}>mock take to room</button>
           <button onClick={() => onOpenVisual?.("visual_abcdefgh")}>mock open visual</button>
           <button onClick={() => onEnterVoice?.("internal-chat-17")}>mock enter voice</button>
@@ -91,21 +94,24 @@ vi.mock("./watches/WatchesScreen.js", () => ({
 import { App } from "./App.js";
 
 describe("App New-chat navigation", () => {
-  beforeEach(() => { state.nextChatMount = 0; });
+  beforeEach(() => {
+    state.nextChatMount = 0;
+    window.localStorage.clear();
+  });
   afterEach(cleanup);
 
   it("mounts a clean ChatScreen every time New is pressed", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(screen.getByTestId("mock-chat").textContent).toContain("chat-1");
 
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(screen.getByTestId("mock-chat").textContent).toContain("chat-2");
   });
 
   it("carries the internal chat session into the Room and back", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     fireEvent.click(screen.getByRole("button", { name: "mock take to room" }));
     expect(screen.getByText("room-source-internal-chat-17")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "mock return to chat" }));
@@ -114,21 +120,21 @@ describe("App New-chat navigation", () => {
 
   it("opens the exact AVA visual emitted by the chat tool path", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     fireEvent.click(screen.getByRole("button", { name: "mock open visual" }));
     expect(screen.getByText("visual-id-visual_abcdefgh")).toBeTruthy();
   });
 
   it("hands voice the session ChatScreen actually created, not the stale null route value", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
     expect(screen.getByText("voice-session-internal-chat-17-fresh-false")).toBeTruthy();
   });
 
   it("marks voice entry from a blank New chat as a fresh conversation", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     fireEvent.click(screen.getByRole("button", { name: "mock enter blank voice" }));
     expect(screen.getByText("voice-session-none-fresh-true")).toBeTruthy();
   });
@@ -144,5 +150,23 @@ describe("App New-chat navigation", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Watches" }));
     expect(screen.getByText("watch-management-screen")).toBeTruthy();
+  });
+
+  it("returns directly to the same chat after visiting another workspace", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock establish session" }));
+    fireEvent.click(screen.getByRole("button", { name: "Explore AVA" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return to current chat" }));
+    expect(screen.getByTestId("mock-chat").textContent).toContain("session-internal-chat-17");
+  });
+
+  it("restores the last chat shortcut after an application reload", () => {
+    window.localStorage.setItem("ava:last-chat-session", "persisted-chat-42");
+    const first = render(<App />);
+    first.unmount();
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Return to current chat" }));
+    expect(screen.getByTestId("mock-chat").textContent).toContain("session-persisted-chat-42");
   });
 });

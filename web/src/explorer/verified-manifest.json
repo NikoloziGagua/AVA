@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1787970127046,
+  "generatedAt": 1788300816254,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -731,8 +731,8 @@
     },
     {
       "capability": "interface.pwa",
-      "path": "web/src/components/ava/TubelightNav.tsx",
-      "symbol": "TubelightNav",
+      "path": "web/src/components/ava/AppSidebar.tsx",
+      "symbol": "AppSidebar",
       "kind": "implementation"
     },
     {

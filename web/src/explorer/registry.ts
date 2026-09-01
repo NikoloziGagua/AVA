@@ -2245,7 +2245,7 @@ const capabilities: ExplorerCapability[] = [
       implementation: "implemented",
       sourceReferences: [
         source("web/src/App.tsx", "App"),
-        source("web/src/components/ava/TubelightNav.tsx", "TubelightNav"),
+        source("web/src/components/ava/AppSidebar.tsx", "AppSidebar"),
         source("server/src/routes/auth.ts", "authRoutes", "route"),
         source("docs/architecture/09-web-frontend.md", "Web frontend", "documentation"),
       ],

@@ -130,9 +130,9 @@ The `ScrollTrigger` object is still exported regardless (`gsap.ts:26`) and is us
 
 ## The chat composition
 
-### Persistent nav, no own header (`web/src/App.tsx`)
+### Persistent sidebar, no own header (`web/src/App.tsx`)
 
-`NAV_FOR_VIEW` now maps `chat: "New"` (`App.tsx:72`), so the persistent `TubelightNav` shows on chat with the "New" lamp active — chat joined the deck. `ChatScreen` no longer renders any header or back button; its `onOpenSessions`/`onOpenRules`/`onOpenMemory`/`onOpenList` props are kept **inert** so the `App.tsx` call site doesn't have to change (`ChatScreen.tsx:16`–`22`). Navigation is the nav pill's job.
+The persistent `AppSidebar` now owns navigation. A fresh composition marks New chat; after the server returns a session, `ChatScreen.onSessionChange` gives the canonical ID to `App`, enabling a one-click Current chat return from every other workspace and after reload. Expanded navigation also exposes recent chats and the full Chats workspace. `ChatScreen` still needs no duplicate header or back button. See [Persistent sidebar navigation](persistent-sidebar-navigation.md).
 
 The orb Flip guard (`App.tsx:39`–`59`) still lists `chat` in `VIEWS_WITH_ORB`, but on chat the orb only exists when the `ThinkingIndicator` is mounted; when chat has no thinking row, `document.querySelector("[data-flip-id='ava-orb']")` returns null and the Flip cleanly degrades to no animation.
 

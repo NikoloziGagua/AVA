@@ -9,7 +9,7 @@ import { BorderGlow } from "./BorderGlow.js";
  * Shared chrome for the deck panels (Chats / Memory / Rules / Self).
  *
  * Lays out a wide desktop column (max-w-7xl, responsive padding) under the
- * persistent TubelightNav, paints the cyan bloom + dot-grid backdrop, renders the
+ * persistent app sidebar, paints the cyan bloom + dot-grid backdrop, renders the
  * title rail (specular sweep + DrawSVG mercury underline + ScrambleText decode), and
  * runs the panel-enter master timeline — or parks to the lit final state under
  * reduced motion.

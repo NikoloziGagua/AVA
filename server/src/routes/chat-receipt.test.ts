@@ -88,7 +88,12 @@ describe("chat task receipt SSE", () => {
     ]);
     const result = await startAndReplay(app, "hello");
 
-    expect(result.events.map((event) => event.event)).toEqual(["final", "receipt", "done"]);
+    expect(result.events.map((event) => event.event)).toEqual([
+      "memory_context",
+      "final",
+      "receipt",
+      "done",
+    ]);
     expect(result.receipt).toMatchObject({
       schemaVersion: 2,
       taskId: result.taskId,

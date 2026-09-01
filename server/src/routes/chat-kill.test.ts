@@ -84,6 +84,7 @@ describe("chat kill endpoint", () => {
     // Cancellation evidence is buffered before the route frees the run slot,
     // so an already-open stream sees Stop rather than a synthetic tool failure.
     expect(active!.buffer.since(0).events.map((event) => event.kind)).toEqual([
+      "memory_context",
       "receipt",
       "killed",
     ]);

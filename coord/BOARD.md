@@ -5340,3 +5340,84 @@ Its SHA-256 fingerprint is
 NEEDS: niko (store the supplied key independently; optionally make the GitHub
 repository private and address the Windows Device Guard rule if Activepieces
 must run again on this PC)
+
+---
+
+### 2026-09-01 - codex - CLAIM: persistent chat navigation and newcomer Explore remodel
+
+Watcher `OTNEhf8CXQ2L` assigns Codex two existing Codex-owned frontend areas.
+I am claiming them as separate committed boundaries: first, preserve the active
+conversation when Niko leaves Chat and make it directly reachable through an
+OpenAI-style expandable chat sidebar; second, remodel Explorer around a
+newcomer-first explanation of AVA's real, evidence-backed capabilities. The
+sidebar will reuse the authoritative session/history state rather than create a
+second conversation model. Explorer will reuse the verified registry, health,
+workflow and task-evidence contracts and will not turn documentation claims
+into operational claims.
+
+Before product edits I will review Niko and AVA's latest improvement discussion
+and ask AVA through its real chat/tool path to remember and index a concise,
+source-linked checkpoint. Each product boundary will include focused tests,
+relevant full suites, production builds, a committed-HEAD smoke and a manual
+black-box check. The local `awwwards-showcase.html` is visual inspiration only;
+restricted source will not be copied. Existing unrelated settings, Codex-agent
+configuration and persona-research files remain untouched.
+
+NEEDS: codex
+
+---
+
+### 2026-09-01 - codex - COMPLETE: persistent chat navigation
+
+AVA now has an OpenAI-style persistent left sidebar instead of relying on the
+top navigation as the product shell. The collapsed rail exposes the principal
+destinations; the expanded desktop panel adds the active conversation, eight
+recent conversations and the workspace/system groups. A mobile overlay and
+scrim provide the same destinations at narrow widths. The shell remembers only
+the opaque active session ID and the expansion preference. `ChatScreen` reports
+the canonical session after load and after the first send creates a server
+session, so Current chat returns directly from Explore, Notes or another tab
+without a round trip through chat history. The shortcut survives reload and is
+removed if the authoritative session list says the conversation no longer
+exists.
+
+Product commit: `07faa66` (`feat(web): add persistent conversation sidebar`).
+The commit includes the new sidebar and focused tests, App/ChatScreen session
+correlation, shell-responsive styling, architecture/feature documentation and
+the updated Explorer verified manifest. The runtime was rebuilt from that
+committed HEAD and is healthy/ready with build ID
+`1103fd56-5883-4d54-8076-de1239162070`.
+
+Verification:
+
+- Focused Vitest: App session routing (9), ChatScreen reopen (10) and sidebar
+  behavior (5) all pass.
+- Full web suite: 96 files / 446 tests pass.
+- Explorer contract/reality audit: 35 capabilities, 78 mappings, 123 verified
+  source references with zero broken, and 29/29 routes.
+- Production web build and server build pass; `git diff --cached --check`
+  passed before commit.
+- A fresh-profile, authenticated, deployed-browser black-box check against
+  `http://127.0.0.1:8787/` opened Explore, returned directly to session
+  `zhpw_qvvsOHI`, opened Notes, returned to that same chat, reloaded and retained
+  the shortcut. Escape collapsed the rail; at 390x844 the scrim appeared and
+  the document had no horizontal overflow. The browser reported no console
+  errors. Disposable browser state and device tokens were removed.
+
+Before implementation, the latest Niko/AVA improvement discussion (source
+messages 4833-4836 in session `zhpw_qvvsOHI`) was indexed through AVA's real
+`memory_index_capture` path as `memory_ibPl3zjPZlkrXr`, titled `Connected
+intelligence stack for AVA improvements`. The stored checkpoint records the
+ideas Niko explicitly liked and preserves the conversation as its authoritative
+source; availability is verified.
+
+Known limitation: the sidebar deliberately does not display message previews,
+which avoids duplicating private content in navigation. Activepieces remains
+unhealthy because of the pre-existing Device Guard/Bun issue and was not used
+as navigation evidence.
+
+Unrelated `.claude/settings.local.json`, `.codex/agents/` and persona-research
+work remain untouched. Forge was neither inspected nor modified.
+
+NEEDS: codex (continue the claimed newcomer-first Explore redesign as a separate
+committed boundary)

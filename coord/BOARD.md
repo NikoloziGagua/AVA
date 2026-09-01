@@ -5367,6 +5367,73 @@ NEEDS: codex
 
 ---
 
+### 2026-09-02 - codex - COMPLETE: durable inline memory context capsule
+
+AVA's assistant replies now carry a versioned, sanitized receipt explaining
+whether the shared durable-memory gate informed the answer. The same receipt is
+emitted before model work for the live turn, retained in the task-scoped SSE
+replay, attached to the final persisted assistant message, revalidated on read,
+and restored exactly once after reopening or reloading the conversation.
+OpenAI and Hume voice replies use the same persisted message metadata, so the
+receipt is visible when Niko returns from voice to the shared chat rather than
+creating a separate voice-memory history.
+
+The compact accessible capsule is collapsed by default and distinguishes used,
+no-match, deliberately suppressed, unavailable and failed memory checks. Its
+details show only the bounded operational reason, project, retrieval mode,
+semantic availability, and at most two source labels with source health and
+match provenance. The persistence boundary strips invalid claims and re-scrubs
+all text; it never carries the query, source excerpt, transcript, prompt,
+message range, source session ID, scores, provider payload, hidden reasoning or
+secrets. A memory-gate exception now becomes an honest error receipt instead of
+breaking the chat turn.
+
+Product commit `bb116b5` (`feat(memory): show durable context receipts`) covers
+`server/src/memory-index/{auto-retrieve.ts,auto-retrieve.test.ts}`,
+`server/src/state/{messages.ts,messages.test.ts}`, chat and realtime-voice
+routes/tests, the web API/stream/message-list integration, the new
+`web/src/chat/{MemoryContextCapsule.tsx,memory-context.ts}`, chat reopen tests,
+and `docs/features/semantic-memory-index.md`. Follow-up commit `4c87b3f`
+(`test(memory): cover context event replay ordering`) updates Stop and fast-run
+SSE tests to assert the intentional leading `memory_context` event.
+
+Verification:
+
+- Focused memory/server coverage passed 3 files / 22 tests; focused SSE
+  regression coverage passed 2 files / 13 tests; focused web rendering/reopen
+  coverage passed 2 files / 20 tests.
+- Complete server suite passed 203 files / 1,572 tests. Complete web suite
+  passed 96 files / 454 tests.
+- Server TypeScript/runtime build and production web/PWA build passed. The
+  existing ES2024 transform and large-main-chunk warnings remain non-failing.
+- A deployed, authenticated Google Chrome black-box check at 390x844 with
+  reduced motion created a disposable conversation and verified: collapsed by
+  default, keyboard Enter expansion, source detail visibility, no horizontal
+  overflow, exactly one restored capsule after reload, and zero console/page
+  errors. All disposable session, message and token rows were then deleted and
+  zero residue was confirmed.
+- The exact committed runtime was rebuilt and relaunched. Disk and live build
+  IDs match at `7f9e81ed-4e3b-44c5-ab10-6180344c4bdd`; health reports
+  `ok=true`, `ready=true`, provider `openai`, and `/` returns HTTP 200 with the
+  application root. The optional Activepieces launcher still exits `-1`, its
+  pre-existing runtime issue; core AVA is healthy.
+
+Known boundaries: the capsule intentionally contains discovery labels rather
+than raw source text. Hume's current memory decision is connection-context
+based rather than recalculated for every utterance. Voice mode intentionally
+does not duplicate a full transcript panel; the receipt appears in the same
+conversation when returning to chat. Non-persisting delegated voice handoffs
+remain non-persisting.
+
+Unrelated `.claude/settings.local.json`, `.codex/agents/` and persona-research
+work were preserved. Forge was neither inspected nor modified.
+
+NEEDS: niko (use a remembered topic in a new chat or shared voice session and
+expand the Memory capsule beneath AVA's reply; choose the next connected-
+intelligence increment after evaluating whether this evidence is useful)
+
+---
+
 ### 2026-09-02 - codex - COMPLETE: connected Project Brief in Notes
 
 The existing Notes project space now opens with a collapsible Project Brief
@@ -5581,3 +5648,43 @@ black-box evidence, cleanup proof and committed runtime build
 
 NEEDS: codex (choose the next bounded connected-intelligence increment from the
 indexed discussion)
+
+---
+
+### 2026-09-02 - codex - CLAIM: durable inline memory context capsule
+
+The indexed improvement discussion's proactive-context idea has a concrete
+visibility gap. AVA already applies one source-verified recall gate across chat
+and voice and records bounded provenance in Mission Control, but the resulting
+chat reply does not show whether durable memory informed it and loses that
+context on reload. I am claiming a small cross-cutting chat/memory slice: add a
+strictly validated, sanitized memory-context receipt to persisted assistant
+message metadata; stream the same receipt for the live turn; and render a
+compact collapsed capsule beside the reply.
+
+The capsule will show used/not-used status, the operational reason, retrieval
+mode and selected memory titles/source health only. It will never persist or
+render the retrieval query, source excerpt, raw transcript, prompt, hidden
+reasoning or secrets. Project/privacy checks stay in the existing retrieval
+gate. Persist-false voice action handoffs remain non-persisting. Tests will cover
+schema rejection/bounds, live rendering, reload, no-match/error presentation,
+project fields, raw-source exclusion and existing visual/exact-text metadata.
+
+NEEDS: codex
+
+---
+
+### 2026-09-02 - codex - TAIL CLOSE: durable inline memory context capsule
+
+The full completion evidence for product commits `bb116b5` and `4c87b3f`
+appears above under `COMPLETE: durable inline memory context capsule`. A generic
+append anchor placed that entry before the later physical claim rather than at
+the file tail; no prior board text was edited or removed. This appended close is
+the chronological clean boundary. It records complete server 1,572-test and web
+454-test suites, production builds, a passing deployed keyboard/reload/mobile
+browser check with zero residue, and committed runtime build
+`7f9e81ed-4e3b-44c5-ab10-6180344c4bdd` healthy and ready.
+
+NEEDS: niko (use a remembered topic in a new chat or shared voice session and
+expand the Memory capsule beneath AVA's reply; choose the next connected-
+intelligence increment after evaluating whether this evidence is useful)

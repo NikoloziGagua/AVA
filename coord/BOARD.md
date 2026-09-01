@@ -5367,6 +5367,66 @@ NEEDS: codex
 
 ---
 
+### 2026-09-02 - codex - COMPLETE: connected Project Brief in Notes
+
+The existing Notes project space now opens with a collapsible Project Brief
+that composes AVA's two authoritative project layers instead of inventing a
+third one. It derives priorities, Doing/Review work, decisions and stable
+context from all current project Notes. Separately, it loads the existing
+project-scoped memory index, applies a second exact-project/privacy check in
+the client, and shows each memory's source status, governance eligibility,
+lineage and collapsed evidence reason. Conversation-backed entries can return
+directly to the exact source chat through App's canonical session route.
+
+The Brief remains usable when the memory index is loading, empty or failed;
+Notes never disappear behind an index error. A request-generation guard drops
+late results after a project switch. Kanban search no longer changes the Brief:
+search filters the board while the Brief continues to reflect the full project.
+The feature is read-only over memory and generates no second AI summary.
+
+Product commit: `fba2339` (`feat(notes): connect source-linked project
+briefs`). Product files are `web/src/notes/ProjectBrief.tsx`,
+`NotesScreen.tsx`, `NotesScreen.test.tsx`, `web/src/App.tsx`, and
+`docs/features/notes.md`.
+
+Verification:
+
+- Focused Notes/App Vitest: 2 files / 16 tests passed. Coverage includes project
+  templates, project-only memory filtering, source-chat routing, changed-source
+  warning, memory failure, collapse semantics, stale async response suppression
+  and the Brief remaining stable under board search.
+- Complete web suite: 96 files / 452 tests passed.
+- Complete server suite: 203 files / 1,569 tests passed.
+- Production web/PWA build and server TypeScript/build passed. `git diff
+  --check` and staged diff checks passed; the existing ES2024 and bundle-size
+  warnings remain non-failing.
+- The deployed authenticated browser test created a disposable project with
+  priority/decision/open-work Notes, a two-message source conversation, and one
+  project-private memory. It verified the visible Brief, verified-source badge,
+  exact evidence reason, source-chat return, collapse state, 390px no-overflow
+  behavior and zero console errors.
+- The black-box test confirmed all disposable project, memory, session and
+  device-token rows were removed after every run, including two harness failures
+  found and corrected before the passing run.
+- Committed AVA was rebuilt and relaunched. Live and disk build IDs match at
+  `36fadc5e-f453-42bd-a3f0-a24cc2523a79`; `/` returns HTTP 200 with the app root.
+
+Known boundaries: project linkage between Notes and memory is currently the
+project's case-insensitive name, so renaming a Notes project does not migrate
+older indexed entries. V1 composes Notes and indexed knowledge only; repository
+files, task history and watches are not yet project-linked. Only
+conversation-backed memory has an Open source chat action. The memory API's
+normal project scope may also return personal context for agent retrieval, so
+the Brief intentionally renders only exact project-private entries.
+
+Unrelated `.claude/settings.local.json`, `.codex/agents/` and persona-research
+work were preserved. Forge was neither inspected nor modified.
+
+NEEDS: codex (choose the next bounded connected-intelligence increment from the
+indexed discussion; do not broaden the Project Brief before evidence supports it)
+
+---
+
 ### 2026-09-01 - codex - COMPLETE: persistent chat navigation
 
 AVA now has an OpenAI-style persistent left sidebar instead of relying on the
@@ -5483,3 +5543,41 @@ work were preserved. Forge was neither inspected nor modified.
 
 NEEDS: codex (inspect the indexed connected-intelligence ideas and claim one
 bounded, non-overlapping next improvement)
+
+---
+
+### 2026-09-01 - codex - CLAIM: connected Project Brief in Notes
+
+The indexed Niko/AVA discussion identifies project workspaces as the most
+visible first increment in the connected-intelligence stack. Repository
+inspection shows that Notes already owns explicit project spaces and the
+memory index already owns source-verified, project-scoped checkpoints, but the
+two are presented separately. I am continuing the existing Codex-owned Notes
+area with one bounded read-only composition: a project Brief inside Notes that
+derives current priorities, decisions, open work and stable documentation from
+authoritative project notes, loads recent project-scoped indexed knowledge,
+shows source/governance truth, and can return to an attached source chat.
+
+This will reuse `/api/notes` and `/api/memory/index?project=...`; it will not add
+a second project schema, generate an unverified AI summary, broaden privacy
+scope, or mutate memory from the Brief. Focused tests will cover project
+isolation, loading/empty/error states, changed-source warnings and source-chat
+routing, followed by full suites, builds and a deployed browser check.
+
+NEEDS: codex
+
+---
+
+### 2026-09-02 - codex - TAIL CLOSE: connected Project Brief
+
+The full completion evidence for product commit `fba2339` appears above under
+`COMPLETE: connected Project Brief in Notes`. An ambiguous patch anchor inserted
+that new entry before later pre-existing thread entries instead of at the
+physical tail; no prior words were edited or removed. This appended close is
+the chronological task boundary. Focused 16-test coverage, the complete web
+452-test and server 1,569-test suites, production builds, deployed source-chat
+black-box evidence, cleanup proof and committed runtime build
+`36fadc5e-f453-42bd-a3f0-a24cc2523a79` are recorded in that completion entry.
+
+NEEDS: codex (choose the next bounded connected-intelligence increment from the
+indexed discussion)

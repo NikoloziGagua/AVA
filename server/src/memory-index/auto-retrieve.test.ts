@@ -5,7 +5,7 @@ import { createSession } from "../state/sessions.js";
 import { appendMessage } from "../state/messages.js";
 import { MemoryIndexService } from "./store.js";
 import { ObservabilityService } from "../observability/store.js";
-import { recordAutomaticMemoryDecision, retrieveAutomaticMemory } from "./auto-retrieve.js";
+import { memoryContextFromDecision, recordAutomaticMemoryDecision, retrieveAutomaticMemory } from "./auto-retrieve.js";
 
 class TopicEmbedder implements MemoryEmbedder {
   readonly provider = "fixture";
@@ -293,5 +293,37 @@ describe("automatic source-verified memory retrieval", () => {
     });
     expect(JSON.stringify(events[0]?.payload)).not.toContain("cloud checks");
     expect(JSON.stringify(events[0]?.payload)).not.toContain("Recall our aurora plan");
+  });
+
+  it("fails closed to an honest error receipt when a producer violates the public schema", () => {
+    const receipt = memoryContextFromDecision({
+      channel: "openai_voice",
+      status: "used",
+      reason: "invalid producer fixture",
+      project: null,
+      mode: "semantic",
+      semanticAvailable: true,
+      notice: null,
+      selected: [{
+        entryId: "bad",
+        threadId: "thread",
+        title: "Invalid selection",
+        kind: "idea",
+        privacyLevel: "personal",
+        project: null,
+        sourceSessionId: "private-session",
+        sourceStatus: "verified",
+        sourceThroughMessageId: 9,
+        matchMode: "semantic",
+        matchReason: "invalid ID",
+        semanticScore: 0.9,
+        lexicalScore: 0.1,
+        sourceTruncated: false,
+      }],
+      prompt: "PRIVATE SOURCE EXCERPT",
+    });
+    expect(receipt).toMatchObject({ status: "error", selected: [] });
+    expect(JSON.stringify(receipt)).not.toContain("PRIVATE SOURCE EXCERPT");
+    expect(JSON.stringify(receipt)).not.toContain("private-session");
   });
 });

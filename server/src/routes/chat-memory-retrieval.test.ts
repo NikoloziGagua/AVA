@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
 import { createSession } from "../state/sessions.js";
-import { appendMessage } from "../state/messages.js";
+import { appendMessage, listMessages } from "../state/messages.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
 import { MemoryIndexService } from "../memory-index/store.js";
@@ -58,7 +58,7 @@ async function setup() {
     runAgentImpl: runAgentImpl as never,
     observability,
   }, { anthropic: null, openai: null }));
-  return { app, prompts, observability };
+  return { app, prompts, observability, db };
 }
 
 describe("chat automatic memory retrieval", () => {
@@ -76,6 +76,28 @@ describe("chat automatic memory retrieval", () => {
       summary: "AVA used 1 latest source-verified memory checkpoint.",
       privacyLevel: "personal",
     });
+    await vi.waitFor(() => {
+      const persisted = listMessages(fixture.db, response.body.sessionId)
+        .findLast((message) => message.role === "assistant");
+      expect(persisted?.metadata?.memoryContext).toMatchObject({
+        schemaVersion: 1,
+        status: "used",
+        selected: [{ title: "Aurora observation plan", sourceStatus: "verified" }],
+      });
+      const metadata = JSON.stringify(persisted?.metadata?.memoryContext);
+      expect(metadata).not.toContain("live cloud checks");
+      expect(metadata).not.toContain("prompt");
+      expect(metadata).not.toContain("query");
+      expect(metadata).not.toContain("sourceSessionId");
+    });
+
+    const replay = await request(fixture.app)
+      .get(`/api/chat/${response.body.sessionId}/stream`)
+      .query({ taskId: response.body.taskId })
+      .expect(200);
+    expect(replay.text).toContain("event: memory_context");
+    expect(replay.text).toContain('"status":"used"');
+    expect(replay.text).not.toContain("live cloud checks");
   });
 
   it("leaves an irrelevant fresh chat clean and reports why no memory was used", async () => {
@@ -89,5 +111,13 @@ describe("chat automatic memory retrieval", () => {
     expect(fixture.observability.getEvents(response.body.taskId)
       .find((event) => event.type === "memory.retrieval.no_match"))
       .toMatchObject({ status: "skipped" });
+    await vi.waitFor(() => {
+      const persisted = listMessages(fixture.db, response.body.sessionId)
+        .findLast((message) => message.role === "assistant");
+      expect(persisted?.metadata?.memoryContext).toMatchObject({
+        status: "no_match",
+        selected: [],
+      });
+    });
   });
 });

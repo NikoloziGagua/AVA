@@ -40,6 +40,62 @@ describe("messages repo", () => {
     expect(listMessages(db, sessionId)[0]?.metadata).toEqual({ inputSource: "voice_exact_text" });
   });
 
+  it("round-trips only a bounded sanitized memory receipt beside existing metadata", () => {
+    const stored = appendMessage(db, {
+      sessionId,
+      role: "assistant",
+      content: "I used the saved plan.",
+      metadata: {
+        visualMessages: [{ visualMessageId: "visual_saved001", revision: 2 }],
+        memoryContext: {
+          schemaVersion: 1,
+          status: "used",
+          reason: "A relevant source-verified checkpoint matched. token=unsafe-value",
+          project: "Aurora",
+          mode: "hybrid",
+          semanticAvailable: true,
+          notice: null,
+          selected: [{
+            entryId: "memory_checkpoint_01",
+            title: "Aurora plan password=unsafe-value",
+            kind: "idea",
+            project: "Aurora",
+            sourceStatus: "verified",
+            matchMode: "hybrid",
+            matchReason: "Matched the plan topic.",
+            sourceTruncated: false,
+          }],
+        },
+      },
+    });
+    const row = db.prepare("SELECT metadata FROM messages WHERE id = ?").get(stored.id) as { metadata: string };
+    expect(row.metadata).not.toContain("unsafe-value");
+    const memory = listMessages(db, sessionId)[0]?.metadata?.memoryContext;
+    expect(memory).toMatchObject({ status: "used", selected: [{ entryId: "memory_checkpoint_01" }] });
+    expect(listMessages(db, sessionId)[0]?.metadata?.visualMessages).toHaveLength(1);
+    expect(JSON.stringify(memory)).not.toContain("query");
+    expect(JSON.stringify(memory)).not.toContain("prompt");
+  });
+
+  it("drops malformed or unsupported memory claims on read", () => {
+    const stored = appendMessage(db, { sessionId, role: "assistant", content: "No claim." });
+    db.prepare("UPDATE messages SET metadata = ? WHERE id = ?").run(JSON.stringify({
+      memoryContext: {
+        schemaVersion: 1,
+        status: "used",
+        reason: "Claims a source but carries none.",
+        project: null,
+        mode: "semantic",
+        semanticAvailable: true,
+        notice: null,
+        selected: [],
+        query: "private query",
+        sourceExcerpt: "private transcript",
+      },
+    }), stored.id);
+    expect(listMessages(db, sessionId)[0]?.metadata).toEqual({});
+  });
+
   it("isolates by session_id", () => {
     const otherSession = createSession(db, { title: null }).id;
     appendMessage(db, { sessionId, role: "user", content: "mine" });

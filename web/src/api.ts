@@ -1,5 +1,6 @@
 import { getToken, clearToken } from "./auth/tokens.js";
 import type { VisualMessage, VisualMessageContext } from "./visuals/types.js";
+import type { MemoryContext } from "./chat/memory-context.js";
 
 export class ApiError extends Error {
   readonly name = "ApiError";
@@ -222,7 +223,7 @@ export async function fetchSession(id: string): Promise<{
     content: string;
     created_at: number;
     visualMessages?: VisualMessage[];
-    metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" };
+    metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text"; memoryContext?: MemoryContext };
   }>;
 }> {
   return request<{
@@ -233,7 +234,7 @@ export async function fetchSession(id: string): Promise<{
       content: string;
       created_at: number;
       visualMessages?: VisualMessage[];
-      metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" };
+      metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text"; memoryContext?: MemoryContext };
     }>;
   }>(`/api/sessions/${id}`);
 }

@@ -4,7 +4,13 @@ import type { Db } from "../state/db.js";
 import { buildSystemPrompt } from "../orchestrator/system-prompt.js";
 import { validateToken } from "../auth/tokens.js";
 import { createSession, getMostRecentSession, getSessionFull, touchSession } from "../state/sessions.js";
-import { appendMessage, listMessages, listMessagesAfterId, type Message } from "../state/messages.js";
+import {
+  appendMessage,
+  listMessages,
+  listMessagesAfterId,
+  type Message,
+  type MessageMemoryContext,
+} from "../state/messages.js";
 import { readDevLog, type DevLogEntry } from "../self/dev-log.js";
 import { dirname } from "node:path";
 import {
@@ -27,6 +33,7 @@ import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
 import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
 import type { MemoryIndexService } from "../memory-index/store.js";
 import {
+  memoryContextFromDecision,
   recordAutomaticMemoryDecision,
   retrieveAutomaticMemory,
 } from "../memory-index/auto-retrieve.js";
@@ -1266,13 +1273,21 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     // sees coherent turns instead of clause-fragments.
     let assistantTurnBuf = "";
     let lastAcceptedUserMessageId: number | null = null;
+    let pendingMemoryContext: MessageMemoryContext | null = null;
     const flushAssistantTurn = (eligibleForMemory = false): string => {
       const text = assistantTurnBuf.trim();
       assistantTurnBuf = "";
       const sourceUserMessageId = eligibleForMemory ? lastAcceptedUserMessageId : null;
       if (eligibleForMemory) lastAcceptedUserMessageId = null;
       if (hybrid && sessionId && text) {
-        const stored = appendMessage(deps.db, { sessionId, role: "assistant", content: text });
+        const memoryContext = pendingMemoryContext;
+        pendingMemoryContext = null;
+        const stored = appendMessage(deps.db, {
+          sessionId,
+          role: "assistant",
+          content: text,
+          ...(memoryContext ? { metadata: { memoryContext } } : {}),
+        });
         persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
         touchSession(deps.db, sessionId);
         if (sourceUserMessageId !== null && deps.memoryAutoCapture) {
@@ -1950,6 +1965,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             });
             if (epoch !== memoryRetrievalEpoch || !memoryRetrievalPending) return;
             memoryRetrievalPending = false;
+            pendingMemoryContext = memoryContextFromDecision(memory);
             if (observedTurn) {
               recordAutomaticMemoryDecision(deps.observability, observedTurn.runId, memory, "ava:voice-memory");
             }
@@ -2102,6 +2118,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       let assistantTurnBuf = "";
       let lastAcceptedUserMessageId: number | null = null;
       let currentTurnMemoryEligible = true;
+      let pendingMemoryContext: MessageMemoryContext | null = null;
       const flushAssistantTurn = (eligibleForMemory = false) => {
         const text = assistantTurnBuf.trim();
         assistantTurnBuf = "";
@@ -2110,7 +2127,14 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           : null;
         if (eligibleForMemory) lastAcceptedUserMessageId = null;
         if (hybrid && sessionId && text) {
-          const stored = appendMessage(deps.db, { sessionId, role: "assistant", content: text });
+          const memoryContext = pendingMemoryContext;
+          pendingMemoryContext = null;
+          const stored = appendMessage(deps.db, {
+            sessionId,
+            role: "assistant",
+            content: text,
+            ...(memoryContext ? { metadata: { memoryContext } } : {}),
+          });
           touchSession(deps.db, sessionId);
           if (sourceUserMessageId !== null && deps.memoryAutoCapture) {
             void deps.memoryAutoCapture({
@@ -2179,6 +2203,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           currentSessionId: sessionId,
           project: memoryProject,
         });
+        pendingMemoryContext = memoryContextFromDecision(memory);
         if (memory.prompt) history += `\n\n${memory.prompt}`;
         log.info(
           `realtime(hume): memory retrieval status=${memory.status} selected=${memory.selected.length} `

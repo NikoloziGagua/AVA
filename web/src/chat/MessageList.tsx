@@ -13,10 +13,12 @@ import type { StreamEvent } from "./useChatStream.js";
 import { TaskReceiptCard } from "./TaskReceiptCard.js";
 import { VisualMessageCard, type VisualSemanticActionHandler } from "../visuals/VisualMessageCard.js";
 import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
+import { MemoryContextCapsule } from "./MemoryContextCapsule.js";
+import type { MemoryContext } from "./memory-context.js";
 
 export type ChatMessage =
   | { role: "user"; text: string; id: string; visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" }
-  | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[] }
+  | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[]; memoryContext?: MemoryContext }
   // `system` rows are server notices (e.g. the "Server restarted…" recovery
   // message) — rendered as a centered notice, never attributed to Ava.
   | { role: "system"; text: string; id: string };
@@ -97,6 +99,7 @@ export function MessageList({
   // Approval snapshots and the terminal result use the same receipt event. Only
   // the newest snapshot is authoritative for the current run.
   const lastReceipt = [...liveEvents].reverse().find((e) => e.kind === "receipt");
+  const liveMemoryContext = [...liveEvents].reverse().find((e) => e.kind === "memory_context");
 
   // Retry re-runs the LAST turn (ChatScreen's retryLast), so it only belongs on
   // the LAST assistant bubble — on every bubble it implied re-running THAT turn.
@@ -237,6 +240,7 @@ export function MessageList({
           ) : (
             <AvaBubble reduced={reduced}>
               <AssistantMarkdown text={m.text} />
+              {m.memoryContext && <MemoryContextCapsule context={m.memoryContext} />}
               <MessageActions
                 text={m.text}
                 onRetry={!lastFinal && m.id === lastAssistantHistoryId ? onRetry : undefined}
@@ -316,6 +320,7 @@ export function MessageList({
           );
         }
         if (e.kind === "receipt") return null;
+        if (e.kind === "memory_context") return null;
         return null;
       })}
 
@@ -325,8 +330,17 @@ export function MessageList({
             <AssistantMarkdown
               text={lastFinal.payload.text}
             />
+            {liveMemoryContext?.kind === "memory_context" && (
+              <MemoryContextCapsule context={liveMemoryContext.payload} />
+            )}
             <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
           </AvaBubble>
+        </div>
+      )}
+
+      {!lastFinal && runTerminated && liveMemoryContext?.kind === "memory_context" && (
+        <div className="ml-9 max-w-[92%]" data-testid="terminated-memory-context">
+          <MemoryContextCapsule context={liveMemoryContext.payload} />
         </div>
       )}
 

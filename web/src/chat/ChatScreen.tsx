@@ -122,6 +122,7 @@ export function ChatScreen({
           ...(m.role === "user" && m.metadata?.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
           ...(m.role === "user" && m.metadata?.visualContext ? { visualContext: m.metadata.visualContext } : {}),
           ...(m.role === "assistant" && m.visualMessages?.length ? { visualMessages: m.visualMessages } : {}),
+          ...(m.role === "assistant" && m.metadata?.memoryContext ? { memoryContext: m.metadata.memoryContext } : {}),
         }));
         // Dedupe target = server's replay rule over the RAW rows (not the last
         // mapped bubble), so a trailing `system` row can't shadow the real final.
@@ -161,11 +162,20 @@ export function ChatScreen({
       for (const epoch of completedEpochs) {
         const id = `a-${epoch}`;
         const inlineVisuals = visualsByEpoch[epoch] ?? [];
+        const memoryContext = [...events]
+          .reverse()
+          .find((event) => event.runEpoch === epoch && event.kind === "memory_context");
         const existingIndex = next.findIndex((m) => m.id === id);
         if (existingIndex >= 0) {
           const existing = next[existingIndex];
-          if (existing?.role === "assistant" && inlineVisuals.length && existing.visualMessages !== inlineVisuals) {
-            next = next.map((message, index) => index === existingIndex ? { ...existing, visualMessages: inlineVisuals } : message);
+          if (existing?.role === "assistant" &&
+              ((inlineVisuals.length && existing.visualMessages !== inlineVisuals) ||
+               (memoryContext?.kind === "memory_context" && existing.memoryContext !== memoryContext.payload))) {
+            next = next.map((message, index) => index === existingIndex ? {
+              ...existing,
+              ...(inlineVisuals.length ? { visualMessages: inlineVisuals } : {}),
+              ...(memoryContext?.kind === "memory_context" ? { memoryContext: memoryContext.payload } : {}),
+            } : message);
           }
           continue;
         }
@@ -184,6 +194,7 @@ export function ChatScreen({
           role: "assistant",
           text: final.payload.text,
           ...(inlineVisuals.length ? { visualMessages: inlineVisuals } : {}),
+          ...(memoryContext?.kind === "memory_context" ? { memoryContext: memoryContext.payload } : {}),
         }];
       }
       return next;
@@ -270,10 +281,13 @@ export function ChatScreen({
   // epoch-0 replay of the last persisted assistant message (same dedupe as the
   // promote effect above, so neither path renders the duplicate).
   const promotedCurrent = history.some((m) => m.id === `a-${runEpoch}`);
+  const seededAssistant = [...history].reverse().find((message) => message.role === "assistant");
   const liveEvents = events.filter((e) => {
     if (e.runEpoch !== runEpoch) return false;
     if (e.kind === "final" && (promotedCurrent ||
         (e.runEpoch === 0 && e.payload.text === seededLastAssistantRef.current))) return false;
+    if (e.kind === "memory_context" && (promotedCurrent ||
+        (e.runEpoch === 0 && seededAssistant?.role === "assistant" && seededAssistant.memoryContext))) return false;
     return true;
   });
 

@@ -172,6 +172,33 @@ Each chat/OpenAI turn records a bounded `memory.retrieval.*` event in Mission
 Control. The event contains status, mode, source IDs/health and match explanation,
 but never the query or retrieved transcript text. Replayed recording is idempotent.
 
+### Inline memory context receipts
+
+The same provider-neutral retrieval gate now projects a versioned, sanitized
+`memoryContext` receipt onto the assistant message it informed. Typed chat emits
+that projection as a live `memory_context` SSE event before model work and stores
+it with the final or error reply. OpenAI and Hume voice attach it to the spoken
+assistant turn they persist in the shared conversation. Returning from voice to
+the chat therefore shows the same durable receipt after reload; internal
+`persist:false` action handoffs still create no duplicate transcript or receipt.
+
+The collapsed chat capsule distinguishes `used`, `no_match`, `suppressed`,
+`unavailable` and `error`. Expanded detail can show retrieval mode, whether
+semantic search was available, selected memory titles/kinds/projects, source
+health, bounded match explanation and truncation. It deliberately cannot contain
+the retrieval query, source-session ID, message range, source excerpt, generated
+prompt, similarity score, transcript, provider payload or hidden reasoning.
+Receipts are schema-validated and re-scrubbed before persistence and again when
+message history is read. A `used` claim is rejected unless at least one valid
+source-addressable selection survives validation.
+
+Fast chat runs retain the same safe projection in memory for five minutes so an
+SSE connection opened after completion receives the context before the final.
+The requested task ID scopes that replay. SQLite message metadata remains the
+restart-safe history authority; Mission Control remains the deeper operational
+record. Hume's receipt reflects its documented connection-time lookup from the
+active chat's latest user context, not an unimplemented per-utterance lookup.
+
 ## Privacy and boundaries
 
 - `scrubSecrets` runs before summary persistence, before embedding calls and

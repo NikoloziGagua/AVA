@@ -230,6 +230,45 @@ describe("ChatScreen send failure", () => {
     expect(screen.getByRole("link", { name: /Evidence/ }).getAttribute("href")).toBe("https://example.com/evidence");
   });
 
+  it("restores the persisted memory receipt and does not duplicate its fast replay", async () => {
+    const memoryContext = {
+      schemaVersion: 1 as const,
+      status: "used" as const,
+      reason: "A source-verified checkpoint matched.",
+      project: "Aurora",
+      mode: "hybrid" as const,
+      semanticAvailable: true,
+      notice: null,
+      selected: [{
+        entryId: "memory_checkpoint_01",
+        title: "Aurora observation plan",
+        kind: "idea",
+        project: "Aurora",
+        sourceStatus: "verified" as const,
+        matchMode: "hybrid" as const,
+        matchReason: "Matched the observation-plan topic.",
+        sourceTruncated: false,
+      }],
+    };
+    fetchSession.mockResolvedValue({
+      session,
+      messages: [
+        msg(1, "user", "What was our aurora plan?"),
+        { ...msg(2, "assistant", "Use the flexible two-night plan."), metadata: { memoryContext } },
+      ],
+    });
+    render(<ChatScreen sessionId="s1" {...noNav} />);
+    expect(await screen.findByText("Memory used · 1 source")).toBeTruthy();
+
+    act(() => {
+      lastES().emit("memory_context", memoryContext, 1);
+      lastES().emit("final", { text: "Use the flexible two-night plan." }, 2);
+      lastES().emit("done", {}, 3);
+    });
+    expect(screen.getAllByTestId("memory-context")).toHaveLength(1);
+    expect(screen.getAllByText("Use the flexible two-night plan.")).toHaveLength(1);
+  });
+
   it("passes the server-assigned new-chat session to voice", async () => {
     const onEnterVoice = vi.fn();
     sendMessage.mockResolvedValue({ sessionId: "created-session", taskId: "task-1" });

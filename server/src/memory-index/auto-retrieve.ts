@@ -2,6 +2,10 @@ import { scrubSecrets } from "../security/scrub.js";
 import type { ObservabilityService } from "../observability/store.js";
 import type { MemoryIndexResult, MemoryRetrievalMode } from "./types.js";
 import type { MemoryIndexService } from "./store.js";
+import {
+  sanitizeMessageMemoryContext,
+  type MessageMemoryContext,
+} from "../state/messages.js";
 
 export type AutomaticMemoryChannel = "chat" | "openai_voice" | "hume_voice";
 export type AutomaticMemoryStatus = "used" | "no_match" | "suppressed" | "unavailable" | "error";
@@ -41,6 +45,47 @@ export type AutomaticMemoryInput = {
   currentSessionId?: string | null;
   project?: string | null;
 };
+
+/**
+ * Projects an internal retrieval decision into the narrow receipt allowed in
+ * message history and the live stream. Raw excerpts, queries, prompts, scores,
+ * session IDs, and transcript positions are intentionally omitted.
+ */
+export function memoryContextFromDecision(decision: AutomaticMemoryDecision): MessageMemoryContext {
+  const receipt = sanitizeMessageMemoryContext({
+    schemaVersion: 1,
+    status: decision.status,
+    reason: decision.reason,
+    project: decision.project,
+    mode: decision.mode,
+    semanticAvailable: decision.semanticAvailable,
+    notice: decision.notice,
+    selected: decision.selected.map((item) => ({
+      entryId: item.entryId,
+      title: item.title,
+      kind: item.kind,
+      project: item.project,
+      sourceStatus: item.sourceStatus,
+      matchMode: item.matchMode,
+      matchReason: item.matchReason,
+      sourceTruncated: item.sourceTruncated,
+    })),
+  });
+  if (receipt) return receipt;
+  // Visibility must never prevent the requested conversation. If an internal
+  // producer violates the receipt contract, fail closed for displayed memory
+  // evidence and preserve the turn as an honest validation error.
+  return {
+    schemaVersion: 1,
+    status: "error",
+    reason: "AVA could not validate the memory-context receipt, so no memory-use claim is shown.",
+    project: null,
+    mode: null,
+    semanticAvailable: false,
+    notice: null,
+    selected: [],
+  };
+}
 
 const GENERIC_TURN = /^(?:hi|hello|hey|thanks|thank you|okay|ok|yes|no|good morning|good night|how are you|what'?s up)[.!? ]*$/i;
 const EXPLICIT_RECALL = /\b(?:remember|recall|we discussed|we decided|our idea|that research|previous conversation|earlier chat|last time)\b/i;

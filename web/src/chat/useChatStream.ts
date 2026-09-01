@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
 import type { TaskReceipt } from "./task-receipt.js";
+import type { MemoryContext } from "./memory-context.js";
 
 type EventBase = { id: number; runEpoch: number };
 
@@ -15,6 +16,7 @@ export type StreamEvent =
   | (EventBase & { kind: "killed"; payload: { reason?: "stuck" | "manual" } })
   | (EventBase & { kind: "done"; payload: Record<string, never> })
   | (EventBase & { kind: "receipt"; payload: TaskReceipt })
+  | (EventBase & { kind: "memory_context"; payload: MemoryContext })
   | (EventBase & { kind: "gap"; payload: { from: number; to: number } })
   | (EventBase & { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } })
   | (EventBase & { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } });
@@ -82,7 +84,7 @@ export function useChatStream(sessionId: string | null, runEpoch: number, taskId
           es.close();
         }
       };
-      for (const k of ["thought", "delta", "tool_call", "tool_result", "final", "error", "killed", "done", "receipt", "gap", "approval_required", "approval_resolved"] as const) {
+      for (const k of ["thought", "delta", "tool_call", "tool_result", "final", "error", "killed", "done", "receipt", "memory_context", "gap", "approval_required", "approval_resolved"] as const) {
         es.addEventListener(k, handle(k));
       }
     }

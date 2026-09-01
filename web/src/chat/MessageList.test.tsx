@@ -6,6 +6,7 @@ import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import type { TaskReceipt } from "./task-receipt.js";
 import type { StreamEvent } from "./useChatStream.js";
+import type { MemoryContext } from "./memory-context.js";
 
 beforeEach(() => {
   // jsdom has no scrollIntoView; the list autoscrolls on every append.
@@ -26,6 +27,26 @@ const history: ChatMessage[] = [
   { id: "u2", role: "user", text: "q2" },
   { id: "a2", role: "assistant", text: "Average: **0ms**, Sir." },
 ];
+
+const usedMemory: MemoryContext = {
+  schemaVersion: 1,
+  status: "used",
+  reason: "A source-verified project checkpoint matched this turn.",
+  project: "Aurora",
+  mode: "hybrid",
+  semanticAvailable: true,
+  notice: null,
+  selected: [{
+    entryId: "memory_checkpoint_01",
+    title: "Aurora observation plan",
+    kind: "idea",
+    project: "Aurora",
+    sourceStatus: "verified",
+    matchMode: "hybrid",
+    matchReason: "Matched the project and observation-plan terms.",
+    sourceTruncated: false,
+  }],
+};
 
 describe("MessageList", () => {
   it("renders Retry only on the LAST assistant bubble", () => {
@@ -126,5 +147,23 @@ describe("MessageList", () => {
     render(<MessageList history={history} liveEvents={liveEvents} />);
     expect(screen.getAllByTestId("task-receipt")).toHaveLength(1);
     expect(screen.getByText("Verified")).toBeTruthy();
+  });
+
+  it("renders a collapsed source-aware memory receipt for persisted and live replies", () => {
+    const { rerender } = render(<MessageList history={[
+      { id: "a-memory", role: "assistant", text: "Use the inland fallback.", memoryContext: usedMemory },
+    ]} liveEvents={[]} />);
+    const persisted = screen.getByTestId("memory-context");
+    expect(persisted.hasAttribute("open")).toBe(false);
+    expect(screen.getByText("Memory used · 1 source")).toBeTruthy();
+    expect(screen.getByText("Aurora observation plan")).toBeTruthy();
+    expect(screen.getByText(/never the private source text/i)).toBeTruthy();
+
+    rerender(<MessageList history={[]} liveEvents={[
+      { id: 1, runEpoch: 2, kind: "memory_context", payload: { ...usedMemory, status: "no_match", selected: [], reason: "No relevant source-verified memory matched." } },
+      { id: 2, runEpoch: 2, kind: "final", payload: { text: "A clean answer." } },
+    ]} />);
+    expect(screen.getByText("No relevant memory used")).toBeTruthy();
+    expect(screen.getAllByTestId("memory-context")).toHaveLength(1);
   });
 });

@@ -10,6 +10,7 @@ import {
   listMessages,
   listMessagesAfterId,
   type Message,
+  type MessageMemoryContext,
   type MessageVisualContext,
   type MessageVisualReference,
 } from "../state/messages.js";
@@ -87,6 +88,7 @@ import { getTaskReceipt, pruneTaskReceipts, saveTaskReceipt } from "../state/tas
 import type { MemoryIndexService } from "../memory-index/store.js";
 import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
 import {
+  memoryContextFromDecision,
   recordAutomaticMemoryDecision,
   retrieveAutomaticMemory,
   type AutomaticMemoryDecision,
@@ -249,6 +251,7 @@ export function chatRoutes(
   // reconstruct after a fast-finish/connect race. Retain the already-sanitized
   // final beside its task id for the same short replay window as the receipt.
   const recentFinals = new Map<string, { taskId: string; text: string; expiresAt: number }>();
+  const recentMemoryContexts = new Map<string, { taskId: string; context: MessageMemoryContext; expiresAt: number }>();
   const RECEIPT_REPLAY_TTL_MS = 5 * 60_000;
   const pruneRecentReceipts = (now = Date.now()) => {
     for (const [sid, value] of recentReceipts) {
@@ -256,6 +259,9 @@ export function chatRoutes(
     }
     for (const [sid, value] of recentFinals) {
       if (value.expiresAt <= now) recentFinals.delete(sid);
+    }
+    for (const [sid, value] of recentMemoryContexts) {
+      if (value.expiresAt <= now) recentMemoryContexts.delete(sid);
     }
   };
 
@@ -391,6 +397,7 @@ export function chatRoutes(
     runs.register(activeRun);
     pruneRecentReceipts();
     recentReceipts.delete(sessionId);
+    recentMemoryContexts.delete(sessionId);
 
     const full = getSessionFull(db, sessionId);
     const recent = full?.summary_through_message_id
@@ -509,6 +516,16 @@ export function chatRoutes(
           currentSessionId: sessionId,
           project: memoryProject,
         });
+    const memoryContext = memoryContextFromDecision(memoryRetrieval);
+    // This is the same bounded projection persisted with the answer. Raw
+    // retrieval queries, source excerpts, and generated prompt text never
+    // cross the live event boundary.
+    buffer.append({ kind: "memory_context", payload: memoryContext });
+    recentMemoryContexts.set(sessionId, {
+      taskId: runId,
+      context: memoryContext,
+      expiresAt: Date.now() + RECEIPT_REPLAY_TTL_MS,
+    });
 
     const generatedPlaybook = mode === "action"
       ? agentDeps.generatedPlaybooks?.matchActive(latestUserText) ?? null
@@ -794,7 +811,10 @@ export function chatRoutes(
               sessionId: sid,
               role: "assistant",
               content: e.payload.text,
-              ...(visualMessages.length ? { metadata: { visualMessages } } : {}),
+              metadata: {
+                memoryContext,
+                ...(visualMessages.length ? { visualMessages } : {}),
+              },
             });
             persistedAssistantMessageId = storedAssistant.id;
           } else if (e.kind === "error") {
@@ -804,9 +824,12 @@ export function chatRoutes(
             appendMessage(db, {
               sessionId: sid, role: "assistant",
               content: `That didn't work, Sir — ${e.payload.message}`,
-              ...([...runVisualReferences.values()].length
-                ? { metadata: { visualMessages: [...runVisualReferences.values()] } }
-                : {}),
+              metadata: {
+                memoryContext,
+                ...([...runVisualReferences.values()].length
+                  ? { visualMessages: [...runVisualReferences.values()] }
+                  : {}),
+              },
             });
           }
         }
@@ -1039,7 +1062,12 @@ export function chatRoutes(
             payload: { message: msg },
           });
           if (parsed.data.persist !== false) {
-            appendMessage(db, { sessionId: sid, role: "assistant", content: `That didn't work, Sir — ${msg}` });
+            appendMessage(db, {
+              sessionId: sid,
+              role: "assistant",
+              content: `That didn't work, Sir — ${msg}`,
+              metadata: { memoryContext },
+            });
           }
         } catch { /* even the error path failed; finally still unregisters */ }
         console.error("[chat] run crashed:", msg);
@@ -1106,6 +1134,16 @@ export function chatRoutes(
         // different turn. An unscoped legacy client may still use the durable
         // conversation fallback after a server restart.
         : requestedTaskId ? null : latestAssistantAfterLastUser(db, sessionId);
+      const rememberedContext = recentMemoryContexts.get(sessionId);
+      if (rememberedContext && (!requestedTaskId || requestedTaskId === rememberedContext.taskId)) {
+        sink.write({
+          id: ++id,
+          kind: "memory_context",
+          payload: rememberedContext.context,
+          bytes: 0,
+          ts: Date.now(),
+        });
+      }
       if (replayFinal) {
         sink.write({ id: ++id, kind: "final", payload: { text: replayFinal }, bytes: 0, ts: Date.now() });
       }

@@ -5421,3 +5421,65 @@ work remain untouched. Forge was neither inspected nor modified.
 
 NEEDS: codex (continue the claimed newcomer-first Explore redesign as a separate
 committed boundary)
+
+---
+
+### 2026-09-01 - codex - COMPLETE: newcomer-first Explorer remodel
+
+Explorer's Discover entrance now explains AVA as a real system to someone who
+has never seen it, while preserving the existing Atlas, Activity and Health
+depth. The asymmetric editorial opening states the four defining promises —
+converse, act, remember and prove — beside a lightweight interactive capability
+constellation. Four real starting prompts come before taxonomy. Five outcome
+chapters (Talk, Use my PC, Use accounts, Remember and Build) progressively
+reveal a plain-language workflow, the exact registry capabilities behind it,
+live readiness, and examples. Known setup-required or unavailable examples now
+open their capability evidence rather than launching a request that cannot run.
+
+The evidence ladder explicitly separates source declarations, workflow maps,
+current runtime checks and recorded work; task counts are not described as
+verified success. Chapter navigation uses tab/tablist/tabpanel semantics with
+Arrow, Home and End keys. Content does not auto-advance, reduced-motion removes
+ambient movement, and the composition reflows without document overflow at
+390px and 320px. The full design rationale and sources are in
+`docs/reviews/2026-09-01-explorer-remodel-design-research.md`; the local Awwwards
+showcase was inspected for editorial hierarchy and pacing only, with no source
+or proprietary imagery copied.
+
+Product commit: `a73ebc0` (`feat(explorer): create editorial capability
+journey`). Files are `web/src/explorer/DiscoverView.tsx`, its focused test,
+`ExplorerScreen.test.tsx`, the scoped Explorer styles in `web/src/theme.css`,
+the verified manifest, `docs/features/explorer-discover.md`, and the design
+research note.
+
+Verification:
+
+- Explorer-focused Vitest: 10 files / 53 tests passed, including registry
+  integrity, progressive chapters, keyboard navigation and unavailable-action
+  routing.
+- Complete web suite: 96 files / 448 tests passed.
+- Complete server suite: 203 files / 1,569 tests passed.
+- Server TypeScript/build and production web/PWA build passed from committed
+  HEAD. The existing ES2024 and large-main-chunk warnings remain warnings.
+- Explorer contract/reality audit passed: 35 capabilities, 78 tool mappings,
+  123 verified source references with zero broken, 29/29 routes, and a runtime
+  reality map matching the current machine.
+- Fresh-profile deployed-browser checks verified all five chapters, keyboard
+  selection, reduced motion, no console errors, no page overflow at 390px or
+  320px-equivalent reflow, and the complete mobile hero headline. The earlier
+  mobile headline clipping found by this check was fixed before commit.
+- Committed AVA was rebuilt and relaunched. The live API reports build ID
+  `1cfe1295-f83f-4430-aaa2-b18638c43dd4`, exactly matching
+  `server/dist/build-id.txt`; the served application root returns HTTP 200.
+
+Known boundaries: deeper Atlas/capability pages retain their current visual
+language; a capability without a live adapter remains honestly Unknown; the
+new hierarchy has automated and manual acceptance evidence but has not yet had
+a formal newcomer usability study. Activepieces' pre-existing Device Guard/Bun
+failure is unrelated to Explorer.
+
+Unrelated `.claude/settings.local.json`, `.codex/agents/` and persona-research
+work were preserved. Forge was neither inspected nor modified.
+
+NEEDS: codex (inspect the indexed connected-intelligence ideas and claim one
+bounded, non-overlapping next improvement)

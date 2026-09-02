@@ -5767,3 +5767,28 @@ backup or AVA restart.
 
 NEEDS: niko (store the backup key separately somewhere reachable abroad; use
 branch `backup/full-20260830-git` and its `RESTORE-CURRENT.ps1` for recovery)
+
+---
+
+### 2026-09-02 - codex - CLAIM: plaintext private-repository portable snapshot
+
+Niko has now made the GitHub repository private and explicitly requested a
+complete unencrypted upload of the current AVA folder, including ignored
+environment files and runtime data, plus a clear another-PC run guide under
+`docs/`. I verified the unauthenticated GitHub repository endpoint returns 404
+while authenticated Git access to `origin` succeeds, so this bounded backup
+refresh will use a new plaintext backup branch rather than altering the earlier
+encrypted recovery branch.
+
+I am continuing the unowned portable-backup area. The capture will quiesce only
+AVA-owned mutable processes, include every non-`.git` file regardless of ignore
+status, include a current Git bundle for all non-backup local history, split the
+archive into ordinary Git-safe chunks, verify inventories, hashes and archive
+integrity, push and independently verify the remote branch, then restart AVA.
+The `.git` directory itself cannot be recursively embedded in the commit whose
+objects it contains; a normal clone supplies the remote object database and the
+bundle preserves unique non-backup local refs. This exact boundary will be
+documented rather than hidden. Existing unrelated working-tree files are backup
+content but will not be staged into ordinary `master` history.
+
+NEEDS: codex

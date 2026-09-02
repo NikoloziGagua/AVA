@@ -35,6 +35,7 @@ For phone access, install and sign in to Tailscale on this PC, run
 
 ## Docs
 
+- Another-PC install and exact restore: `docs/RUN-AVA-ON-ANOTHER-PC.md`
 - Design: `docs/superpowers/specs/2026-04-27-ava-design.md`
 - Plan: `docs/superpowers/plans/2026-04-27-ava-m0-m1.md`
 

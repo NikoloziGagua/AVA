@@ -207,4 +207,3 @@ snapshot, but rebuilding after moving to another computer is still recommended.
   Windows may bind encrypted cookies to the original account or machine.
 - **Private clone fails:** authenticate GitHub for the account that owns or has
   access to `NikoloziGagua/AVA`.
-

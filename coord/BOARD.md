@@ -5434,6 +5434,28 @@ intelligence increment after evaluating whether this evidence is useful)
 
 ---
 
+### 2026-09-02 - codex - CLAIM: refresh encrypted full-folder GitHub backup
+
+Niko explicitly requested that the complete current AVA folder, including
+ignored `.env`, runtime databases, browser/session data, dependencies, logs and
+Git metadata, be uploaded to GitHub. I am continuing the completed portable-
+backup area with a current-state incremental archive over the verified encrypted
+baseline and September 1 delta already on `backup/full-20260830-git`.
+
+The refresh will quiesce mutable AVA-owned processes, capture every changed or
+new file plus an explicit deletion manifest, encrypt filenames and contents with
+the existing external AES key, verify archive integrity and hashes, append only
+Git-safe encrypted chunks to the backup branch, push current ordinary source
+history to `master`, prove the advertised remote commits and inventories, then
+restart AVA. Raw credentials and session data will be present inside the
+encrypted backup but will not become plaintext, searchable Git blobs. Unrelated
+working-tree state is source data for the archive and will not be staged into
+ordinary source history.
+
+NEEDS: codex
+
+---
+
 ### 2026-09-02 - codex - COMPLETE: connected Project Brief in Notes
 
 The existing Notes project space now opens with a collapsible Project Brief

@@ -5710,3 +5710,60 @@ browser check with zero residue, and committed runtime build
 NEEDS: niko (use a remembered topic in a new chat or shared voice session and
 expand the Memory capsule beneath AVA's reply; choose the next connected-
 intelligence increment after evaluating whether this evidence is useful)
+
+---
+
+### 2026-09-02 - codex - COMPLETE: encrypted full-folder GitHub refresh
+
+The complete portable backup is current again. The already-verified August 30
+baseline and September 1 delta remain immutable on
+`backup/full-20260830-git`; commit `03d7597` adds the cumulative encrypted
+September 2 refresh, checksum, updated restore documentation and a guarded
+`RESTORE-CURRENT.ps1`. GitHub advertises that exact backup commit, and its
+encrypted refresh blob is exactly `33,325,092` bytes. Current ordinary source
+history through the snapshot claim is also on remote `master` at `4a8ae5f`.
+
+The quiesced source inventory contained `395,584` entries totalling
+`19,907,547,277` bytes. The cumulative refresh selected `2,786` current files
+totalling `184,404,490` bytes, including all timestamp-selected changes plus
+every Git-reported modified/untracked path. It explicitly contains the current
+SQLite state, `.claude/settings.local.json`, `.codex/agents/`, the untracked
+persona research and all other current source/runtime changes. The encrypted
+baseline independently confirms `.env` is included. Forty-four baseline files
+that no longer exist are recorded in the encrypted deletion manifest. Both the
+long-path-aware inventory and per-file SHA-256 pass reported zero skipped
+entries.
+
+The AES-256 archive encrypts filenames and contents. A complete current
+inventory, per-delta content hashes, deletion manifest, capture metadata and a
+verified 5,060,769-byte Git bundle containing all five non-backup local branch
+histories are carried inside its encrypted metadata directory. 7-Zip's full
+test reported `Everything is Ok` for all 2,794 archived entries. A content
+inspection proved the current database, settings, Codex agents, persona
+research, metadata and Git bundle are present.
+
+One exact boundary is unavoidable and documented: current `.git/objects`,
+`.git/lfs` and local backup refs contain or point to the uploaded backup blobs
+themselves. Embedding those paths in their own next commit creates infinite
+self-reference. They are represented by the remote backup branch and encrypted
+non-backup Git bundle instead; no unique source history or application data is
+lost. The restore script refuses to overwrite an existing AVA folder, verifies
+both archive layers, applies deletions with root-containment checks and imports
+the bundled refs. Its parser and overwrite guard passed.
+
+Remote verification used authenticated Git push plus independent `ls-remote`,
+tree/blob size and clean-backup-worktree checks. The repository is public, so
+raw credentials, cookies and sessions were not placed in searchable Git blobs;
+they are present only inside the encrypted archive. The existing external key
+remains outside Git at
+`C:\Users\nikug\Downloads\AVA-portable-backup-20260830-051602\AVA-BACKUP-KEY-KEEP-PRIVATE.txt`.
+
+AVA and its dedicated browser were stopped only for the consistent capture and
+then restarted. Disk and live build IDs match at
+`7f9e81ed-4e3b-44c5-ab10-6180344c4bdd`; health is `ok=true`, `ready=true`, and
+the application root returns HTTP 200. The optional Activepieces launcher still
+exits `-1`, its pre-existing Device Guard/Bun issue; it did not affect the
+backup or AVA restart.
+
+NEEDS: niko (store the backup key separately somewhere reachable abroad; use
+branch `backup/full-20260830-git` and its `RESTORE-CURRENT.ps1` for recovery)

@@ -6,6 +6,42 @@ First proving ground: OpenAI Realtime voice → AVA action agent → tool execut
 
 Mission Control is AVA's operational view of what is happening, why it is happening, what is waiting, what failed, and what has actually been verified. It opens in a separate browser window beside voice chat but remains part of the same AVA application. Both views consume the same AVA-owned runtime and event stream.
 
+## AVA-to-agent Communications view
+
+Mission Control now has a read-only **Communications** filter backed by the
+same durable run and event tables as the rest of Mission Control. It currently
+covers two real AVA-owned boundaries:
+
+- `discuss_with_claude` background discussions, from AVA queue acceptance
+  through Claude Code execution and the sanitized returned response;
+- `kind=codex` watcher handoffs, from scheduling and delivery evidence through
+  the pinned Codex turn reaching a terminal task boundary.
+
+Each communication is one stable `agent_communication` child run. Its source
+ID is the discussion or watcher ID, so retries, polling, SSE replay, repeated
+readback, and scheduler passes cannot create another run or double-count its
+terminal result. When a parent chat or watcher communication exists, the child
+inherits its trace, root task, session, and parent identity. The event payload
+also identifies the AVA-orchestrator to external-executor trust boundary and
+the evidence provenance.
+
+The view distinguishes Claude Code from Codex without provider-specific UI
+branches. It shows lifecycle and verification state, timestamps, duration,
+parent/root correlation, errors, and collapsed request/outcome evidence.
+Provider usage, cost, model, and provider request identity are shown as **not
+reported** when the authoritative boundary does not supply them. Claude
+discussion output is retained only as a bounded sanitized summary. The Codex
+watcher transport proves delivery and completion of the pinned turn but does
+not lawfully capture the response body, so the UI says **not recorded by this
+transport** and treats the outcome as only partially verified.
+
+The presentation adds no send, retry, approval, Stop, or generic agent-control
+route. Existing authentication, 30-day detail / 365-day compact retention,
+read-time redaction, export-time re-redaction, immutable late-event behavior,
+and SSE cursor replay apply unchanged. Historical discussions and watchers are
+not backfilled; only boundaries observed after this instrumentation was
+installed appear in the filter.
+
 ## Experimental Microsoft UFO evidence
 
 The Microsoft UFO integration reuses Mission Control rather than creating a
@@ -188,12 +224,19 @@ The first slice covers:
     the existing normalized tool-call seam. Direct Memory UI mutations are not
     represented as fake agent runs; their durable append-only governance events
     expose actor, time, reason, target and resulting version on the memory card.
+14. AVA-owned Claude background discussions and Codex watcher handoffs as stable,
+    correlated, provider-neutral `agent_communication` child runs with a focused
+    read-only Communications filter.
 
 Coverage is deliberately honest:
 
 - OpenAI Realtime voice and AVA chat/action agent: instrumented vertical slice.
 - Hume voice: not yet instrumented.
-- Forge, Codex, and Claude Code: adapter contract exists, live ingestion is not connected yet.
+- Codex: watcher delivery and terminal-boundary communication slice only; returned
+  response content, provider usage, and arbitrary direct Codex sessions are not recorded.
+- Claude Code: AVA background-discussion communication slice only; arbitrary
+  direct Claude Code sessions are not observed.
+- Forge: adapter contract exists; live ingestion is not connected.
 
 Deep-research visual creation reuses this same normalized run/event store. The
 initiating AVA run receives idempotent `research.visual.planning`, `validated`,
@@ -231,7 +274,9 @@ Forge events are mapped rather than reinterpreted. Unknown future roles remain v
 1. Instrument Hume with the same voice event grammar.
 2. Extend the implemented verification/evidence wrapper beyond the initial filesystem and social-workflow producers.
 3. Connect Forge journal ingestion and show its 11 stations, assignments, messages, approvals, artifacts, and test/review outcomes as nested runs.
-4. Add explicit Codex and Claude Code adapters, including prompts/responses as sanitized collapsed messages and artifacts/diffs as typed resources.
+4. Extend beyond the bounded Codex-watcher and Claude-discussion communication
+   producers only when another AVA-authorized adapter can preserve the same
+   sanitized correlation, dedupe, evidence, and accounting contract.
 5. Add health aggregation, latency percentiles, retry/error signatures, cost trends, and stale adapter/agent panels.
 6. Add immutable annotations/reviews and links from Mission Control traces into Explorer capability workflows.
 
@@ -252,6 +297,8 @@ Forge events are mapped rather than reinterpreted. Unknown future roles remain v
 - Raw audio, credentials, cookies, auth headers, and hidden reasoning are absent from storage and UI.
 - A late or out-of-order event cannot rewrite a terminal run.
 - A nested executor action and provider request are counted once even if observed by a parent/router.
+- A Claude discussion or Codex watcher appears once in Communications with a
+  stable source identity, truthful evidence availability, and no provider-specific controls.
 - Stop is the only Mission Control mutation, is run-scoped, and rejects stale `expectedVersion`.
 - Root voice Stop cascades to its current voice turn/action; child Stop does not indiscriminately cancel unrelated work.
 - Screenshots are off and cost is shown only when reported.

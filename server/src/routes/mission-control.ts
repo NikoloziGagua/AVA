@@ -10,6 +10,7 @@ import {
   MISSION_CONTROL_EXPORT_MAX_TIME_RANGE_MS,
   MISSION_CONTROL_EXPORT_SCHEMA_VERSION,
 } from "../observability/export.js";
+import { COMMUNICATION_RUN_KIND } from "../observability/communications.js";
 
 export const MISSION_CONTROL_API_VERSION = 1;
 
@@ -70,8 +71,8 @@ export function missionControlRoutes(
         avaChatAgent: "vertical_slice",
         humeVoice: "not_yet_instrumented",
         forge: "adapter_contract_ready_not_connected",
-        codex: "adapter_contract_ready_not_connected",
-        claudeCode: "adapter_contract_ready_not_connected",
+        codex: "watcher_communication_slice",
+        claudeCode: "background_discussion_slice",
       },
       forge: {
         boundary: "separate_runtime_ava_integrated",
@@ -94,8 +95,20 @@ export function missionControlRoutes(
 
   router.get("/runs", auth, (req, res) => {
     const limit = Math.max(1, Math.min(100, Math.floor(numberParam(req.query.limit, 50))));
+    const category = req.query.category;
+    if (category !== undefined && category !== "communications") {
+      res.status(400).json({
+        error: "invalid_mission_category",
+        message: "Mission Control category must be communications when supplied.",
+      });
+      return;
+    }
     res.json({
-      runs: observability.listRuns({ limit }),
+      runs: observability.listRuns({
+        limit,
+        runKind: category === "communications" ? COMMUNICATION_RUN_KIND : undefined,
+      }),
+      category: category ?? "all",
       generatedAt: Date.now(),
       apiVersion: MISSION_CONTROL_API_VERSION,
     });

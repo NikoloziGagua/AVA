@@ -19,7 +19,7 @@ describe("buildDiscussTools", () => {
 
     const r = await discuss.run({ topic: "should we cache X" }, ctx);
 
-    expect(queue).toHaveBeenCalledWith("should we cache X", "sess-1");
+    expect(queue).toHaveBeenCalledWith("should we cache X", "sess-1", "r");
     expect(r.ok).toBe(true);
     expect(r.text).toContain("Started conferring with Claude");
     expect(r.text).toContain("should we cache X");

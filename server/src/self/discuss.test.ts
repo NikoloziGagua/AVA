@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { openDb } from "../state/db.js";
 import { createDiscussion, getDiscussion } from "../state/discussions.js";
 import { runDiscussion, type DiscussDeps } from "./discuss.js";
@@ -70,5 +70,28 @@ describe("runDiscussion", () => {
     const { deps: dp, delivered } = deps();
     await expect(runDiscussion(d, "nope", dp)).resolves.toBeUndefined();
     expect(delivered.length).toBe(0);
+  });
+
+  it("publishes worker and terminal observation boundaries without letting telemetry break delivery", async () => {
+    const d = db();
+    const id = createDiscussion(d, { topic: "observe", sessionId: "s" });
+    const running = vi.fn(() => { throw new Error("telemetry unavailable"); });
+    const completed = vi.fn();
+    const { deps: dp, delivered } = deps({
+      observe: { running, completed },
+      consult: async () => ({ ok: true, text: "bounded answer" }),
+    });
+
+    await runDiscussion(d, id, dp);
+
+    expect(running).toHaveBeenCalledTimes(1);
+    expect(completed).toHaveBeenCalledWith(
+      expect.objectContaining({ id, topic: "observe" }),
+      "bounded answer",
+      expect.any(Number),
+      expect.any(Number),
+    );
+    expect(delivered).toHaveLength(1);
+    expect(getDiscussion(d, id)?.status).toBe("done");
   });
 });

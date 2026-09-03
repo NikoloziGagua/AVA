@@ -597,9 +597,23 @@ export class ObservabilityStore {
     return row ? runFromRow(row, now) : null;
   }
 
-  listRuns(options: { limit?: number; status?: ObservabilityRunStatus } = {}): ObservabilityRun[] {
+  listRuns(options: {
+    limit?: number;
+    status?: ObservabilityRunStatus;
+    runKind?: string;
+  } = {}): ObservabilityRun[] {
     const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
-    const where = options.status ? "WHERE r.status = ?" : "";
+    const clauses: string[] = [];
+    const params: Array<string | number> = [];
+    if (options.status) {
+      clauses.push("r.status = ?");
+      params.push(options.status);
+    }
+    if (options.runKind) {
+      clauses.push("r.run_kind = ?");
+      params.push(options.runKind);
+    }
+    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     const sql = `
       ${RUN_SELECT}
       ${where}
@@ -607,9 +621,7 @@ export class ObservabilityStore {
       ORDER BY r.updated_at DESC, r.id DESC
       LIMIT ?
     `;
-    const rows = options.status
-      ? this.db.prepare(sql).all(options.status, limit)
-      : this.db.prepare(sql).all(limit);
+    const rows = this.db.prepare(sql).all(...params, limit);
     const now = Date.now();
     return (rows as RunRow[]).map((row) => runFromRow(row, now));
   }

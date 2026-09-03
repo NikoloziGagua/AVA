@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { openInMemoryDb } from "../state/db.js";
 import { createWatch, listWatches, dueWatches, recordWatchRun, getWatch, getChildWatch } from "../state/watches.js";
 import { parseWatchMarker, buildCheckPrompt, tickOnce, type SchedulerDeps } from "./scheduler.js";
+import { ObservabilityService } from "../observability/store.js";
+import { communicationRunId } from "../observability/communications.js";
 
 const quiet = { info: () => {}, warn: () => {} };
 
@@ -165,6 +167,7 @@ describe("pinned Codex delivery (watches v3)", () => {
 
   it("disables an irrecoverable lost delivery instead of retrying forever", async () => {
     const db = openInMemoryDb();
+    const observability = new ObservabilityService(db);
     const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 1, target });
     const dispatchCodex = vi.fn(async () => ({
       status: "error" as const,
@@ -172,8 +175,8 @@ describe("pinned Codex delivery (watches v3)", () => {
       retryable: false,
     }));
 
-    await tickOnce(deps(db, { dispatchCodex, inspectCodex: vi.fn() }));
-    await tickOnce(deps(db, { dispatchCodex, inspectCodex: vi.fn() }));
+    await tickOnce(deps(db, { dispatchCodex, inspectCodex: vi.fn(), observability }));
+    await tickOnce(deps(db, { dispatchCodex, inspectCodex: vi.fn(), observability }));
 
     expect(dispatchCodex).toHaveBeenCalledOnce();
     expect(getWatch(db, w.id)).toMatchObject({
@@ -181,16 +184,37 @@ describe("pinned Codex delivery (watches v3)", () => {
       last_status: "error",
       last_result: "the delivery process ended before its marker appeared",
     });
+    const communicationId = communicationRunId("codex_watcher", w.id);
+    expect(observability.getRun(communicationId)).toMatchObject({
+      runKind: "agent_communication",
+      runtimeType: "codex",
+      status: "failed",
+      outcome: "codex_dispatch_failed",
+    });
+    expect(observability.getEvents(communicationId).filter((event) => event.type === "communication.dispatch.failed")).toHaveLength(1);
   });
 
   it("keeps retryable dispatcher errors enabled", async () => {
     const db = openInMemoryDb();
+    const observability = new ObservabilityService(db);
     const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 1, target });
-    await tickOnce(deps(db, {
+    const retryDeps = deps(db, {
       dispatchCodex: async () => ({ status: "error", detail: "session file is temporarily unavailable", retryable: true }),
       inspectCodex: vi.fn(),
-    }));
+      observability,
+    });
+    vi.useFakeTimers({ now: new Date("2030-09-03T12:00:00Z") });
+    try {
+      await tickOnce(retryDeps);
+      vi.advanceTimersByTime(61_000);
+      await tickOnce(retryDeps);
+    } finally {
+      vi.useRealTimers();
+    }
     expect(getWatch(db, w.id)).toMatchObject({ enabled: 1, last_status: "error" });
+    const communicationId = communicationRunId("codex_watcher", w.id);
+    expect(observability.getRun(communicationId)).toMatchObject({ status: "retrying", retryCount: 2 });
+    expect(observability.getEvents(communicationId).filter((event) => event.type === "communication.dispatch.retrying")).toHaveLength(2);
   });
 
   it("keeps a scheduled Codex one-shot due through its multi-phase delivery", async () => {
@@ -211,6 +235,7 @@ describe("pinned Codex delivery (watches v3)", () => {
 
   it("persists verified delivery and later observes completion", async () => {
     const db = openInMemoryDb();
+    const observability = new ObservabilityService(db);
     const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 1, target });
     const notify = vi.fn();
     const dispatchCodex = vi.fn(async () => ({
@@ -232,10 +257,10 @@ describe("pinned Codex delivery (watches v3)", () => {
 
     vi.useFakeTimers({ now: new Date("2026-08-04T01:00:00Z") });
     try {
-      await tickOnce(deps(db, { dispatchCodex, inspectCodex, notify }));
+      await tickOnce(deps(db, { dispatchCodex, inspectCodex, notify, observability }));
       expect(getWatch(db, w.id)).toMatchObject({ last_status: "delivered", dispatch_pid: 32148 });
       vi.advanceTimersByTime(61_000);
-      await tickOnce(deps(db, { dispatchCodex, inspectCodex, notify }));
+      await tickOnce(deps(db, { dispatchCodex, inspectCodex, notify, observability }));
     } finally {
       vi.useRealTimers();
     }
@@ -244,6 +269,19 @@ describe("pinned Codex delivery (watches v3)", () => {
     expect(inspectCodex).toHaveBeenCalledOnce();
     expect(getWatch(db, w.id)).toMatchObject({ enabled: 0, last_status: "completed" });
     expect(notify).toHaveBeenCalledTimes(2);
+    const communicationId = communicationRunId("codex_watcher", w.id);
+    expect(observability.getRun(communicationId)).toMatchObject({
+      status: "completed",
+      verificationStatus: "partially_verified",
+      outcome: "task_boundary_observed_response_not_recorded",
+    });
+    expect(observability.getEvents(communicationId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "communication.delivery.verified", status: "success" }),
+      expect.objectContaining({
+        type: "communication.response.completed",
+        payload: expect.objectContaining({ responseAvailability: "not_recorded" }),
+      }),
+    ]));
   });
 
   it("asks AVA for exactly one successor after a completed cycle task", async () => {

@@ -1,15 +1,22 @@
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Db } from "../state/db.js";
 import { createWatch, listWatches, deleteWatch } from "../state/watches.js";
 import type { CodexWatchTarget } from "../watches/codex-dispatch.js";
+import type { ToolDef } from "./ava-mcp.js";
+import type { ObservabilityService } from "../observability/store.js";
+import {
+  CommunicationObservabilityRecorder,
+  communicationRunId,
+} from "../observability/communications.js";
 
 // Watch tools — how "notify me if the RTX 5090 drops below $1800" becomes a
 // standing background check. Ava creates the watch herself in the same turn;
 // the scheduler (watches/scheduler.ts) does the recurring work.
 
-type ToolDef = { tool: Tool; run: (args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }> };
-
-export function buildWatchTools(o: { db: Db; resolveCodexTarget?: () => CodexWatchTarget | null }): ToolDef[] {
+export function buildWatchTools(o: {
+  db: Db;
+  resolveCodexTarget?: () => CodexWatchTarget | null;
+  observability?: ObservabilityService;
+}): ToolDef[] {
   return [
     {
       tool: {
@@ -45,7 +52,7 @@ export function buildWatchTools(o: { db: Db; resolveCodexTarget?: () => CodexWat
           required: ["prompt"],
         },
       },
-      run: async (args) => {
+      run: async (args, ctx = { runId: "watch-tool" }) => {
         const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
         if (!prompt) return { ok: false, text: "watch_create needs a non-empty prompt" };
         const kind = args.kind === "reminder" ? "reminder" as const : args.kind === "codex" ? "codex" as const : "check" as const;
@@ -78,6 +85,24 @@ export function buildWatchTools(o: { db: Db; resolveCodexTarget?: () => CodexWat
               ? args.parent_watch_id.trim()
               : undefined,
           });
+          if (kind === "codex") {
+            const requestedCycleParent = w.parent_watch_id
+              ? communicationRunId("codex_watcher", w.parent_watch_id)
+              : null;
+            const parentRunId = requestedCycleParent && o.observability?.getRun(requestedCycleParent)
+              ? requestedCycleParent
+              : ctx.runId;
+            new CommunicationObservabilityRecorder(o.observability).ensureStarted({
+              source: "codex_watcher",
+              sourceId: w.id,
+              runtimeType: "codex",
+              title: "Codex watcher handoff",
+              requestSummary: prompt,
+              sessionId: null,
+              parentRunId,
+              startedAt: w.created_at,
+            });
+          }
           const when = runAt
             ? `once at ${new Date(runAt).toLocaleString()}`
             : dailyAt ? `daily at ${dailyAt}` : `every ${w.interval_minutes}min${w.once ? ", stops after first trigger" : ""}`;

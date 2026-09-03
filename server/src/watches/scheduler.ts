@@ -10,6 +10,12 @@ import {
   type Watch,
 } from "../state/watches.js";
 import type { CodexDispatchRequest, CodexDispatchResult, CodexThreadSnapshot, CodexWatchTarget } from "./codex-dispatch.js";
+import type { ObservabilityService } from "../observability/store.js";
+import {
+  CommunicationObservabilityRecorder,
+  communicationRunId,
+  type CommunicationEventInput,
+} from "../observability/communications.js";
 
 // The watch scheduler. Every tick it finds due watches and runs each check as
 // a REAL agent turn through the server's own /api/chat — so a check gets the
@@ -34,6 +40,8 @@ export type SchedulerDeps = {
   runCheck?: (w: Watch, deps: SchedulerDeps) => Promise<WatchCheckResult>;
   dispatchCodex?: (request: CodexDispatchRequest) => Promise<CodexDispatchResult>;
   inspectCodex?: (target: CodexWatchTarget, marker?: string | null, dispatchOffset?: number | null) => CodexThreadSnapshot;
+  /** Shared read model for Codex delivery/status evidence. */
+  observability?: ObservabilityService;
   /** Injectable cycle planner. Production asks AVA through its normal tool loop. */
   planNextCodexTask?: (w: Watch, deps: SchedulerDeps) => Promise<WatchCheckResult>;
   tickMs?: number;
@@ -136,30 +144,109 @@ export function planNextCodexTaskViaHttp(w: Watch, deps: SchedulerDeps): Promise
 }
 
 async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
+  const communication = new CommunicationObservabilityRecorder(deps.observability);
+  // This pass's prior durable timestamp is stable if the pass is replayed, but
+  // advances before a later retry. Use it to count genuine retry attempts once.
+  const retryAttemptKey = `dispatch.retrying:${w.last_run_at ?? w.created_at}`;
+  const cycleParentRunId = w.parent_watch_id
+    ? communicationRunId("codex_watcher", w.parent_watch_id)
+    : null;
+  communication.ensureStarted({
+    source: "codex_watcher",
+    sourceId: w.id,
+    runtimeType: "codex",
+    title: "Codex watcher handoff",
+    requestSummary: w.prompt,
+    sessionId: w.session_id,
+    parentRunId: cycleParentRunId,
+    startedAt: w.created_at,
+  });
+  const observe = (input: CommunicationEventInput) =>
+    communication.record("codex_watcher", w.id, input);
+
   if (!deps.dispatchCodex || !deps.inspectCodex) {
     recordWatchRun(deps.db, w.id, { status: "error", result: "Codex watcher dispatcher is unavailable" });
+    observe({
+      phase: "dispatch.failed",
+      status: "error",
+      title: "Codex dispatch unavailable",
+      summary: "AVA could not reach the Codex watcher dispatcher.",
+      responseAvailability: "unavailable",
+      error: "Codex watcher dispatcher is unavailable",
+      terminal: true,
+      runStatus: "failed",
+      outcome: "dispatcher_unavailable",
+      verificationStatus: "not_verified",
+    });
     return;
   }
   if (!w.target_thread_id || !w.target_session_file || !w.target_cwd) {
     recordWatchRun(deps.db, w.id, { status: "error", result: "Codex watcher has no pinned target" });
     setWatchEnabled(deps.db, w.id, false);
+    observe({
+      phase: "dispatch.failed",
+      status: "error",
+      title: "Codex target unavailable",
+      summary: "The watcher had no pinned Codex thread target.",
+      responseAvailability: "unavailable",
+      error: "Codex watcher has no pinned target",
+      terminal: true,
+      runStatus: "failed",
+      outcome: "pinned_target_unavailable",
+      verificationStatus: "not_verified",
+    });
     return;
   }
   const target = { threadId: w.target_thread_id, sessionFile: w.target_session_file, cwd: w.target_cwd };
 
   if (!w.delivered_at) {
-    const result = await deps.dispatchCodex({
-      watchId: w.id,
-      prompt: w.prompt,
-      target,
-      marker: w.delivery_marker,
-      dispatchOffset: w.dispatch_offset,
-      dispatchPid: w.dispatch_pid,
-      parentWatchId: w.parent_watch_id,
-      continueCycle: Boolean(w.continue_cycle),
+    observe({
+      phase: "delegation.started",
+      status: "running",
+      title: "AVA routed work to Codex",
+      summary: "AVA began an acknowledged delivery to the pinned Codex thread.",
+      responseAvailability: "pending",
+      runStatus: "starting",
     });
+    let result: CodexDispatchResult;
+    try {
+      result = await deps.dispatchCodex({
+        watchId: w.id,
+        prompt: w.prompt,
+        target,
+        marker: w.delivery_marker,
+        dispatchOffset: w.dispatch_offset,
+        dispatchPid: w.dispatch_pid,
+        parentWatchId: w.parent_watch_id,
+        continueCycle: Boolean(w.continue_cycle),
+      });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      recordWatchRun(deps.db, w.id, { status: "error", result: message });
+      observe({
+        phase: "dispatch.retrying",
+        status: "retrying",
+        title: "Codex dispatch will retry",
+        summary: "The dispatch attempt failed before delivery could be verified.",
+        responseAvailability: "pending",
+        error: message,
+        runStatus: "retrying",
+        dedupSuffix: retryAttemptKey,
+      });
+      return;
+    }
     if (result.status === "busy") {
       recordWatchRun(deps.db, w.id, { status: "busy", result: result.detail });
+      observe({
+        phase: "dispatch.retrying",
+        status: "retrying",
+        title: "Codex thread busy",
+        summary: "AVA is waiting for the pinned Codex thread to reach a safe delivery boundary.",
+        responseAvailability: "pending",
+        error: result.detail,
+        runStatus: "retrying",
+        dedupSuffix: retryAttemptKey,
+      });
       return;
     }
     if (result.status === "error") {
@@ -169,6 +256,29 @@ async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
       // consequential task whose session write was merely delayed. Keep the
       // failure evidence, but stop scheduling the same terminal error forever.
       if (!result.retryable) setWatchEnabled(deps.db, w.id, false);
+      observe(result.retryable
+        ? {
+            phase: "dispatch.retrying",
+            status: "retrying",
+            title: "Codex dispatch will retry",
+            summary: "AVA could not verify delivery and retained the watcher for another bounded attempt.",
+            responseAvailability: "pending",
+            error: result.detail,
+            runStatus: "retrying",
+            dedupSuffix: retryAttemptKey,
+          }
+        : {
+            phase: "dispatch.failed",
+            status: "error",
+            title: "Codex dispatch failed",
+            summary: "AVA could not safely retry this delivery.",
+            responseAvailability: "unavailable",
+            error: result.detail,
+            terminal: true,
+            runStatus: "failed",
+            outcome: "codex_dispatch_failed",
+            verificationStatus: "not_verified",
+          });
       return;
     }
     recordCodexDispatch(deps.db, w.id, {
@@ -179,7 +289,24 @@ async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
       delivered: result.status === "delivered" || result.status === "already_delivered",
     });
     if (result.status === "delivered" || result.status === "already_delivered") {
+      observe({
+        phase: "delivery.verified",
+        status: "success",
+        title: "Codex delivery verified",
+        summary: "The unique watcher marker was observed in the pinned Codex thread.",
+        responseAvailability: "pending",
+        runStatus: "waiting_for_agent",
+      });
       deps.notify(`Codex received AVA watcher task: ${w.prompt.slice(0, 140)}`);
+    } else {
+      observe({
+        phase: "delivery.waiting",
+        status: "waiting",
+        title: "Waiting for Codex delivery evidence",
+        summary: "The instruction was staged but its unique marker has not yet been verified.",
+        responseAvailability: "pending",
+        runStatus: "waiting_for_agent",
+      });
     }
     return;
   }
@@ -189,14 +316,42 @@ async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
     // Never redispatch blindly. The stored marker/offset allows a later pass to
     // distinguish delayed session persistence from a genuinely lost process.
     recordWatchRun(deps.db, w.id, { status: "error", result: "delivery evidence disappeared from the pinned Codex thread" });
+    observe({
+      phase: "delivery.evidence_unavailable",
+      status: "error",
+      title: "Codex delivery evidence unavailable",
+      summary: "AVA retained the watcher but could no longer observe its stored delivery marker.",
+      responseAvailability: "pending",
+      error: "delivery evidence disappeared from the pinned Codex thread",
+      runStatus: "waiting_for_agent",
+    });
     return;
   }
   if (!snapshot.markerTurnCompleted) {
     recordWatchRun(deps.db, w.id, { status: "running", result: "Codex accepted the watcher instruction and is still working" });
+    observe({
+      phase: "executor.running",
+      status: "running",
+      title: "Codex is working",
+      summary: "The pinned thread contains the watcher instruction and its turn has not reached a completed boundary.",
+      responseAvailability: "pending",
+      runStatus: "running",
+    });
     return;
   }
 
   recordCodexCompleted(deps.db, w.id);
+  observe({
+    phase: "response.completed",
+    status: "success",
+    title: "Codex task boundary completed",
+    summary: "AVA observed the delivered Codex turn reach a completed boundary. This transport does not record Codex's returned response content or prove the implemented outcome.",
+    responseAvailability: "not_recorded",
+    terminal: true,
+    runStatus: "completed",
+    outcome: "task_boundary_observed_response_not_recorded",
+    verificationStatus: "partially_verified",
+  });
   if (!w.continue_cycle) {
     setWatchEnabled(deps.db, w.id, false);
     deps.notify(`Codex completed AVA watcher task: ${w.prompt.slice(0, 140)}`);

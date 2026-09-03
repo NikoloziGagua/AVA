@@ -53,6 +53,8 @@ describe("Mission Control API", () => {
       coverage: {
         openAiRealtimeVoice: "vertical_slice",
         forge: "adapter_contract_ready_not_connected",
+        codex: "watcher_communication_slice",
+        claudeCode: "background_discussion_slice",
       },
       forge: { boundary: "separate_runtime_ava_integrated" },
       evidenceExport: {
@@ -111,6 +113,36 @@ describe("Mission Control API", () => {
     expect(serialized).not.toContain("this-must-not-remain");
     expect(serialized).not.toContain("impossible-secret");
     expect(serialized).toContain("***");
+    db.close();
+  });
+
+  it("offers a typed communications category without leaking unrelated runs", async () => {
+    const { app, db, observability } = setup();
+    observability.startRun({
+      id: "ordinary-run",
+      runKind: "chat_agent",
+      runtimeType: "ava",
+      ownerType: "ava",
+      title: "Ordinary chat",
+    });
+    observability.startRun({
+      id: "communication-run",
+      runKind: "agent_communication",
+      runtimeType: "codex",
+      ownerType: "agent",
+      ownerId: "codex",
+      title: "Codex watcher handoff",
+    });
+
+    const filtered = await request(app)
+      .get("/api/mission-control/runs?limit=50&category=communications")
+      .expect(200);
+    expect(filtered.body).toMatchObject({ category: "communications" });
+    expect(filtered.body.runs.map((run: { id: string }) => run.id)).toEqual(["communication-run"]);
+    const invalid = await request(app)
+      .get("/api/mission-control/runs?category=unknown")
+      .expect(400);
+    expect(invalid.body).toMatchObject({ error: "invalid_mission_category" });
     db.close();
   });
 

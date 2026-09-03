@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MissionEvent, MissionEvidenceExport, MissionRun } from "../api.js";
 
 const api = vi.hoisted(() => ({
@@ -10,7 +10,7 @@ const api = vi.hoisted(() => ({
   fetchMissionRun: vi.fn(),
   saveMissionExport: vi.fn(),
   stopMissionRun: vi.fn(),
-  subscribeMissionEvents: vi.fn(() => () => {}),
+  subscribeMissionEvents: vi.fn((_options?: unknown) => () => {}),
 }));
 
 vi.mock("../api.js", async (loadOriginal) => {
@@ -104,6 +104,90 @@ const event: MissionEvent = {
   terminal: false,
   late: false,
   projectionApplied: true,
+};
+
+const claudeCommunicationRun: MissionRun = {
+  ...run,
+  id: "communication:provider_discussion:disc-1",
+  traceId: "trace-communication",
+  parentRunId: "chat-parent",
+  rootTaskId: "chat-parent",
+  runKind: "agent_communication",
+  runtimeId: "claude_code:communication",
+  runtimeType: "claude_code",
+  ownerType: "agent",
+  ownerId: "claude_code",
+  ownerRole: "external-executor",
+  title: "Claude background discussion",
+  objective: "Compare the two cache strategies",
+  status: "completed",
+  outcome: "response_received_unverified",
+  verificationStatus: "partially_verified",
+  compactSummary: "Prefer the bounded cache.",
+  controlAvailable: false,
+  inputTokens: 0,
+  outputTokens: 0,
+  eventCount: 3,
+};
+
+const claudeCommunicationEvent: MissionEvent = {
+  ...event,
+  seq: 9,
+  eventId: "communication-event-9",
+  runId: claudeCommunicationRun.id,
+  traceId: claudeCommunicationRun.traceId,
+  runtimeId: claudeCommunicationRun.runtimeId,
+  runtimeType: claudeCommunicationRun.runtimeType,
+  actorId: "claude_code",
+  actorRole: "external-executor",
+  type: "communication.response.completed",
+  status: "success",
+  title: "Claude response received",
+  summary: "AVA received a sanitized Claude response.",
+  visibility: "sensitive_collapsed",
+  payload: {
+    communicationSource: "provider_discussion",
+    requestAvailability: "sanitized_recorded",
+    responseAvailability: "sanitized_recorded",
+    usageAvailability: "not_reported",
+    evidenceProvenance: "ava_observed_boundary",
+  },
+  terminal: true,
+};
+
+const codexCommunicationRun: MissionRun = {
+  ...claudeCommunicationRun,
+  id: "communication:codex_watcher:watch-1",
+  traceId: "trace-codex",
+  parentRunId: null,
+  rootTaskId: "communication:codex_watcher:watch-1",
+  runtimeId: "codex:communication",
+  runtimeType: "codex",
+  ownerId: "codex",
+  title: "Codex watcher handoff",
+  objective: "Implement one bounded task",
+  outcome: "task_boundary_observed_response_not_recorded",
+  compactSummary: "Codex task boundary completed; response content was not recorded.",
+};
+
+const codexCommunicationEvent: MissionEvent = {
+  ...claudeCommunicationEvent,
+  seq: 10,
+  eventId: "communication-event-10",
+  runId: codexCommunicationRun.id,
+  traceId: codexCommunicationRun.traceId,
+  runtimeId: codexCommunicationRun.runtimeId,
+  runtimeType: codexCommunicationRun.runtimeType,
+  actorId: "codex",
+  type: "communication.response.completed",
+  title: "Codex task boundary completed",
+  payload: {
+    communicationSource: "codex_watcher",
+    requestAvailability: "sanitized_recorded",
+    responseAvailability: "not_recorded",
+    usageAvailability: "not_reported",
+    evidenceProvenance: "ava_observed_boundary",
+  },
 };
 
 const evidenceExport: MissionEvidenceExport = {
@@ -277,5 +361,108 @@ describe("MissionControlScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Download JSON" }));
     expect(await screen.findByText("Evidence scope exceeds the byte limit.")).toBeTruthy();
     expect(api.saveMissionExport).not.toHaveBeenCalled();
+  });
+
+  it("filters to provider-neutral communications and exposes sanitized Claude evidence", async () => {
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 9 },
+    });
+    api.fetchMissionRuns.mockImplementation(async (_limit: number, category: string) =>
+      category === "communications" ? [claudeCommunicationRun] : [run]);
+    api.fetchMissionRun.mockImplementation(async (id: string) => id === claudeCommunicationRun.id
+      ? { run: claudeCommunicationRun, events: [claudeCommunicationEvent] }
+      : { run, events: [event] });
+
+    render(<MissionControlScreen />);
+    expect(await screen.findByText("Transcript accepted")).toBeTruthy();
+    const communications = screen.getByRole("button", { name: "Communications" });
+    expect(communications.tabIndex).toBe(0);
+    fireEvent.click(communications);
+
+    expect(await screen.findByText("Claude response received")).toBeTruthy();
+    expect(api.fetchMissionRuns).toHaveBeenCalledWith(75, "communications");
+    const evidenceRegion = screen.getByRole("region", { name: "Communication evidence" });
+    expect(evidenceRegion.textContent).toContain("AVA");
+    expect(evidenceRegion.textContent).toContain("Claude Code");
+    expect(screen.getAllByText("Sanitized evidence recorded")).toHaveLength(2);
+    expect(screen.getByText("Parent chat-parent")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Stop agent communication/i })).toBeNull();
+
+    fireEvent.click(screen.getByText("Sanitized request summary"));
+    expect(screen.getAllByText("Compare the two cache strategies")).toHaveLength(2);
+    fireEvent.click(screen.getByText("Sanitized outcome summary"));
+    expect(screen.getAllByText("Prefer the bounded cache.")).toHaveLength(2);
+  });
+
+  it("labels Codex distinctly and reports response content as not recorded", async () => {
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 10 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([codexCommunicationRun]);
+    api.fetchMissionRun.mockResolvedValue({ run: codexCommunicationRun, events: [codexCommunicationEvent] });
+
+    render(<MissionControlScreen />);
+
+    expect(await screen.findByText("Codex task boundary completed")).toBeTruthy();
+    const evidenceRegion = screen.getByRole("region", { name: "Communication evidence" });
+    expect(evidenceRegion.textContent).toContain("AVA");
+    expect(evidenceRegion.textContent).toContain("Codex");
+    expect(screen.getByText("Not recorded by this transport")).toBeTruthy();
+    expect(screen.getAllByText("Not reported").length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByRole("button", { name: /retry|send|approve/i })).toBeNull();
+  });
+
+  it("applies a communication lifecycle event from SSE once and preserves the filtered reload", async () => {
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 9 },
+    });
+    api.fetchMissionRuns.mockImplementation(async (_limit: number, category: string) =>
+      category === "communications" ? [claudeCommunicationRun] : [run]);
+    api.fetchMissionRun.mockImplementation(async (id: string) => id === claudeCommunicationRun.id
+      ? { run: claudeCommunicationRun, events: [claudeCommunicationEvent] }
+      : { run, events: [event] });
+
+    render(<MissionControlScreen />);
+    expect(await screen.findByText("Transcript accepted")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Communications" }));
+    expect(await screen.findByText("Claude response received")).toBeTruthy();
+
+    const stream = api.subscribeMissionEvents.mock.calls.at(-1)?.[0] as {
+      onEvent: (next: MissionEvent) => void;
+    };
+    const retryEvent: MissionEvent = {
+      ...claudeCommunicationEvent,
+      seq: 11,
+      eventId: "communication-event-11",
+      type: "communication.executor.retrying",
+      status: "retrying",
+      title: "Claude consultation retrying",
+      terminal: false,
+    };
+    act(() => {
+      stream.onEvent(retryEvent);
+      stream.onEvent(retryEvent);
+    });
+
+    expect(screen.getAllByText("Claude consultation retrying")).toHaveLength(1);
+    expect(api.fetchMissionRuns).toHaveBeenCalledWith(75, "communications");
   });
 });

@@ -44,6 +44,7 @@ import { strategyRoutes } from "./routes/strategy.js";
 import { apiNotFound } from "./routes/api-fallback.js";
 import { markStaleExplorerTasksInterrupted } from "./explorer/store.js";
 import { ObservabilityService } from "./observability/store.js";
+import { CommunicationObservabilityRecorder } from "./observability/communications.js";
 import type { ObservabilityParentContext } from "./observability/types.js";
 import { playbooksRoutes } from "./routes/playbooks.js";
 import { watchesRoutes } from "./routes/watches.js";
@@ -143,6 +144,7 @@ const codexDispatcher = buildCodexDispatcher({
   handoffDir: join(cfg.dataDir, "codex-watch-inbox"),
 });
 const observability = new ObservabilityService(db);
+const communicationObservability = new CommunicationObservabilityRecorder(observability);
 const ufoExperiment = new UfoExperimentService(db, loadUfoExperimentConfig(process.env, cfg.dataDir), observability);
 const strategyStore = new StrategyRoomStore(db);
 const interruptedStrategyRooms = strategyStore.failInterruptedRooms();
@@ -587,10 +589,61 @@ function deliverDiscussion(o: { sessionId: string | null; topic: string; ok: boo
   notifyDone?.(`Claude and I finished discussing: ${o.topic}`);
 }
 
-function queueDiscussion(topic: string, sessionId: string | null): string {
+function queueDiscussion(topic: string, sessionId: string | null, parentRunId: string | null = null): string {
   const id = createDiscussion(db, { topic, sessionId });
+  communicationObservability.ensureStarted({
+    source: "provider_discussion",
+    sourceId: id,
+    runtimeType: "claude_code",
+    title: "Claude background discussion",
+    requestSummary: topic,
+    sessionId,
+    parentRunId,
+  });
   // Fire-and-forget: the consult runs in the background so Ava keeps talking.
-  void runDiscussion(db, id, { consult: (t) => consult(t, id), deliver: deliverDiscussion })
+  void runDiscussion(db, id, {
+    consult: (t) => consult(t, id),
+    deliver: deliverDiscussion,
+    observe: {
+      running: (_discussion, at) => communicationObservability.record("provider_discussion", id, {
+        phase: "executor.running",
+        status: "running",
+        title: "Claude consultation running",
+        summary: "Claude Code accepted AVA's read-only discussion request.",
+        responseAvailability: "pending",
+        runStatus: "running",
+        occurredAt: at,
+      }),
+      completed: (_discussion, result, at, durationMs) => communicationObservability.record("provider_discussion", id, {
+        phase: "response.completed",
+        status: "success",
+        title: "Claude response received",
+        summary: "AVA received and stored a sanitized Claude response; its advice is not independent proof of a product outcome.",
+        responseSummary: result,
+        responseAvailability: "sanitized_recorded",
+        terminal: true,
+        runStatus: "completed",
+        outcome: "response_received_unverified",
+        verificationStatus: "partially_verified",
+        occurredAt: at,
+        durationMs,
+      }),
+      failed: (_discussion, error, at, durationMs) => communicationObservability.record("provider_discussion", id, {
+        phase: "response.failed",
+        status: "error",
+        title: "Claude discussion failed",
+        summary: "The external discussion ended without a usable response.",
+        responseAvailability: "unavailable",
+        error,
+        terminal: true,
+        runStatus: "failed",
+        outcome: "provider_discussion_failed",
+        verificationStatus: "not_verified",
+        occurredAt: at,
+        durationMs,
+      }),
+    },
+  })
     .catch((e) => log.error({ err: e instanceof Error ? e.message : String(e), id }, "discussion crashed"));
   return id;
 }
@@ -854,6 +907,7 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
       log,
       dispatchCodex: codexDispatcher.dispatch,
       inspectCodex: codexDispatcher.inspect,
+      observability,
     });
   } else {
     log.warn({}, "watch scheduler disabled — no LLM provider");

@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { openInMemoryDb } from "../state/db.js";
 import { createWatch, getWatch, recordCodexCompleted, recordCodexSuccessor } from "../state/watches.js";
 import { buildWatchTools } from "./watches-mcp.js";
+import { ObservabilityService } from "../observability/store.js";
+import { CommunicationObservabilityRecorder, communicationRunId } from "../observability/communications.js";
 
 describe("watch_create tool", () => {
   it("keeps ordinary AVA monitors on the shared scheduler path", async () => {
     const db = openInMemoryDb();
     const create = buildWatchTools({ db }).find((entry) => entry.tool.name === "watch_create")!;
-    const result = await create.run({ prompt: "check Instagram inbox", interval_minutes: 15, once: false });
+    const result = await create.run({ prompt: "check Instagram inbox", interval_minutes: 15, once: false }, { runId: "test-run" });
 
     expect(result.ok).toBe(true);
     const watch = db.prepare("SELECT * FROM watches").get() as { kind: string; target_thread_id: string | null };
@@ -16,8 +18,16 @@ describe("watch_create tool", () => {
 
   it("pins Codex target identity and cycle ancestry", async () => {
     const db = openInMemoryDb();
+    const observability = new ObservabilityService(db);
+    new CommunicationObservabilityRecorder(observability).ensureStarted({
+      source: "codex_watcher",
+      sourceId: "previous-watch",
+      runtimeType: "codex",
+      title: "Previous Codex watcher",
+      requestSummary: "previous task",
+    });
     const target = { threadId: "thread-exact", sessionFile: "C:/sessions/exact.jsonl", cwd: "C:/repo/AVA" };
-    const create = buildWatchTools({ db, resolveCodexTarget: () => target })
+    const create = buildWatchTools({ db, resolveCodexTarget: () => target, observability })
       .find((entry) => entry.tool.name === "watch_create")!;
     const result = await create.run({
       prompt: "build notes",
@@ -25,7 +35,7 @@ describe("watch_create tool", () => {
       interval_minutes: 1,
       continue_cycle: true,
       parent_watch_id: "previous-watch",
-    });
+    }, { runId: "missing-chat-parent" });
 
     expect(result).toMatchObject({ ok: true });
     const id = /\(([A-Za-z0-9_-]+)\)/.exec(result.text)?.[1];
@@ -37,12 +47,18 @@ describe("watch_create tool", () => {
       continue_cycle: 1,
       parent_watch_id: "previous-watch",
     });
+    expect(observability.getRun(communicationRunId("codex_watcher", id!))).toMatchObject({
+      parentRunId: communicationRunId("codex_watcher", "previous-watch"),
+      traceId: observability.getRun(communicationRunId("codex_watcher", "previous-watch"))?.traceId,
+      runtimeType: "codex",
+      status: "queued",
+    });
   });
 
   it("refuses an unpinned Codex watch", async () => {
     const db = openInMemoryDb();
     const create = buildWatchTools({ db }).find((entry) => entry.tool.name === "watch_create")!;
-    const result = await create.run({ prompt: "build notes", kind: "codex", interval_minutes: 1 });
+    const result = await create.run({ prompt: "build notes", kind: "codex", interval_minutes: 1 }, { runId: "test-run" });
     expect(result).toMatchObject({ ok: false });
     expect(result.text).toContain("no active Codex TUI thread");
   });
@@ -57,7 +73,7 @@ describe("watch_create tool", () => {
       kind: "codex",
       interval_minutes: 1,
       parent_watch_id: "   ",
-    });
+    }, { runId: "test-run" });
     const watch = db.prepare("SELECT parent_watch_id FROM watches").get() as { parent_watch_id: string | null };
     expect(watch.parent_watch_id).toBeNull();
   });
@@ -78,7 +94,7 @@ describe("watch_create tool", () => {
       now: 11,
     });
     const list = buildWatchTools({ db }).find((entry) => entry.tool.name === "watch_list")!;
-    const result = await list.run({});
+    const result = await list.run({}, { runId: "test-run" });
     expect(result.text).toContain("last: completed");
     expect(result.text).toContain("next: blocked (AVA provider quota exhausted)");
   });

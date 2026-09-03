@@ -12,6 +12,7 @@ import {
   Download,
   Eye,
   FileJson,
+  MessagesSquare,
   Octagon,
   Radio,
   RefreshCw,
@@ -34,6 +35,7 @@ import {
   type MissionEvidenceExport,
   type MissionExportScope,
   type MissionRun,
+  type MissionRunCategory,
 } from "../api.js";
 
 const ACTIVE = new Set([
@@ -137,6 +139,41 @@ function flattenRunTree(runs: MissionRun[]): Array<{ run: MissionRun; depth: num
   return result;
 }
 
+type CommunicationAvailability = "pending" | "sanitized_recorded" | "not_recorded" | "unavailable";
+
+function communicationPayload(events: MissionEvent[]): Record<string, unknown> | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const value = events[index]?.payload;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      if (typeof record.communicationSource === "string") return record;
+    }
+  }
+  return null;
+}
+
+function communicationAvailability(
+  payload: Record<string, unknown> | null,
+  key: "requestAvailability" | "responseAvailability",
+): CommunicationAvailability {
+  const value = payload?.[key];
+  return value === "pending" || value === "sanitized_recorded" || value === "not_recorded" || value === "unavailable"
+    ? value
+    : "not_recorded";
+}
+
+function availabilityLabel(value: CommunicationAvailability): string {
+  if (value === "sanitized_recorded") return "Sanitized evidence recorded";
+  if (value === "pending") return "Pending";
+  if (value === "unavailable") return "Unavailable";
+  return "Not recorded by this transport";
+}
+
+function communicationActor(run: MissionRun): string {
+  const label = run.runtimeType.replaceAll("_", " ");
+  return label.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export function MissionControlScreen() {
   const [runs, setRuns] = useState<MissionRun[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -153,17 +190,18 @@ export function MissionControlScreen() {
   const [exportScope, setExportScope] = useState<MissionExportScope>("run");
   const [exporting, setExporting] = useState(false);
   const [exportReceipt, setExportReceipt] = useState<MissionEvidenceExport | null>(null);
+  const [category, setCategory] = useState<MissionRunCategory>("all");
   const refreshTimer = useRef<number | null>(null);
   const cursor = useRef(0);
 
   const loadRuns = useCallback(async () => {
-    const next = await fetchMissionRuns(75);
+    const next = await fetchMissionRuns(75, category);
     setRuns(next);
     setSelectedId((current) => {
       if (current && next.some((run) => run.id === current)) return current;
       return next.find((run) => ACTIVE.has(run.status))?.id ?? next[0]?.id ?? null;
     });
-  }, []);
+  }, [category]);
 
   const loadDetail = useCallback(async (id: string) => {
     const detail = await fetchMissionRun(id);
@@ -242,6 +280,9 @@ export function MissionControlScreen() {
   );
   const activeCount = runs.filter((run) => ACTIVE.has(run.status)).length;
   const detailEvent = selectedEvent;
+  const selectedCommunication = selectedRun?.runKind === "agent_communication"
+    ? communicationPayload(events)
+    : null;
 
   const stop = async () => {
     if (!selectedRun?.controlAvailable || stopping) return;
@@ -317,15 +358,37 @@ export function MissionControlScreen() {
         </div>
       )}
 
-      <div className="relative z-10 grid h-[calc(100vh-72px)] min-h-0 grid-cols-[300px_minmax(460px,1fr)_360px]">
-        <aside className="min-h-0 overflow-y-auto border-r border-white/10 bg-white/[0.015] p-3">
+      <div className="relative z-10 grid h-[calc(100vh-72px)] min-h-0 grid-cols-1 overflow-y-auto xl:grid-cols-[300px_minmax(460px,1fr)_360px] xl:overflow-hidden">
+        <aside className="max-h-[38vh] min-h-0 overflow-y-auto border-b border-white/10 bg-white/[0.015] p-3 xl:max-h-none xl:border-b-0 xl:border-r">
           <div className="mb-3 flex items-center justify-between px-2">
-            <span className="hud text-[9px] text-white/40">Runs</span>
+            <span className="hud text-[9px] text-white/40">Observed work</span>
             <Workflow size={13} className="text-white/30" />
+          </div>
+          <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-white/8 bg-black/25 p-1" role="group" aria-label="Mission Control view">
+            {([
+              { id: "all", label: "All activity", icon: Activity },
+              { id: "communications", label: "Communications", icon: MessagesSquare },
+            ] as const).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setCategory(id)}
+                aria-pressed={category === id}
+                className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[10px] transition ${
+                  category === id
+                    ? "bg-cyan-300/10 text-cyan-100"
+                    : "text-white/38 hover:bg-white/[0.04] hover:text-white/68"
+                }`}
+              >
+                <Icon size={11} /> {label}
+              </button>
+            ))}
           </div>
           {tree.length === 0 && (
             <div className="rounded-xl border border-dashed border-white/10 p-5 text-center text-xs leading-5 text-white/35">
-              No instrumented runs yet. Start a voice turn or send AVA a message.
+              {category === "communications"
+                ? "No recorded AVA-to-agent communications yet. Claude discussions and Codex watcher handoffs will appear here."
+                : "No instrumented runs yet. Start a voice turn or send AVA a message."}
             </div>
           )}
           <div className="space-y-1">
@@ -354,7 +417,7 @@ export function MissionControlScreen() {
           </div>
         </aside>
 
-        <section className="min-h-0 overflow-y-auto p-5">
+        <section className="min-h-[520px] overflow-y-auto p-5 xl:min-h-0">
           {!selectedRun ? (
             <div className="flex h-full items-center justify-center text-sm text-white/35">Select an observed run.</div>
           ) : (
@@ -394,6 +457,59 @@ export function MissionControlScreen() {
                   )}
                 </div>
               </div>
+
+              {selectedCommunication && (
+                <section className="mt-5 rounded-2xl border border-violet-300/15 bg-[linear-gradient(135deg,rgba(124,92,255,0.08),rgba(92,242,255,0.035))] p-4" aria-label="Communication evidence">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-medium text-white/80">
+                        <MessagesSquare size={14} className="text-violet-200" /> AVA → {communicationActor(selectedRun)}
+                      </div>
+                      <p className="mt-1 text-[11px] leading-5 text-white/42">
+                        Read-only communication evidence from AVA's authoritative event stream.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-[9px] uppercase tracking-wider">
+                      <span className="rounded-full border border-white/10 px-2 py-1 text-white/45">{selectedRun.status.replaceAll("_", " ")}</span>
+                      <span className="rounded-full border border-white/10 px-2 py-1 text-white/45">{selectedRun.verificationStatus.replaceAll("_", " ")}</span>
+                    </div>
+                  </div>
+                  <dl className="mt-4 grid gap-2 text-[10px] sm:grid-cols-2">
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3">
+                      <dt className="uppercase tracking-wider text-white/28">Request</dt>
+                      <dd className="mt-1 text-white/62">{availabilityLabel(communicationAvailability(selectedCommunication, "requestAvailability"))}</dd>
+                    </div>
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3">
+                      <dt className="uppercase tracking-wider text-white/28">Response</dt>
+                      <dd className="mt-1 text-white/62">{availabilityLabel(communicationAvailability(selectedCommunication, "responseAvailability"))}</dd>
+                    </div>
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3">
+                      <dt className="uppercase tracking-wider text-white/28">Correlation</dt>
+                      <dd className="mt-1 break-all text-white/62">{selectedRun.parentRunId ? `Parent ${selectedRun.parentRunId}` : `Root trace ${selectedRun.traceId}`}</dd>
+                    </div>
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3">
+                      <dt className="uppercase tracking-wider text-white/28">Provider usage / cost</dt>
+                      <dd className="mt-1 text-white/62">Not reported</dd>
+                    </div>
+                  </dl>
+                  {(selectedRun.objective || selectedRun.compactSummary) && (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {selectedRun.objective && (
+                        <details className="rounded-xl border border-white/8 bg-black/20 p-3">
+                          <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-white/40">Sanitized request summary</summary>
+                          <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-5 text-white/55">{selectedRun.objective}</p>
+                        </details>
+                      )}
+                      {selectedRun.compactSummary && (
+                        <details className="rounded-xl border border-white/8 bg-black/20 p-3">
+                          <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-white/40">Sanitized outcome summary</summary>
+                          <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-5 text-white/55">{selectedRun.compactSummary}</p>
+                        </details>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )}
 
               {exportOpen && (
                 <section className="mt-4 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.035] p-4" aria-label="Evidence export">
@@ -522,7 +638,7 @@ export function MissionControlScreen() {
           )}
         </section>
 
-        <aside className="min-h-0 overflow-y-auto border-l border-white/10 bg-white/[0.015] p-5">
+        <aside className="min-h-[360px] overflow-y-auto border-t border-white/10 bg-white/[0.015] p-5 xl:min-h-0 xl:border-l xl:border-t-0">
           <div className="flex items-center gap-2">
             <Box size={14} className="text-white/35" />
             <h3 className="hud text-[10px] text-white/50">{detailEvent ? "Event evidence" : "Run context"}</h3>

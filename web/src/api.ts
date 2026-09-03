@@ -1321,9 +1321,15 @@ export async function fetchMissionMeta(): Promise<MissionMeta> {
   return request<MissionMeta>("/api/mission-control/meta");
 }
 
-export async function fetchMissionRuns(limit = 50): Promise<MissionRun[]> {
+export type MissionRunCategory = "all" | "communications";
+
+export async function fetchMissionRuns(
+  limit = 50,
+  category: MissionRunCategory = "all",
+): Promise<MissionRun[]> {
+  const categoryQuery = category === "communications" ? "&category=communications" : "";
   const response = await request<{ runs: MissionRun[] }>(
-    `/api/mission-control/runs?limit=${Math.max(1, Math.min(100, limit))}`,
+    `/api/mission-control/runs?limit=${Math.max(1, Math.min(100, limit))}${categoryQuery}`,
   );
   return response.runs;
 }

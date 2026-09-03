@@ -210,7 +210,7 @@ export type AgentDeps = {
   queueSelfImprove?: (goal: string) => string | Promise<string>;
   listSelfImprovements?: () => IntentStatusSummary[];
   /** Discuss-with-Claude: queue a background, read-only consult and recount past ones. */
-  queueDiscussion?: (topic: string, sessionId: string | null) => string;
+  queueDiscussion?: (topic: string, sessionId: string | null, parentRunId?: string | null) => string;
   listDiscussions?: () => Discussion[];
   getDiscussion?: (id: string) => Discussion | null;
   /** Move the authoritative current chat snapshot into AVA's Strategy Room. */
@@ -943,7 +943,11 @@ export function chatRoutes(
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
             // Standing background checks ("notify me if/when …") — the
             // scheduler re-runs them; Ava just registers/lists/deletes here.
-            ...(buildWatchTools({ db, resolveCodexTarget: agentDeps.resolveCodexWatchTarget }) as ToolDef[]),
+            ...(buildWatchTools({
+              db,
+              resolveCodexTarget: agentDeps.resolveCodexWatchTarget,
+              observability: agentDeps.observability,
+            }) as ToolDef[]),
             // App modules: deterministic Instagram workflows + the people map
             // (saved usernames are authoritative; sends re-verify the profile).
             ...(buildInstagramTools({ getChrome: agentDeps.getChrome, memoryDir: agentDeps.memoryDir }) as ToolDef[]),

@@ -2,7 +2,7 @@ import type { ToolDef } from "./ava-mcp.js";
 import type { Discussion } from "../state/discussions.js";
 
 export function buildDiscussTools(deps: {
-  queue: (topic: string, sessionId: string | null) => string;
+  queue: (topic: string, sessionId: string | null, parentRunId?: string | null) => string;
   list: () => Discussion[];
   get: (id: string) => Discussion | null;
   sessionId: string | null;
@@ -18,10 +18,10 @@ export function buildDiscussTools(deps: {
         "'discuss/check/run this by Claude' or wants Claude's input on a question. Args: { topic }.",
       inputSchema: { type: "object", properties: { topic: { type: "string" } }, required: ["topic"] },
     },
-    run: async (args) => {
+    run: async (args, ctx) => {
       const topic = String(args.topic ?? "").trim();
       if (!topic) return { ok: false, text: "missing topic" };
-      deps.queue(topic, deps.sessionId);
+      deps.queue(topic, deps.sessionId, ctx.runId);
       return {
         ok: true,
         text: `Started conferring with Claude about "${topic}", Sir — I'll keep talking with you and tell you what we come up with when we're done.`,

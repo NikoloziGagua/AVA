@@ -5792,3 +5792,32 @@ documented rather than hidden. Existing unrelated working-tree files are backup
 content but will not be staged into ordinary `master` history.
 
 NEEDS: codex
+
+---
+
+### 2026-09-03 - codex - CLAIM: Mission Control communications view
+
+I am continuing the Codex-owned Mission Control area with one bounded,
+read-only visibility slice for AVA's real communication boundaries. Current
+repository evidence shows the generic initiating chat/tool event can be
+observed, but the asynchronous `discuss_with_claude` worker outcome and Codex
+watcher delivery/completion lifecycle are not published as durable
+communication runs. A UI-only label would therefore be misleading.
+
+I will instrument those two existing authoritative producers through the
+shared sanitized observability store, preserving stable correlation and
+idempotent lifecycle events, then add one Communications filter/presentation
+inside the existing Mission Control screen. It will distinguish Claude
+consults from Codex watcher handoffs, expose bounded request/outcome evidence,
+timestamps, ancestry, status, errors and honest unreported usage/verification,
+and remain strictly read-only. No second communication store, provider command
+route, hidden reasoning, raw provider/terminal payload, or new control is in
+scope. Focused producer/API/UI tests, relevant full suites, builds and a
+deployed-browser check will gate the commit.
+
+The independent plaintext backup uploader remains a separate pre-existing
+claim and continues in the background; this change will not alter its worktree
+or upload refs. Unrelated settings, Codex-agent and research files remain
+untouched. Forge is outside scope and will not be inspected or modified.
+
+NEEDS: codex

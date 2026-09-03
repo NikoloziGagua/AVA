@@ -232,11 +232,13 @@ export function MissionControlScreen() {
     });
   }, [category, entry.runId]);
 
-  const loadDetail = useCallback(async (id: string) => {
+  const loadDetail = useCallback(async (id: string, expectWatcherReceipt = false) => {
     const detail = await fetchMissionRun(id);
     setSelectedRun(detail.run);
     setEvents(detail.events);
-    setNavigation(detail.navigation ?? null);
+    setNavigation(expectWatcherReceipt && detail.navigation?.kind !== "watcher"
+      ? { kind: "watcher", availability: "unavailable" }
+      : detail.navigation ?? null);
     setRuns((current) => current.some((run) => run.id === detail.run.id)
       ? current
       : [detail.run, ...current]);
@@ -296,21 +298,51 @@ export function MissionControlScreen() {
   }, [failClosedWatcherNavigation, loadDetail, selectedId]);
 
   useEffect(() => {
-    if (!selectedId || navigation?.kind !== "watcher") return;
-    const revalidate = () => {
-      void loadDetail(selectedId).then(() => setError(null)).catch(() => {
-        failClosedWatcherNavigation();
-        setError("Mission Control could not revalidate this evidence.");
-      });
+    if (!selectedId || navigation?.kind !== "watcher" || navigation.availability !== "available") return;
+    let disposed = false;
+    let timer: number | null = null;
+    let running = false;
+    let delayMs = 5_000;
+    const schedule = (delay: number) => {
+      if (disposed) return;
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void revalidate(), delay);
     };
-    const visible = () => { if (document.visibilityState === "visible") revalidate(); };
-    window.addEventListener("focus", revalidate);
+    const revalidate = async () => {
+      if (disposed || running) return;
+      if (document.visibilityState !== "visible") {
+        schedule(5_000);
+        return;
+      }
+      running = true;
+      try {
+        await loadDetail(selectedId, true);
+        delayMs = 5_000;
+        setError(null);
+      } catch {
+        failClosedWatcherNavigation();
+        delayMs = Math.min(30_000, delayMs * 2);
+        setError("Mission Control could not revalidate this evidence.");
+      } finally {
+        running = false;
+        schedule(delayMs);
+      }
+    };
+    const immediate = () => {
+      delayMs = 5_000;
+      schedule(0);
+    };
+    const visible = () => { if (document.visibilityState === "visible") immediate(); };
+    schedule(delayMs);
+    window.addEventListener("focus", immediate);
     document.addEventListener("visibilitychange", visible);
     return () => {
-      window.removeEventListener("focus", revalidate);
+      disposed = true;
+      if (timer != null) window.clearTimeout(timer);
+      window.removeEventListener("focus", immediate);
       document.removeEventListener("visibilitychange", visible);
     };
-  }, [failClosedWatcherNavigation, loadDetail, navigation?.kind, selectedId]);
+  }, [failClosedWatcherNavigation, loadDetail, navigation?.availability, navigation?.kind, selectedId]);
 
   useEffect(() => {
     if (!streamReady) return;
@@ -530,7 +562,7 @@ export function MissionControlScreen() {
                 </div>
               </div>
 
-              {selectedCommunication && (
+              {(selectedCommunication || navigation?.kind === "watcher") && (
                 <section className="mt-5 rounded-2xl border border-violet-300/15 bg-[linear-gradient(135deg,rgba(124,92,255,0.08),rgba(92,242,255,0.035))] p-4" aria-label="Communication evidence">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -576,6 +608,7 @@ export function MissionControlScreen() {
                       )}
                     </div>
                   )}
+                  {selectedCommunication ? (
                   <dl className="mt-4 grid gap-2 text-[10px] sm:grid-cols-2">
                     <div className="rounded-xl border border-white/8 bg-black/20 p-3">
                       <dt className="uppercase tracking-wider text-white/28">Request</dt>
@@ -598,6 +631,11 @@ export function MissionControlScreen() {
                       <dd className="mt-1 text-white/62">{responseEvidenceLabel(selectedCommunication)}</dd>
                     </div>
                   </dl>
+                  ) : (
+                    <div className="mt-4 rounded-xl border border-white/8 bg-black/20 p-3 text-[11px] leading-5 text-white/45">
+                      Detailed communication evidence is unavailable or no longer retained.
+                    </div>
+                  )}
                   {(selectedRun.objective || selectedRun.compactSummary) && (
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
                       {selectedRun.objective && (

@@ -79,13 +79,25 @@ events are coalesced through one bounded refresh and the authoritative routes
 still make the availability decision.
 
 Watch deletion and the six-hour retention purge do not publish a lawful SSE
-event. For those cases, the exact visible receipt is revalidated when its tab
-regains focus or becomes visible; Watches also retains its existing 15-second
-list refresh. A failed quiet refresh removes any rendered evidence link and
-shows the same ID-free unavailable receipt. Mission Control likewise fails an
-existing watcher link closed on focused revalidation without exposing the
-resolver error. The stream, routes, retention, and mutation surface are not
-expanded.
+event. Persisting a deletion marker into expired evidence would weaken the
+retention boundary, while a process-local deletion bus would not satisfy the
+existing durable replay/high-water contract. Instead, an already-rendered exact
+receipt is revalidated while its tab stays foregrounded: Mission Control reads
+only its selected run every five seconds, and Watches reads only the currently
+visible, previously proven exact receipts through the authenticated
+`GET /api/watches/:id/communication-evidence` contract. Watches checks at most
+12 visible receipts per pass. Transport failures remove the link immediately
+and back off retries to at most 30 seconds; an authoritative unavailable result
+stops exact polling for that receipt. Focus/visibility and the existing
+15-second Watch-list refresh remain recovery boundaries.
+
+The exact Watch receipt endpoint is read-only and `no-store`. Malformed,
+deleted, wrong-kind, inaccessible and resolver-error records all return the
+same ID-free unavailable shape. If Mission Control detail expires but its
+compact run remains, the selected card keeps the watcher origin visibly
+unavailable and states that detailed communication evidence is no longer
+retained. No deleted content, labels, prompts, summaries or resolver errors are
+emitted, and no stream, store, transcript or mutation surface is added.
 
 The presentation adds no send, retry, approval, Stop, or generic agent-control
 route. Existing authentication, 30-day detail / 365-day compact retention,

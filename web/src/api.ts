@@ -1095,6 +1095,30 @@ export async function fetchWatches(): Promise<WatchRow[]> {
   return j.watches ?? [];
 }
 
+export type WatcherCommunicationEvidence = NonNullable<WatchRow["communication_evidence"]>;
+
+/** Revalidate one already-visible read-only evidence receipt without refetching every watch. */
+export async function fetchWatchCommunicationEvidence(id: string): Promise<WatcherCommunicationEvidence> {
+  const expectedRunId = /^[A-Za-z0-9_-]{1,64}$/.test(id)
+    ? `communication:codex_watcher:${id}`
+    : null;
+  const response = await request<{ communication_evidence?: unknown }>(
+    `/api/watches/${encodeURIComponent(id)}/communication-evidence`,
+  );
+  const evidence = response.communication_evidence;
+  if (
+    evidence &&
+    typeof evidence === "object" &&
+    !Array.isArray(evidence) &&
+    (evidence as { availability?: unknown }).availability === "available" &&
+    typeof (evidence as { runId?: unknown }).runId === "string" &&
+    (evidence as { runId: string }).runId === expectedRunId
+  ) {
+    return { availability: "available", runId: (evidence as { runId: string }).runId };
+  }
+  return { availability: "unavailable" };
+}
+
 export type CreateWatchInput = {
   prompt: string;
   intervalMinutes?: number;

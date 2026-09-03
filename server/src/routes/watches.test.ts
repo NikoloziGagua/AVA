@@ -5,7 +5,7 @@ import express from "express";
 import request from "supertest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openDb } from "../state/db.js";
-import { createWatch, getWatch } from "../state/watches.js";
+import { createWatch, deleteWatch, getWatch } from "../state/watches.js";
 import { CommunicationObservabilityRecorder, resolveWatcherCommunicationEvidence } from "../observability/communications.js";
 import { ObservabilityService } from "../observability/store.js";
 import { watchesRoutes, type WatchesRouteOptions } from "./watches.js";
@@ -148,6 +148,75 @@ describe("watch management routes", () => {
     db.close();
   });
 
+  it("revalidates only one exact authenticated receipt across retention and Watch deletion", async () => {
+    const { app, db, observability } = setup();
+    const codex = createWatch(db, { prompt: "Exact receipt", runAt: Date.now() + 60_000, kind: "codex" });
+    const other = createWatch(db, { prompt: "Other receipt", runAt: Date.now() + 60_000, kind: "codex" });
+    const recorder = new CommunicationObservabilityRecorder(observability);
+    const run = recorder.ensureStarted({
+      source: "codex_watcher",
+      sourceId: codex.id,
+      runtimeType: "codex",
+      title: "Codex watcher handoff",
+      requestSummary: "Exact receipt",
+    })!;
+    recorder.ensureStarted({
+      source: "codex_watcher",
+      sourceId: other.id,
+      runtimeType: "codex",
+      title: "Codex watcher handoff",
+      requestSummary: "Other receipt",
+    });
+    const stateBefore = JSON.stringify(getWatch(db, codex.id));
+    const eventCountBefore = (db.prepare("SELECT COUNT(*) AS value FROM observability_events").get() as { value: number }).value;
+
+    await request(app)
+      .get(`/api/watches/${codex.id}/communication-evidence`)
+      .expect("Cache-Control", "no-store")
+      .expect(200, {
+        communication_evidence: { availability: "available", runId: run.id },
+      });
+    expect(JSON.stringify(getWatch(db, codex.id))).toBe(stateBefore);
+    expect((db.prepare("SELECT COUNT(*) AS value FROM observability_events").get() as { value: number }).value)
+      .toBe(eventCountBefore);
+
+    db.prepare("DELETE FROM observability_events WHERE run_id = ?").run(run.id);
+    const expired = await request(app)
+      .get(`/api/watches/${codex.id}/communication-evidence`)
+      .expect(200);
+    expect(expired.body).toEqual({ communication_evidence: { availability: "unavailable" } });
+    expect(JSON.stringify(expired.body)).not.toContain(run.id);
+
+    deleteWatch(db, other.id);
+    const deleted = await request(app)
+      .get(`/api/watches/${other.id}/communication-evidence`)
+      .expect(200);
+    expect(deleted.body).toEqual({ communication_evidence: { availability: "unavailable" } });
+    expect(JSON.stringify(deleted.body)).not.toContain(other.id);
+    db.close();
+  });
+
+  it("makes malformed, wrong-kind and resolver-error exact receipts indistinguishable", async () => {
+    const resolver = vi.fn(() => { throw new Error("private resolver detail"); });
+    const { app, db } = setup({ resolveCommunicationEvidence: resolver });
+    const ordinary = createWatch(db, { prompt: "Ordinary", intervalMinutes: 30, kind: "check" });
+    const codex = createWatch(db, { prompt: "Private", runAt: Date.now() + 60_000, kind: "codex" });
+
+    for (const path of [
+      "/api/watches/%2E%2E%2Fprivate/communication-evidence",
+      `/api/watches/${ordinary.id}/communication-evidence`,
+      `/api/watches/${codex.id}/communication-evidence`,
+      "/api/watches/missing/communication-evidence",
+    ]) {
+      const response = await request(app).get(path).expect(200);
+      expect(response.body).toEqual({ communication_evidence: { availability: "unavailable" } });
+      expect(JSON.stringify(response.body)).not.toContain("private resolver detail");
+      expect(JSON.stringify(response.body)).not.toContain("communication:");
+    }
+    expect(resolver).toHaveBeenCalledTimes(1);
+    db.close();
+  });
+
   it("collapses absent and resolver-failed Codex evidence to the same ID-free state", async () => {
     const absent = setup();
     createWatch(absent.db, { prompt: "No retained trace", runAt: Date.now() + 60_000, kind: "codex" });
@@ -181,6 +250,9 @@ describe("watch management routes", () => {
     ));
 
     await request(app).get("/api/watches").expect(401, { error: "unauthorized" });
+    await request(app)
+      .get("/api/watches/private/communication-evidence")
+      .expect(401, { error: "unauthorized" });
     expect(resolveCommunicationEvidence).not.toHaveBeenCalled();
     db.close();
   });

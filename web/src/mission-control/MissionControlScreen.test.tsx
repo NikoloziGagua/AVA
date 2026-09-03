@@ -27,6 +27,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 const run: MissionRun = {
@@ -507,6 +508,84 @@ describe("MissionControlScreen", () => {
     expect(screen.queryByRole("link", { name: "Open exact watcher in Watches" })).toBeNull();
     expect(screen.getByText("Mission Control could not revalidate this evidence.")).toBeTruthy();
     expect(document.body.textContent).not.toContain("private watcher identity");
+  });
+
+  it("collapses a deleted watcher receipt while Mission Control remains continuously foregrounded", async () => {
+    vi.useFakeTimers();
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 10 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([codexCommunicationRun]);
+    api.fetchMissionRun
+      .mockResolvedValueOnce({
+        run: codexCommunicationRun,
+        events: [codexCommunicationEvent],
+        navigation: { kind: "watcher", availability: "available", watcherId: "watch-live-delete" },
+      })
+      .mockResolvedValueOnce({
+        run: codexCommunicationRun,
+        events: [codexCommunicationEvent],
+        navigation: { kind: "watcher", availability: "unavailable" },
+      });
+
+    render(<MissionControlScreen />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByRole("link", { name: "Open exact watcher in Watches" })).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(api.fetchMissionRun).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/Watcher record unavailable/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open exact watcher in Watches" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Communication evidence" }).textContent).not.toContain("watch-live-delete");
+  });
+
+  it("turns expired detail without a navigation identity into the same unavailable receipt", async () => {
+    vi.useFakeTimers();
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 10 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([codexCommunicationRun]);
+    api.fetchMissionRun
+      .mockResolvedValueOnce({
+        run: codexCommunicationRun,
+        events: [codexCommunicationEvent],
+        navigation: { kind: "watcher", availability: "available", watcherId: "watch-expiring" },
+      })
+      .mockResolvedValueOnce({
+        run: { ...codexCommunicationRun, eventCount: 0 },
+        events: [],
+        navigation: null,
+      });
+
+    render(<MissionControlScreen />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByRole("link", { name: "Open exact watcher in Watches" })).toBeTruthy();
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText(/Watcher record unavailable/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open exact watcher in Watches" })).toBeNull();
+    expect(document.body.textContent).not.toContain("watch-expiring");
   });
 
   it("restores an exact Watches deep link, preserves reload selection, and exposes keyboard Back", async () => {

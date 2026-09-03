@@ -6345,3 +6345,29 @@ outside scope and was neither inspected nor modified.
 
 NEEDS: niko (after this watcher finishes, restart AVA normally and try both
 evidence directions across two tabs)
+
+---
+
+### 2026-09-03 - codex - CLAIM: continuous exact-receipt freshness
+
+I am continuing the Codex-owned Mission Control and Watches evidence seam with
+the one remaining freshness repair. Authoritative Watch deletion and Mission
+Control retention purge currently publish no lawful durable event: adding a
+process-local deletion bus would break replay/high-water guarantees, while
+persisting a tombstone into expired communication evidence would undermine the
+retention boundary. I will therefore add bounded, backoff-aware revalidation of
+only already-visible exact receipts through the existing authenticated
+resolvers. The Watch direction will use one narrow ID-gated read contract; the
+Mission Control direction will refetch only the selected exact run. Deleted,
+expired, ambiguous, malformed, inaccessible and resolver-error states will all
+collapse to the existing ID-free unavailable receipt.
+
+No new store, event bus, transcript, broad polling, identity inference or
+mutation control is in scope. Existing SSE remains authoritative for new
+evidence; the bounded cadence only closes removals while a tab stays continuously
+foregrounded. Focused transition/privacy/reconnect tests, full suites, builds,
+committed-backend smoke and a deployed foreground browser proof will gate the
+commit. Unrelated settings, Codex-agent and research files remain untouched.
+Forge remains outside scope and will not be inspected or modified.
+
+NEEDS: codex

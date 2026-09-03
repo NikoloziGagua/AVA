@@ -86,12 +86,24 @@ An open card does not treat that receipt as permanently true. The Watches
 screen consumes AVA's existing Mission Control stream from its current durable
 cursor and requests fresh authenticated watch evidence only for a normalized
 event tied to a visible exact Codex identity; unrelated events are ignored and
-replays are debounced. Focus/visible-tab refresh handles deletion and retention
-expiry because those removals do not emit observability events. If the refresh
-or resolver is inaccessible, the card fails closed to the same ID-free
-unavailable wording. Mission Control applies the matching focused-detail and
-existing SSE revalidation in the other direction. No new watch stream, global
-event bus, transcript storage, or action was introduced.
+replays are debounced. Deletion and detail-retention expiry do not have a
+durable SSE event, so previously proven receipts that are currently on screen
+also use one narrow read-only exact endpoint every five seconds, bounded to 12
+visible cards. That endpoint returns only an available run reference or the
+same ID-free unavailable state; it never returns Watch content. An inaccessible
+transport fails the visible link closed and retries with bounded backoff up to
+30 seconds. An authoritative unavailable result removes the receipt from the
+exact cadence. Focus/visible-tab refresh and the existing 15-second list reload
+remain recovery paths.
+
+Mission Control applies the same five-second foreground cadence only to its
+selected, already-proven watcher receipt. If the Watch is deleted or retained
+communication detail expires, the link promptly becomes the existing
+non-disclosing unavailable state without requiring focus or another event.
+This bounded fallback exists because inserting retention tombstones into the
+observability journal would undermine retention and a transient deletion bus
+would break replay/high-water semantics. No new watch stream, global event bus,
+transcript storage, broad polling, or action was introduced.
 
 ## How it works
 

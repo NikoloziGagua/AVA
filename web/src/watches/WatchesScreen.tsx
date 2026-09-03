@@ -21,6 +21,7 @@ import {
   createWatchApi,
   deleteWatchApi,
   fetchMissionMeta,
+  fetchWatchCommunicationEvidence,
   fetchWatches,
   setWatchEnabled,
   subscribeMissionEvents,
@@ -34,6 +35,9 @@ import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 import { scheduleLabel, timeAgo } from "../memory/WatchesSection.js";
 
 const REFRESH_MS = 15_000;
+const EXACT_RECEIPT_REFRESH_MS = 5_000;
+const EXACT_RECEIPT_MAX_BACKOFF_MS = 30_000;
+const EXACT_RECEIPT_MAX_VISIBLE = 12;
 type Filter = "all" | "active" | "paused" | "attention";
 type ScheduleMode = "interval" | "once" | "daily";
 
@@ -67,6 +71,14 @@ function failClosedCommunicationEvidence(watches: WatchRow[] | null): WatchRow[]
   return watches?.map((watch) => watch.kind === "codex"
     ? { ...watch, communication_evidence: { availability: "unavailable" as const } }
     : watch) ?? null;
+}
+
+function isWatchCardVisible(id: string): boolean {
+  const card = document.getElementById(watchElementId(id));
+  if (!card) return false;
+  const rect = card.getBoundingClientRect();
+  return rect.bottom >= 0 && rect.top <= window.innerHeight &&
+    rect.right >= 0 && rect.left <= window.innerWidth;
 }
 
 function errorMessage(cause: unknown): string {
@@ -416,11 +428,18 @@ export function WatchesScreen({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const watchesRef = useRef<WatchRow[] | null>(null);
+  const provenReceiptIds = useRef<Set<string>>(new Set());
   const receiptRefreshTimer = useRef<number | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     try {
       const next = await fetchWatches();
+      provenReceiptIds.current = new Set(next.flatMap((watch) =>
+        watch.kind === "codex" &&
+        watch.communication_evidence?.availability === "available" &&
+        CODEX_COMMUNICATION_RUN_ID.test(watch.communication_evidence.runId)
+          ? [watch.id]
+          : []));
       watchesRef.current = next;
       setWatches(next);
       if (!quiet) setError(null);
@@ -476,6 +495,79 @@ export function WatchesScreen({
     });
     return () => { disposed = true; unsubscribe(); };
   }, [scheduleReceiptRefresh]);
+
+  useEffect(() => {
+    let disposed = false;
+    let timer: number | null = null;
+    let delayMs = EXACT_RECEIPT_REFRESH_MS;
+    let running = false;
+
+    const schedule = (delay: number) => {
+      if (disposed) return;
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void revalidate(), delay);
+    };
+    const revalidate = async () => {
+      if (disposed || running) return;
+      if (document.visibilityState !== "visible") {
+        schedule(EXACT_RECEIPT_REFRESH_MS);
+        return;
+      }
+      const current = watchesRef.current ?? [];
+      const candidates = current.filter((watch) =>
+        watch.kind === "codex" &&
+        provenReceiptIds.current.has(watch.id) &&
+        isWatchCardVisible(watch.id),
+      ).slice(0, EXACT_RECEIPT_MAX_VISIBLE);
+      if (candidates.length === 0) {
+        delayMs = EXACT_RECEIPT_REFRESH_MS;
+        schedule(delayMs);
+        return;
+      }
+
+      running = true;
+      const results = await Promise.allSettled(candidates.map(async (watch) => ({
+        id: watch.id,
+        evidence: await fetchWatchCommunicationEvidence(watch.id),
+      })));
+      running = false;
+      if (disposed) return;
+
+      let transportFailed = false;
+      const resolved = new Map<string, WatchRow["communication_evidence"]>();
+      results.forEach((result, index) => {
+        const id = candidates[index]!.id;
+        if (result.status === "fulfilled") {
+          resolved.set(id, result.value.evidence);
+          if (result.value.evidence.availability === "unavailable") {
+            provenReceiptIds.current.delete(id);
+          }
+        } else {
+          // Fail the rendered link closed, but retain its prior proof privately
+          // so a bounded backoff retry can recover after a transport outage.
+          transportFailed = true;
+          resolved.set(id, { availability: "unavailable" });
+        }
+      });
+      setWatches((rows) => {
+        const next = rows?.map((watch) => resolved.has(watch.id)
+          ? { ...watch, communication_evidence: resolved.get(watch.id)! }
+          : watch) ?? rows;
+        watchesRef.current = next;
+        return next;
+      });
+      delayMs = transportFailed
+        ? Math.min(EXACT_RECEIPT_MAX_BACKOFF_MS, delayMs * 2)
+        : EXACT_RECEIPT_REFRESH_MS;
+      schedule(delayMs);
+    };
+
+    schedule(EXACT_RECEIPT_REFRESH_MS);
+    return () => {
+      disposed = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, []);
 
   const visible = useMemo(() => {
     if (!watches) return [];

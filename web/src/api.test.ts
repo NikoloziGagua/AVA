@@ -8,6 +8,7 @@ import {
   fetchExplorerTask,
   fetchMissionExport,
   fetchSessions,
+  fetchWatchCommunicationEvidence,
   saveMissionExport,
   transcribeAudio,
   type MissionEvidenceExport,
@@ -129,6 +130,33 @@ describe("watch management API", () => {
       once: true,
       kind: "check",
     });
+  });
+
+  it("revalidates one authenticated receipt and collapses malformed evidence client-side", async () => {
+    setToken("watch-receipt-token");
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        communication_evidence: {
+          availability: "available",
+          runId: "communication:codex_watcher:watch-exact-one",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        communication_evidence: {
+          availability: "available",
+          runId: "communication:codex_watcher:other-watch",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+
+    await expect(fetchWatchCommunicationEvidence("watch-exact-one")).resolves.toEqual({
+      availability: "available",
+      runId: "communication:codex_watcher:watch-exact-one",
+    });
+    const [path, init] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(path).toBe("/api/watches/watch-exact-one/communication-evidence");
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer watch-receipt-token");
+    await expect(fetchWatchCommunicationEvidence("watch-exact-one"))
+      .resolves.toEqual({ availability: "unavailable" });
   });
 });
 

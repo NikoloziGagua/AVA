@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   createWatchApi: vi.fn(),
   setWatchEnabled: vi.fn(),
   deleteWatchApi: vi.fn(),
+  fetchWatchCommunicationEvidence: vi.fn(),
   fetchMissionMeta: vi.fn(),
   subscribeMissionEvents: vi.fn((_options?: unknown) => () => {}),
 }));
@@ -16,6 +17,7 @@ vi.mock("../api.js", () => ({
   createWatchApi: api.createWatchApi,
   setWatchEnabled: api.setWatchEnabled,
   deleteWatchApi: api.deleteWatchApi,
+  fetchWatchCommunicationEvidence: api.fetchWatchCommunicationEvidence,
   fetchMissionMeta: api.fetchMissionMeta,
   subscribeMissionEvents: api.subscribeMissionEvents,
 }));
@@ -52,11 +54,15 @@ beforeEach(() => {
   api.createWatchApi.mockReset();
   api.setWatchEnabled.mockReset().mockResolvedValue(undefined);
   api.deleteWatchApi.mockReset().mockResolvedValue(undefined);
+  api.fetchWatchCommunicationEvidence.mockReset().mockResolvedValue({ availability: "unavailable" });
   api.fetchMissionMeta.mockReset().mockResolvedValue({ eventBounds: { min: 1, max: 100 } });
   api.subscribeMissionEvents.mockReset().mockImplementation((_options?: unknown) => () => {});
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("WatchesScreen", () => {
   it("renders truthful counts, lifecycle evidence, and no unsupported run-now control", async () => {
@@ -347,6 +353,113 @@ describe("WatchesScreen", () => {
     expect(await screen.findByText("Mission Control evidence unavailable or not retained.")).toBeTruthy();
     expect(document.body.textContent).not.toContain("private resolver detail");
     expect(screen.queryByRole("link", { name: "Open exact communication in Mission Control" })).toBeNull();
+  });
+
+  it("removes an expired exact receipt while the tab stays continuously foregrounded", async () => {
+    vi.useFakeTimers();
+    const available = row({
+      id: "codex-expired-live",
+      prompt: "Continuously visible receipt",
+      kind: "codex",
+      communication_evidence: {
+        availability: "available",
+        runId: "communication:codex_watcher:codex-expired-live",
+      },
+    });
+    api.fetchWatches.mockResolvedValue([available]);
+    api.fetchWatchCommunicationEvidence.mockResolvedValue({ availability: "unavailable" });
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(screen.getByRole("link", { name: "Open exact communication in Mission Control" })).toBeTruthy();
+    expect(api.subscribeMissionEvents).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(api.fetchWatchCommunicationEvidence).toHaveBeenCalledTimes(1);
+    expect(api.fetchWatchCommunicationEvidence).toHaveBeenCalledWith("codex-expired-live");
+    expect(screen.getByText("Mission Control evidence unavailable or not retained.")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open exact communication in Mission Control" })).toBeNull();
+    expect(document.body.textContent).not.toContain("communication:codex_watcher:codex-expired-live");
+    expect(api.fetchWatches).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails a receipt closed on transport error and retries its exact proof with bounded backoff", async () => {
+    vi.useFakeTimers();
+    const available = row({
+      id: "codex-backoff",
+      prompt: "Backoff receipt",
+      kind: "codex",
+      communication_evidence: {
+        availability: "available",
+        runId: "communication:codex_watcher:codex-backoff",
+      },
+    });
+    api.fetchWatches.mockResolvedValue([available]);
+    api.fetchWatchCommunicationEvidence
+      .mockRejectedValueOnce(new Error("private transport detail"))
+      .mockResolvedValueOnce(available.communication_evidence);
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Mission Control evidence unavailable or not retained.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("private transport detail");
+    expect(api.fetchWatchCommunicationEvidence).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(9_999);
+      await Promise.resolve();
+    });
+    expect(api.fetchWatchCommunicationEvidence).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(api.fetchWatchCommunicationEvidence).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("link", { name: "Open exact communication in Mission Control" })).toBeTruthy();
+  });
+
+  it("bounds foreground checks to twelve visible proven receipts and ignores ordinary watches", async () => {
+    vi.useFakeTimers();
+    const codexRows = Array.from({ length: 13 }, (_, index) => row({
+      id: `codex-bounded-${index}`,
+      prompt: `Bounded receipt ${index}`,
+      kind: "codex",
+      communication_evidence: {
+        availability: "available",
+        runId: `communication:codex_watcher:codex-bounded-${index}`,
+      },
+    }));
+    api.fetchWatches.mockResolvedValue([
+      ...codexRows,
+      row({ id: "ordinary-bounded", prompt: "Ordinary", kind: "check" }),
+    ]);
+    api.fetchWatchCommunicationEvidence.mockImplementation(async (id: string) => ({
+      availability: "available",
+      runId: `communication:codex_watcher:${id}`,
+    }));
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(api.fetchWatchCommunicationEvidence).toHaveBeenCalledTimes(12);
+    expect(api.fetchWatchCommunicationEvidence).not.toHaveBeenCalledWith("codex-bounded-12");
+    expect(api.fetchWatchCommunicationEvidence).not.toHaveBeenCalledWith("ordinary-bounded");
   });
 });
 

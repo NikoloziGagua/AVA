@@ -1,8 +1,10 @@
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import type { Db } from "../state/db.js";
-import { createWatch, listWatches, deleteWatch, setWatchEnabled } from "../state/watches.js";
+import { createWatch, listWatches, deleteWatch, getWatch, setWatchEnabled } from "../state/watches.js";
 import type { WatcherCommunicationEvidence } from "../observability/communications.js";
+
+const WatchId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 
 const CreateBody = z.object({
   prompt: z.string().min(1).max(2000),
@@ -18,21 +20,53 @@ export type WatchesRouteOptions = {
   resolveCommunicationEvidence?: (watcherId: string) => WatcherCommunicationEvidence;
 };
 
+function communicationEvidenceForWatch(
+  watcherId: string,
+  resolve: WatchesRouteOptions["resolveCommunicationEvidence"],
+): WatcherCommunicationEvidence {
+  if (!WatchId.safeParse(watcherId).success) return { availability: "unavailable" };
+  try {
+    const evidence = resolve?.(watcherId);
+    return evidence?.availability === "available" &&
+      evidence.runId === `communication:codex_watcher:${watcherId}`
+      ? evidence
+      : { availability: "unavailable" };
+  } catch {
+    // Missing, inaccessible and failed resolution deliberately look alike.
+    return { availability: "unavailable" };
+  }
+}
+
 /** Read/manage surface for standing watches (long-term monitoring). */
 export function watchesRoutes(db: Db, auth: RequestHandler, options: WatchesRouteOptions = {}): Router {
   const r = Router();
   r.get("/", auth, (_req, res) => {
     const watches = listWatches(db).map((watch) => {
       if (watch.kind !== "codex") return watch;
-      let communicationEvidence: WatcherCommunicationEvidence = { availability: "unavailable" };
-      try {
-        communicationEvidence = options.resolveCommunicationEvidence?.(watch.id) ?? communicationEvidence;
-      } catch {
-        // Missing, inaccessible and failed resolution deliberately look alike.
-      }
-      return { ...watch, communication_evidence: communicationEvidence };
+      return {
+        ...watch,
+        communication_evidence: communicationEvidenceForWatch(
+          watch.id,
+          options.resolveCommunicationEvidence,
+        ),
+      };
     });
     res.json({ watches });
+  });
+  /**
+   * Narrow read model for a receipt already proven in the authenticated Watch
+   * collection. It deliberately returns the same ID-free unavailable shape for
+   * malformed, deleted, wrong-kind, inaccessible and resolver-error cases.
+   */
+  r.get("/:id/communication-evidence", auth, (req, res) => {
+    const id = req.params.id;
+    const watch = typeof id === "string" && WatchId.safeParse(id).success ? getWatch(db, id) : null;
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      communication_evidence: watch?.kind === "codex"
+        ? communicationEvidenceForWatch(watch.id, options.resolveCommunicationEvidence)
+        : { availability: "unavailable" },
+    });
   });
   r.post("/", auth, (req, res) => {
     const p = CreateBody.safeParse(req.body);

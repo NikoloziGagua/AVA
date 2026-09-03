@@ -45,6 +45,7 @@ describe("CommunicationObservabilityRecorder", () => {
       title: "Claude response received",
       responseSummary: "Prefer bounded caching.",
       responseAvailability: "sanitized_recorded" as const,
+      responseEvidenceProvenance: "provider_result_boundary" as const,
       terminal: true,
       runStatus: "completed" as const,
       outcome: "response_received_unverified",
@@ -77,6 +78,7 @@ describe("CommunicationObservabilityRecorder", () => {
     expect(observability.getEvents(runId).at(-1)?.payload).toMatchObject({
       communicationSource: "provider_discussion",
       evidenceProvenance: "ava_observed_boundary",
+      responseEvidenceProvenance: "provider_result_boundary",
       trustBoundary: {
         from: "ava_orchestrator",
         to: "external_executor",
@@ -98,6 +100,15 @@ describe("CommunicationObservabilityRecorder", () => {
       requestSummary: `Authorization: Bearer request-secret\n${"x".repeat(2_200)}`,
     });
     recorder.record("provider_discussion", "secret-discussion", {
+      phase: "response.received",
+      status: "running",
+      title: "Claude response received",
+      responseSummary: `API_KEY=response-secret\n${"z".repeat(4_200)}`,
+      responseAvailability: "sanitized_recorded",
+      responseEvidenceProvenance: "provider_result_boundary",
+      runStatus: "running",
+    });
+    recorder.record("provider_discussion", "secret-discussion", {
       phase: "response.failed",
       status: "error",
       title: "Claude discussion failed",
@@ -115,6 +126,7 @@ describe("CommunicationObservabilityRecorder", () => {
       events: observability.getEvents(runId),
     });
     expect(serialized).not.toContain("request-secret");
+    expect(serialized).not.toContain("response-secret");
     expect(serialized).not.toContain("failure-secret");
     expect(serialized).toContain("***");
     expect(serialized).toContain("truncated by communication boundary");

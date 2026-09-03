@@ -341,16 +341,25 @@ async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
   }
 
   recordCodexCompleted(deps.db, w.id);
+  const terminalResult = snapshot.terminalResult ?? null;
   observe({
     phase: "response.completed",
     status: "success",
     title: "Codex task boundary completed",
-    summary: "AVA observed the delivered Codex turn reach a completed boundary. This transport does not record Codex's returned response content or prove the implemented outcome.",
-    responseAvailability: "not_recorded",
+    summary: terminalResult
+      ? "AVA observed the exact delivered Codex turn reach a completed boundary and captured its sanitized terminal result. This proves a result was returned, not that the implemented outcome succeeded."
+      : "AVA observed the delivered Codex turn reach a completed boundary. This completion did not contain a terminal result, so no response content was recorded or inferred.",
+    responseSummary: terminalResult?.summary ?? null,
+    responseAvailability: terminalResult ? "sanitized_recorded" : "not_recorded",
+    responseEvidenceProvenance: terminalResult ? "exact_thread_terminal_result" : null,
     terminal: true,
     runStatus: "completed",
-    outcome: "task_boundary_observed_response_not_recorded",
+    outcome: terminalResult
+      ? "task_boundary_observed_sanitized_response_recorded"
+      : "task_boundary_observed_response_not_recorded",
     verificationStatus: "partially_verified",
+    occurredAt: terminalResult?.occurredAt ?? undefined,
+    durationMs: terminalResult?.durationMs ?? null,
   });
   if (!w.continue_cycle) {
     setWatchEnabled(deps.db, w.id, false);

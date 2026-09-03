@@ -253,6 +253,12 @@ describe("pinned Codex delivery (watches v3)", () => {
       turnId: "turn-1",
       fileSize: 500,
       reason: "complete",
+      terminalResult: {
+        summary: "Implemented the bounded Notes phase.",
+        source: "exact_thread_task_complete" as const,
+        occurredAt: Date.parse("2026-08-04T01:01:00Z"),
+        durationMs: 60_000,
+      },
     }));
 
     vi.useFakeTimers({ now: new Date("2026-08-04T01:00:00Z") });
@@ -273,15 +279,55 @@ describe("pinned Codex delivery (watches v3)", () => {
     expect(observability.getRun(communicationId)).toMatchObject({
       status: "completed",
       verificationStatus: "partially_verified",
-      outcome: "task_boundary_observed_response_not_recorded",
+      outcome: "task_boundary_observed_sanitized_response_recorded",
+      compactSummary: "Implemented the bounded Notes phase.",
     });
     expect(observability.getEvents(communicationId)).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "communication.delivery.verified", status: "success" }),
       expect.objectContaining({
         type: "communication.response.completed",
-        payload: expect.objectContaining({ responseAvailability: "not_recorded" }),
+        payload: expect.objectContaining({
+          responseAvailability: "sanitized_recorded",
+          response: "Implemented the bounded Notes phase.",
+          responseEvidenceProvenance: "exact_thread_terminal_result",
+        }),
       }),
     ]));
+  });
+
+  it("keeps an exact-thread completion truthful when no terminal result was recorded", async () => {
+    const db = openInMemoryDb();
+    const observability = new ObservabilityService(db);
+    const w = createWatch(db, { prompt: "build notes", kind: "codex", intervalMinutes: 1, target });
+    db.prepare(`UPDATE watches SET delivery_marker = ?, dispatch_offset = 10, delivered_at = ?, last_run_at = ? WHERE id = ?`)
+      .run(`[AVA-WATCH:${w.id}]`, Date.now() - 60_000, Date.now() - 60_000, w.id);
+
+    await tickOnce(deps(db, {
+      dispatchCodex: vi.fn(),
+      inspectCodex: vi.fn(() => ({
+        state: "idle" as const,
+        markerSeen: true,
+        markerTurnCompleted: true,
+        turnId: "turn-without-result",
+        fileSize: 500,
+        reason: "complete",
+        terminalResult: null,
+      })),
+      observability,
+    }));
+
+    const runId = communicationRunId("codex_watcher", w.id);
+    expect(observability.getRun(runId)).toMatchObject({
+      status: "completed",
+      outcome: "task_boundary_observed_response_not_recorded",
+      verificationStatus: "partially_verified",
+    });
+    expect(observability.getEvents(runId).at(-1)?.payload).toMatchObject({
+      responseAvailability: "not_recorded",
+      response: null,
+      responseEvidenceProvenance: null,
+    });
+    db.close();
   });
 
   it("asks AVA for exactly one successor after a completed cycle task", async () => {

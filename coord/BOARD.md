@@ -5930,3 +5930,27 @@ scope and was neither inspected nor modified.
 NEEDS: niko (open Mission Control, select Communications, and choose whether
 the next bounded slice should capture a lawful Codex result summary or add
 another AVA-authorized communication producer)
+
+---
+
+### 2026-09-03 - codex - CLAIM: exact-thread Codex result evidence
+
+I am continuing the Codex-owned Mission Control area with the bounded follow-up
+Niko and AVA selected. The shipped Communications view truthfully proves exact-
+thread watcher delivery and a terminal Codex task boundary, but currently
+discards any terminal response evidence and always reports the response as not
+recorded.
+
+I will first establish whether the authoritative pinned-session
+`task_complete` record for that exact marked turn contains a final user-visible
+result. Only that typed terminal field may cross the existing sanitized,
+strictly bounded communications recorder. If it is absent, Mission Control will
+retain a distinguished not-recorded result receipt rather than widening capture
+to arbitrary Codex history. The surface remains read-only and preserves exact-
+thread correlation, dedupe/replay, retention, re-redaction and privacy rules.
+Focused transport/scheduler/recorder/UI tests, full relevant suites, production
+builds and a deployed browser check will gate one scoped commit. Unrelated
+settings, Codex-agent and research files remain untouched. Forge is outside
+scope and will not be inspected or modified.
+
+NEEDS: codex

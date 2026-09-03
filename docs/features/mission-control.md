@@ -30,10 +30,19 @@ branches. It shows lifecycle and verification state, timestamps, duration,
 parent/root correlation, errors, and collapsed request/outcome evidence.
 Provider usage, cost, model, and provider request identity are shown as **not
 reported** when the authoritative boundary does not supply them. Claude
-discussion output is retained only as a bounded sanitized summary. The Codex
-watcher transport proves delivery and completion of the pinned turn but does
-not lawfully capture the response body, so the UI says **not recorded by this
-transport** and treats the outcome as only partially verified.
+discussion output is retained only as a bounded sanitized summary. For a Codex
+watcher, AVA accepts result content only from the `last_agent_message` field on
+the typed `task_complete` event for the exact marked turn. It is sanitized at
+the transport boundary, capped at 4,000 characters, sanitized again before
+persistence/read/export, and collapsed in the UI. Assistant messages,
+diagnostic output, other turns, and arbitrary session history are never result
+sources. When that exact terminal field is absent, the UI continues to say
+**not recorded by this transport** instead of inferring a response.
+
+Both a recorded terminal result and a content-free completion remain only
+**partially verified**: the boundary proves that Codex returned a result and
+finished the marked turn, not that its reported implementation or tests are
+correct. Historical completed watchers are not backfilled.
 
 The presentation adds no send, retry, approval, Stop, or generic agent-control
 route. Existing authentication, 30-day detail / 365-day compact retention,
@@ -232,8 +241,10 @@ Coverage is deliberately honest:
 
 - OpenAI Realtime voice and AVA chat/action agent: instrumented vertical slice.
 - Hume voice: not yet instrumented.
-- Codex: watcher delivery and terminal-boundary communication slice only; returned
-  response content, provider usage, and arbitrary direct Codex sessions are not recorded.
+- Codex: exact-thread watcher delivery, terminal-boundary evidence, and a
+  bounded sanitized terminal result when the matching `task_complete` record
+  supplies one. Provider usage and arbitrary direct Codex sessions are not
+  recorded; missing terminal results remain explicitly not recorded.
 - Claude Code: AVA background-discussion communication slice only; arbitrary
   direct Claude Code sessions are not observed.
 - Forge: adapter contract exists; live ingestion is not connected.

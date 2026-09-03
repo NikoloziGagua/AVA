@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, normalize, resolve } from "node:path";
+import { sanitiseExplorerText } from "../explorer/redaction.js";
 import {
   hasCodexHandoff,
   readCodexHandoffCompletion,
@@ -35,6 +36,14 @@ export type CodexThreadSnapshot = {
   turnId: string | null;
   fileSize: number;
   reason: string;
+  terminalResult?: CodexTerminalResultEvidence | null;
+};
+
+export type CodexTerminalResultEvidence = {
+  summary: string;
+  source: "exact_thread_task_complete";
+  occurredAt: number | null;
+  durationMs: number | null;
 };
 
 export type CodexDispatchRequest = {
@@ -89,6 +98,40 @@ type SessionMeta = {
 const MARKER_PREFIX = "AVA-WATCH";
 const DEFAULT_VERIFY_MS = 20_000;
 const TAIL_BYTES = 4 * 1024 * 1024;
+const TERMINAL_RESULT_LIMIT = 4_000;
+
+function normalizeTimestamp(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 0 && value < 10_000_000_000 ? Math.round(value * 1_000) : Math.round(value);
+  }
+  if (typeof value !== "string" || !value.trim()) return null;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) return normalizeTimestamp(numeric);
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function terminalResultEvidence(payload: {
+  last_agent_message?: unknown;
+  completed_at?: unknown;
+  duration_ms?: unknown;
+}): CodexTerminalResultEvidence | null {
+  if (typeof payload.last_agent_message !== "string") return null;
+  const sanitised = sanitiseExplorerText(payload.last_agent_message)?.trim();
+  if (!sanitised) return null;
+  const summary = sanitised.length <= TERMINAL_RESULT_LIMIT
+    ? sanitised
+    : `${sanitised.slice(0, TERMINAL_RESULT_LIMIT)}\n[truncated by Codex result boundary]`;
+  const duration = typeof payload.duration_ms === "number" && Number.isFinite(payload.duration_ms)
+    ? Math.max(0, Math.round(payload.duration_ms))
+    : null;
+  return {
+    summary,
+    source: "exact_thread_task_complete",
+    occurredAt: normalizeTimestamp(payload.completed_at),
+    durationMs: duration,
+  };
+}
 
 function samePath(a: string, b: string): boolean {
   return normalize(resolve(a)).toLowerCase() === normalize(resolve(b)).toLowerCase();
@@ -211,6 +254,7 @@ export function inspectCodexThread(
   let markerSeen = false;
   let markerTurnCompleted = false;
   let turnId: string | null = null;
+  let terminalResult: CodexTerminalResultEvidence | null = null;
   if (marker) {
     const start = Math.max(0, (dispatchOffset ?? 0) - 4);
     const records = readRange(target.sessionFile, start).text.split(/\r?\n/);
@@ -219,19 +263,31 @@ export function inspectCodexThread(
       const line = records[index]!;
       if (!line.trim()) continue;
       try {
-        const record = JSON.parse(line) as { type?: string; payload?: { type?: string; turn_id?: string } };
+        const record = JSON.parse(line) as {
+          type?: string;
+          payload?: {
+            type?: string;
+            turn_id?: string;
+            last_agent_message?: unknown;
+            completed_at?: unknown;
+            duration_ms?: unknown;
+          };
+        };
         const payload = record.payload;
         if (payload?.type === "task_started" && markerIndex < 0) turnId = payload.turn_id ?? turnId;
         // A Stop-hook continuation is persisted as a typed hook-prompt response
         // item, not a user_message. Require that semantic envelope: arbitrary
         // diagnostic/tool text may echo the marker and is not delivery evidence.
-        if (payloadContainsDeliveryMarker(record, marker)) {
+        if (!markerSeen && payloadContainsDeliveryMarker(record, marker)) {
           markerSeen = true;
           markerIndex = index;
         }
-        if (markerIndex >= 0 && index > markerIndex && payload?.type === "task_complete") {
+        const matchesMarkedTurn = !turnId || !payload?.turn_id || payload.turn_id === turnId;
+        if (markerIndex >= 0 && index > markerIndex && payload?.type === "task_complete" && matchesMarkedTurn) {
           markerTurnCompleted = true;
           turnId = payload.turn_id ?? turnId;
+          terminalResult = terminalResultEvidence(payload);
+          break;
         }
       } catch { /* ignore incomplete/unrelated lines */ }
     }
@@ -245,6 +301,7 @@ export function inspectCodexThread(
     turnId,
     fileSize,
     reason: state === "busy" ? "the pinned Codex thread has an unfinished task" : state === "idle" ? "the pinned Codex thread is at a completed task boundary" : "no reliable Codex task boundary was found",
+    terminalResult,
   };
 }
 

@@ -79,12 +79,66 @@ describe("Codex thread evidence", () => {
     const running = inspectCodexThread(target, "[AVA-WATCH:w1]", offset);
     expect(running).toMatchObject({ state: "busy", markerSeen: true, markerTurnCompleted: false, turnId: "turn-watch" });
 
-    appendFileSync(target.sessionFile, `${event("task_complete", { turn_id: "turn-watch" })}\n`);
+    appendFileSync(target.sessionFile, `${event("task_complete", {
+      turn_id: "turn-watch",
+      last_agent_message: "Implemented and tested the bounded receipt.",
+      completed_at: 1_788_437_768,
+      duration_ms: 321,
+    })}\n`);
     expect(inspectCodexThread(target, "[AVA-WATCH:w1]", offset)).toMatchObject({
       state: "idle",
       markerSeen: true,
       markerTurnCompleted: true,
       turnId: "turn-watch",
+      terminalResult: {
+        summary: "Implemented and tested the bounded receipt.",
+        source: "exact_thread_task_complete",
+        occurredAt: 1_788_437_768_000,
+        durationMs: 321,
+      },
+    });
+  });
+
+  it("accepts only the marked turn's bounded sanitized terminal result", () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-result", cwd: "C:/repo/AVA", state: "idle" });
+    const offset = inspectCodexThread(target).fileSize;
+    appendFileSync(target.sessionFile, `${event("task_started", { turn_id: "turn-result" })}\n`);
+    appendFileSync(target.sessionFile, `${event("user_message", { message: "[AVA-WATCH:result-1] build" })}\n`);
+    appendFileSync(target.sessionFile, `${event("task_complete", {
+      turn_id: "different-turn",
+      last_agent_message: "must not be selected",
+    })}\n`);
+    appendFileSync(target.sessionFile, `${event("task_complete", {
+      turn_id: "turn-result",
+      last_agent_message: `Authorization: Bearer response-secret\n${"x".repeat(4_500)}`,
+    })}\n`);
+
+    const result = inspectCodexThread(target, "[AVA-WATCH:result-1]", offset);
+    expect(result.markerTurnCompleted).toBe(true);
+    expect(result.terminalResult?.summary).not.toContain("response-secret");
+    expect(result.terminalResult?.summary).not.toContain("must not be selected");
+    expect(result.terminalResult?.summary).toContain("Authorization: ***");
+    expect(result.terminalResult?.summary).toContain("[truncated by Codex result boundary]");
+    expect(result.terminalResult!.summary.length).toBeLessThan(4_100);
+  });
+
+  it("does not treat assistant or diagnostic records as terminal result evidence", () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-unverified-result", cwd: "C:/repo/AVA", state: "idle" });
+    const offset = inspectCodexThread(target).fileSize;
+    appendFileSync(target.sessionFile, `${event("task_started", { turn_id: "turn-unverified" })}\n`);
+    appendFileSync(target.sessionFile, `${event("user_message", { message: "[AVA-WATCH:unverified-result] build" })}\n`);
+    appendFileSync(target.sessionFile, `${event("agent_message", { message: "intermediate output must not be captured" })}\n`);
+    appendFileSync(target.sessionFile, `${JSON.stringify({
+      type: "response_item",
+      payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "another untrusted result" }] },
+    })}\n`);
+    appendFileSync(target.sessionFile, `${event("task_complete", { turn_id: "turn-unverified" })}\n`);
+
+    expect(inspectCodexThread(target, "[AVA-WATCH:unverified-result]", offset)).toMatchObject({
+      markerTurnCompleted: true,
+      terminalResult: null,
     });
   });
 

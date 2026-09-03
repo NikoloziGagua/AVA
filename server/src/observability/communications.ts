@@ -29,6 +29,7 @@ export type CommunicationEventInput = {
   summary?: string | null;
   responseSummary?: string | null;
   responseAvailability?: CommunicationResponseAvailability;
+  responseEvidenceProvenance?: "provider_result_boundary" | "exact_thread_terminal_result" | null;
   error?: string | null;
   runStatus?: ObservabilityRunStatus;
   terminal?: boolean;
@@ -140,6 +141,7 @@ export class CommunicationObservabilityRecorder {
           requestAvailability: "sanitized_recorded",
           responseAvailability: input.responseAvailability ?? (response ? "sanitized_recorded" : "pending"),
           response,
+          responseEvidenceProvenance: input.responseEvidenceProvenance ?? null,
           usageAvailability: "not_reported",
           costAvailability: "not_reported",
           providerModelAvailability: "not_reported",

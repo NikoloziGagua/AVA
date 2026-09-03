@@ -82,7 +82,14 @@ Two halves: **tools** (Ava registers/lists/deletes watches during a turn) and a
   support the queue command. Neither path starts a competing
   `codex exec resume` writer.
   AVA verifies the unique marker in the immutable JSONL session record. The
-  adapter contract is deliberately
+  matching turn's typed `task_complete.last_agent_message` is the only accepted
+  result-content source. AVA sanitizes and bounds that user-visible terminal
+  message before publishing it to the existing Mission Control Communications
+  evidence stream. Other assistant events, diagnostics, tool output, and other
+  turns are ignored; an absent terminal result stays explicitly not recorded.
+  This proves Codex returned a result, not that the reported product work is
+  correct. Historical watcher results are not backfilled. The adapter contract
+  is deliberately
   isolated so another session target, such as Claude Code, can implement the
   same resolve/dispatch/inspect boundary without changing ordinary watches.
 
@@ -182,6 +189,11 @@ HTTP route caps it at 24 h.
   A content-free prompt-hash receipt prevents a scheduler retry from submitting
   the message twice. A timeout or lost acknowledgement is terminally ambiguous
   and is never replayed automatically.
+- **Codex terminal prose is result evidence, not product verification.** Only
+  the exact marked turn's typed terminal result may appear as a collapsed,
+  sanitized 4,000-character summary in Mission Control. Completion remains
+  partially verified until separate repository, test, build, or runtime
+  evidence proves the claimed outcome.
 - **Delivery occurs at a clean task boundary.** Codex itself queues a message
   received while work is active and begins it after that turn finishes. An idle
   pinned thread starts directly. AVA no longer needs to infer whether the TUI is

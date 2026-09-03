@@ -621,6 +621,7 @@ function queueDiscussion(topic: string, sessionId: string | null, parentRunId: s
         summary: "AVA received and stored a sanitized Claude response; its advice is not independent proof of a product outcome.",
         responseSummary: result,
         responseAvailability: "sanitized_recorded",
+        responseEvidenceProvenance: "provider_result_boundary",
         terminal: true,
         runStatus: "completed",
         outcome: "response_received_unverified",

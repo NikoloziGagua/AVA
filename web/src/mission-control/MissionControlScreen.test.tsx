@@ -166,8 +166,8 @@ const codexCommunicationRun: MissionRun = {
   ownerId: "codex",
   title: "Codex watcher handoff",
   objective: "Implement one bounded task",
-  outcome: "task_boundary_observed_response_not_recorded",
-  compactSummary: "Codex task boundary completed; response content was not recorded.",
+  outcome: "task_boundary_observed_sanitized_response_recorded",
+  compactSummary: "Implemented and tested the bounded task.",
 };
 
 const codexCommunicationEvent: MissionEvent = {
@@ -184,7 +184,8 @@ const codexCommunicationEvent: MissionEvent = {
   payload: {
     communicationSource: "codex_watcher",
     requestAvailability: "sanitized_recorded",
-    responseAvailability: "not_recorded",
+    responseAvailability: "sanitized_recorded",
+    responseEvidenceProvenance: "exact_thread_terminal_result",
     usageAvailability: "not_reported",
     evidenceProvenance: "ava_observed_boundary",
   },
@@ -400,7 +401,7 @@ describe("MissionControlScreen", () => {
     expect(screen.getAllByText("Prefer the bounded cache.")).toHaveLength(2);
   });
 
-  it("labels Codex distinctly and reports response content as not recorded", async () => {
+  it("labels Codex distinctly and exposes only its exact-thread terminal result", async () => {
     api.fetchMissionMeta.mockResolvedValue({
       ok: true,
       service: "ava-mission-control",
@@ -419,9 +420,44 @@ describe("MissionControlScreen", () => {
     const evidenceRegion = screen.getByRole("region", { name: "Communication evidence" });
     expect(evidenceRegion.textContent).toContain("AVA");
     expect(evidenceRegion.textContent).toContain("Codex");
-    expect(screen.getByText("Not recorded by this transport")).toBeTruthy();
+    expect(screen.getAllByText("Sanitized evidence recorded")).toHaveLength(2);
+    expect(screen.getByText("Exact-thread terminal result")).toBeTruthy();
+    fireEvent.click(screen.getByText("Sanitized outcome summary"));
+    expect(screen.getAllByText("Implemented and tested the bounded task.")).toHaveLength(2);
     expect(screen.getAllByText("Not reported").length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByRole("button", { name: /retry|send|approve/i })).toBeNull();
+  });
+
+  it("keeps a completed Codex result explicitly not recorded when terminal content is absent", async () => {
+    const unavailableRun = {
+      ...codexCommunicationRun,
+      outcome: "task_boundary_observed_response_not_recorded",
+      compactSummary: "Codex reached a completed task boundary without recorded result content.",
+    };
+    const unavailableEvent = {
+      ...codexCommunicationEvent,
+      payload: {
+        ...codexCommunicationEvent.payload as Record<string, unknown>,
+        responseAvailability: "not_recorded",
+        responseEvidenceProvenance: null,
+      },
+    };
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 10 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([unavailableRun]);
+    api.fetchMissionRun.mockResolvedValue({ run: unavailableRun, events: [unavailableEvent] });
+
+    render(<MissionControlScreen />);
+    expect(await screen.findByText("Codex task boundary completed")).toBeTruthy();
+    expect(screen.getByText("Not recorded by this transport")).toBeTruthy();
+    expect(screen.getByText("No result content recorded")).toBeTruthy();
   });
 
   it("applies a communication lifecycle event from SSE once and preserves the filtered reload", async () => {

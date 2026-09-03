@@ -169,6 +169,17 @@ function availabilityLabel(value: CommunicationAvailability): string {
   return "Not recorded by this transport";
 }
 
+function responseEvidenceLabel(payload: Record<string, unknown> | null): string {
+  const provenance = payload?.responseEvidenceProvenance;
+  if (provenance === "exact_thread_terminal_result") return "Exact-thread terminal result";
+  if (provenance === "provider_result_boundary") return "Provider result boundary";
+  const availability = communicationAvailability(payload, "responseAvailability");
+  if (availability === "pending") return "Pending";
+  if (availability === "unavailable") return "Result source unavailable";
+  if (availability === "not_recorded") return "No result content recorded";
+  return "AVA-observed result boundary";
+}
+
 function communicationActor(run: MissionRun): string {
   const label = run.runtimeType.replaceAll("_", " ");
   return label.replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -490,6 +501,10 @@ export function MissionControlScreen() {
                     <div className="rounded-xl border border-white/8 bg-black/20 p-3">
                       <dt className="uppercase tracking-wider text-white/28">Provider usage / cost</dt>
                       <dd className="mt-1 text-white/62">Not reported</dd>
+                    </div>
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3 sm:col-span-2">
+                      <dt className="uppercase tracking-wider text-white/28">Result evidence</dt>
+                      <dd className="mt-1 text-white/62">{responseEvidenceLabel(selectedCommunication)}</dd>
                     </div>
                   </dl>
                   {(selectedRun.objective || selectedRun.compactSummary) && (

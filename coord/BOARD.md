@@ -5367,6 +5367,80 @@ NEEDS: codex
 
 ---
 
+### 2026-09-03 - codex - COMPLETE: live exact-bridge revalidation
+
+Implemented and committed product change `9e0f1bb4e7b19b822b4fac6bc06e9747d89b3310`
+(`fix(observability): revalidate exact evidence links`). Watches now joins the
+existing authenticated Mission Control SSE stream at its durable high-water
+cursor. It re-fetches authoritative evidence only when an event matches an
+already-proved visible run ID or carries the normalized exact
+`codex_watcher`/`sourceId` identity of a visible Codex watch; unrelated Claude,
+ordinary and malformed events do nothing. Duplicate/replayed relevant events
+coalesce into one bounded refresh. Focus and visible-tab transitions revalidate
+both directions; a quiet fetch/resolver failure removes the stale link and
+uses the existing ID-free unavailable receipt. Both changing receipts are
+polite live regions, and Mission Control revalidation errors are accessible
+alerts with generic non-disclosing text.
+
+The authoritative forward resolver no longer accepts whichever source envelope
+arrived last: mixed or conflicting retained communication identities now fail
+closed. Existing authenticated routes remain authoritative. No store, event
+bus, route family, transcript, broad polling regime, fuzzy identity inference,
+send/retry/stop/approval action, or other mutation was added.
+
+Changed files: `server/src/routes/mission-control.ts` and test,
+`server/src/routes/watches.test.ts`,
+`web/src/mission-control/MissionControlScreen.tsx` and test,
+`web/src/watches/WatchesScreen.tsx` and test, plus
+`docs/features/mission-control.md`, `docs/features/watches.md`, and the
+append-only board claim.
+
+Verification:
+
+- focused server (communications + Mission Control + Watches) -> 3 files / 23
+  tests passed;
+- focused web (Watches + Mission Control + App navigation) -> 3 files / 37
+  tests passed;
+- full server -> 204 files / 1,589 tests passed;
+- full web -> 96 files / 471 tests passed;
+- server TypeScript/build and production web/PWA build passed;
+- `git diff --check`, staged diff check, and bounded changed-source privacy scan
+  passed (only existing CRLF notices);
+- committed HEAD passed an isolated scratch-port server boot smoke (`healthy`)
+  using built ID `afe4a2a6-262c-48ef-943e-da043694cd15`;
+- deployed browser used two disposable, explicitly synthetic freshness records.
+  Removing one run's event detail made its already-rendered Watch evidence link
+  disappear on focus; deleting the other Watch made its already-rendered
+  Mission Control link become unavailable on focus. Both unavailable receipts
+  disclosed no prior ID. Exact selection and keyboard Back returned to the same
+  Watch, Watches and Mission Control each measured 760px document width at a
+  760px viewport, console/page errors were zero, and cleanup left zero fixture
+  watches and zero fixture runs.
+
+The owner's running AVA process remained healthy (`ok=true`, OpenAI, build
+`ae6c1e98-d41d-44e4-8f0d-8475d08a6849`) and was deliberately not restarted
+while this watcher was active, avoiding another false restart-orphan boundary.
+The committed backend ambiguity guard will load on the next normal AVA runtime
+restart; the browser freshness behavior was checked from the new production
+bundle against the existing authenticated routes.
+
+Known limits: Watch deletion and the six-hour retention purge publish no lawful
+SSE event, so focus/visible-tab revalidation covers tab switching; Watches also
+retains its existing 15-second refresh. A continuously foregrounded Mission
+Control tab with no observability activity revalidates on its manual refresh or
+next focus, not from a fabricated removal event. Existing warnings remain the
+unrecognized ES2024 target and a roughly 2.345 MB main bundle. AVA still has one
+authenticated owner scope rather than per-project Watch ACLs. Existing
+`.claude/settings.local.json`, `.codex/agents/`, and persona-research changes
+remain untouched. Forge remained outside scope and was neither inspected nor
+modified.
+
+NEEDS: niko (after this watcher reaches its terminal boundary, use the next
+normal AVA restart and test leaving either evidence view open while its exact
+target is removed in another tab)
+
+---
+
 ### 2026-09-03 - codex - COMPLETE: watcher-to-communication evidence bridge
 
 Implemented and committed product change `a48525936776aadf1becbd0124bce68b014e24a7`
@@ -6251,3 +6325,23 @@ settings, Codex-agent and research changes remain untouched. Forge remains
 outside scope and will not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-09-03 - codex - TAIL CLOSE: live exact-bridge revalidation
+
+The full completion and acceptance evidence for product commit
+`9e0f1bb4e7b19b822b4fac6bc06e9747d89b3310` appears above under `COMPLETE:
+live exact-bridge revalidation`. A generic patch anchor placed that append
+before later existing thread entries; no earlier board text was edited or
+removed. This physical-tail close records 1,589 passing server tests, 471
+passing web tests, both production builds, committed-HEAD scratch boot health,
+and the cleaned two-direction 760px browser transition proof with exact
+selection, keyboard Back, ID-free unavailable receipts, and zero console
+errors. The owner runtime was kept alive to avoid orphaning this active watcher;
+the committed backend loads at the next normal restart. Unrelated settings,
+Codex-agent and persona-research changes remain untouched. Forge remained
+outside scope and was neither inspected nor modified.
+
+NEEDS: niko (after this watcher finishes, restart AVA normally and try both
+evidence directions across two tabs)

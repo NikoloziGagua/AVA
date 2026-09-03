@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const api = vi.hoisted(() => ({
   fetchWatches: vi.fn(),
   createWatchApi: vi.fn(),
   setWatchEnabled: vi.fn(),
   deleteWatchApi: vi.fn(),
+  fetchMissionMeta: vi.fn(),
+  subscribeMissionEvents: vi.fn((_options?: unknown) => () => {}),
 }));
 
 vi.mock("../api.js", () => ({
@@ -14,6 +16,8 @@ vi.mock("../api.js", () => ({
   createWatchApi: api.createWatchApi,
   setWatchEnabled: api.setWatchEnabled,
   deleteWatchApi: api.deleteWatchApi,
+  fetchMissionMeta: api.fetchMissionMeta,
+  subscribeMissionEvents: api.subscribeMissionEvents,
 }));
 vi.mock("../components/ava/PanelShell.js", () => ({
   PanelShell: ({ title, children }: { title: string; children: React.ReactNode }) => <main><h1>{title}</h1>{children}</main>,
@@ -23,7 +27,7 @@ vi.mock("../components/ava/BorderGlow.js", () => ({
 }));
 
 import { WatchesScreen, watchStatusLabel } from "./WatchesScreen.js";
-import type { WatchRow } from "../api.js";
+import type { MissionEvent, WatchRow } from "../api.js";
 
 const row = (patch: Partial<WatchRow> = {}): WatchRow => ({
   id: "watch-1",
@@ -48,6 +52,8 @@ beforeEach(() => {
   api.createWatchApi.mockReset();
   api.setWatchEnabled.mockReset().mockResolvedValue(undefined);
   api.deleteWatchApi.mockReset().mockResolvedValue(undefined);
+  api.fetchMissionMeta.mockReset().mockResolvedValue({ eventBounds: { min: 1, max: 100 } });
+  api.subscribeMissionEvents.mockReset().mockImplementation((_options?: unknown) => () => {});
 });
 
 afterEach(cleanup);
@@ -237,6 +243,110 @@ describe("WatchesScreen", () => {
     expect(screen.queryByRole("link", { name: "Open exact communication in Mission Control" })).toBeNull();
     const ordinaryCard = screen.getByLabelText("Watch: Ordinary check");
     expect(ordinaryCard.textContent).not.toContain("Mission Control evidence");
+  });
+
+  it("revalidates an already-rendered receipt on its exact Mission Control SSE identity", async () => {
+    const available = row({
+      id: "codex-live",
+      prompt: "Live evidence",
+      kind: "codex",
+      communication_evidence: {
+        availability: "available",
+        runId: "communication:codex_watcher:codex-live",
+      },
+    });
+    api.fetchWatches
+      .mockResolvedValueOnce([available])
+      .mockResolvedValueOnce([row({
+        ...available,
+        communication_evidence: { availability: "unavailable" },
+      })]);
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+
+    const exactLink = await screen.findByRole("link", { name: "Open exact communication in Mission Control" });
+    exactLink.focus();
+    await waitFor(() => expect(api.subscribeMissionEvents).toHaveBeenCalledTimes(1));
+    const stream = api.subscribeMissionEvents.mock.calls[0]?.[0] as {
+      onEvent: (event: MissionEvent) => void;
+    };
+    const matchingEvent = {
+      runId: "communication:codex_watcher:codex-live",
+      payload: { communicationSource: "codex_watcher", sourceId: "codex-live" },
+    } as MissionEvent;
+    act(() => {
+      stream.onEvent(matchingEvent);
+      stream.onEvent(matchingEvent);
+    });
+
+    expect(await screen.findByText("Mission Control evidence unavailable or not retained.")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open exact communication in Mission Control" })).toBeNull();
+    expect(document.body.textContent).not.toContain("communication:codex_watcher:codex-live");
+    expect(api.fetchWatches).toHaveBeenCalledTimes(2);
+  });
+
+  it("promotes an unavailable receipt only after an exact normalized source event revalidates it", async () => {
+    const unavailable = row({
+      id: "codex-new-evidence",
+      prompt: "New evidence",
+      kind: "codex",
+      communication_evidence: { availability: "unavailable" },
+    });
+    api.fetchWatches
+      .mockResolvedValueOnce([unavailable])
+      .mockResolvedValueOnce([row({
+        ...unavailable,
+        communication_evidence: {
+          availability: "available",
+          runId: "communication:codex_watcher:codex-new-evidence",
+        },
+      })]);
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+
+    expect(await screen.findByText("Mission Control evidence unavailable or not retained.")).toBeTruthy();
+    await waitFor(() => expect(api.subscribeMissionEvents).toHaveBeenCalledTimes(1));
+    const stream = api.subscribeMissionEvents.mock.calls[0]?.[0] as {
+      onEvent: (event: MissionEvent) => void;
+    };
+    act(() => stream.onEvent({
+      runId: "opaque-authoritative-run-id",
+      payload: { communicationSource: "codex_watcher", sourceId: "codex-new-evidence" },
+    } as MissionEvent));
+
+    expect(await screen.findByRole("link", { name: "Open exact communication in Mission Control" })).toBeTruthy();
+    expect(api.fetchWatches).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores unrelated SSE identities and fails a visible receipt closed on focus revalidation error", async () => {
+    const available = row({
+      id: "codex-focus",
+      prompt: "Focus evidence",
+      kind: "codex",
+      communication_evidence: {
+        availability: "available",
+        runId: "communication:codex_watcher:codex-focus",
+      },
+    });
+    api.fetchWatches.mockResolvedValueOnce([available]).mockRejectedValueOnce(new Error("private resolver detail"));
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+
+    const link = await screen.findByRole("link", { name: "Open exact communication in Mission Control" });
+    link.focus();
+    await waitFor(() => expect(api.subscribeMissionEvents).toHaveBeenCalledTimes(1));
+    const stream = api.subscribeMissionEvents.mock.calls[0]?.[0] as {
+      onEvent: (event: MissionEvent) => void;
+    };
+    act(() => stream.onEvent({
+      runId: "communication:provider_discussion:other",
+      payload: { communicationSource: "provider_discussion", sourceId: "other" },
+    } as MissionEvent));
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 160)); });
+    expect(api.fetchWatches).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(link);
+
+    act(() => window.dispatchEvent(new Event("focus")));
+    expect(await screen.findByText("Mission Control evidence unavailable or not retained.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("private resolver detail");
+    expect(screen.queryByRole("link", { name: "Open exact communication in Mission Control" })).toBeNull();
   });
 });
 

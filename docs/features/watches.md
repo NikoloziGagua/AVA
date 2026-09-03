@@ -82,6 +82,17 @@ conflict, or authenticated resolution fails, the card shows one ID-free
 reminder cards remain unchanged. This is read-only; the existing pause/resume,
 delete, scheduler, and evidence contracts are untouched.
 
+An open card does not treat that receipt as permanently true. The Watches
+screen consumes AVA's existing Mission Control stream from its current durable
+cursor and requests fresh authenticated watch evidence only for a normalized
+event tied to a visible exact Codex identity; unrelated events are ignored and
+replays are debounced. Focus/visible-tab refresh handles deletion and retention
+expiry because those removals do not emit observability events. If the refresh
+or resolver is inaccessible, the card fails closed to the same ID-free
+unavailable wording. Mission Control applies the matching focused-detail and
+existing SSE revalidation in the other direction. No new watch stream, global
+event bus, transcript storage, or action was introduced.
+
 ## How it works
 
 Two halves: **tools** (Ava registers/lists/deletes watches during a turn) and a

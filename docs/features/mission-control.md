@@ -68,6 +68,25 @@ retained** receipt. The link selects that exact run directly; reload preserves
 the selection and Back returns to Watches. Ordinary checks, reminders, Claude
 discussions, and unrelated runs receive no reverse link.
 
+Both receipts are live read models rather than one-time navigation claims.
+Mission Control's existing authenticated SSE refresh re-fetches the selected
+run detail, so a relevant communication event re-resolves its Watch before the
+link remains visible. Watches joins that same stream at its durable high-water
+cursor and refreshes only when an event matches an already-proved run ID or a
+normalized exact `codex_watcher` source identity for a visible Codex watch;
+unrelated provider and ordinary run events do nothing. Duplicate/replayed SSE
+events are coalesced through one bounded refresh and the authoritative routes
+still make the availability decision.
+
+Watch deletion and the six-hour retention purge do not publish a lawful SSE
+event. For those cases, the exact visible receipt is revalidated when its tab
+regains focus or becomes visible; Watches also retains its existing 15-second
+list refresh. A failed quiet refresh removes any rendered evidence link and
+shows the same ID-free unavailable receipt. Mission Control likewise fails an
+existing watcher link closed on focused revalidation without exposing the
+resolver error. The stream, routes, retention, and mutation surface are not
+expanded.
+
 The presentation adds no send, retry, approval, Stop, or generic agent-control
 route. Existing authentication, 30-day detail / 365-day compact retention,
 read-time redaction, export-time re-redaction, immutable late-event behavior,

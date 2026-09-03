@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlarmClock,
   ArrowLeft,
@@ -20,9 +20,12 @@ import {
 import {
   createWatchApi,
   deleteWatchApi,
+  fetchMissionMeta,
   fetchWatches,
   setWatchEnabled,
+  subscribeMissionEvents,
   type CreateWatchInput,
+  type MissionEvent,
   type WatchRow,
 } from "../api.js";
 import { BorderGlow } from "../components/ava/BorderGlow.js";
@@ -36,6 +39,35 @@ type ScheduleMode = "interval" | "once" | "daily";
 
 const ATTENTION = new Set(["error", "unclear", "busy"]);
 const CODEX_COMMUNICATION_RUN_ID = /^communication:codex_watcher:[A-Za-z0-9_-]{1,64}$/;
+const WATCHER_SOURCE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+function eventCanChangeVisibleCommunicationEvidence(
+  event: MissionEvent,
+  watches: WatchRow[] | null,
+): boolean {
+  if (!watches) return false;
+  const linkedRunIds = new Set(watches.flatMap((watch) =>
+    watch.kind === "codex" &&
+    watch.communication_evidence?.availability === "available" &&
+    CODEX_COMMUNICATION_RUN_ID.test(watch.communication_evidence.runId)
+      ? [watch.communication_evidence.runId]
+      : []));
+  if (linkedRunIds.has(event.runId)) return true;
+
+  const payload = event.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const identity = payload as Record<string, unknown>;
+  if (identity.communicationSource !== "codex_watcher") return false;
+  const sourceId = identity.sourceId;
+  return typeof sourceId === "string" && WATCHER_SOURCE_ID.test(sourceId) &&
+    watches.some((watch) => watch.kind === "codex" && watch.id === sourceId);
+}
+
+function failClosedCommunicationEvidence(watches: WatchRow[] | null): WatchRow[] | null {
+  return watches?.map((watch) => watch.kind === "codex"
+    ? { ...watch, communication_evidence: { availability: "unavailable" as const } }
+    : watch) ?? null;
+}
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "The watch request failed.";
@@ -319,7 +351,7 @@ function WatchCard({ watch, busy, highlighted, onToggle, onDelete, onOpenChat }:
             <div className="mt-2 text-[11px] text-white/50">Successor: {watch.successor_status}{watch.successor_result ? ` · ${watch.successor_result}` : ""}</div>
           )}
           {watch.kind === "codex" && (
-            <div className="mt-3 rounded-xl border border-violet-300/12 bg-violet-300/[0.035] px-3 py-2.5 text-[11px] leading-5 text-white/52">
+            <div aria-live="polite" className="mt-3 rounded-xl border border-violet-300/12 bg-violet-300/[0.035] px-3 py-2.5 text-[11px] leading-5 text-white/52">
               {communicationRunId ? (
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <span className="flex items-center gap-2">
@@ -383,23 +415,67 @@ export function WatchesScreen({
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const watchesRef = useRef<WatchRow[] | null>(null);
+  const receiptRefreshTimer = useRef<number | null>(null);
 
-  async function load(quiet = false) {
+  const load = useCallback(async (quiet = false) => {
     try {
-      setWatches(await fetchWatches());
+      const next = await fetchWatches();
+      watchesRef.current = next;
+      setWatches(next);
       if (!quiet) setError(null);
     } catch (cause) {
-      if (!quiet) setError(errorMessage(cause));
+      if (quiet) {
+        setWatches((current) => {
+          const next = failClosedCommunicationEvidence(current);
+          watchesRef.current = next;
+          return next;
+        });
+      } else {
+        setError(errorMessage(cause));
+      }
     }
-  }
+  }, []);
+
+  const scheduleReceiptRefresh = useCallback(() => {
+    if (receiptRefreshTimer.current != null) window.clearTimeout(receiptRefreshTimer.current);
+    receiptRefreshTimer.current = window.setTimeout(() => void load(true), 120);
+  }, [load]);
 
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => void load(true), REFRESH_MS);
-    const focus = () => void load(true);
+    const focus = () => scheduleReceiptRefresh();
+    const visible = () => { if (document.visibilityState === "visible") scheduleReceiptRefresh(); };
     window.addEventListener("focus", focus);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", focus); };
-  }, []);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", focus);
+      document.removeEventListener("visibilitychange", visible);
+      if (receiptRefreshTimer.current != null) window.clearTimeout(receiptRefreshTimer.current);
+    };
+  }, [load, scheduleReceiptRefresh]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe = () => {};
+    void fetchMissionMeta().then((meta) => {
+      if (disposed) return;
+      unsubscribe = subscribeMissionEvents({
+        after: meta.eventBounds.max ?? 0,
+        onGap: scheduleReceiptRefresh,
+        onEvent: (event) => {
+          if (eventCanChangeVisibleCommunicationEvidence(event, watchesRef.current)) {
+            scheduleReceiptRefresh();
+          }
+        },
+      });
+    }).catch(() => {
+      // The existing interval and focus boundary remain the truthful fallback.
+    });
+    return () => { disposed = true; unsubscribe(); };
+  }, [scheduleReceiptRefresh]);
 
   const visible = useMemo(() => {
     if (!watches) return [];

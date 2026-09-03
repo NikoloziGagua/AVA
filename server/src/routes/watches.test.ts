@@ -124,6 +124,30 @@ describe("watch management routes", () => {
     db.close();
   });
 
+  it("revalidates an available receipt to ID-free unavailable after detail retention removes its proof", async () => {
+    const { app, db, observability } = setup();
+    const codex = createWatch(db, { prompt: "Expiring evidence", runAt: Date.now() + 60_000, kind: "codex" });
+    const run = new CommunicationObservabilityRecorder(observability).ensureStarted({
+      source: "codex_watcher",
+      sourceId: codex.id,
+      runtimeType: "codex",
+      title: "Codex watcher handoff",
+      requestSummary: "Expiring evidence",
+    })!;
+
+    const available = await request(app).get("/api/watches").expect(200);
+    expect(available.body.watches[0].communication_evidence).toEqual({
+      availability: "available",
+      runId: run.id,
+    });
+
+    db.prepare("DELETE FROM observability_events WHERE run_id = ?").run(run.id);
+    const unavailable = await request(app).get("/api/watches").expect(200);
+    expect(unavailable.body.watches[0].communication_evidence).toEqual({ availability: "unavailable" });
+    expect(JSON.stringify(unavailable.body.watches[0].communication_evidence)).not.toContain(run.id);
+    db.close();
+  });
+
   it("collapses absent and resolver-failed Codex evidence to the same ID-free state", async () => {
     const absent = setup();
     createWatch(absent.db, { prompt: "No retained trace", runAt: Date.now() + 60_000, kind: "codex" });

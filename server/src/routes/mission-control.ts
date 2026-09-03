@@ -62,19 +62,26 @@ export function resolveMissionControlNavigation(
   events: ObservabilityEvent[],
   resolveWatcher: MissionControlRouteOptions["resolveWatcher"],
 ): MissionControlNavigation {
-  let communication: Record<string, unknown> | null = null;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const payload = events[index]?.payload;
+  const identities: Array<{ source: string; sourceId: unknown }> = [];
+  for (const event of events) {
+    const payload = event.payload;
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
     const candidate = payload as Record<string, unknown>;
     if (typeof candidate.communicationSource === "string") {
-      communication = candidate;
-      break;
+      identities.push({ source: candidate.communicationSource, sourceId: candidate.sourceId });
     }
   }
-  if (communication?.communicationSource !== "codex_watcher") return null;
+  const watcherIdentities = identities.filter((identity) => identity.source === "codex_watcher");
+  if (watcherIdentities.length === 0) return null;
 
-  const sourceId = communication.sourceId;
+  // A mixed or conflicting retained identity cannot be made unambiguous by
+  // choosing whichever event happened to arrive last.
+  if (watcherIdentities.length !== identities.length) {
+    return { kind: "watcher", availability: "unavailable" };
+  }
+
+  const sourceIds = new Set(watcherIdentities.map((identity) => identity.sourceId));
+  const sourceId = sourceIds.size === 1 ? watcherIdentities[0]?.sourceId : null;
   if (typeof sourceId !== "string" || !WATCHER_SOURCE_ID.test(sourceId) || !resolveWatcher) {
     return { kind: "watcher", availability: "unavailable" };
   }

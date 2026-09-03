@@ -243,15 +243,22 @@ export function MissionControlScreen() {
     cursor.current = Math.max(cursor.current, ...detail.events.map((event) => event.seq), 0);
   }, []);
 
+  const failClosedWatcherNavigation = useCallback(() => {
+    setNavigation((current) => current?.kind === "watcher"
+      ? { kind: "watcher", availability: "unavailable" }
+      : current);
+  }, []);
+
   const refresh = useCallback(async () => {
     try {
       await loadRuns();
       if (selectedId) await loadDetail(selectedId);
       setError(null);
     } catch (cause) {
+      failClosedWatcherNavigation();
       setError(cause instanceof Error ? cause.message : "Mission Control could not refresh.");
     }
-  }, [loadDetail, loadRuns, selectedId]);
+  }, [failClosedWatcherNavigation, loadDetail, loadRuns, selectedId]);
 
   useEffect(() => {
     document.title = "AVA Mission Control";
@@ -282,8 +289,28 @@ export function MissionControlScreen() {
     setNavigation(null);
     setExportOpen(false);
     setExportReceipt(null);
-    void loadDetail(selectedId).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
-  }, [loadDetail, selectedId]);
+    void loadDetail(selectedId).catch((cause) => {
+      failClosedWatcherNavigation();
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, [failClosedWatcherNavigation, loadDetail, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || navigation?.kind !== "watcher") return;
+    const revalidate = () => {
+      void loadDetail(selectedId).then(() => setError(null)).catch(() => {
+        failClosedWatcherNavigation();
+        setError("Mission Control could not revalidate this evidence.");
+      });
+    };
+    const visible = () => { if (document.visibilityState === "visible") revalidate(); };
+    window.addEventListener("focus", revalidate);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.removeEventListener("focus", revalidate);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [failClosedWatcherNavigation, loadDetail, navigation?.kind, selectedId]);
 
   useEffect(() => {
     if (!streamReady) return;
@@ -398,7 +425,7 @@ export function MissionControlScreen() {
       </header>
 
       {error && (
-        <div className="relative z-20 mx-6 mt-3 flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-100">
+        <div role="alert" className="relative z-20 mx-6 mt-3 flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-100">
           <AlertTriangle size={14} /> {error}
         </div>
       )}
@@ -520,7 +547,7 @@ export function MissionControlScreen() {
                     </div>
                   </div>
                   {navigation?.kind === "watcher" && (
-                    <div className="mt-4 rounded-xl border border-white/8 bg-black/20 p-3" aria-label="Watcher origin">
+                    <div className="mt-4 rounded-xl border border-white/8 bg-black/20 p-3" aria-label="Watcher origin" aria-live="polite">
                       {navigation.availability === "available" ? (
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>

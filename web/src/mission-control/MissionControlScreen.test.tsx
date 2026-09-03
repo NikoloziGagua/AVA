@@ -442,6 +442,73 @@ describe("MissionControlScreen", () => {
     expect(screen.getByText("Exact watcher record available")).toBeTruthy();
   });
 
+  it("revalidates an already-rendered watcher receipt on Mission Control SSE", async () => {
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 10 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([codexCommunicationRun]);
+    api.fetchMissionRun
+      .mockResolvedValueOnce({
+        run: codexCommunicationRun,
+        events: [codexCommunicationEvent],
+        navigation: { kind: "watcher", availability: "available", watcherId: "watch-1" },
+      })
+      .mockResolvedValueOnce({
+        run: codexCommunicationRun,
+        events: [codexCommunicationEvent],
+        navigation: { kind: "watcher", availability: "unavailable" },
+      });
+
+    render(<MissionControlScreen />);
+    const exactLink = await screen.findByRole("link", { name: "Open exact watcher in Watches" });
+    exactLink.focus();
+    const stream = api.subscribeMissionEvents.mock.calls.at(-1)?.[0] as {
+      onEvent: (next: MissionEvent) => void;
+    };
+    act(() => stream.onEvent({ ...codexCommunicationEvent, seq: 11, eventId: "communication-event-11" }));
+
+    expect(await screen.findByText(/Watcher record unavailable/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open exact watcher in Watches" })).toBeNull();
+    expect(screen.getByRole("region", { name: "Communication evidence" }).textContent).not.toContain("watch-1");
+    expect(api.fetchMissionRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails a visible watcher receipt closed when focus revalidation is inaccessible", async () => {
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 10 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([codexCommunicationRun]);
+    api.fetchMissionRun
+      .mockResolvedValueOnce({
+        run: codexCommunicationRun,
+        events: [codexCommunicationEvent],
+        navigation: { kind: "watcher", availability: "available", watcherId: "watch-private" },
+      })
+      .mockRejectedValueOnce(new Error("private watcher identity"));
+
+    render(<MissionControlScreen />);
+    const exactLink = await screen.findByRole("link", { name: "Open exact watcher in Watches" });
+    exactLink.focus();
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    expect(await screen.findByText(/Watcher record unavailable/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open exact watcher in Watches" })).toBeNull();
+    expect(screen.getByText("Mission Control could not revalidate this evidence.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("private watcher identity");
+  });
+
   it("restores an exact Watches deep link, preserves reload selection, and exposes keyboard Back", async () => {
     window.history.replaceState(
       null,

@@ -6229,3 +6229,25 @@ settings, Codex-agent and persona-research changes remain untouched. Forge
 remained outside scope and was neither inspected nor modified.
 
 NEEDS: niko (use Open evidence on a Codex Watch, then Back to Watches)
+
+---
+
+### 2026-09-03 - codex - CLAIM: live exact-bridge revalidation
+
+I am continuing the Codex-owned Mission Control and Watches presentation seam
+with one bounded freshness repair. The existing Mission Control SSE already
+causes selected run details to be re-resolved, but Watches does not consume
+relevant communication events and neither direction performs a focused exact
+receipt check when a hidden tab becomes active again. I will reuse the existing
+authenticated list/detail routes and Mission Control stream: only an event
+whose normalized stable identity matches a visible Codex watch may trigger its
+receipt refresh; tab focus/visibility will cover Watch deletion and retention
+purges because those authoritative removals emit no lawful SSE event. Conflicting
+source envelopes will fail closed instead of accepting the latest one. No new
+store, event bus, polling regime, transcript, identity inference or mutation
+control is in scope. Focused transition/privacy/UI tests, full suites, builds,
+and a deployed two-tab narrow-width check will gate the commit. Existing
+settings, Codex-agent and research changes remain untouched. Forge remains
+outside scope and will not be inspected or modified.
+
+NEEDS: codex

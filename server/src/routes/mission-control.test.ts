@@ -186,6 +186,48 @@ describe("Mission Control API", () => {
     db.close();
   });
 
+  it("fails a previously exact navigation closed when retained identities become ambiguous", async () => {
+    const { app, db, observability } = setup();
+    const watch = createWatch(db, {
+      prompt: "Original exact watcher",
+      runAt: Date.now() + 60_000,
+      kind: "codex",
+    });
+    const other = createWatch(db, {
+      prompt: "Conflicting watcher",
+      runAt: Date.now() + 60_000,
+      kind: "codex",
+    });
+    const run = new CommunicationObservabilityRecorder(observability).ensureStarted({
+      source: "codex_watcher",
+      sourceId: watch.id,
+      runtimeType: "codex",
+      title: "Codex watcher handoff",
+      requestSummary: "Original exact watcher",
+    })!;
+
+    const available = await request(app)
+      .get(`/api/mission-control/runs/${encodeURIComponent(run.id)}`)
+      .expect(200);
+    expect(available.body.navigation).toMatchObject({ availability: "available", watcherId: watch.id });
+
+    observability.record(run.id, {
+      producerId: "identity-conflict-fixture",
+      producerEventId: "conflicting-watcher-source",
+      type: "communication.identity.conflict",
+      status: "observed",
+      title: "Conflicting identity fixture",
+      payload: { communicationSource: "codex_watcher", sourceId: other.id },
+    });
+    const unavailable = await request(app)
+      .get(`/api/mission-control/runs/${encodeURIComponent(run.id)}`)
+      .expect(200);
+    expect(unavailable.body.navigation).toEqual({ kind: "watcher", availability: "unavailable" });
+    expect(JSON.stringify(unavailable.body.navigation)).not.toContain(watch.id);
+    expect(JSON.stringify(unavailable.body.navigation)).not.toContain(other.id);
+    db.close();
+  });
+
   it("never infers watcher navigation for malformed IDs, other watch kinds, or Claude runs", async () => {
     const { app, db, observability } = setup();
     const recorder = new CommunicationObservabilityRecorder(observability);

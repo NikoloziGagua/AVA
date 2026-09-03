@@ -60,6 +60,16 @@ delivered, running, completed, or failed. For continuous Codex cycles, task
 completion and successor planning are separate visible states: a planner outage
 cannot rewrite a verified completion as a failed task.
 
+A Codex watcher communication in Mission Control can open this workspace at
+the exact authoritative watcher card. AVA validates the stable watcher source
+ID against the persisted authenticated watch list before returning the link;
+the workspace then focuses and highlights the matching `kind=codex` card and
+offers a browser-back action. Missing, deleted, malformed, wrong-kind, or
+inaccessible records all use the same **watcher record unavailable** message.
+The bridge does not infer identity from prompt/result text, expose a new lookup
+API, or add any mutation control. Claude communications and ordinary Mission
+Control runs do not receive a watcher link.
+
 ## How it works
 
 Two halves: **tools** (Ava registers/lists/deletes watches during a turn) and a

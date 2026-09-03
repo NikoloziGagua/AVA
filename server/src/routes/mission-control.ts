@@ -12,6 +12,18 @@ import {
 } from "../observability/export.js";
 import { COMMUNICATION_RUN_KIND } from "../observability/communications.js";
 
+const WATCHER_SOURCE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+export type MissionControlNavigation =
+  | { kind: "watcher"; availability: "available"; watcherId: string }
+  | { kind: "watcher"; availability: "unavailable" }
+  | null;
+
+export type MissionControlRouteOptions = {
+  /** Resolve against the same authoritative, authenticated Watches state. */
+  resolveWatcher?: (id: string) => { id: string; kind: string } | null;
+};
+
 export const MISSION_CONTROL_API_VERSION = 1;
 
 const StopBody = z.object({
@@ -40,9 +52,47 @@ function writeEvent(res: Response, event: ObservabilityEvent): void {
   res.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 
+/**
+ * Navigation is derived only from the normalized communication envelope's
+ * stable source ID. Titles, prompts, ancestry and terminal prose are never
+ * parsed for an identifier. Missing and inaccessible records deliberately
+ * collapse to the same response so this read model cannot become an oracle.
+ */
+export function resolveMissionControlNavigation(
+  events: ObservabilityEvent[],
+  resolveWatcher: MissionControlRouteOptions["resolveWatcher"],
+): MissionControlNavigation {
+  let communication: Record<string, unknown> | null = null;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const payload = events[index]?.payload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
+    const candidate = payload as Record<string, unknown>;
+    if (typeof candidate.communicationSource === "string") {
+      communication = candidate;
+      break;
+    }
+  }
+  if (communication?.communicationSource !== "codex_watcher") return null;
+
+  const sourceId = communication.sourceId;
+  if (typeof sourceId !== "string" || !WATCHER_SOURCE_ID.test(sourceId) || !resolveWatcher) {
+    return { kind: "watcher", availability: "unavailable" };
+  }
+  try {
+    const watcher = resolveWatcher(sourceId);
+    if (watcher?.id !== sourceId || watcher.kind !== "codex") {
+      return { kind: "watcher", availability: "unavailable" };
+    }
+    return { kind: "watcher", availability: "available", watcherId: sourceId };
+  } catch {
+    return { kind: "watcher", availability: "unavailable" };
+  }
+}
+
 export function missionControlRoutes(
   auth: RequestHandler,
   observability: ObservabilityService,
+  options: MissionControlRouteOptions = {},
 ): Router {
   const router = Router();
 
@@ -128,9 +178,11 @@ export function missionControlRoutes(
       });
       return;
     }
+    const events = observability.getEvents(id);
     res.json({
       run,
-      events: observability.getEvents(id),
+      events,
+      navigation: resolveMissionControlNavigation(events, options.resolveWatcher),
       generatedAt: Date.now(),
       apiVersion: MISSION_CONTROL_API_VERSION,
     });

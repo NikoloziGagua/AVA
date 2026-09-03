@@ -394,6 +394,7 @@ describe("MissionControlScreen", () => {
     expect(screen.getAllByText("Sanitized evidence recorded")).toHaveLength(2);
     expect(screen.getByText("Parent chat-parent")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Stop agent communication/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: /Open exact watcher/i })).toBeNull();
 
     fireEvent.click(screen.getByText("Sanitized request summary"));
     expect(screen.getAllByText("Compare the two cache strategies")).toHaveLength(2);
@@ -412,7 +413,11 @@ describe("MissionControlScreen", () => {
       eventBounds: { min: 1, max: 10 },
     });
     api.fetchMissionRuns.mockResolvedValue([codexCommunicationRun]);
-    api.fetchMissionRun.mockResolvedValue({ run: codexCommunicationRun, events: [codexCommunicationEvent] });
+    api.fetchMissionRun.mockResolvedValue({
+      run: codexCommunicationRun,
+      events: [codexCommunicationEvent],
+      navigation: { kind: "watcher", availability: "available", watcherId: "watch-1" },
+    });
 
     render(<MissionControlScreen />);
 
@@ -426,6 +431,11 @@ describe("MissionControlScreen", () => {
     expect(screen.getAllByText("Implemented and tested the bounded task.")).toHaveLength(2);
     expect(screen.getAllByText("Not reported").length).toBeGreaterThanOrEqual(3);
     expect(screen.queryByRole("button", { name: /retry|send|approve/i })).toBeNull();
+    const exactWatcher = screen.getByRole("link", { name: "Open exact watcher in Watches" });
+    expect(exactWatcher.getAttribute("href")).toBe("/?view=watches&watch=watch-1&from=mission-control");
+    exactWatcher.focus();
+    expect(document.activeElement).toBe(exactWatcher);
+    expect(screen.getByText("Exact watcher record available")).toBeTruthy();
   });
 
   it("keeps a completed Codex result explicitly not recorded when terminal content is absent", async () => {
@@ -452,12 +462,18 @@ describe("MissionControlScreen", () => {
       eventBounds: { min: 1, max: 10 },
     });
     api.fetchMissionRuns.mockResolvedValue([unavailableRun]);
-    api.fetchMissionRun.mockResolvedValue({ run: unavailableRun, events: [unavailableEvent] });
+    api.fetchMissionRun.mockResolvedValue({
+      run: unavailableRun,
+      events: [unavailableEvent],
+      navigation: { kind: "watcher", availability: "unavailable" },
+    });
 
     render(<MissionControlScreen />);
     expect(await screen.findByText("Codex task boundary completed")).toBeTruthy();
     expect(screen.getByText("Not recorded by this transport")).toBeTruthy();
     expect(screen.getByText("No result content recorded")).toBeTruthy();
+    expect(screen.getByText(/Watcher record unavailable/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /Open exact watcher/i })).toBeNull();
   });
 
   it("applies a communication lifecycle event from SSE once and preserves the filtered reload", async () => {

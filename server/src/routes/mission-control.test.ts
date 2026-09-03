@@ -3,12 +3,14 @@ import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { openInMemoryDb } from "../state/db.js";
 import { ObservabilityService } from "../observability/store.js";
+import { CommunicationObservabilityRecorder } from "../observability/communications.js";
 import { missionControlRoutes } from "./mission-control.js";
 import {
   MISSION_CONTROL_EXPORT_MAX_ROWS,
 } from "../observability/export.js";
 import { requireToken } from "../auth/middleware.js";
 import { issueToken } from "../auth/tokens.js";
+import { createWatch, deleteWatch, getWatch } from "../state/watches.js";
 
 function setup(auth: RequestHandler = (_req, _res, next) => next()) {
   const db = openInMemoryDb();
@@ -17,7 +19,7 @@ function setup(auth: RequestHandler = (_req, _res, next) => next()) {
   app.use(express.json());
   app.use(
     "/api/mission-control",
-    missionControlRoutes(auth, observability),
+    missionControlRoutes(auth, observability, { resolveWatcher: (id) => getWatch(db, id) }),
   );
   return { app, db, observability };
 }
@@ -29,7 +31,7 @@ function setupAuthenticated() {
   app.use(express.json());
   app.use(
     "/api/mission-control",
-    missionControlRoutes(requireToken(db), observability),
+    missionControlRoutes(requireToken(db), observability, { resolveWatcher: (id) => getWatch(db, id) }),
   );
   return { app, db, observability };
 }
@@ -143,6 +145,91 @@ describe("Mission Control API", () => {
       .get("/api/mission-control/runs?category=unknown")
       .expect(400);
     expect(invalid.body).toMatchObject({ error: "invalid_mission_category" });
+    db.close();
+  });
+
+  it("resolves a Codex communication only to its exact authenticated watcher record", async () => {
+    const { app, db, observability } = setupAuthenticated();
+    const watch = createWatch(db, {
+      prompt: "Continue the bounded implementation",
+      runAt: Date.now() + 60_000,
+      kind: "codex",
+    });
+    const recorder = new CommunicationObservabilityRecorder(observability);
+    const run = recorder.ensureStarted({
+      source: "codex_watcher",
+      sourceId: watch.id,
+      runtimeType: "codex",
+      title: "Codex watcher handoff",
+      requestSummary: "Continue the bounded implementation",
+    })!;
+
+    await request(app).get(`/api/mission-control/runs/${encodeURIComponent(run.id)}`).expect(401);
+    const token = issueToken(db, { label: "watcher-navigation-test" });
+    const available = await request(app)
+      .get(`/api/mission-control/runs/${encodeURIComponent(run.id)}`)
+      .set("Authorization", `Bearer ${token.secret}`)
+      .expect(200);
+    expect(available.body.navigation).toEqual({
+      kind: "watcher",
+      availability: "available",
+      watcherId: watch.id,
+    });
+
+    deleteWatch(db, watch.id);
+    const unavailable = await request(app)
+      .get(`/api/mission-control/runs/${encodeURIComponent(run.id)}`)
+      .set("Authorization", `Bearer ${token.secret}`)
+      .expect(200);
+    expect(unavailable.body.navigation).toEqual({ kind: "watcher", availability: "unavailable" });
+    expect(JSON.stringify(unavailable.body.navigation)).not.toContain(watch.id);
+    db.close();
+  });
+
+  it("never infers watcher navigation for malformed IDs, other watch kinds, or Claude runs", async () => {
+    const { app, db, observability } = setup();
+    const recorder = new CommunicationObservabilityRecorder(observability);
+    const ordinary = createWatch(db, {
+      prompt: "Ordinary AVA check",
+      intervalMinutes: 30,
+      kind: "check",
+    });
+    const wrongKind = recorder.ensureStarted({
+      source: "codex_watcher",
+      sourceId: ordinary.id,
+      runtimeType: "codex",
+      title: `Codex watcher ${ordinary.id}`,
+      requestSummary: "The title and prompt must not create a link.",
+    })!;
+    const malformed = recorder.ensureStarted({
+      source: "codex_watcher",
+      sourceId: "../../not-a-watch",
+      runtimeType: "codex",
+      title: `Codex watcher ${ordinary.id}`,
+      requestSummary: `Pretend the watcher is ${ordinary.id}`,
+    })!;
+    const claude = recorder.ensureStarted({
+      source: "provider_discussion",
+      sourceId: ordinary.id,
+      runtimeType: "claude_code",
+      title: "Claude discussion",
+      requestSummary: `Discuss watcher ${ordinary.id}`,
+    })!;
+
+    const wrongKindDetail = await request(app)
+      .get(`/api/mission-control/runs/${encodeURIComponent(wrongKind.id)}`)
+      .expect(200);
+    expect(wrongKindDetail.body.navigation).toEqual({ kind: "watcher", availability: "unavailable" });
+
+    const malformedDetail = await request(app)
+      .get(`/api/mission-control/runs/${encodeURIComponent(malformed.id)}`)
+      .expect(200);
+    expect(malformedDetail.body.navigation).toEqual({ kind: "watcher", availability: "unavailable" });
+
+    const claudeDetail = await request(app)
+      .get(`/api/mission-control/runs/${encodeURIComponent(claude.id)}`)
+      .expect(200);
+    expect(claudeDetail.body.navigation).toBeNull();
     db.close();
   });
 

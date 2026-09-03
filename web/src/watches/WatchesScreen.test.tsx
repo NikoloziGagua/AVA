@@ -154,6 +154,45 @@ describe("WatchesScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pause Tell me when the status page changes" }));
     expect((await screen.findByRole("alert")).textContent).toContain("server unavailable");
   });
+
+  it("focuses the exact Codex watcher selected by Mission Control and preserves a back action", async () => {
+    const back = vi.fn();
+    api.fetchWatches.mockResolvedValue([
+      row({ id: "ordinary", prompt: "Ordinary check" }),
+      row({ id: "codex-exact", prompt: "Exact Codex handoff", kind: "codex", last_status: "completed" }),
+    ]);
+    render(
+      <WatchesScreen
+        onOpenChat={() => undefined}
+        focusWatchId="codex-exact"
+        navigationRequested
+        onBackToMissionControl={back}
+      />,
+    );
+
+    const card = await screen.findByLabelText("Watch: Exact Codex handoff");
+    await waitFor(() => expect(document.activeElement).toBe(card));
+    expect(card.getAttribute("data-mission-control-target")).toBe("true");
+    expect(screen.getByText("Opened the exact Codex watcher recorded by Mission Control.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Back to Mission Control" }));
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(api.setWatchEnabled).not.toHaveBeenCalled();
+    expect(api.deleteWatchApi).not.toHaveBeenCalled();
+  });
+
+  it("uses one non-disclosing unavailable state for missing and wrong-kind watcher targets", async () => {
+    api.fetchWatches.mockResolvedValue([row({ id: "ordinary", kind: "check" })]);
+    const rendered = render(
+      <WatchesScreen onOpenChat={() => undefined} focusWatchId="missing" navigationRequested />,
+    );
+    expect(await screen.findByText(/Watcher record unavailable/)).toBeTruthy();
+    expect(screen.queryByText("missing")).toBeNull();
+
+    rendered.unmount();
+    render(<WatchesScreen onOpenChat={() => undefined} focusWatchId="ordinary" navigationRequested />);
+    expect(await screen.findByText(/Watcher record unavailable/)).toBeTruthy();
+    expect(screen.queryByText("Opened the exact Codex watcher recorded by Mission Control.")).toBeNull();
+  });
 });
 
 describe("watchStatusLabel", () => {

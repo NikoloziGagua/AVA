@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
+  AlarmClock,
   AlertTriangle,
   Bot,
   Box,
@@ -34,6 +35,7 @@ import {
   type MissionEvent,
   type MissionEvidenceExport,
   type MissionExportScope,
+  type MissionControlNavigation,
   type MissionRun,
   type MissionRunCategory,
 } from "../api.js";
@@ -190,6 +192,7 @@ export function MissionControlScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<MissionRun | null>(null);
   const [events, setEvents] = useState<MissionEvent[]>([]);
+  const [navigation, setNavigation] = useState<MissionControlNavigation>(null);
   const [selectedEvent, setSelectedEvent] = useState<MissionEvent | null>(null);
   const [streamState, setStreamState] = useState<"connecting" | "live" | "reconnecting" | "offline">("connecting");
   const [technical, setTechnical] = useState(false);
@@ -218,6 +221,7 @@ export function MissionControlScreen() {
     const detail = await fetchMissionRun(id);
     setSelectedRun(detail.run);
     setEvents(detail.events);
+    setNavigation(detail.navigation ?? null);
     cursor.current = Math.max(cursor.current, ...detail.events.map((event) => event.seq), 0);
   }, []);
 
@@ -253,9 +257,11 @@ export function MissionControlScreen() {
     if (!selectedId) {
       setSelectedRun(null);
       setEvents([]);
+      setNavigation(null);
       return;
     }
     setSelectedEvent(null);
+    setNavigation(null);
     setExportOpen(false);
     setExportReceipt(null);
     void loadDetail(selectedId).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
@@ -485,6 +491,36 @@ export function MissionControlScreen() {
                       <span className="rounded-full border border-white/10 px-2 py-1 text-white/45">{selectedRun.verificationStatus.replaceAll("_", " ")}</span>
                     </div>
                   </div>
+                  {navigation?.kind === "watcher" && (
+                    <div className="mt-4 rounded-xl border border-white/8 bg-black/20 p-3" aria-label="Watcher origin">
+                      {navigation.availability === "available" ? (
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2 text-[11px] font-medium text-white/72">
+                              <AlarmClock size={13} className="text-cyan-200" /> Exact watcher record available
+                            </div>
+                            <p className="mt-1 text-[10px] leading-5 text-white/38">
+                              This link uses the stable watcher identity recorded by AVA, not text inferred from the prompt or result.
+                            </p>
+                          </div>
+                          <a
+                            href={`/?view=watches&watch=${encodeURIComponent(navigation.watcherId)}&from=mission-control`}
+                            aria-label="Open exact watcher in Watches"
+                            className="flex items-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.07] px-3 py-2 text-[11px] font-medium text-cyan-100 transition hover:bg-cyan-300/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70"
+                          >
+                            <AlarmClock size={13} /> Open in Watches
+                          </a>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-2 text-[11px] leading-5 text-white/45">
+                          <AlarmClock size={13} className="mt-1 shrink-0 text-white/32" />
+                          <span>
+                            Watcher record unavailable. It may no longer be retained or may not be visible in this scope.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <dl className="mt-4 grid gap-2 text-[10px] sm:grid-cols-2">
                     <div className="rounded-xl border border-white/8 bg-black/20 p-3">
                       <dt className="uppercase tracking-wider text-white/28">Request</dt>

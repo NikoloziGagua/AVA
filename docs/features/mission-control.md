@@ -44,6 +44,18 @@ Both a recorded terminal result and a content-free completion remain only
 finished the marked turn, not that its reported implementation or tests are
 correct. Historical completed watchers are not backfilled.
 
+For Codex watcher communications, the detail response also exposes one
+read-only navigation receipt when the normalized event's exact `sourceId`
+still resolves to the authoritative persisted `kind=codex` watcher. The link
+opens AVA's existing Watches workspace, focuses and highlights that exact
+card, and preserves browser Back to Mission Control. It never derives an ID
+from a title, prompt, ancestry value, summary, or terminal prose. A malformed
+ID, deleted record, resolver failure, wrong watch kind, or record outside the
+authenticated visibility scope all produce the same non-disclosing **watcher
+record unavailable** state. Claude discussions and unrelated runs receive no
+watcher navigation. This adds no new store or mutation route; the existing
+Watches API and record remain authoritative.
+
 The presentation adds no send, retry, approval, Stop, or generic agent-control
 route. Existing authentication, 30-day detail / 365-day compact retention,
 read-time redaction, export-time re-redaction, immutable late-event behavior,
@@ -236,6 +248,9 @@ The first slice covers:
 14. AVA-owned Claude background discussions and Codex watcher handoffs as stable,
     correlated, provider-neutral `agent_communication` child runs with a focused
     read-only Communications filter.
+15. Exact-identity, read-only navigation from a resolvable Codex communication
+    to its existing Watches record, with one non-disclosing unavailable state
+    for missing or inaccessible targets.
 
 Coverage is deliberately honest:
 
@@ -310,6 +325,9 @@ Forge events are mapped rather than reinterpreted. Unknown future roles remain v
 - A nested executor action and provider request are counted once even if observed by a parent/router.
 - A Claude discussion or Codex watcher appears once in Communications with a
   stable source identity, truthful evidence availability, and no provider-specific controls.
+- A Codex communication links to Watches only when its authoritative stable
+  source ID resolves to that exact persisted Codex watch; stale, deleted,
+  malformed, wrong-kind and inaccessible targets expose no ID-bearing link.
 - Stop is the only Mission Control mutation, is run-scoped, and rejects stale `expectedVersion`.
 - Root voice Stop cascades to its current voice turn/action; child Stop does not indiscriminately cancel unrelated work.
 - Screenshots are off and cost is shown only when reported.

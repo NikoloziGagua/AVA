@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlarmClock,
+  ArrowLeft,
   BellRing,
   Bot,
   CalendarClock,
@@ -257,9 +258,14 @@ function CreateWatchPanel({ onCreated }: { onCreated: (watch: WatchRow) => void 
   );
 }
 
-function WatchCard({ watch, busy, onToggle, onDelete, onOpenChat }: {
+function watchElementId(id: string): string {
+  return `ava-watch-${id.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+}
+
+function WatchCard({ watch, busy, highlighted, onToggle, onDelete, onOpenChat }: {
   watch: WatchRow;
   busy: boolean;
+  highlighted: boolean;
   onToggle: () => void;
   onDelete: () => void;
   onOpenChat: (sessionId: string) => void;
@@ -273,7 +279,17 @@ function WatchCard({ watch, busy, onToggle, onDelete, onOpenChat }: {
 
   const Icon = watch.kind === "reminder" ? BellRing : watch.kind === "codex" ? Bot : Search;
   return (
-    <article className="rounded-2xl border border-white/[0.08] bg-black/40 px-4 py-4 sm:px-5" aria-label={`Watch: ${watch.prompt}`}>
+    <article
+      id={watchElementId(watch.id)}
+      tabIndex={highlighted ? -1 : undefined}
+      className={`rounded-2xl border bg-black/40 px-4 py-4 outline-none transition sm:px-5 ${
+        highlighted
+          ? "border-cyan-300/35 ring-2 ring-cyan-300/15"
+          : "border-white/[0.08]"
+      }`}
+      aria-label={`Watch: ${watch.prompt}`}
+      data-mission-control-target={highlighted || undefined}
+    >
       <div className="flex items-start gap-3">
         <div className="mt-0.5 rounded-lg border border-white/10 bg-white/[0.045] p-2 text-[var(--ac)]"><Icon size={16} /></div>
         <div className="min-w-0 flex-1">
@@ -322,7 +338,17 @@ function WatchCard({ watch, busy, onToggle, onDelete, onOpenChat }: {
   );
 }
 
-export function WatchesScreen({ onOpenChat }: { onOpenChat: (sessionId: string) => void }) {
+export function WatchesScreen({
+  onOpenChat,
+  focusWatchId = null,
+  navigationRequested = false,
+  onBackToMissionControl,
+}: {
+  onOpenChat: (sessionId: string) => void;
+  focusWatchId?: string | null;
+  navigationRequested?: boolean;
+  onBackToMissionControl?: () => void;
+}) {
   const [watches, setWatches] = useState<WatchRow[] | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -356,6 +382,25 @@ export function WatchesScreen({ onOpenChat }: { onOpenChat: (sessionId: string) 
       return !needle || [watch.prompt, watch.last_result, watch.kind, watch.last_status].join(" ").toLocaleLowerCase().includes(needle);
     });
   }, [filter, query, watches]);
+
+  const focusedWatch = useMemo(
+    () => navigationRequested && focusWatchId
+      ? watches?.find((watch) => watch.id === focusWatchId && watch.kind === "codex") ?? null
+      : null,
+    [focusWatchId, navigationRequested, watches],
+  );
+
+  useEffect(() => {
+    if (!focusedWatch) return;
+    setFilter("all");
+    setQuery("");
+    const timer = window.setTimeout(() => {
+      const target = document.getElementById(watchElementId(focusedWatch.id));
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView?.({ behavior: "auto", block: "center" });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [focusedWatch]);
 
   const active = watches?.filter((watch) => Boolean(watch.enabled)).length ?? 0;
   const attention = watches?.filter((watch) => ATTENTION.has(String(watch.last_status))).length ?? 0;
@@ -427,6 +472,26 @@ export function WatchesScreen({ onOpenChat }: { onOpenChat: (sessionId: string) 
           </div>
         </div>
 
+        {navigationRequested && !watches && !error && (
+          <div role="status" className="mb-4 rounded-xl border border-white/10 bg-white/[0.025] px-4 py-3 text-xs text-white/50">
+            Resolving the exact watcher record…
+          </div>
+        )}
+        {navigationRequested && watches && focusedWatch && (
+          <div role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.055] px-4 py-3 text-xs text-cyan-50/75">
+            <span>Opened the exact Codex watcher recorded by Mission Control.</span>
+            {onBackToMissionControl && (
+              <button type="button" className="btn-deck btn-ghost" onClick={onBackToMissionControl}>
+                <ArrowLeft size={13} /> Back to Mission Control
+              </button>
+            )}
+          </div>
+        )}
+        {navigationRequested && watches && !focusedWatch && (
+          <div role="status" className="mb-4 rounded-xl border border-white/10 bg-white/[0.025] px-4 py-3 text-xs leading-5 text-white/50">
+            Watcher record unavailable. It may no longer be retained or may not be visible in this scope.
+          </div>
+        )}
         {error && <div role="alert" className="mb-4 rounded-xl border border-red-300/20 bg-red-400/[0.07] px-4 py-3 text-xs text-red-100">{error}</div>}
         {!watches && !error && <div className="flex h-44 items-center justify-center gap-2 text-xs text-white/45"><LoaderCircle size={16} className="animate-spin" />Loading watches…</div>}
         {watches && visible.length === 0 && (
@@ -442,6 +507,7 @@ export function WatchesScreen({ onOpenChat }: { onOpenChat: (sessionId: string) 
               key={watch.id}
               watch={watch}
               busy={busyId === watch.id}
+              highlighted={focusedWatch?.id === watch.id}
               onToggle={() => void toggle(watch)}
               onDelete={() => void remove(watch)}
               onOpenChat={onOpenChat}

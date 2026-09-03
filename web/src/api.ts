@@ -1238,6 +1238,11 @@ export type MissionEvent = {
   projectionApplied: boolean;
 };
 
+export type MissionControlNavigation =
+  | { kind: "watcher"; availability: "available"; watcherId: string }
+  | { kind: "watcher"; availability: "unavailable" }
+  | null;
+
 export type MissionMeta = {
   ok: true;
   service: "ava-mission-control";
@@ -1337,6 +1342,7 @@ export async function fetchMissionRuns(
 export async function fetchMissionRun(id: string): Promise<{
   run: MissionRun;
   events: MissionEvent[];
+  navigation: MissionControlNavigation;
 }> {
   return request(`/api/mission-control/runs/${encodeURIComponent(id)}`);
 }

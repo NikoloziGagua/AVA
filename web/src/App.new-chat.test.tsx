@@ -88,7 +88,13 @@ vi.mock("./visuals/VisualsScreen.js", () => ({
   VisualsScreen: ({ initialVisualId }: { initialVisualId?: string | null }) => <div>visual-id-{initialVisualId ?? "none"}</div>,
 }));
 vi.mock("./watches/WatchesScreen.js", () => ({
-  WatchesScreen: () => <div>watch-management-screen</div>,
+  WatchesScreen: ({ focusWatchId, navigationRequested }: { focusWatchId?: string | null; navigationRequested?: boolean }) => (
+    <div>
+      watch-management-screen
+      <span>focus-{focusWatchId ?? "none"}</span>
+      <span>origin-{String(!!navigationRequested)}</span>
+    </div>
+  ),
 }));
 
 import { App } from "./App.js";
@@ -97,6 +103,7 @@ describe("App New-chat navigation", () => {
   beforeEach(() => {
     state.nextChatMount = 0;
     window.localStorage.clear();
+    window.history.replaceState(null, "", "/");
   });
   afterEach(cleanup);
 
@@ -150,6 +157,23 @@ describe("App New-chat navigation", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Watches" }));
     expect(screen.getByText("watch-management-screen")).toBeTruthy();
+  });
+
+  it("lands an exact Mission Control deep link in Watches and consumes the URL", () => {
+    window.history.replaceState(null, "", "/?view=watches&watch=watch_Exact-7&from=mission-control");
+    render(<App />);
+    expect(screen.getByText("watch-management-screen")).toBeTruthy();
+    expect(screen.getByText("focus-watch_Exact-7")).toBeTruthy();
+    expect(screen.getByText("origin-true")).toBeTruthy();
+    expect(window.location.search).toBe("");
+  });
+
+  it("keeps a malformed Mission Control watcher link non-identifying", () => {
+    window.history.replaceState(null, "", "/?view=watches&watch=..%2Fsecret&from=mission-control");
+    render(<App />);
+    expect(screen.getByText("watch-management-screen")).toBeTruthy();
+    expect(screen.getByText("focus-none")).toBeTruthy();
+    expect(screen.getByText("origin-true")).toBeTruthy();
   });
 
   it("returns directly to the same chat after visiting another workspace", () => {

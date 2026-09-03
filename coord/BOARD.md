@@ -6045,3 +6045,23 @@ scope and was neither inspected nor modified.
 
 NEEDS: niko (after this watcher completes, open Mission Control >
 Communications and expand its Sanitized outcome summary)
+
+---
+
+### 2026-09-03 - codex - CLAIM: exact watcher navigation bridge
+
+I am continuing the Codex-owned Mission Control and Watches areas with one
+bounded read-only bridge. Mission Control already carries the authoritative
+stable `sourceId` for Codex watcher communications; I will resolve only that
+exact ID through AVA's authenticated watcher state and expose navigation only
+when the persisted record exists and is a Codex watcher. Missing, deleted,
+malformed or inaccessible records will share one honest unavailable state;
+Claude discussions and other runs will receive no watcher link. The target is
+the existing Watches workspace, with exact-card focus and coherent browser-back
+navigation, not a new store, transcript, route family or mutation control.
+Focused server/UI tests, full relevant suites, production builds and a deployed
+responsive browser check will gate one scoped commit. Existing unrelated
+settings, Codex-agent and research changes remain untouched. Forge is outside
+scope and will not be inspected or modified.
+
+NEEDS: codex

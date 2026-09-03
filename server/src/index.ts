@@ -48,6 +48,7 @@ import { CommunicationObservabilityRecorder } from "./observability/communicatio
 import type { ObservabilityParentContext } from "./observability/types.js";
 import { playbooksRoutes } from "./routes/playbooks.js";
 import { watchesRoutes } from "./routes/watches.js";
+import { getWatch } from "./state/watches.js";
 import { peopleRoutes } from "./routes/people.js";
 import { startWatchScheduler } from "./watches/scheduler.js";
 import { buildCodexDispatcher } from "./watches/codex-dispatch.js";
@@ -800,7 +801,9 @@ app.use("/api/explorer", explorerRoutes(requireToken(db), {
   memoryDir: cfg.memoryDir,
   capabilitySnapshot: () => buildCapabilitySnapshot(capabilityRouteDeps),
 }));
-app.use("/api/mission-control", missionControlRoutes(requireToken(db), observability));
+app.use("/api/mission-control", missionControlRoutes(requireToken(db), observability, {
+  resolveWatcher: (id) => getWatch(db, id),
+}));
 app.use("/api/ufo-experiment", ufoExperimentRoutes(requireToken(db), ufoExperiment));
 app.use("/api/strategy", strategyRoutes(requireToken(db), strategyCoordinator));
 app.use("/api/playbooks", playbooksRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));

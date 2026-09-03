@@ -30,7 +30,7 @@ type View =
   | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
   | { name: "memory" }
   | { name: "notes" }
-  | { name: "watches" }
+  | { name: "watches"; focusWatchId?: string | null; navigationOrigin?: "mission-control" }
   | { name: "rules" }
   | { name: "self" }
   | { name: "strategy"; sourceSessionId?: string }
@@ -45,6 +45,21 @@ type View =
 const VIEWS_WITH_ORB = ["splash", "orbit", "voice"];
 const LAST_CHAT_STORAGE_KEY = "ava:last-chat-session";
 const SIDEBAR_STORAGE_KEY = "ava:sidebar-expanded";
+const WATCHER_LINK_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+function readInitialView(): View {
+  if (typeof window === "undefined") return { name: "splash" };
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("view") !== "watches" || params.get("from") !== "mission-control") {
+    return { name: "splash" };
+  }
+  const requested = params.get("watch");
+  return {
+    name: "watches",
+    focusWatchId: requested && WATCHER_LINK_ID.test(requested) ? requested : null,
+    navigationOrigin: "mission-control",
+  };
+}
 
 function readStoredChat(): string | null {
   try { return window.localStorage.getItem(LAST_CHAT_STORAGE_KEY); }
@@ -81,7 +96,7 @@ function navForView(v: View): string | undefined {
 
 export function App() {
   const [paired, setPaired] = useState<boolean>(!!getToken());
-  const [view, setView] = useState<View>({ name: "splash" });
+  const [view, setView] = useState<View>(readInitialView);
   // A fresh-chat view can remain `sessionId:null` after ChatScreen internally
   // receives a server session. Incrementing this key makes a second press of
   // New genuinely discard that draft and mount a clean conversation.
@@ -121,6 +136,15 @@ export function App() {
     const h = () => setPaired(false);
     window.addEventListener("ava:unauthorized", h);
     return () => window.removeEventListener("ava:unauthorized", h);
+  }, []);
+
+  // Consume the Mission Control deep link once. Replacing only the current
+  // history entry keeps browser Back pointed at the originating Mission Control
+  // view while preventing a later reload from repeatedly forcing Watches.
+  useEffect(() => {
+    if (view.name !== "watches" || view.navigationOrigin !== "mission-control") return;
+    const clean = `${window.location.pathname}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", clean || "/");
   }, []);
 
   // ── Transition window: mark it so the always-on WebGL loops idle during the
@@ -387,7 +411,12 @@ export function App() {
             exit={exitTo}
             transition={enterT}
           >
-            <WatchesScreen onOpenChat={(sessionId) => setView({ name: "chat", sessionId })} />
+            <WatchesScreen
+              onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
+              focusWatchId={view.focusWatchId}
+              navigationRequested={view.navigationOrigin === "mission-control"}
+              onBackToMissionControl={() => window.history.back()}
+            />
           </motion.div>
         )}
         {view.name === "visuals" && (

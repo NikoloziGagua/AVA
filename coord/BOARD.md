@@ -5367,6 +5367,69 @@ NEEDS: codex
 
 ---
 
+### 2026-09-03 - codex - COMPLETE: watcher-to-communication evidence bridge
+
+Implemented and committed product change `a48525936776aadf1becbd0124bce68b014e24a7`
+(`feat: link watches to exact communication evidence`). The authenticated
+Watches list now gives a `kind=codex` record one reverse communication receipt
+only when the canonical durable run still exists and retained normalized
+events prove `communicationSource=codex_watcher` plus the exact stable watcher
+`sourceId`. The deterministic run name locates a candidate but is not accepted
+as evidence by itself. Missing, malformed, conflicting, detail-expired and
+resolver-error cases collapse to the same ID-free `unavailable` receipt;
+authentication runs before resolution, and checks/reminders are unchanged.
+
+The existing Watch card renders one keyboard-focusable read-only **Open
+evidence** link only for a client-validated canonical run ID. It opens the
+existing Mission Control detail view with that exact run selected even when it
+is outside the current 75-run list. The selection survives reload, and **Back
+to Watches** returns through coherent browser history. Invalid URL identities
+are neither fetched nor displayed. No store, transcript archive, search route,
+send/retry/stop/approval action, or other mutation capability was added.
+
+Changed files: `server/src/observability/communications.ts` and test,
+`server/src/routes/watches.ts` and test, `server/src/index.ts`, `web/src/api.ts`,
+`web/src/watches/WatchesScreen.tsx` and test,
+`web/src/mission-control/MissionControlScreen.tsx` and test, plus
+`docs/features/mission-control.md` and `docs/features/watches.md`.
+
+Verification:
+
+- focused server (`communications`, Watches route, Mission Control route) ->
+  3 files / 21 tests passed;
+- focused web (Watches, Mission Control, App navigation) -> 3 files / 32 tests
+  passed;
+- full server -> 204 files / 1,587 tests passed;
+- full web -> 96 files / 466 tests passed;
+- server TypeScript/build and production web/PWA build passed;
+- `git diff --check` and staged diff checks passed (only existing CRLF notices);
+- committed runtime relaunched through `start-ava-desktop-runtime.ps1`;
+  `/api/health` returned `ok=true`, provider `openai`, and build ID
+  `ae6c1e98-d41d-44e4-8f0d-8475d08a6849`, exactly matching `server/dist`;
+- deployed-browser black box used the real retained watcher `hLIN7ctGr0yh`,
+  whose Watch link resolved only to
+  `communication:codex_watcher:hLIN7ctGr0yh`. Mission Control displayed AVA's
+  authoritative evidence and exact-watcher receipt, 760px viewport width had
+  760px document width, keyboard focus reached Back, Back restored the exact
+  Watch link, and console/page errors were zero. The runtime truthfully showed
+  that active run as `ORPHANED` because the committed-build relaunch crossed
+  its non-terminal execution; it was not relabelled as completed.
+
+Existing warnings remain: Vite/esbuild does not recognize configured ES2024
+and the production main chunk is about 2.34 MB. Evidence links are intentionally
+unavailable after detailed events expire even if a compact run projection
+remains, because a compact ID alone does not prove exact identity. AVA retains
+one authenticated owner scope rather than a per-project watcher ACL; this
+change adds no broader access. Existing unrelated
+`.claude/settings.local.json`, `.codex/agents/`, and persona-research changes
+remain untouched. Forge remained outside scope and was neither inspected nor
+modified.
+
+NEEDS: niko (in Watches, open a Codex delivery and use Open evidence; use Back
+to return to the same Watches workspace)
+
+---
+
 ### 2026-09-03 - codex - COMPLETE: exact-thread Codex result evidence
 
 Implemented and committed the bounded Mission Control follow-up as
@@ -6148,3 +6211,21 @@ unrelated settings, Codex-agent and research files remain untouched. Forge is
 outside scope and will not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-09-03 - codex - TAIL CLOSE: watcher-to-communication evidence bridge
+
+The full completion and acceptance evidence for product commit
+`a48525936776aadf1becbd0124bce68b014e24a7` appears above under `COMPLETE:
+watcher-to-communication evidence bridge`. A generic patch anchor placed that
+append before later existing thread entries; no earlier board text was edited
+or removed. This physical-tail close records the clean boundary: 1,587 server
+tests, 466 web tests, both production builds, matching committed runtime health,
+and a real `hLIN7ctGr0yh` Watch -> exact Mission Control run -> Back browser
+round-trip at 760px with zero console errors. The link is read-only, exact-ID
+and retained-envelope gated, and unavailable cases disclose no ID. Unrelated
+settings, Codex-agent and persona-research changes remain untouched. Forge
+remained outside scope and was neither inspected nor modified.
+
+NEEDS: niko (use Open evidence on a Codex Watch, then Back to Watches)

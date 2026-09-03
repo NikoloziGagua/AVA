@@ -5367,6 +5367,78 @@ NEEDS: codex
 
 ---
 
+### 2026-09-03 - codex - COMPLETE: exact-thread Codex result evidence
+
+Implemented and committed the bounded Mission Control follow-up as
+`6643b8ded48eed5dab7b67a597a1b9b2af70af4b`
+(`feat(observability): capture bounded Codex watcher results`).
+
+The exact-thread inspector now accepts result content only from
+`task_complete.last_agent_message` on the same turn as the unique watcher
+marker. It rejects mismatched turns, intermediate `agent_message` records,
+assistant response items, diagnostics and arbitrary history. The terminal text
+is sanitized at this transport boundary, capped at 4,000 characters, then
+passes through Mission Control's existing persistence/read/export redaction.
+The scheduler publishes it through the existing idempotent communication run
+as collapsed `sanitized_recorded` evidence with explicit
+`exact_thread_terminal_result` provenance. A completion without that typed
+field remains `not_recorded`; neither state is promoted beyond partially
+verified because terminal prose does not prove a product outcome.
+
+The provider-neutral Communications card now shows the result evidence source.
+Claude results use the same generic field (`provider_result_boundary`), while
+legacy/missing Codex content says `No result content recorded`. The surface is
+still read-only and adds no send, retry, Stop, approval or mutation route.
+
+Changed files:
+
+- `server/src/watches/codex-dispatch.ts` and `.test.ts`
+- `server/src/watches/scheduler.ts` and `.test.ts`
+- `server/src/observability/communications.ts` and `.test.ts`
+- `server/src/index.ts`
+- `web/src/mission-control/MissionControlScreen.tsx` and `.test.tsx`
+- `docs/features/mission-control.md`
+- `docs/features/watches.md`
+- this append-only coordination claim/evidence
+
+Verification:
+
+- Focused server Mission Control/store/export/communications/watcher suites:
+  57/57 passed across 6 files.
+- Focused web Mission Control/API suites: 19/19 passed across 2 files.
+- Full server suite: 1,580/1,580 passed across 204 files.
+- Full web suite: 458/458 passed across 96 files.
+- Server TypeScript/build and production web/PWA build passed.
+- `git diff --check` passed; the bounded non-test changed-source privacy scan
+  found no credential-like literals.
+- A real, content-free parser check against predecessor watcher
+  `ykInpVMjiIHG` proved the stored marker, exact turn ID and typed terminal
+  record agree. It recovered a 1,424-character sanitized result, recorded
+  completion time, and 3,049,614 ms duration without printing its content. The
+  active `EXUgBa_vi6Pf` turn remained incomplete with no premature result.
+- Committed-HEAD AVA restart passed: `/api/health` reports `ok=true`,
+  `ready=true`; disk and live build ID both equal
+  `f7b55dd0-2947-4576-aad8-adc562dc9677`; `/` returned HTTP 200.
+- Deployed Chrome black-box at 390 px showed Communications, the new Result
+  evidence field and an honest pending/not-recorded state; keyboard activation
+  worked, document/body width stayed 390 px, no agent mutation controls were
+  present, and zero console errors were observed.
+
+Known existing warnings remain: Vitest/Vite's esbuild does not recognise the
+repository's `ES2024` target, and the production main chunk is 2,337.06 kB
+(above Vite's 500 kB advisory). Historical completed watchers are deliberately
+not backfilled. Results appear only for future watcher completions whose exact
+terminal event supplies the typed field; arbitrary Codex sessions and provider
+usage/cost remain unobserved. Unrelated `.claude/settings.local.json`,
+`.codex/agents/`, and persona-research changes were preserved. Forge remained
+outside scope and was neither inspected nor modified.
+
+NEEDS: niko (use Mission Control > Communications after this watcher reaches
+its clean terminal boundary; its collapsed Sanitized outcome summary should be
+the first naturally captured result under the new contract)
+
+---
+
 ### 2026-09-03 - codex - COMPLETE: Mission Control communications view
 
 Committed AVA-only implementation `33c3b6d746ebbee990693406cef6108ce9e495e2`
@@ -5954,3 +6026,22 @@ settings, Codex-agent and research files remain untouched. Forge is outside
 scope and will not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-09-03 - codex - TAIL CLOSE: exact-thread Codex result evidence
+
+The full implementation and acceptance evidence for product commit `6643b8d`
+appears above under `COMPLETE: exact-thread Codex result evidence`. A generic
+patch anchor inserted that completion entry before later pre-existing thread
+entries instead of at the physical tail; no prior board text was edited or
+removed. This appended close is the chronological clean boundary. It records
+1,580 passing server tests, 458 passing web tests, production builds,
+committed-HEAD boot smoke, a real exact-turn parser proof, and a deployed
+responsive browser check with zero console errors. Missing terminal result
+content remains explicitly not recorded, and terminal prose remains only
+partially verified. Unrelated changes were preserved. Forge remained outside
+scope and was neither inspected nor modified.
+
+NEEDS: niko (after this watcher completes, open Mission Control >
+Communications and expand its Sanitized outcome summary)

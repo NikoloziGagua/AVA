@@ -44,7 +44,10 @@ import { strategyRoutes } from "./routes/strategy.js";
 import { apiNotFound } from "./routes/api-fallback.js";
 import { markStaleExplorerTasksInterrupted } from "./explorer/store.js";
 import { ObservabilityService } from "./observability/store.js";
-import { CommunicationObservabilityRecorder } from "./observability/communications.js";
+import {
+  CommunicationObservabilityRecorder,
+  resolveWatcherCommunicationEvidence,
+} from "./observability/communications.js";
 import type { ObservabilityParentContext } from "./observability/types.js";
 import { playbooksRoutes } from "./routes/playbooks.js";
 import { watchesRoutes } from "./routes/watches.js";
@@ -807,7 +810,9 @@ app.use("/api/mission-control", missionControlRoutes(requireToken(db), observabi
 app.use("/api/ufo-experiment", ufoExperimentRoutes(requireToken(db), ufoExperiment));
 app.use("/api/strategy", strategyRoutes(requireToken(db), strategyCoordinator));
 app.use("/api/playbooks", playbooksRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
-app.use("/api/watches", watchesRoutes(db, requireToken(db)));
+app.use("/api/watches", watchesRoutes(db, requireToken(db), {
+  resolveCommunicationEvidence: (id) => resolveWatcherCommunicationEvidence(observability, id),
+}));
 app.use("/api/people", peopleRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
 app.use("/api/self", selfRoutes(db, requireToken(db), {
   startImprovement,

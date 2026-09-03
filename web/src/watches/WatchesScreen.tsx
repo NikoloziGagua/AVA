@@ -11,6 +11,7 @@ import {
   Pause,
   Play,
   Plus,
+  RadioTower,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -34,6 +35,7 @@ type Filter = "all" | "active" | "paused" | "attention";
 type ScheduleMode = "interval" | "once" | "daily";
 
 const ATTENTION = new Set(["error", "unclear", "busy"]);
+const CODEX_COMMUNICATION_RUN_ID = /^communication:codex_watcher:[A-Za-z0-9_-]{1,64}$/;
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : "The watch request failed.";
@@ -278,6 +280,10 @@ function WatchCard({ watch, busy, highlighted, onToggle, onDelete, onOpenChat }:
   }, [armed]);
 
   const Icon = watch.kind === "reminder" ? BellRing : watch.kind === "codex" ? Bot : Search;
+  const communicationRunId = watch.communication_evidence?.availability === "available" &&
+    CODEX_COMMUNICATION_RUN_ID.test(watch.communication_evidence.runId)
+    ? watch.communication_evidence.runId
+    : null;
   return (
     <article
       id={watchElementId(watch.id)}
@@ -311,6 +317,29 @@ function WatchCard({ watch, busy, highlighted, onToggle, onDelete, onOpenChat }:
           )}
           {watch.kind === "codex" && watch.successor_status && (
             <div className="mt-2 text-[11px] text-white/50">Successor: {watch.successor_status}{watch.successor_result ? ` · ${watch.successor_result}` : ""}</div>
+          )}
+          {watch.kind === "codex" && (
+            <div className="mt-3 rounded-xl border border-violet-300/12 bg-violet-300/[0.035] px-3 py-2.5 text-[11px] leading-5 text-white/52">
+              {communicationRunId ? (
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="flex items-center gap-2">
+                    <RadioTower size={13} className="text-violet-200" /> Exact communication evidence retained
+                  </span>
+                  <a
+                    href={`/?mission-control=1&run=${encodeURIComponent(communicationRunId)}&from=watches`}
+                    aria-label="Open exact communication in Mission Control"
+                    className="flex items-center gap-2 rounded-lg border border-violet-200/20 bg-violet-200/[0.06] px-3 py-1.5 font-medium text-violet-100 transition hover:bg-violet-200/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-200/70"
+                  >
+                    <RadioTower size={12} /> Open evidence
+                  </a>
+                </div>
+              ) : (
+                <span className="flex items-start gap-2">
+                  <RadioTower size={13} className="mt-1 shrink-0 text-white/28" />
+                  Mission Control evidence unavailable or not retained.
+                </span>
+              )}
+            </div>
           )}
         </div>
       </div>

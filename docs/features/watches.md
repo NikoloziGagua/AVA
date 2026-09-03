@@ -70,6 +70,18 @@ The bridge does not infer identity from prompt/result text, expose a new lookup
 API, or add any mutation control. Claude communications and ordinary Mission
 Control runs do not receive a watcher link.
 
+The same card now offers the reverse **Open evidence** link when its exact
+Mission Control communication is still provable. AVA first locates the
+canonical run from the stable watcher identity, then requires retained
+normalized event envelopes to confirm the exact `codex_watcher` source ID.
+The run name alone, timestamps, prompt/result text, and ordering are never used
+as proof. Reload keeps the exact Mission Control run selected and Back returns
+to Watches. If detail has expired under retention, no run exists, identities
+conflict, or authenticated resolution fails, the card shows one ID-free
+**Mission Control evidence unavailable or not retained** state. Check and
+reminder cards remain unchanged. This is read-only; the existing pause/resume,
+delete, scheduler, and evidence contracts are untouched.
+
 ## How it works
 
 Two halves: **tools** (Ava registers/lists/deletes watches during a turn) and a

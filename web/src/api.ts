@@ -1085,6 +1085,9 @@ export type WatchRow = {
   successor_result?: string | null;
   successor_attempted_at?: number | null;
   successor_session_id?: string | null;
+  communication_evidence?:
+    | { availability: "available"; runId: string }
+    | { availability: "unavailable" };
 };
 
 export async function fetchWatches(): Promise<WatchRow[]> {

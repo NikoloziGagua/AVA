@@ -11,6 +11,10 @@ export type CommunicationResponseAvailability =
   | "not_recorded"
   | "unavailable";
 
+export type WatcherCommunicationEvidence =
+  | { availability: "available"; runId: string }
+  | { availability: "unavailable" };
+
 export type StartCommunicationInput = {
   source: CommunicationSource;
   sourceId: string;
@@ -56,6 +60,46 @@ function bounded(value: string | null | undefined, limit: number): string | null
 export function communicationRunId(source: CommunicationSource, sourceId: string): string {
   const safe = sourceId.replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 160) || "unknown";
   return `communication:${source}:${safe}`;
+}
+
+const WATCHER_SOURCE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * Resolve the reverse Watches -> Mission Control bridge without interpreting
+ * presentation text. The deterministic run ID locates the candidate, while a
+ * retained normalized source envelope proves its identity. A compact run with
+ * expired detail is deliberately insufficient evidence.
+ */
+export function resolveWatcherCommunicationEvidence(
+  observability: ObservabilityService,
+  sourceId: string,
+): WatcherCommunicationEvidence {
+  if (!WATCHER_SOURCE_ID.test(sourceId)) return { availability: "unavailable" };
+  const runId = communicationRunId("codex_watcher", sourceId);
+  const run = observability.getRun(runId);
+  if (
+    !run ||
+    run.runKind !== COMMUNICATION_RUN_KIND ||
+    run.runtimeType !== "codex" ||
+    run.ownerId !== "codex"
+  ) {
+    return { availability: "unavailable" };
+  }
+
+  const identities = observability.getEvents(runId).flatMap((event) => {
+    const payload = event.payload;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+    const record = payload as Record<string, unknown>;
+    if (typeof record.communicationSource !== "string") return [];
+    return [{ source: record.communicationSource, sourceId: record.sourceId }];
+  });
+  if (
+    identities.length === 0 ||
+    identities.some((identity) => identity.source !== "codex_watcher" || identity.sourceId !== sourceId)
+  ) {
+    return { availability: "unavailable" };
+  }
+  return { availability: "available", runId };
 }
 
 /**

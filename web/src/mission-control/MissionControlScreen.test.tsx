@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { MissionEvent, MissionEvidenceExport, MissionRun } from "../api.js";
 
@@ -19,6 +19,10 @@ vi.mock("../api.js", async (loadOriginal) => {
 });
 
 import { MissionControlScreen } from "./MissionControlScreen.js";
+
+beforeEach(() => {
+  window.history.replaceState(null, "", "/?mission-control=1");
+});
 
 afterEach(() => {
   cleanup();
@@ -436,6 +440,66 @@ describe("MissionControlScreen", () => {
     exactWatcher.focus();
     expect(document.activeElement).toBe(exactWatcher);
     expect(screen.getByText("Exact watcher record available")).toBeTruthy();
+  });
+
+  it("restores an exact Watches deep link, preserves reload selection, and exposes keyboard Back", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      `/?mission-control=1&run=${encodeURIComponent(codexCommunicationRun.id)}&from=watches`,
+    );
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => undefined);
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 10 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([]);
+    api.fetchMissionRun.mockResolvedValue({
+      run: codexCommunicationRun,
+      events: [codexCommunicationEvent],
+      navigation: { kind: "watcher", availability: "available", watcherId: "watch-1" },
+    });
+
+    const first = render(<MissionControlScreen />);
+    expect(await screen.findByText("Codex task boundary completed")).toBeTruthy();
+    expect(api.fetchMissionRun).toHaveBeenCalledWith(codexCommunicationRun.id);
+    const backButton = screen.getByRole("button", { name: "Back to Watches" });
+    backButton.focus();
+    expect(document.activeElement).toBe(backButton);
+    fireEvent.click(backButton);
+    expect(back).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toContain(`run=${encodeURIComponent(codexCommunicationRun.id)}`);
+
+    first.unmount();
+    render(<MissionControlScreen />);
+    expect(await screen.findByText("Codex task boundary completed")).toBeTruthy();
+    expect(api.fetchMissionRun.mock.calls.filter(([id]) => id === codexCommunicationRun.id).length).toBeGreaterThanOrEqual(2);
+    back.mockRestore();
+  });
+
+  it("never requests a malformed run identity from a Watches URL", async () => {
+    window.history.replaceState(null, "", "/?mission-control=1&run=..%2Fprivate&from=watches");
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 1, max: 9 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([claudeCommunicationRun]);
+    api.fetchMissionRun.mockResolvedValue({ run: claudeCommunicationRun, events: [claudeCommunicationEvent] });
+
+    render(<MissionControlScreen />);
+    expect(await screen.findByText("Claude response received")).toBeTruthy();
+    expect(api.fetchMissionRun).not.toHaveBeenCalledWith("../private");
+    expect(screen.queryByText("../private")).toBeNull();
   });
 
   it("keeps a completed Codex result explicitly not recorded when terminal content is absent", async () => {

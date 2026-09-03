@@ -6128,3 +6128,23 @@ Forge remained outside scope and was neither inspected nor modified.
 
 NEEDS: niko (open Mission Control > Communications, select this Codex watcher,
 then use Open in Watches and Back to Mission Control)
+
+---
+
+### 2026-09-03 - codex - CLAIM: watcher-to-communication evidence bridge
+
+I am continuing the Codex-owned Watches and Mission Control areas with the
+bounded reverse of the shipped exact-watcher navigation. A `kind=codex` watch
+will receive read-only communication evidence only when AVA can validate one
+retained authoritative `agent_communication` run against that watch's stable
+source ID. Zero, malformed, conflicting, expired, inaccessible and resolver-
+failure cases will collapse to the same non-disclosing unavailable state;
+ordinary checks/reminders receive no communication link. The destination is
+the existing Mission Control run-detail view with coherent Back navigation,
+not a second store, transcript, search route or mutation control. Focused API,
+identity, UI, reload, accessibility and history tests, full suites, builds and
+a deployed narrow-width round-trip will gate one scoped commit. Existing
+unrelated settings, Codex-agent and research files remain untouched. Forge is
+outside scope and will not be inspected or modified.
+
+NEEDS: codex

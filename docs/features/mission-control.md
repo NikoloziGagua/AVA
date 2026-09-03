@@ -56,6 +56,18 @@ record unavailable** state. Claude discussions and unrelated runs receive no
 watcher navigation. This adds no new store or mutation route; the existing
 Watches API and record remain authoritative.
 
+The reverse bridge follows a stricter evidence rule. The authenticated Watches
+response exposes a Mission Control run link for a `kind=codex` record only when
+the canonical communication run still exists **and** retained normalized event
+detail proves the same `communicationSource=codex_watcher` and exact stable
+`sourceId`. The deterministic run name locates a candidate but is not accepted
+as proof on its own. Zero evidence, compacted/expired detail, conflicting source
+envelopes, malformed identity, resolver failure, or inaccessible scope all
+produce the same ID-free **Mission Control evidence unavailable or not
+retained** receipt. The link selects that exact run directly; reload preserves
+the selection and Back returns to Watches. Ordinary checks, reminders, Claude
+discussions, and unrelated runs receive no reverse link.
+
 The presentation adds no send, retry, approval, Stop, or generic agent-control
 route. Existing authentication, 30-day detail / 365-day compact retention,
 read-time redaction, export-time re-redaction, immutable late-event behavior,
@@ -251,6 +263,9 @@ The first slice covers:
 15. Exact-identity, read-only navigation from a resolvable Codex communication
     to its existing Watches record, with one non-disclosing unavailable state
     for missing or inaccessible targets.
+16. The reverse exact-identity evidence bridge from a Codex watcher to its one
+    retained normalized communication run, without treating a compact run ID
+    or presentation text as evidence.
 
 Coverage is deliberately honest:
 
@@ -328,6 +343,9 @@ Forge events are mapped rather than reinterpreted. Unknown future roles remain v
 - A Codex communication links to Watches only when its authoritative stable
   source ID resolves to that exact persisted Codex watch; stale, deleted,
   malformed, wrong-kind and inaccessible targets expose no ID-bearing link.
+- A Codex watcher links back only while one retained canonical communication
+  run has normalized exact-source evidence; compacted or conflicting evidence
+  produces the same non-disclosing unavailable receipt.
 - Stop is the only Mission Control mutation, is run-scoped, and rejects stale `expectedVersion`.
 - Root voice Stop cascades to its current voice turn/action; child Stop does not indiscriminately cancel unrelated work.
 - Screenshots are off and cost is shown only when reported.

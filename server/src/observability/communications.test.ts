@@ -5,6 +5,7 @@ import {
   COMMUNICATION_RUN_KIND,
   CommunicationObservabilityRecorder,
   communicationRunId,
+  resolveWatcherCommunicationEvidence,
 } from "./communications.js";
 
 describe("CommunicationObservabilityRecorder", () => {
@@ -174,6 +175,71 @@ describe("CommunicationObservabilityRecorder", () => {
       type: "communication.dispatch.retrying",
       late: true,
       projectionApplied: false,
+    });
+    db.close();
+  });
+
+  it("resolves one retained exact watcher envelope and rejects zero or malformed evidence", () => {
+    const db = openInMemoryDb();
+    const observability = new ObservabilityService(db);
+    const recorder = new CommunicationObservabilityRecorder(observability);
+    expect(resolveWatcherCommunicationEvidence(observability, "missing-watch")).toEqual({
+      availability: "unavailable",
+    });
+    expect(resolveWatcherCommunicationEvidence(observability, "../malformed")).toEqual({
+      availability: "unavailable",
+    });
+
+    recorder.ensureStarted({
+      source: "codex_watcher",
+      sourceId: "watch-exact",
+      runtimeType: "codex",
+      title: "Codex watcher handoff",
+      requestSummary: "Continue the exact task",
+    });
+    expect(resolveWatcherCommunicationEvidence(observability, "watch-exact")).toEqual({
+      availability: "available",
+      runId: communicationRunId("codex_watcher", "watch-exact"),
+    });
+    db.close();
+  });
+
+  it("fails closed for conflicting identity or retention-compacted detail", () => {
+    const db = openInMemoryDb();
+    const observability = new ObservabilityService(db);
+    const recorder = new CommunicationObservabilityRecorder(observability);
+    recorder.ensureStarted({
+      source: "codex_watcher",
+      sourceId: "watch-ambiguous",
+      runtimeType: "codex",
+      title: "Codex watcher handoff",
+      requestSummary: "Continue the exact task",
+    });
+    const runId = communicationRunId("codex_watcher", "watch-ambiguous");
+    observability.record(runId, {
+      producerId: "identity-conflict-fixture",
+      producerEventId: "conflicting-source",
+      type: "communication.identity.conflict",
+      status: "observed",
+      title: "Conflicting identity fixture",
+      payload: { communicationSource: "codex_watcher", sourceId: "another-watch" },
+    });
+    expect(resolveWatcherCommunicationEvidence(observability, "watch-ambiguous")).toEqual({
+      availability: "unavailable",
+    });
+
+    recorder.ensureStarted({
+      source: "codex_watcher",
+      sourceId: "watch-compacted",
+      runtimeType: "codex",
+      title: "Codex watcher handoff",
+      requestSummary: "Retained compact record",
+    });
+    const compactedRunId = communicationRunId("codex_watcher", "watch-compacted");
+    db.prepare("DELETE FROM observability_events WHERE run_id = ?").run(compactedRunId);
+    expect(observability.getRun(compactedRunId)).not.toBeNull();
+    expect(resolveWatcherCommunicationEvidence(observability, "watch-compacted")).toEqual({
+      availability: "unavailable",
     });
     db.close();
   });

@@ -3,6 +3,7 @@ import {
   Activity,
   AlarmClock,
   AlertTriangle,
+  ArrowLeft,
   Bot,
   Box,
   CheckCircle2,
@@ -51,6 +52,18 @@ const ACTIVE = new Set([
   "verifying",
   "cancelling",
 ]);
+const MISSION_RUN_LINK_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
+
+function readMissionControlEntry(): { runId: string | null; fromWatches: boolean } {
+  if (typeof window === "undefined") return { runId: null, fromWatches: false };
+  const params = new URLSearchParams(window.location.search);
+  const fromWatches = params.get("from") === "watches";
+  const requested = params.get("run");
+  return {
+    runId: fromWatches && requested && MISSION_RUN_LINK_ID.test(requested) ? requested : null,
+    fromWatches,
+  };
+}
 
 function formatAge(at: number): string {
   const delta = Math.max(0, Date.now() - at);
@@ -188,8 +201,9 @@ function communicationActor(run: MissionRun): string {
 }
 
 export function MissionControlScreen() {
+  const [entry] = useState(readMissionControlEntry);
   const [runs, setRuns] = useState<MissionRun[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(entry.runId);
   const [selectedRun, setSelectedRun] = useState<MissionRun | null>(null);
   const [events, setEvents] = useState<MissionEvent[]>([]);
   const [navigation, setNavigation] = useState<MissionControlNavigation>(null);
@@ -213,15 +227,19 @@ export function MissionControlScreen() {
     setRuns(next);
     setSelectedId((current) => {
       if (current && next.some((run) => run.id === current)) return current;
+      if (current && current === entry.runId) return current;
       return next.find((run) => ACTIVE.has(run.status))?.id ?? next[0]?.id ?? null;
     });
-  }, [category]);
+  }, [category, entry.runId]);
 
   const loadDetail = useCallback(async (id: string) => {
     const detail = await fetchMissionRun(id);
     setSelectedRun(detail.run);
     setEvents(detail.events);
     setNavigation(detail.navigation ?? null);
+    setRuns((current) => current.some((run) => run.id === detail.run.id)
+      ? current
+      : [detail.run, ...current]);
     cursor.current = Math.max(cursor.current, ...detail.events.map((event) => event.seq), 0);
   }, []);
 
@@ -342,6 +360,16 @@ export function MissionControlScreen() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_0%,rgba(92,242,255,0.09),transparent_34%),radial-gradient(circle_at_82%_8%,rgba(124,92,255,0.08),transparent_28%)]" />
       <header className="relative z-10 flex h-[72px] items-center justify-between border-b border-white/10 px-6">
         <div className="flex items-center gap-4">
+          {entry.fromWatches && (
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+              aria-label="Back to Watches"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-white/55 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70"
+            >
+              <ArrowLeft size={15} />
+            </button>
+          )}
           <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-300/20 bg-cyan-300/8">
             <Activity size={20} style={{ color: "var(--ac)" }} />
           </div>

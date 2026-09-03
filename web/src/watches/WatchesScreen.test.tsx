@@ -193,6 +193,51 @@ describe("WatchesScreen", () => {
     expect(await screen.findByText(/Watcher record unavailable/)).toBeTruthy();
     expect(screen.queryByText("Opened the exact Codex watcher recorded by Mission Control.")).toBeNull();
   });
+
+  it("links an exact Codex watch to its retained Mission Control run without adding controls", async () => {
+    api.fetchWatches.mockResolvedValue([row({
+      id: "codex-evidence",
+      prompt: "Inspect the finished Codex task",
+      kind: "codex",
+      communication_evidence: {
+        availability: "available",
+        runId: "communication:codex_watcher:codex-evidence",
+      },
+    })]);
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+
+    const link = await screen.findByRole("link", { name: "Open exact communication in Mission Control" });
+    expect(link.getAttribute("href")).toBe("/?mission-control=1&run=communication%3Acodex_watcher%3Acodex-evidence&from=watches");
+    link.focus();
+    expect(document.activeElement).toBe(link);
+    expect(screen.getByText("Exact communication evidence retained")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /send|retry|approve|run now/i })).toBeNull();
+  });
+
+  it("does not disclose malformed evidence IDs or attach evidence to non-Codex watches", async () => {
+    api.fetchWatches.mockResolvedValue([
+      row({
+        id: "codex-malformed",
+        prompt: "Malformed evidence",
+        kind: "codex",
+        communication_evidence: { availability: "available", runId: "../../secret-run" },
+      }),
+      row({
+        id: "ordinary-with-field",
+        prompt: "Ordinary check",
+        kind: "check",
+        communication_evidence: { availability: "available", runId: "communication:codex_watcher:wrong" },
+      }),
+    ]);
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+
+    expect(await screen.findByText("Malformed evidence")).toBeTruthy();
+    expect(screen.getByText("Mission Control evidence unavailable or not retained.")).toBeTruthy();
+    expect(screen.queryByText("../../secret-run")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Open exact communication in Mission Control" })).toBeNull();
+    const ordinaryCard = screen.getByLabelText("Watch: Ordinary check");
+    expect(ordinaryCard.textContent).not.toContain("Mission Control evidence");
+  });
 });
 
 describe("watchStatusLabel", () => {

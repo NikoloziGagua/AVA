@@ -5367,6 +5367,97 @@ NEEDS: codex
 
 ---
 
+### 2026-09-03 - codex - COMPLETE: Mission Control communications view
+
+Committed AVA-only implementation `33c3b6d746ebbee990693406cef6108ce9e495e2`
+(`feat(observability): show agent communications`). Mission Control now has a
+read-only Communications filter over the authoritative observability store. It
+shows `discuss_with_claude` background work and `kind=codex` watcher handoffs
+as distinct provider-neutral `agent_communication` child runs rather than
+inferring communication from generic chat tool chips.
+
+The implementation adds `server/src/observability/communications.ts` and its
+focused test, wires the shared recorder through `server/src/index.ts`,
+`routes/chat.ts`, `self/discuss.ts`, `tools/discuss-mcp.ts`,
+`tools/watches-mcp.ts`, and `watches/scheduler.ts`, and extends the existing
+run-list query in `observability/store.ts` plus the authenticated typed category
+in `routes/mission-control.ts`. Corresponding focused tests were updated in
+each producer/API area. `web/src/api.ts` now requests the typed category and
+`web/src/mission-control/MissionControlScreen.tsx` provides the responsive
+All activity / Communications presentation, collapsed sanitized evidence,
+correlation, status, verification, and honest unavailable accounting; its UI
+test covers both providers, SSE event dedupe, accessibility semantics, and the
+absence of communication mutation controls. `docs/features/mission-control.md`
+documents exact coverage, privacy/retention behavior, and limitations.
+
+Stable discussion/watch source IDs now produce one run and stable event dedupe
+keys. Parent/root/session correlation is preserved when known; cycle watchers
+link to their predecessor communication. Genuine retry attempts use the prior
+durable watcher timestamp so they count once while a replay of the same attempt
+does not. Terminal and late signals retain the existing immutable projection
+rules. Request evidence is bounded to 2,000 characters, response evidence to
+4,000, and errors to 2,000 before the existing sanitizer runs; read and export
+redaction remain unchanged. The envelope identifies the AVA-orchestrator to
+external-executor trust boundary and reports cost, usage, model, and provider
+request identity as not reported when AVA has no authoritative evidence.
+
+Verification performed:
+
+- Focused server command covering communications, Mission Control routes,
+  Claude discussion, discussion tools, watcher tools, and scheduler: 6 files,
+  47/47 passed.
+- Focused post-refinement scheduler/recorder command: 2 files, 24/24 passed.
+- Focused Mission Control web command: 1 file, 7/7 passed, including filtered
+  reload and duplicate SSE delivery.
+- Full server suite (serial JSON reporter): 1,577/1,577 passed. An earlier run
+  executed concurrently with both web tests and the production build returned
+  one transient nonzero suite result whose verbose name was truncated; two
+  subsequent serial server runs passed completely.
+- Full web suite: 96 files, 457/457 passed.
+- `npm.cmd -w server run build`: passed.
+- `npm.cmd -w web run build`: passed; existing warnings remain for the
+  repository's unrecognized `ES2024` esbuild target and a 2,336.41 kB main
+  chunk over Vite's 500 kB advisory threshold.
+- `git diff --check`: passed. The bounded changed-file privacy scan found no
+  credential-shaped additions.
+- Committed runtime boot smoke: disk and live build ID both
+  `5266dd9e-c27b-4cbc-aed9-f96ab3fd39d9`; `/api/health` reported `ok=true`,
+  `ready=true`, provider `openai`.
+
+The live black-box used AVA's authenticated normal chat/tool path, not a
+manufactured event. AVA queued real discussion `QGXEQnWqPr42`; Mission Control
+recorded exactly one child run
+`communication:provider_discussion:QGXEQnWqPr42`, parent
+`DSM3tjrddXaM`, under trace `trace_qN_TG-GYfy07wD`. Its four events were
+`run.created`, `communication.queued`, `communication.executor.running`, and
+`communication.response.completed`; it finished `completed` /
+`partially_verified`, with sanitized response evidence and zero errors. The
+deployed browser also truthfully displayed the current Codex watcher as a
+separate running communication with response pending. At 1440x900 and 390x844,
+the filter and evidence cards rendered, the narrow view had zero horizontal
+overflow, there were zero communication mutation controls, and no browser
+console errors occurred.
+
+Known limits are explicit: existing historical discussions/watchers are not
+backfilled; arbitrary direct Codex or Claude sessions are not observed; Codex
+watcher delivery can prove its pinned turn reached a clean boundary but does
+not capture returned response content or independently prove product work, so
+it remains partially verified; provider usage/cost/model/request IDs remain not
+reported; there is no communication send/retry/approval/Stop control. The
+first browser probe incorrectly waited for `networkidle` despite the intended
+long-lived SSE stream and timed out; the valid deployed check used
+`domcontentloaded` and explicit UI readiness.
+
+Unrelated `.claude/settings.local.json`, `.codex/agents/`, and the untracked
+persona research remain untouched. The independent plaintext backup worktree
+and uploader were not altered. Forge was neither inspected nor modified.
+
+NEEDS: niko (open Mission Control, select Communications, and decide whether
+the next slice should lawfully capture a bounded Codex result summary or extend
+the same read-only visibility to another AVA-authorized communication path)
+
+---
+
 ### 2026-09-02 - codex - COMPLETE: durable inline memory context capsule
 
 AVA's assistant replies now carry a versioned, sanitized receipt explaining
@@ -5821,3 +5912,21 @@ or upload refs. Unrelated settings, Codex-agent and research files remain
 untouched. Forge is outside scope and will not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-09-03 - codex - TAIL CLOSE: Mission Control communications view
+
+The full implementation and acceptance evidence for product commit `33c3b6d`
+appears above under `COMPLETE: Mission Control communications view`. A generic
+patch anchor inserted that completion entry before later pre-existing thread
+entries instead of at the physical tail; no prior board text was edited or
+removed. This appended close is the chronological clean boundary. It records
+the 1,577-test server and 457-test web suites, production builds, committed-HEAD
+boot smoke, and a deployed real AVA-to-Claude plus live Codex-watcher browser
+check with zero console errors or narrow-width overflow. Forge remained outside
+scope and was neither inspected nor modified.
+
+NEEDS: niko (open Mission Control, select Communications, and choose whether
+the next bounded slice should capture a lawful Codex result summary or add
+another AVA-authorized communication producer)

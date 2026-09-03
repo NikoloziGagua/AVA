@@ -6065,3 +6065,66 @@ settings, Codex-agent and research changes remain untouched. Forge is outside
 scope and will not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-09-03 - codex - COMPLETE: exact watcher navigation bridge
+
+Implemented and committed product change `7e0f1a01acd7807e0ff4d6cbc52a961b1829b743`
+(`feat(observability): link communications to exact watchers`). Mission
+Control's existing authenticated run-detail route now derives an optional
+navigation receipt solely from the normalized communication envelope's stable
+`communicationSource=codex_watcher` and exact `sourceId`. The production
+resolver checks the same SQLite watcher record used by the Watches workspace
+and permits a link only for an exact `kind=codex` match. Malformed, missing,
+deleted, wrong-kind, resolver-error and inaccessible cases collapse to one
+ID-free `unavailable` response; Claude discussions and other runs return no
+watcher navigation. No title, prompt, ancestry, summary or terminal prose is
+parsed for identity.
+
+The Communications card adds one keyboard-focusable read-only **Open in
+Watches** link only for the available receipt. Its one-use in-app URL opens the
+existing Watches workspace, is consumed from browser history, focuses and
+highlights the exact authoritative card, and offers **Back to Mission Control**.
+The landing page revalidates the exact ID and Codex kind against the
+authenticated watch list; stale or tampered targets show the same
+non-disclosing unavailable message. No store, transcript archive, route family,
+send/retry/stop/approval action, or other mutation was added.
+
+Changed areas: `server/src/routes/mission-control.ts` and test,
+`server/src/index.ts`, `web/src/api.ts`, `web/src/mission-control/`,
+`web/src/watches/`, `web/src/App.tsx` and navigation tests, plus
+`docs/features/mission-control.md` and `docs/features/watches.md`.
+
+Verification:
+
+- focused server: `npm.cmd -w server run test -- src/routes/mission-control.test.ts`
+  -> 1 file / 10 tests passed;
+- focused web: Mission Control + Watches + App navigation -> 3 files / 28 tests passed;
+- full server: `npm.cmd -w server run test` -> 204 files / 1,582 tests passed;
+- full web: `npm.cmd -w web run test` -> 96 files / 462 tests passed;
+- `npm.cmd -w server run build` and `npm.cmd -w web run build` passed;
+- `git diff --check` and the staged diff check passed (only CRLF conversion notices);
+- committed build relaunched through `start-ava-desktop-runtime.ps1`; `/api/health`
+  reported ready with OpenAI and live build ID
+  `644dab02-4b1c-48ca-b7a9-19362e91cd7a`, exactly matching `server/dist`;
+- deployed browser at 760x900 used the real current communication/watch
+  `wTz472diS9fk`: the authoritative href contained that exact ID, Watches
+  focused the matching card, both views had no horizontal overflow, Back
+  returned to Mission Control, and console/page errors were zero.
+
+Existing warnings remain unchanged: Vite/esbuild does not recognize the
+configured ES2024 target, the production main chunk is about 2.34 MB, and
+pre-existing MagicRings smoke tests log GSAP scale-reset notices. The bridge
+only covers retained post-instrumentation Codex watcher communications. A watch
+deleted in another window can leave an already-rendered link until the next
+detail refresh, but the Watches landing revalidates it and refuses to focus a
+missing record. AVA currently has one authenticated owner scope rather than a
+separate per-project watcher ACL; this bridge adds no broader visibility.
+
+Final status retains only the pre-existing unrelated
+`.claude/settings.local.json`, `.codex/agents/`, and persona-research changes.
+Forge remained outside scope and was neither inspected nor modified.
+
+NEEDS: niko (open Mission Control > Communications, select this Codex watcher,
+then use Open in Watches and Back to Mission Control)

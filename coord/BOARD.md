@@ -5367,6 +5367,86 @@ NEEDS: codex
 
 ---
 
+### 2026-09-04 - codex - COMPLETE: continuous exact-receipt freshness
+
+Product commit `bb2d0a0` closes the remaining continuously-foregrounded stale
+link gap between Watches and Mission Control without adding deletion tombstones,
+a second event bus, or broad polling. The Watches API now exposes one
+authenticated, read-only, `no-store` exact receipt resolver at
+`GET /api/watches/:id/communication-evidence`. It accepts only a retained
+`kind=codex` watch whose normalized communication run proves the same stable
+source identity; malformed, deleted, expired, conflicting, inaccessible and
+resolver-error cases return the same ID-free `unavailable` shape.
+
+The Watches UI revalidates only previously proven, currently visible Codex
+receipts (maximum 12 per pass) every five seconds while foregrounded. Mission
+Control revalidates only the selected exact communication receipt on the same
+bounded cadence. Transport errors immediately fail a rendered link closed and
+retry with bounded backoff up to 30 seconds; authoritative unavailability
+removes the receipt from the cadence. Existing SSE, focus/visibility refresh,
+retention, replay/high-water, navigation and read-only behavior remain intact.
+When compact run state remains but detailed identity evidence has expired,
+Mission Control now keeps the communication panel and shows the same honest
+unavailable Watch receipt instead of hiding the boundary.
+
+Changed areas:
+
+- `server/src/routes/watches.ts` and `.test.ts`: exact authenticated resolver,
+  strict stable-ID validation, `no-store`, non-disclosing failure behavior and
+  proof that reads do not mutate Watch or observability state;
+- `web/src/api.ts` and `.test.ts`: typed exact receipt client with response and
+  run-ID validation;
+- `web/src/watches/WatchesScreen.tsx` and `.test.tsx`: bounded visible-card
+  cadence, backoff, deletion/retention transitions, concurrency cap and
+  non-Codex isolation;
+- `web/src/mission-control/MissionControlScreen.tsx` and `.test.tsx`: selected
+  exact-receipt cadence and honest compact-without-detail state;
+- `docs/features/mission-control.md` and `docs/features/watches.md`: exact
+  semantics, privacy boundary, cadence/backoff and limitations.
+
+Verification:
+
+- focused server: `npm.cmd -w server run test -- src/routes/watches.test.ts
+  src/routes/mission-control.test.ts` -> 2 files / 20 tests passed;
+- focused web: `npm.cmd -w web run test -- src/api.test.ts
+  src/watches/WatchesScreen.test.tsx
+  src/mission-control/MissionControlScreen.test.tsx` -> 3 files / 43 tests
+  passed;
+- full server: `npm.cmd -w server run test` -> 204 files / 1,591 tests passed;
+- full web: `npm.cmd -w web run test` -> 96 files / 477 tests passed;
+- `npm.cmd -w server run build` and `npm.cmd -w web run build` passed;
+- `git diff --check`, staged diff check, and a bounded added-line credential
+  pattern scan passed (zero findings);
+- committed-HEAD boot smoke passed; a separate scratch backend reported build
+  ID `f5921bac-06f7-4621-b672-11eb03c0097b`, exactly matching
+  `server/dist/build-id.txt`;
+- deployed headless Chrome at 760x900 with reduced motion proved both directions
+  while continuously foregrounded: deleting the exact Watch collapsed the
+  Mission Control link, deleting retained detail events collapsed the Watches
+  link, both unavailable receipts disclosed no target ID, browser Back remained
+  coherent, horizontal overflow was absent, and console/page errors were zero.
+  The synthetic database, token and server were then stopped and deleted.
+
+Existing warnings are unchanged: TypeScript/Vite tooling reports the configured
+ES2024 target as unrecognized in one build path, the production main chunk is
+about 2.35 MB, and two pre-existing visual/animation tests intentionally log
+fallback diagnostics while passing. Removal freshness is nominally five seconds
+and can reach 30 seconds after repeated transport failures. Watches checks at
+most 12 visible proven receipts per pass; ordinary/non-Codex watches are never
+queried. AVA still has one authenticated owner scope rather than per-project
+Watch ACLs. The owner runtime was not restarted during this active watcher; the
+committed build loads on the next normal restart.
+
+Final status retains only the pre-existing unrelated
+`.claude/settings.local.json`, `.codex/agents/`, and persona-research changes.
+Forge remained outside scope and was neither inspected nor modified.
+
+NEEDS: niko (after this watcher closes, restart AVA normally; then leave a Watch
+or Communications receipt open while its exact counterpart is deleted or ages
+out and confirm it changes to unavailable without refocusing the tab)
+
+---
+
 ### 2026-09-03 - codex - COMPLETE: live exact-bridge revalidation
 
 Implemented and committed product change `9e0f1bb4e7b19b822b4fac6bc06e9747d89b3310`
@@ -6371,3 +6451,24 @@ commit. Unrelated settings, Codex-agent and research files remain untouched.
 Forge remains outside scope and will not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-09-04 - codex - TAIL CLOSE: continuous exact-receipt freshness
+
+The full completion and acceptance evidence for product commit `bb2d0a0` is
+recorded above under `COMPLETE: continuous exact-receipt freshness`. A generic
+patch anchor placed that append before later existing thread entries; no prior
+board text was edited or removed. This physical-tail close records the clean
+boundary: 1,591 server tests and 477 web tests passed, both production builds
+passed, committed-HEAD scratch boot health matched the built ID, and a cleaned
+760px Chrome smoke proved continuously-foregrounded Watch deletion and retained
+communication expiry collapse both exact links to ID-free unavailable states
+within the bounded cadence. Back navigation remained coherent, horizontal
+overflow was absent, and console/page errors were zero. Only pre-existing
+settings, Codex-agent and persona-research changes remain. Forge remained
+outside scope and was neither inspected nor modified.
+
+NEEDS: niko (restart AVA after this watcher, then try either exact evidence link;
+if its counterpart disappears, the open receipt should become unavailable
+without refocusing the tab)

@@ -6642,3 +6642,74 @@ Unrelated settings, Codex-agent and research work remains untouched. Forge,
 forge-remodel-work and every other repository remains outside scope.
 
 NEEDS: codex
+
+---
+
+### 2026-09-04 - codex - COMPLETE: deterministic web bundle split
+
+Product commit `7d6dbd4118508001b8e9556ea03d61a33ea51989` replaces AVA's
+single 2.35 MB client artifact with one measured, deterministic production
+graph. `scripts/web-chunk-policy.mjs` assigns package families to stable vendor
+chunks and preserves Three.js's real one-way published module boundaries
+(`three.core` -> renderer -> examples) instead of cutting arbitrary library
+source. `web/vite.config.ts` applies that one Rollup policy. `MemoryScreen`,
+`VoiceScreen` and `ExplorerScreen` now load at their existing navigation
+boundaries behind one accessible Suspense status while preserving their
+existing state and routing contracts.
+
+`scripts/verify-web-production-bundle.mjs` is wired after every canonical web
+build. It deterministically verifies representative module ownership, required
+chunks, the unchanged 500,000-byte limit, shell references and that every
+emitted JavaScript artifact is present in the generated offline service-worker
+precache. The managed fallback remains a separately verified single-file
+esbuild path. `App.new-chat.test.tsx` now waits for the genuine asynchronous
+voice route while retaining all three fresh/resumed session assertions.
+
+Measured evidence:
+
+- before: 2,347.25 kB main JavaScript (696.45 kB gzip), one Vite >500 kB
+  warning, 8 PWA entries / about 2,491.58 KiB;
+- after: 12 JavaScript chunks, largest 353,078 bytes, zero >500 kB warnings;
+  entry 353.08 kB (99.44 kB gzip), an 85.0% uncompressed reduction;
+- major bounded chunks: Three renderer 349.23 kB, Explorer 316.92 kB,
+  diagrams 302.87 kB, animation 299.84 kB, React 194.83 kB, Three core
+  154.72 kB, Markdown 148.86 kB, Three effects 18.82 kB;
+- installed-offline coverage remains complete: 19 precache entries / about
+  2,492.37 KiB; the verifier found every emitted JavaScript file in `sw.js`;
+- final canonical `npm.cmd -w web run build`: 2,666 client modules and 53
+  worker modules built, budget/PWA verifier passed, zero large-chunk warnings
+  and zero unsupported-target/ES2024 warnings;
+- managed `npm.cmd -w web run build:managed`: passed, zero warnings,
+  2,426,719-byte single fallback bundle, and `assets/index-managed.js` was
+  present in its service-worker precache;
+- focused navigation/workspace tests: 7 files / 26 tests passed;
+- complete web Vitest: 96 files / 477 tests passed (only the established
+  deliberate fallback/jsdom stderr diagnostics remained);
+- complete server Vitest: 204 files / 1,591 tests passed;
+- server production TypeScript/build passed; standalone web TypeScript and
+  build-target verification passed; `git diff --check` and staged diff check
+  passed after removing one trailing blank line;
+- committed-HEAD isolated server boot smoke returned `healthy` with built ID
+  `db6a8a6c-7f04-4246-8d7e-21c0aaf38d67`.
+
+No warning threshold, dependency version, minifier, source-map setting,
+security boundary or feature behavior was weakened. The alternate managed
+fallback intentionally stays single-file because it exists for environments
+whose managed runner cannot execute Vite's normal child process. PWA install
+size is intentionally almost unchanged: this slice improves initial graph
+partitioning and parse boundaries while retaining the complete offline app.
+The home shell still eagerly references eight JavaScript artifacts totaling
+1,914,573 bytes because the eager Chat and standalone Visuals routes share
+Markdown/diagram renderers; that measured next boundary is separate work.
+
+Exactly one successor Codex watch was created: `zVVnmTOYbPUr`, parent
+`ary8lHgSqn0z`, one-shot at a one-minute interval with continuation enabled.
+It owns the bounded demand-loading proof for that shared conversation/visual
+renderer graph and must retain all new bundle/PWA gates.
+
+Only the pre-existing unrelated `.claude/settings.local.json`, `.codex/agents/`
+and persona-research files remain outside the commit. Forge,
+forge-remodel-work and every other repository remained outside scope and were
+neither inspected nor modified.
+
+NEEDS: codex (successor watcher `zVVnmTOYbPUr`)

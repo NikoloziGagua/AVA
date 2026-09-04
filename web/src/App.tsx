@@ -1,4 +1,15 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Home, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen, Presentation, AlarmClock } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
@@ -7,7 +18,6 @@ import { SCREEN, markTransition } from "./lib/deckMotion.js";
 import { useReducedMotion } from "./lib/useReducedMotion.js";
 import { getToken } from "./auth/tokens.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
-import { ChatScreen } from "./chat/ChatScreen.js";
 import { RulesScreen } from "./rules/RulesScreen.js";
 import { NotesScreen } from "./notes/NotesScreen.js";
 import { SelfScreen } from "./self/SelfScreen.js";
@@ -15,15 +25,16 @@ import { OrbitScreen } from "./orbit/OrbitScreen.js";
 import { ChatListScreen } from "./orbit/ChatListScreen.js";
 import { MissionControlScreen } from "./mission-control/MissionControlScreen.js";
 import { StrategyRoomScreen } from "./strategy/StrategyRoomScreen.js";
-import { VisualsScreen } from "./visuals/VisualsScreen.js";
 import { WatchesScreen } from "./watches/WatchesScreen.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 
-// These are the three measured heavyweight destinations outside AVA's initial
-// splash/home/chat path. Loading them at their existing navigation boundary
-// removes their application code (and Memory's post-processing add-ons) from
-// the eager graph without changing routing, state ownership or offline support.
+// Measured heavyweight destinations load only at their real navigation
+// boundaries. Chat and Visuals intentionally move together: each reaches the
+// same Markdown/diagram graph, so deferring only one leaves that graph eager.
+const ChatScreen = lazy(async () => ({
+  default: (await import("./chat/ChatScreen.js")).ChatScreen,
+}));
 const MemoryScreen = lazy(async () => ({
   default: (await import("./memory/MemoryScreen.js")).MemoryScreen,
 }));
@@ -32,6 +43,9 @@ const VoiceScreen = lazy(async () => ({
 }));
 const ExplorerScreen = lazy(async () => ({
   default: (await import("./explorer/ExplorerScreen.js")).ExplorerScreen,
+}));
+const VisualsScreen = lazy(async () => ({
+  default: (await import("./visuals/VisualsScreen.js")).VisualsScreen,
 }));
 
 type View =
@@ -85,12 +99,66 @@ function readSidebarPreference(): boolean {
   return window.innerWidth >= 1024;
 }
 
-function DeferredScreenFallback() {
+export function DeferredScreenFallback() {
   return (
     <div className="absolute inset-0 grid place-items-center bg-black" role="status" aria-live="polite">
       <span className="hud text-[10px] tracking-[0.2em] text-white/45">Loading workspace…</span>
     </div>
   );
+}
+
+type DeferredScreenBoundaryProps = {
+  children: ReactNode;
+  resetKey: string;
+  reload?: () => void;
+};
+
+/**
+ * A stale service-worker page can request a chunk from the previous build after
+ * a release. Suspense handles normal loading; this boundary makes that uncommon
+ * failure explicit and recoverable without weakening module integrity.
+ */
+export class DeferredScreenBoundary extends Component<
+  DeferredScreenBoundaryProps,
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[ava] deferred workspace failed to load", error.message, info.componentStack);
+  }
+
+  componentDidUpdate(previous: DeferredScreenBoundaryProps) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false });
+    }
+  }
+
+  private reload = () => {
+    if (this.props.reload) this.props.reload();
+    else window.location.reload();
+  };
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="absolute inset-0 grid place-items-center bg-black px-6 text-center" role="alert">
+        <div className="flex max-w-sm flex-col items-center gap-3">
+          <strong className="text-sm font-medium text-white">This workspace did not load.</strong>
+          <span className="text-xs leading-5 text-white/55">
+            AVA may have updated while this window was open. Reload to use the installed version.
+          </span>
+          <button className="btn-deck btn-ghost h-9 px-4 text-xs" type="button" onClick={this.reload}>
+            Reload AVA
+          </button>
+        </div>
+      </div>
+    );
+  }
 }
 
 /** Which sidebar destination to mark for a view. Voice/splash return undefined. */
@@ -265,6 +333,7 @@ export function App() {
           concurrent mode cross-dissolves — and every screen now enters/exits with
           the SAME tokens so the swap reads as one coherent motion, not a pile of
           mismatched pops and fades. */}
+      <DeferredScreenBoundary resetKey={view.name}>
       <Suspense fallback={<DeferredScreenFallback />}>
       <AnimatePresence>
         {view.name === "splash" && (
@@ -491,6 +560,7 @@ export function App() {
         )}
       </AnimatePresence>
       </Suspense>
+      </DeferredScreenBoundary>
 
       </div>
     </div>

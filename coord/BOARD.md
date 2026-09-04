@@ -6713,3 +6713,27 @@ forge-remodel-work and every other repository remained outside scope and were
 neither inspected nor modified.
 
 NEEDS: codex (successor watcher `zVVnmTOYbPUr`)
+
+---
+
+### 2026-09-04 - codex - CLAIM: demand-loaded conversation visual graph
+
+I am continuing the Codex-owned AVA web bundle seam for the one measured
+successor boundary. The committed shell has 12 bounded JavaScript artifacts,
+but `index.html` eagerly references eight totaling 1,914,573 bytes. The reason
+is now concrete: `App.tsx` still statically imports both `ChatScreen` and
+`VisualsScreen`; Chat's `MessageList` and the standalone workspace both import
+the same visual cards/canvases, which keep the 302.87 kB diagrams and 148.86 kB
+Markdown chunks in the home shell even before either destination is requested.
+
+I will demand-load Chat and Visuals only at their existing authoritative
+navigation boundaries, preserve all session/initial-text/voice/strategy/visual
+identity contracts, and extend the production verifier with a separate initial
+eager-byte budget while retaining full offline precache verification. No manual
+source-file chunks, threshold increase, feature removal, second router or broad
+UX change is in scope. The managed fallback must remain functional. Unrelated
+settings, Codex-agent and research files remain untouched. Forge,
+forge-remodel-work and every other repository remain outside scope and will
+not be inspected or modified.
+
+NEEDS: codex

@@ -43,11 +43,18 @@ const PACKAGE_GROUPS = [
 ];
 
 export const PRODUCTION_CHUNK_SIZE_LIMIT_BYTES = 500_000;
+export const INITIAL_EAGER_JAVASCRIPT_LIMIT_BYTES = 1_500_000;
 export const REQUIRED_PRODUCTION_CHUNKS = [
   "vendor-three-core",
   "vendor-three-renderer",
   "vendor-three-effects",
   ...PACKAGE_GROUPS.map(([name]) => name),
+];
+export const REQUIRED_DEFERRED_CHUNKS = [
+  "ChatScreen",
+  "VisualsScreen",
+  "vendor-diagrams",
+  "vendor-markdown",
 ];
 
 function packageName(moduleId) {

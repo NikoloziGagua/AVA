@@ -2,7 +2,9 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  INITIAL_EAGER_JAVASCRIPT_LIMIT_BYTES,
   PRODUCTION_CHUNK_SIZE_LIMIT_BYTES,
+  REQUIRED_DEFERRED_CHUNKS,
   REQUIRED_PRODUCTION_CHUNKS,
   productionChunkForModule,
 } from "./web-chunk-policy.mjs";
@@ -60,6 +62,29 @@ assert(
 
 const indexHtml = await readFile(join(webDist, "index.html"), "utf8");
 const serviceWorker = await readFile(join(webDist, "sw.js"), "utf8");
+const eagerNames = new Set(
+  [...indexHtml.matchAll(/(?:src|href)="\/assets\/([^"?]+\.js)(?:\?[^"?]*)?"/g)]
+    .map((match) => match[1]),
+);
+assert(eagerNames.size > 0, "index.html must reference an executable application entry");
+const eager = measured.filter(({ name }) => eagerNames.has(name));
+assert(
+  eager.length === eagerNames.size,
+  "every eager JavaScript reference in index.html must resolve to an emitted artifact",
+);
+const eagerBytes = eager.reduce((total, { size }) => total + size, 0);
+assert(
+  eagerBytes <= INITIAL_EAGER_JAVASCRIPT_LIMIT_BYTES,
+  `initial shell references ${eagerBytes} JavaScript bytes, above the ` +
+    `${INITIAL_EAGER_JAVASCRIPT_LIMIT_BYTES}-byte budget`,
+);
+
+for (const deferred of REQUIRED_DEFERRED_CHUNKS) {
+  const artifact = measured.find(({ name }) => name.startsWith(`${deferred}-`));
+  assert(artifact, `required deferred artifact ${deferred} was not emitted`);
+  assert(!eagerNames.has(artifact.name), `${artifact.name} must not be eager in index.html`);
+}
+
 for (const { name } of measured) {
   assert(
     indexHtml.includes(name) || serviceWorker.includes(name),
@@ -69,7 +94,9 @@ for (const { name } of measured) {
 }
 
 console.log(
-  `web production bundle verified: ${measured.length} JS chunks, ` +
+  `web production bundle verified: ${eager.length} eager JS chunks / ${eagerBytes} bytes, ` +
+  `${measured.length} installed-offline JS chunks / ` +
+  `${measured.reduce((total, { size }) => total + size, 0)} bytes, ` +
   `largest ${Math.max(...measured.map(({ size }) => size))} bytes, ` +
   `all <= ${PRODUCTION_CHUNK_SIZE_LIMIT_BYTES} bytes and precached offline`,
 );

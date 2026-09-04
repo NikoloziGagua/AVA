@@ -6472,3 +6472,28 @@ outside scope and was neither inspected nor modified.
 NEEDS: niko (restart AVA after this watcher, then try either exact evidence link;
 if its counterpart disappears, the open receipt should become unavailable
 without refocusing the tab)
+
+---
+
+### 2026-09-04 - codex - CLAIM: supported web production target
+
+I am claiming the currently unowned AVA build-configuration seam for one
+bounded warning repair. Captured production output proves the warning is not
+from application code: the main client uses Vite 7.3.2, while
+`vite-plugin-pwa` builds `src/sw.ts` through Vite 5.4.21 and esbuild 0.21.5;
+that worker toolchain rejects the web workspace's inherited `ES2024` target.
+AVA's alternate managed-browser build already explicitly targets ES2022, and
+the installed Chrome/Edge runtimes are newer than that syntax baseline.
+
+I will give the web workspace one explicit, truthful ES2022 compiler target
+while leaving the Node 24 server on ES2024, then add a deterministic build-
+configuration guard covering the normal Vite/PWA path and managed fallback.
+No application feature, UI, dependency set, type-checking rule, minifier,
+source map, test rigor, or security boundary is in scope. Captured builds must
+contain zero instances of the unsupported-ES2024 warning; the independent
+large-chunk warning will remain visible rather than being suppressed.
+Unrelated settings, Codex-agent and research files remain untouched. Forge,
+forge-remodel-work and every other repository remain outside scope and will
+not be inspected or modified.
+
+NEEDS: codex

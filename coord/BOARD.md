@@ -6833,3 +6833,70 @@ research files remain untouched. Forge, forge-remodel-work and every other
 repository remain outside scope and will not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-09-04 - codex - COMPLETE: demand-loaded home WebGL surface
+
+Committed AVA-only product change `b3921e3` (`perf(web): defer home WebGL
+surface`). `OrbitScreen` now renders a small `HomeSurface` gate instead of
+statically importing `DottedSurface`. The gate short-circuits on AVA's existing
+effective reduced-motion preference, probes for a real WebGL context only for
+full-motion users, releases that probe, and requests the Three/Dotted module
+graph only when Home is actually mounted. Reduced motion, unavailable WebGL,
+lazy-load errors and renderer errors retain a static dotted backdrop; the
+surface-local error boundary cannot remove the orb, command bar, voice entry
+or Explore control.
+
+The production contract now limits the initial shell to four asset JavaScript
+files and 900,000 bytes. It explicitly requires `DottedSurface`, all three
+Three package layers, Chat, Visuals, Markdown and diagrams to be emitted but
+absent from `index.html`; its existing independent loop still requires every
+one of those lazy artifacts in the service-worker precache. The unchanged
+per-artifact ceiling is 500,000 bytes.
+
+Measured and verification evidence:
+
+- prior committed boundary: 6 eager asset JavaScript files / 1,341,536 bytes;
+- after: 4/4 eager asset JavaScript files / 837,362/900,000 bytes, a further
+  504,174-byte (37.6%) reduction; 17 installed-offline JavaScript files /
+  2,363,731 bytes; largest artifact 349,227 bytes;
+- canonical `npm.cmd -w web run build`: 2,667 client modules and 53 worker
+  modules built, 24 total PWA precache entries / about 2,495.99 KiB. It emitted
+  DottedSurface 1.83 kB, Three core 154.72 kB, renderer 349.23 kB and effects
+  18.82 kB as non-eager artifacts. Target, 500 kB and offline verifiers passed
+  with zero unsupported-target and zero large-chunk warnings;
+- `npm.cmd -w web run build:managed` passed with its intentional single 2.3 MB
+  artifact, proving the managed environment still needs no split-loader;
+- focused Home/App/navigation tests passed 4 files / 20 tests, including
+  reduced-motion no-import, missing-WebGL no-import, renderer failure
+  containment and one-time first render;
+- complete web Vitest passed 97 files / 484 tests; complete server Vitest
+  passed 204 files / 1,591 tests; standalone web TypeScript and server
+  production build passed; `git diff --check` and staged checks passed;
+- committed-HEAD isolated server boot smoke returned `healthy`;
+- real installed Chrome at 390x844 loaded only entry, React, core, animation
+  and `registerSW.js` during Splash. Full-motion Home then fetched exactly
+  DottedSurface, Three core and Three renderer and rendered the WebGL surface.
+  A separate reduced-motion load fetched none of them and rendered the static
+  surface. Both paths produced zero console/page errors; temporary preview and
+  smoke files were removed.
+
+No feature, warning, chunk threshold, target, manual package boundary,
+minification/source-map behavior, navigation/session contract, security rule,
+or offline-installed capability was weakened. Installed size is intentionally
+unchanged apart from the small gate because this is a first-load/parse
+improvement, not feature removal.
+
+No successor watcher was scheduled. The remaining eager graph is the shared
+React/application shell plus animation required by Splash itself; separating
+it further would require a larger bootstrap/router redesign rather than the
+kind of measured narrow boundary authorized by this cycle. That is not a clear
+bounded successor from current evidence.
+
+Only the pre-existing unrelated `.claude/settings.local.json`, `.codex/agents/`
+and persona-research files remain outside the product commit. Forge,
+forge-remodel-work and every other repository remained outside scope and were
+neither inspected nor modified.
+
+NEEDS: nobody

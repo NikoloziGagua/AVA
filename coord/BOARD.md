@@ -6737,3 +6737,74 @@ forge-remodel-work and every other repository remain outside scope and will
 not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-09-04 - codex - COMPLETE: demand-loaded conversation visual graph
+
+Committed AVA-only product change `80b10f9` (`perf(web): lazy-load
+conversation visuals`). `App.tsx` now imports `ChatScreen` and
+`VisualsScreen` only at their existing navigation boundaries. They share the
+same deferred Markdown/diagram vendor graph, so neither feature nor those
+renderers enter the splash/home payload. The existing route objects remain the
+source of session ID, fresh-chat revision, initial text, Strategy Room return,
+voice handoff and exact visual ID; no second router or persistence path was
+introduced. A shared Suspense status is screen-reader-announced, and a bounded
+error boundary presents a real reload action if an installed page refers to a
+stale or unavailable module.
+
+The production policy now treats initial transfer separately from installed
+offline size. `scripts/web-chunk-policy.mjs` sets a 1,500,000-byte initial
+eager-JavaScript budget and names Chat, Visuals, Markdown and diagrams as
+required deferred artifacts. `scripts/verify-web-production-bundle.mjs`
+derives the actual eager set from `index.html`, rejects unresolved or eagerly
+referenced deferred artifacts, retains the 500,000-byte per-chunk budget, and
+independently proves every emitted JavaScript artifact is present in `sw.js`.
+
+Measured and verification evidence:
+
+- committed baseline: 8 eager asset JavaScript files / 1,914,573 bytes;
+- after: 6 eager asset JavaScript files / 1,341,536 bytes, a 573,037-byte
+  (29.9%) reduction; 16 installed-offline JavaScript files / 2,362,322 bytes;
+  largest artifact 349,227 bytes;
+- canonical `npm.cmd -w web run build`: 2,666 client modules and 53 worker
+  modules built; Chat (53.76 kB), Visuals (5.02 kB), Markdown (148.86 kB) and
+  diagrams (302.87 kB) were separate non-eager artifacts; 23 total PWA
+  precache entries / about 2,494.77 KiB; zero unsupported-target and zero
+  >500 kB warnings;
+- `npm.cmd -w web run build:managed`: passed with the intentional 2.3 MB
+  single-file managed fallback; dynamic imports were safely bundled rather
+  than requiring unsupported split loading;
+- focused App/chat/visual suite: 5 files / 36 tests passed; complete web
+  Vitest: 96 files / 480 tests passed; standalone web TypeScript passed;
+- complete server Vitest initially had one unrelated 10-second setup timeout
+  in `chrome-click.test.ts` while all 1,591 collected tests passed. The isolated
+  file then passed 4/4, and the clean complete rerun passed 204 files / 1,591
+  tests. Server production build passed;
+- `git diff --check` and staged diff validation passed. The committed-HEAD
+  isolated backend boot smoke returned `healthy`;
+- a real installed Chrome smoke at 390x844 loaded only the six policy-counted
+  eager assets plus `registerSW.js` before navigation. Entering New chat then
+  fetched `ChatScreen`, `humanize`, `api`, Markdown and diagrams on demand,
+  rendered the composer, and produced zero console/page errors. The temporary
+  preview and smoke script were removed.
+
+No chunk threshold, browser target, source-map/minification behavior, PWA
+offline coverage, feature, security boundary or server behavior was weakened.
+Total installed size is deliberately nearly unchanged because AVA remains
+fully usable offline after installation. Diagram CSS remains part of the
+global stylesheet; the measured objective in this slice is executable initial
+JavaScript. The next measured eager contributor is the decorative Three.js
+home surface, not conversation code.
+
+Exactly one successor Codex watch was created: `LmLCVKNFZCK1`, parent
+`zVVnmTOYbPUr`, one-shot at one minute with continuation enabled. It owns the
+bounded splash-to-home DottedSurface demand-loading proof and must preserve all
+current bundle, accessibility, managed fallback and offline gates.
+
+Only the pre-existing unrelated `.claude/settings.local.json`, `.codex/agents/`
+and persona-research files remain outside the product commit. Forge,
+forge-remodel-work and every other repository remained outside scope and were
+neither inspected nor modified.
+
+NEEDS: codex (successor watcher `LmLCVKNFZCK1`)

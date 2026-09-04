@@ -5367,6 +5367,75 @@ NEEDS: codex
 
 ---
 
+### 2026-09-04 - codex - COMPLETE: supported ES2022 build target
+
+Commit `c533d63aee97da25f3a1821eebf4fd3845ebd232`
+(`build: use a supported ES2022 target`) removes the repeated unsupported
+ES2024 Vite/esbuild warning without suppressing output or changing application
+behavior. Baseline production evidence showed exactly one warning while the
+PWA plugin compiled `src/sw.ts`: the main bundle used Vite 7.3.2, but the
+plugin's isolated worker build used Vite 5.4.21 with esbuild 0.21.5, whose CLI
+rejects `es2024` and accepts `es2022`.
+
+The initial claim proposed a web-only override. The first complete Vitest run
+then exposed the same root cause in both workspaces because Vitest's Vite 5
+transform also reads the root target. The final configuration therefore uses
+one authoritative `ES2022` emitted-syntax target in `tsconfig.base.json`.
+`web/tsconfig.json` inherits it and limits its standard library to ES2022 plus
+DOM; `server/tsconfig.json` inherits the safe emit target while retaining its
+existing ES2024 library/API typings for Node 24.18. This is a compatibility
+change, not weaker type checking: strictness and all existing compiler rules
+remain unchanged, and Node 24 supports the emitted baseline.
+
+`scripts/verify-web-build-target.mjs` is now a mandatory preflight for both
+normal and managed web production builds. It verifies the shared target, web
+library, server library, absence of target drift, both managed esbuild target
+flags, and that the exact esbuild resolved by `vite-plugin-pwa` can transform
+the selected target. `web/package.json` wires that guard before compilation in
+both build paths. No dependency was added or upgraded.
+
+Verification:
+
+- pre-change canonical web build: exit 0, one exact
+  `Unrecognized target environment "ES2024"` warning at `src/sw.ts`;
+- focused target guard and TypeScript checks passed for server runtime, server
+  scripts and web;
+- focused server Vitest: 1 file / 7 tests, zero unsupported-target warnings;
+- focused web Vitest: 1 file / 3 tests, zero unsupported-target warnings;
+- full server Vitest, rerun alone after a transient parallel Chrome-launch
+  contention: 204 files / 1,591 tests passed, zero unsupported-target warnings;
+  the isolated `chrome-click` suite also passed 1 file / 4 tests;
+- full web Vitest: 96 files / 477 tests passed, zero unsupported-target
+  warnings;
+- server production build passed;
+- managed web production build passed and its guard reported ES2022 against
+  PWA-worker Vite 5.4.21 / esbuild 0.21.5, with zero unsupported-target
+  warnings;
+- canonical web/PWA production build transformed 2,666 client modules and 53
+  worker modules, exited 0, and captured zero ES2024/unsupported-target lines;
+- the separate existing large-chunk warning remained visible exactly once
+  (main bundle about 2.35 MB) and was not suppressed;
+- `git diff --check` and the staged diff check passed apart from Git's existing
+  LF-to-CRLF checkout notices;
+- committed-HEAD boot smoke returned `healthy`; built server ID
+  `bd4cbbdd-1c8a-4631-ab49-8e1c7d3f9724` loaded successfully.
+
+The installed production browsers are Chrome 151 and Edge 152, both comfortably
+newer than the ES2022 syntax baseline. This target controls emitted syntax; it
+does not provide polyfills for arbitrary future Web APIs. The PWA worker still
+uses its plugin-owned Vite 5 toolchain and the independent chunk-size warning
+remains future performance work. No owner-runtime restart was required because
+runtime behavior did not change.
+
+Final status retains only the pre-existing unrelated
+`.claude/settings.local.json`, `.codex/agents/`, and persona-research changes.
+Forge, forge-remodel-work and every other repository remained outside scope
+and were neither inspected nor modified.
+
+NEEDS: nobody
+
+---
+
 ### 2026-09-04 - codex - COMPLETE: continuous exact-receipt freshness
 
 Product commit `bb2d0a0` closes the remaining continuously-foregrounded stale
@@ -6497,3 +6566,24 @@ forge-remodel-work and every other repository remain outside scope and will
 not be inspected or modified.
 
 NEEDS: codex
+
+---
+
+### 2026-09-04 - codex - TAIL CLOSE: supported ES2022 build target
+
+The complete implementation and acceptance record for product commit
+`c533d63aee97da25f3a1821eebf4fd3845ebd232` appears above under `COMPLETE:
+supported ES2022 build target`. A generic patch anchor placed that entry before
+later existing thread entries; no prior board text was edited or removed. This
+physical-tail close records the final clean boundary: the shared emitted-syntax
+target is ES2022, the Node 24 server retains ES2024 API typings, and both normal
+and managed web builds enforce the exact PWA worker's target support before
+compiling. Full server (1,591) and web (477) tests, all TypeScript checks, both
+production builds, managed fallback build, diff checks, and committed-HEAD boot
+smoke passed. Captured final test/build output contained zero unsupported-target
+or ES2024 warnings; the independent 2.35 MB chunk warning remains visible.
+Only pre-existing settings, Codex-agent and persona-research changes remain.
+Forge, forge-remodel-work and every other repository remained outside scope
+and were neither inspected nor modified.
+
+NEEDS: nobody

@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import { Radar } from "lucide-react";
-import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { NebulaBackground } from "../components/ava/NebulaBackground.js";
 import { Orb } from "../components/ava/Orb.js";
 import { CommandBar } from "../chat/CommandBar.js";
@@ -8,6 +7,7 @@ import { isCoarsePointer } from "../lib/media.js";
 import { gsap, useGSAP } from "../lib/gsap.js";
 import { EASE } from "../lib/deckMotion.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
+import { HomeSurface } from "./HomeSurface.js";
 
 export interface OrbitScreenProps {
   /** Submit from the command bar → open a new chat seeded with this text. */
@@ -23,8 +23,9 @@ function isTypingTarget(e: KeyboardEvent): boolean {
 
 /**
  * Home — de-spun. No orbital ring, no rotating chat nodes. The moving
- * DottedSurface + Nebula behind a glass tubelight nav, the mercury Orb hero, the
- * AVA wordmark, and a command bar. Press Space (or click the orb) to talk.
+ * A demand-loaded dotted surface + Nebula behind a glass tubelight nav, the
+ * mercury Orb hero, the AVA wordmark, and a command bar. Press Space (or click
+ * the orb) to talk. Reduced motion and unavailable WebGL stay on static art.
  */
 export function OrbitScreen({ onCommand, onEnterVoice, onExplore }: OrbitScreenProps) {
   // Touch devices have no spacebar (and Space is a press, not a hold) — the
@@ -69,7 +70,7 @@ export function OrbitScreen({ onCommand, onEnterVoice, onExplore }: OrbitScreenP
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-black">
-      <DottedSurface />
+      <HomeSurface />
       <NebulaBackground />
       {/* vignette to lift the orb */}
       <div

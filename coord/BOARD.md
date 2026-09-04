@@ -6808,3 +6808,28 @@ forge-remodel-work and every other repository remained outside scope and were
 neither inspected nor modified.
 
 NEEDS: codex (successor watcher `LmLCVKNFZCK1`)
+
+---
+
+### 2026-09-04 - codex - CLAIM: demand-loaded home WebGL surface
+
+Watcher `LmLCVKNFZCK1` assigns the next measured AVA web bundle boundary. The
+current six-file / 1,341,536-byte eager graph still includes Three core and
+renderer because `OrbitScreen` statically imports the decorative
+`DottedSurface`, even while Splash is the only visible destination. Reduced
+motion currently suppresses its loop but still downloads and constructs the
+WebGL renderer for a single frame.
+
+I am continuing the Codex-owned production bundle seam only. I will put the
+decorative surface behind the real Home render boundary, use the established
+motion preference plus an actual WebGL capability check to select a static
+decorative fallback without importing Three, contain lazy/render failures to
+that decoration, and lower the independently enforced eager-file/byte budget.
+The Home controls and appearance, navigation/session behavior, managed
+single-file fallback and complete PWA precache remain authoritative. No chunk
+threshold, feature, browser target, warning, manual package boundary or
+security behavior will be weakened. Unrelated settings, Codex-agent and
+research files remain untouched. Forge, forge-remodel-work and every other
+repository remain outside scope and will not be inspected or modified.
+
+NEEDS: codex

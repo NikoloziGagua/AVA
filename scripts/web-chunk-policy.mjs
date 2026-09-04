@@ -43,7 +43,8 @@ const PACKAGE_GROUPS = [
 ];
 
 export const PRODUCTION_CHUNK_SIZE_LIMIT_BYTES = 500_000;
-export const INITIAL_EAGER_JAVASCRIPT_LIMIT_BYTES = 1_500_000;
+export const INITIAL_EAGER_JAVASCRIPT_LIMIT_BYTES = 900_000;
+export const INITIAL_EAGER_JAVASCRIPT_LIMIT_FILES = 4;
 export const REQUIRED_PRODUCTION_CHUNKS = [
   "vendor-three-core",
   "vendor-three-renderer",
@@ -52,9 +53,13 @@ export const REQUIRED_PRODUCTION_CHUNKS = [
 ];
 export const REQUIRED_DEFERRED_CHUNKS = [
   "ChatScreen",
+  "DottedSurface",
   "VisualsScreen",
   "vendor-diagrams",
   "vendor-markdown",
+  "vendor-three-core",
+  "vendor-three-renderer",
+  "vendor-three-effects",
 ];
 
 function packageName(moduleId) {

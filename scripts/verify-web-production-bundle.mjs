@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   INITIAL_EAGER_JAVASCRIPT_LIMIT_BYTES,
+  INITIAL_EAGER_JAVASCRIPT_LIMIT_FILES,
   PRODUCTION_CHUNK_SIZE_LIMIT_BYTES,
   REQUIRED_DEFERRED_CHUNKS,
   REQUIRED_PRODUCTION_CHUNKS,
@@ -67,6 +68,11 @@ const eagerNames = new Set(
     .map((match) => match[1]),
 );
 assert(eagerNames.size > 0, "index.html must reference an executable application entry");
+assert(
+  eagerNames.size <= INITIAL_EAGER_JAVASCRIPT_LIMIT_FILES,
+  `initial shell references ${eagerNames.size} JavaScript artifacts, above the ` +
+    `${INITIAL_EAGER_JAVASCRIPT_LIMIT_FILES}-artifact budget`,
+);
 const eager = measured.filter(({ name }) => eagerNames.has(name));
 assert(
   eager.length === eagerNames.size,
@@ -94,7 +100,8 @@ for (const { name } of measured) {
 }
 
 console.log(
-  `web production bundle verified: ${eager.length} eager JS chunks / ${eagerBytes} bytes, ` +
+  `web production bundle verified: ${eager.length}/${INITIAL_EAGER_JAVASCRIPT_LIMIT_FILES} eager JS chunks / ` +
+  `${eagerBytes}/${INITIAL_EAGER_JAVASCRIPT_LIMIT_BYTES} bytes, ` +
   `${measured.length} installed-offline JS chunks / ` +
   `${measured.reduce((total, { size }) => total + size, 0)} bytes, ` +
   `largest ${Math.max(...measured.map(({ size }) => size))} bytes, ` +

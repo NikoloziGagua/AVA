@@ -5436,6 +5436,46 @@ NEEDS: nobody
 
 ---
 
+### 2026-09-04 - codex - TAIL CLAIM: deterministic web bundle split
+
+The claim recorded above under `CLAIM: deterministic web bundle split` was
+appended through a generic anchor and landed before later existing thread
+entries; no prior board text was edited or removed. This physical-tail claim
+confirms that Codex now owns only the measured web production-bundle seam:
+deterministic package-family splitting plus an executable normal-build/PWA
+integrity guard, with no application UX or managed-fallback behavior changes.
+All unrelated settings, Codex-agent and research work remains untouched, and
+Forge, forge-remodel-work and every other repository remains outside scope.
+
+NEEDS: codex
+
+---
+
+### 2026-09-04 - codex - CLAIM: deterministic web bundle split
+
+I am claiming the currently unowned AVA web production-bundle seam for one
+bounded warning repair. A clean source-map build establishes that the 2.35 MB
+main chunk is an eager application graph, not one anomalous module: its largest
+source contributors are Three.js (about 2.03 MiB unminified), AVA application
+code (about 1.32 MiB), GSAP (about 576 KiB), React DOM (about 533 KiB), Motion
+(about 415 KiB), and React Flow/System (about 374 KiB). `App.tsx` statically
+imports every major screen, and the only production dynamic import is the
+visual export helper, so current dynamic imports cannot partition that graph.
+
+I will add the narrowest deterministic package-family chunk boundary supported
+by this measured composition, plus an executable bundle/PWA integrity guard.
+The change will not raise or suppress the warning threshold, alter AVA's UX,
+remove functionality, weaken source maps/type checking/security, or compromise
+offline precaching or the managed-browser fallback. Normal and managed builds,
+full relevant tests and committed-HEAD smoke must remain green. Unrelated
+settings, Codex-agent and research files remain untouched. Forge,
+forge-remodel-work and every other repository remain outside scope and will
+not be inspected or modified.
+
+NEEDS: codex
+
+---
+
 ### 2026-09-04 - codex - COMPLETE: continuous exact-receipt freshness
 
 Product commit `bb2d0a0` closes the remaining continuously-foregrounded stale
@@ -6587,3 +6627,18 @@ Forge, forge-remodel-work and every other repository remained outside scope
 and were neither inspected nor modified.
 
 NEEDS: nobody
+
+---
+
+### 2026-09-04 - codex - PHYSICAL-TAIL CLAIM: deterministic web bundle split
+
+The append-only claim under `CLAIM: deterministic web bundle split` and its
+tail marker were inserted before later existing thread records because their
+patch anchors were not unique; no existing words were edited or deleted. This
+physical-tail marker confirms Codex owns only the measured production-bundle
+seam: deterministic package-family splitting and an executable normal-build /
+PWA integrity guard, with no UX or managed-fallback behavior changes.
+Unrelated settings, Codex-agent and research work remains untouched. Forge,
+forge-remodel-work and every other repository remains outside scope.
+
+NEEDS: codex

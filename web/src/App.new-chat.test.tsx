@@ -132,25 +132,25 @@ describe("App New-chat navigation", () => {
     expect(screen.getByText("visual-id-visual_abcdefgh")).toBeTruthy();
   });
 
-  it("hands voice the session ChatScreen actually created, not the stale null route value", () => {
+  it("hands voice the session ChatScreen actually created, not the stale null route value", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
-    expect(screen.getByText("voice-session-internal-chat-17-fresh-false")).toBeTruthy();
+    expect(await screen.findByText("voice-session-internal-chat-17-fresh-false")).toBeTruthy();
   });
 
-  it("marks voice entry from a blank New chat as a fresh conversation", () => {
+  it("marks voice entry from a blank New chat as a fresh conversation", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     fireEvent.click(screen.getByRole("button", { name: "mock enter blank voice" }));
-    expect(screen.getByText("voice-session-none-fresh-true")).toBeTruthy();
+    expect(await screen.findByText("voice-session-none-fresh-true")).toBeTruthy();
   });
 
-  it("keeps Home-orb voice entry on resume-latest behavior", () => {
+  it("keeps Home-orb voice entry on resume-latest behavior", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
-    expect(screen.getByText("voice-session-none-fresh-false")).toBeTruthy();
+    expect(await screen.findByText("voice-session-none-fresh-false")).toBeTruthy();
   });
 
   it("opens the first-class Watches workspace from primary navigation", () => {

@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { productionChunkForModule } from "../scripts/web-chunk-policy.mjs";
 
 export default defineConfig({
   plugins: [
@@ -29,6 +30,17 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        // Package-family ownership is derived from the measured production
+        // graph. It keeps each library intact while preventing one eager
+        // multi-megabyte entry chunk; the post-build guard checks the budget
+        // and that every emitted chunk remains in the offline precache.
+        manualChunks: productionChunkForModule,
+      },
+    },
+  },
   server: {
     proxy: {
       // Target 127.0.0.1, NOT "localhost": the server binds to 127.0.0.1 (IPv4),

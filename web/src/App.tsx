@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Home, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen, Presentation, AlarmClock } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
@@ -9,19 +9,30 @@ import { getToken } from "./auth/tokens.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
 import { ChatScreen } from "./chat/ChatScreen.js";
 import { RulesScreen } from "./rules/RulesScreen.js";
-import { MemoryScreen } from "./memory/MemoryScreen.js";
 import { NotesScreen } from "./notes/NotesScreen.js";
 import { SelfScreen } from "./self/SelfScreen.js";
 import { OrbitScreen } from "./orbit/OrbitScreen.js";
 import { ChatListScreen } from "./orbit/ChatListScreen.js";
-import { VoiceScreen } from "./voice/VoiceScreen.js";
-import { ExplorerScreen } from "./explorer/ExplorerScreen.js";
 import { MissionControlScreen } from "./mission-control/MissionControlScreen.js";
 import { StrategyRoomScreen } from "./strategy/StrategyRoomScreen.js";
 import { VisualsScreen } from "./visuals/VisualsScreen.js";
 import { WatchesScreen } from "./watches/WatchesScreen.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
+
+// These are the three measured heavyweight destinations outside AVA's initial
+// splash/home/chat path. Loading them at their existing navigation boundary
+// removes their application code (and Memory's post-processing add-ons) from
+// the eager graph without changing routing, state ownership or offline support.
+const MemoryScreen = lazy(async () => ({
+  default: (await import("./memory/MemoryScreen.js")).MemoryScreen,
+}));
+const VoiceScreen = lazy(async () => ({
+  default: (await import("./voice/VoiceScreen.js")).VoiceScreen,
+}));
+const ExplorerScreen = lazy(async () => ({
+  default: (await import("./explorer/ExplorerScreen.js")).ExplorerScreen,
+}));
 
 type View =
   | { name: "splash" }
@@ -72,6 +83,14 @@ function readSidebarPreference(): boolean {
     if (stored !== null) return stored === "true";
   } catch { /* storage can be unavailable in hardened browsers */ }
   return window.innerWidth >= 1024;
+}
+
+function DeferredScreenFallback() {
+  return (
+    <div className="absolute inset-0 grid place-items-center bg-black" role="status" aria-live="polite">
+      <span className="hud text-[10px] tracking-[0.2em] text-white/45">Loading workspace…</span>
+    </div>
+  );
 }
 
 /** Which sidebar destination to mark for a view. Voice/splash return undefined. */
@@ -246,6 +265,7 @@ export function App() {
           concurrent mode cross-dissolves — and every screen now enters/exits with
           the SAME tokens so the swap reads as one coherent motion, not a pile of
           mismatched pops and fades. */}
+      <Suspense fallback={<DeferredScreenFallback />}>
       <AnimatePresence>
         {view.name === "splash" && (
           <motion.div
@@ -470,6 +490,7 @@ export function App() {
           </motion.div>
         )}
       </AnimatePresence>
+      </Suspense>
 
       </div>
     </div>

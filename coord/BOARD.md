@@ -7036,3 +7036,45 @@ scope and were neither inspected nor modified. No successor was scheduled
 because current evidence showed no further bounded non-duplicative mismatch.
 
 NEEDS: nobody
+
+---
+
+### 2026-09-08 - codex - CLAIM: atomic physical-EOF board appends
+
+Watcher `8ZYVfiP16eqL` assigns the bounded repair for AVA/Codex coordination
+chronology. Repository evidence confirms there is no application-owned board
+writer: agents currently patch repeated textual anchors, which can insert a
+CLAIM or COMPLETE before physical EOF, while Self worktree recovery only merges
+append-only histories after a later Git conflict. I am claiming only a tested
+atomic append primitive/CLI, stale-tail and concurrency protection, migration
+of authoritative agent instructions to that writer, and exact documentation.
+Existing board bytes and history will not be rewritten, reordered, normalized,
+truncated, or deleted. Unrelated changes remain preserved; Forge and every
+other repository remain outside scope and will not be inspected or modified.
+
+NEEDS: codex
+
+---
+
+### 2026-09-08 - codex - COMPLETE: atomic physical-EOF board appends
+
+Committed the bounded AVA coordination repair as `1c6eec3d7085d54c2c6eb51d0877c4e56ddb2254` (`fix(coord): append board entries at physical EOF`). The established failure was not a Git merge or BOARD format problem: AVA had no authoritative writer, so agents used search-anchor patches against repeated separators and `NEEDS:` lines. Commit `216847c` is concrete evidence: its CLAIM and COMPLETE landed thousands of lines before EOF and needed later physical-tail markers. Self worktree reconciliation only handled a later branch conflict and could not make the original write land at EOF.
+
+The new `scripts/coord-board.mjs` is the single repository-owned append boundary. `board:status` returns a version containing the exact byte length and SHA-256 digest. `board:append` acquires an exclusive adjacent lock, re-reads and compares that version under the lock, appends once using OS append mode, flushes, and verifies the complete prior byte prefix plus the new suffix. A stale writer fails with `STALE_BOARD`; a live competing writer produces bounded `LOCK_TIMEOUT`; no caller searches for headings or anchors. Same-host abandoned locks are recoverable only after the bounded stale interval and only when their owner is gone. Existing bytes are never normalized; only the new entry adopts the board's existing LF/CRLF convention and is limited to 128 KiB.
+
+Authoritative callers and instructions now use that boundary: `AGENTS.md`, `CLAUDE.md`, and watcher-delivered Codex prompts forbid anchor patches and name the status/append workflow. `coord/README.md` documents reread, version, UTF-8 file/base64/stdin input, retry behavior, byte preservation and the remaining non-cooperating-editor limitation. `.gitignore` excludes the transient adjacent lock. Root `package.json` exposes `board:status`, `board:append`, and `test:board-append`.
+
+Verification evidence:
+
+- board writer tests: 9/9 passed, covering repeated anchors, exact physical EOF, a multi-megabyte board, prior-byte immutability, CRLF plus UTF-8, stale rejection, simultaneous writers, live-lock timeout, abandoned-lock recovery, final NEEDS validation, and CLAIM then COMPLETE chronology without corrective markers;
+- focused watcher and Self reconciliation regression: 2 files / 30 tests passed;
+- complete server Vitest: 204 files / 1,594 tests passed;
+- server production TypeScript/build passed;
+- Node syntax checks for both new scripts, `git diff --check`, staged diff validation, and committed-HEAD isolated boot smoke passed; boot smoke returned `{"ok":true,"log":"healthy"}`;
+- this COMPLETE entry itself was submitted to the live 409,364-byte board through `board:append` using expected version `board-v1:409364:36783e6f12be2429a44edb3066c8f8ca738d8b69037a9d562a2f7599a5d350df`. It is the real regression proof that an entry lands at current physical EOF without a TAIL or PHYSICAL-TAIL correction.
+
+No web source or web build configuration changed, so the previously verified frontend production bundles were not rebuilt for this repository-coordination-only slice. The lock is cooperative: a non-cooperating editor can still write the file, but post-write byte verification detects an overlap and refuses to report a clean append. Self's existing append-only Git reconciliation remains the later branch merge boundary.
+
+No successor watcher was scheduled because the measured generic-anchor failure is closed and current evidence establishes no second bounded coordination-writer defect. The pre-existing unrelated `.claude/settings.local.json`, `.codex/agents/`, and persona research file remain untouched. Forge, forge-remodel-work, and every other repository remained outside scope and were neither inspected nor modified.
+
+NEEDS: nobody

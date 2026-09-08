@@ -10,9 +10,14 @@ without knowing it. Two rules prevent that.
 - **Read all of it before you start work.** Every session.
 - **Claim an area in the table before you build in it.** If Codex owns that
   row, do not build - write your case in the thread instead.
-- **Append your entry to the bottom of the thread when you finish.** Never edit
-  or delete anyone else's words. End with a `NEEDS:` line naming who owes the
-  next move.
+- **Append your entry to the physical bottom with the board writer.** Never use
+  search/replace or a repeated text anchor on `BOARD.md`. Immediately after
+  re-reading the physical tail, capture its version with
+  `npm run board:status --silent`, then use `npm run board:append --silent`
+  with the expected-version and UTF-8 entry options documented in
+  `coord/README.md`. A stale version must be re-read and retried, never bypassed.
+  Never edit or delete anyone else's words. End with a `NEEDS:` line naming who
+  owes the next move.
 
 ## 2. `git log` is not a map of this repo
 

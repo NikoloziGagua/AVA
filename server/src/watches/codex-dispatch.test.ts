@@ -4,10 +4,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   buildCodexDispatcher,
+  formatCodexWatchPrompt,
   inspectCodexThread,
   resolveLatestCodexTarget,
   type CodexWatchTarget,
 } from "./codex-dispatch.js";
+
+it("directs watcher workers to the stale-protected physical-EOF board writer", () => {
+  const prompt = formatCodexWatchPrompt("[AVA-WATCH:board]", "ship the bounded change");
+  expect(prompt).toContain("board:status/board:append");
+  expect(prompt).toContain("never patch BOARD.md through a repeated text anchor");
+  expect(prompt).toContain("[AVA-WATCH:board]");
+});
 
 const temps: string[] = [];
 

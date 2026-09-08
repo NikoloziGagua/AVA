@@ -14,6 +14,7 @@ chrome-profile/
 .vite/
 .pm2/
 *.tsbuildinfo
+coord/.BOARD.md.append.lock
 
 # Scratch and staging areas from Forge patch runs and installer testing.
 # Working directories, not source — they hold copies of files that live

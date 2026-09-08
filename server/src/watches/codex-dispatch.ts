@@ -569,6 +569,8 @@ export function formatCodexWatchPrompt(marker: string, prompt: string): string {
     `AVA delivered this scheduled instruction into the pinned Codex session. Treat it as Niko-authorized AVA repository work.\n\n` +
     `${prompt.trim()}\n\n` +
     `Do not ask Niko routine questions. Implement, test, commit, and keep coord/BOARD.md current. ` +
+    `Use the repository board:status/board:append commands from AGENTS.md for CLAIM and COMPLETE entries; ` +
+    `never patch BOARD.md through a repeated text anchor. ` +
     `When complete, leave the thread at a clean task boundary so AVA can select the next instruction.`
   );
 }

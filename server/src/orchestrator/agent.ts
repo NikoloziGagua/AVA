@@ -6,7 +6,11 @@ import type { ToolDef } from "../tools/ava-mcp.js";
 import type { ToolVerificationEvidence } from "./verification-evidence.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
-import { buildPolicyHook, type PolicyHook } from "../policy/runtime.js";
+import {
+  buildPolicyHook,
+  type ApprovalPolicyEvidence,
+  type PolicyHook,
+} from "../policy/runtime.js";
 import type { Db } from "../state/db.js";
 import type { Approval } from "../state/approvals.js";
 import { withTimeout, TOOL_BUDGET_MS } from "./timeout.js";
@@ -37,8 +41,22 @@ export type AgentEvent =
   | { kind: "error"; payload: { message: string } }
   | { kind: "killed"; payload: { reason?: "stuck" | "manual" } }
   | { kind: "done"; payload: Record<string, never> }
-  | { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } }
-  | { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } };
+  | {
+      kind: "approval_required";
+      payload: {
+        id: string;
+        tool: string;
+        args: unknown;
+        summary: string;
+      } & Partial<ApprovalPolicyEvidence>;
+    }
+  | {
+      kind: "approval_resolved";
+      payload: {
+        id: string;
+        status: "approved" | "denied" | "expired";
+      } & Partial<ApprovalPolicyEvidence>;
+    };
 
 export type AgentDeps = {
   /**

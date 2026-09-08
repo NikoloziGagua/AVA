@@ -27,6 +27,10 @@ import {
   setVoiceEngine as apiSetVoiceEngine,
   type VoiceEngine,
 } from "../api.js";
+import {
+  resolvedApprovalCopy,
+  type ApprovalPolicyEvidence,
+} from "../approvals/presentation.js";
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
 const SAMPLE_RATE = 24000;
@@ -196,6 +200,12 @@ export interface PendingApproval {
   id: string;
   tool: string;
   summary: string;
+  args?: unknown;
+  riskTier?: ApprovalPolicyEvidence["riskTier"];
+  timeoutBehavior?: ApprovalPolicyEvidence["timeoutBehavior"];
+  requestedAt?: number;
+  deadlineAt?: number;
+  timeoutMs?: number;
 }
 
 // AudioWorklet processor source — registered as a Blob URL at module scope so
@@ -636,13 +646,48 @@ export function useRealtimeVoice({
       });
       es.addEventListener("approval_required", (e) => {
         try {
-          const p = JSON.parse((e as MessageEvent).data) as { id: string; tool: string; summary: string };
-          setPendingApproval({ id: p.id, tool: p.tool, summary: p.summary });
+          const p = JSON.parse((e as MessageEvent).data) as {
+            id: string;
+            tool: string;
+            summary: string;
+            args?: unknown;
+            riskTier?: unknown;
+            timeoutBehavior?: unknown;
+            requestedAt?: unknown;
+            deadlineAt?: unknown;
+            timeoutMs?: unknown;
+          };
+          setPendingApproval({
+            id: p.id,
+            tool: p.tool,
+            summary: p.summary,
+            args: p.args,
+            riskTier: p.riskTier === "medium" || p.riskTier === "high" ? p.riskTier : undefined,
+            timeoutBehavior: p.timeoutBehavior === "auto_approve" || p.timeoutBehavior === "auto_deny"
+              ? p.timeoutBehavior
+              : undefined,
+            requestedAt: typeof p.requestedAt === "number" ? p.requestedAt : undefined,
+            deadlineAt: typeof p.deadlineAt === "number" ? p.deadlineAt : undefined,
+            timeoutMs: typeof p.timeoutMs === "number" ? p.timeoutMs : undefined,
+          });
         } catch { /* ignore */ }
       });
       es.addEventListener("approval_resolved", (e) => {
         try {
-          const p = JSON.parse((e as MessageEvent).data) as { id: string };
+          const p = JSON.parse((e as MessageEvent).data) as {
+            id: string;
+            status?: unknown;
+            riskTier?: unknown;
+            timeoutBehavior?: unknown;
+          };
+          if (p.status === "approved" || p.status === "denied" || p.status === "expired") {
+            setHint(resolvedApprovalCopy(p.status, {
+              riskTier: p.riskTier === "medium" || p.riskTier === "high" ? p.riskTier : undefined,
+              timeoutBehavior: p.timeoutBehavior === "auto_approve" || p.timeoutBehavior === "auto_deny"
+                ? p.timeoutBehavior
+                : undefined,
+            }));
+          }
           setPendingApproval((cur) => (cur && cur.id === p.id ? null : cur));
         } catch { /* ignore */ }
       });

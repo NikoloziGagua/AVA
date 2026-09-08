@@ -148,37 +148,79 @@ export class AgentObservabilityRecorder {
         }
         return;
       }
-      case "approval_required":
+      case "approval_required": {
+        const policyRecorded = (event.payload.riskTier === "medium" && event.payload.timeoutBehavior === "auto_approve")
+          || (event.payload.riskTier === "high" && event.payload.timeoutBehavior === "auto_deny");
         this.observability.record(this.runId, {
           parentSpanId: this.parentSpanId,
           causationEventId: this.causationEventId,
           type: "approval.requested",
           status: "waiting",
-          title: `Approval required for ${event.payload.tool}`,
-          summary: event.payload.summary,
+          title: policyRecorded
+            ? `${event.payload.riskTier === "high" ? "High" : "Medium"}-risk approval required for ${event.payload.tool}`
+            : `Approval required for ${event.payload.tool}`,
+          summary: !policyRecorded
+            ? "Risk and timeout behavior were not recorded for this approval event."
+            : event.payload.timeoutBehavior === "auto_deny"
+              ? "If no decision arrives by the deadline, AVA will deny this high-risk action and it will not run."
+              : "If no decision arrives by the deadline, AVA will approve this medium-risk action and continue.",
           // Never copy tool args into the observability event. The approval
           // summary is the intentional, already-redacted disclosure boundary.
           payload: {
             approvalId: event.payload.id,
             tool: event.payload.tool,
             summary: event.payload.summary,
+            riskTier: event.payload.riskTier ?? null,
+            timeoutBehavior: event.payload.timeoutBehavior ?? null,
+            requestedAt: event.payload.requestedAt ?? null,
+            deadlineAt: event.payload.deadlineAt ?? null,
+            timeoutMs: event.payload.timeoutMs ?? null,
           },
           occurredAt: at,
           runStatus: "waiting_for_approval",
         });
         return;
-      case "approval_resolved":
+      }
+      case "approval_resolved": {
+        const policyRecorded = event.payload.riskTier === "medium" || event.payload.riskTier === "high";
+        const riskName = event.payload.riskTier === "high" ? "High" : "Medium";
+        const title = !policyRecorded
+          ? `Approval ${event.payload.status}`
+          : event.payload.status === "approved"
+            ? `${riskName}-risk approval granted`
+            : event.payload.status === "denied"
+              ? `${riskName}-risk approval denied — action not run`
+              : event.payload.riskTier === "high"
+                ? "High-risk approval expired — action not run"
+                : "Medium-risk approval expired or cancelled — action not run";
+        const summary = event.payload.status === "approved"
+          ? !policyRecorded
+            ? "The approval resolved approved and the action may continue."
+            : event.payload.riskTier === "high"
+              ? "The high-risk action was approved before its auto-deny deadline and may continue."
+              : "The medium-risk action resolved approved and may continue."
+          : "Policy did not authorize the protected action to execute.";
         this.observability.record(this.runId, {
           parentSpanId: this.parentSpanId,
           causationEventId: this.causationEventId,
           type: "approval.resolved",
           status: event.payload.status,
-          title: `Approval ${event.payload.status}`,
-          payload: { approvalId: event.payload.id },
+          title,
+          summary,
+          payload: {
+            approvalId: event.payload.id,
+            riskTier: event.payload.riskTier ?? null,
+            timeoutBehavior: event.payload.timeoutBehavior ?? null,
+            requestedAt: event.payload.requestedAt ?? null,
+            deadlineAt: event.payload.deadlineAt ?? null,
+            timeoutMs: event.payload.timeoutMs ?? null,
+            resolutionStatus: event.payload.status,
+          },
           occurredAt: at,
           runStatus: "running",
         });
         return;
+      }
       case "final":
         if (this.terminalRecorded || this.finalResponseRecorded) return;
         this.finalResponseRecorded = true;

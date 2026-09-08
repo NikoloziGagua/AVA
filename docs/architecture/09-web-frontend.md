@@ -336,8 +336,8 @@ sequenceDiagram
 When Ava wants to do something gated, the server streams an `approval_required` event and `MessageList` renders an **`ApprovalCard`** inline. The card:
 
 - Shows the humanized action ("Ava wants to **Run …**"), an expandable raw `tool` + `args` blob, and **Cancel / Approve now** buttons.
-- Runs a **15-second veto countdown** with a draining progress bar. The server **auto-approves after 15s unless the owner declines** — the countdown just mirrors that window (`ApprovalCard.tsx:24-31`). This matches Ava's "act-first" posture: confirm only briefly, default to proceeding.
-- On tap, calls `approveApproval(id)` / `denyApproval(id)` and stays in a "Settling…" busy state; it does **not** optimistically resolve. It waits for the server's `approval_resolved` SSE event, which flips the card to its compact resolved form (`MessageList` passes `resolvedStatus` down). This keeps the UI honest about the server's actual decision.
+- Mirrors the server's **absolute veto deadline** with a draining progress bar. `medium` risk says silence auto-approves; `high` risk says silence auto-denies and the action will not run. Remount/reconnect uses the original deadline rather than restarting at 15 seconds. Missing legacy metadata gets neutral “not recorded” copy.
+- On tap, calls `approveApproval(id)` / `denyApproval(id)` and stays in a submission state; it does **not** optimistically resolve. It waits for the server's `approval_resolved` SSE event, which flips the card to a risk-aware compact resolved form (`MessageList` passes `resolvedStatus` down). Native buttons, labelled regions, and polite status announcements preserve keyboard and screen-reader access.
 
 Approvals also arrive as **web-push notifications** so the owner can respond when the app is closed (see §9), with native Approve/Deny notification actions.
 

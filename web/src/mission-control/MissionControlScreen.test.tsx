@@ -275,6 +275,108 @@ describe("MissionControlScreen", () => {
     await waitFor(() => expect(api.stopMissionRun).toHaveBeenCalledWith("voice-root", 7));
   });
 
+  it("renders recorded medium/high timeout policy and truthful expired copy", async () => {
+    const approvalRun: MissionRun = {
+      ...run,
+      id: "approval-run",
+      traceId: "approval-trace",
+      rootTaskId: "approval-run",
+      title: "Approval run",
+      status: "waiting_for_approval",
+      controlAvailable: false,
+    };
+    const medium: MissionEvent = {
+      ...event,
+      seq: 3,
+      eventId: "approval-medium",
+      runId: approvalRun.id,
+      traceId: approvalRun.traceId,
+      type: "approval.requested",
+      status: "waiting",
+      title: "Medium-risk approval required for claude_code",
+      summary: "If no decision arrives by the deadline, AVA will approve this medium-risk action and continue.",
+      payload: {
+        riskTier: "medium",
+        timeoutBehavior: "auto_approve",
+        requestedAt: 100_000,
+        deadlineAt: 115_000,
+        timeoutMs: 15_000,
+      },
+    };
+    const high: MissionEvent = {
+      ...medium,
+      seq: 4,
+      eventId: "approval-high",
+      title: "High-risk approval required for fs_delete",
+      summary: "If no decision arrives by the deadline, AVA will deny this high-risk action and it will not run.",
+      payload: {
+        riskTier: "high",
+        timeoutBehavior: "auto_deny",
+        requestedAt: 100_000,
+        deadlineAt: 115_000,
+        timeoutMs: 15_000,
+      },
+    };
+    const expired: MissionEvent = {
+      ...high,
+      seq: 5,
+      eventId: "approval-expired",
+      type: "approval.resolved",
+      status: "expired",
+      title: "High-risk approval expired — action not run",
+      summary: "Policy did not authorize the protected action to execute.",
+      payload: { ...high.payload as Record<string, unknown>, resolutionStatus: "expired" },
+    };
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 3, max: 5 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([approvalRun]);
+    api.fetchMissionRun.mockResolvedValue({ run: approvalRun, events: [medium, high, expired] });
+
+    render(<MissionControlScreen />);
+    expect(await screen.findByText("High-risk approval expired — action not run")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /High-risk approval required for fs_delete/ }));
+    expect(screen.getByRole("region", { name: "Approval policy evidence" })).toBeTruthy();
+    expect(screen.getByText("High risk")).toBeTruthy();
+    expect(screen.getByText("Silence auto-denies; the action does not run")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Medium-risk approval required for claude_code/ }));
+    expect(screen.getByText("Medium risk")).toBeTruthy();
+    expect(screen.getByText("Silence auto-approves; the action may continue")).toBeTruthy();
+  });
+
+  it("does not infer missing approval policy evidence", async () => {
+    const legacyApproval: MissionEvent = {
+      ...event,
+      type: "approval.requested",
+      title: "Approval required for legacy tool",
+      payload: { approvalId: "legacy" },
+    };
+    api.fetchMissionMeta.mockResolvedValue({
+      ok: true,
+      service: "ava-mission-control",
+      apiVersion: 1,
+      schemaVersion: 1,
+      serverAuthority: "ava",
+      controls: ["stop"],
+      eventBounds: { min: 2, max: 2 },
+    });
+    api.fetchMissionRuns.mockResolvedValue([run]);
+    api.fetchMissionRun.mockResolvedValue({ run, events: [legacyApproval] });
+
+    render(<MissionControlScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /Approval required for legacy tool/ }));
+    expect(screen.getByText(/Risk and timeout behavior were not recorded/)).toBeTruthy();
+    expect(screen.queryByText(/Silence auto-/)).toBeNull();
+  });
+
   it("does not present missing token accounting as a measured zero", async () => {
     const noUsageRun = { ...run, inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
     api.fetchMissionMeta.mockResolvedValue({

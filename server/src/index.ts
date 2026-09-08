@@ -1044,8 +1044,9 @@ async function runVoiceAction(
             terminal = "cancelled";
             stop = true;
           }
-          // approval_required no longer stalls voice: the policy auto-approves
-          // after the 15s veto window, so we keep reading and speak the result.
+          // approval_required does not terminate the voice stream. The policy
+          // remains authoritative: medium risk auto-approves on timeout while
+          // high risk expires/auto-denies, and either result keeps streaming.
         }
       }
     }

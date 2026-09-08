@@ -749,10 +749,11 @@ budget resets on a healthy connect and never fires after an intentional `stop()`
 or unmount.
 
 **Approvals over voice.** The agent's `approval_required` SSE event surfaces as a
-card in `VoiceScreen` (`useRealtimeVoice.ts:445`); you approve/deny by tapping or
-(per the card copy) by saying yes/no. Note `runVoiceAction` does **not** stall on
-approvals — the policy auto-approves after the ~15 s veto window, so the run
-keeps streaming and the result still gets spoken (`index.ts:439`).
+card in `VoiceScreen`; you approve/deny by tapping or (per the card copy) by
+saying yes/no. The card announces the same server-owned risk, timeout behavior,
+and absolute deadline as chat: medium silence auto-approves, while high silence
+auto-denies and does not run the action. `runVoiceAction` keeps reading through
+the decision window so the authoritative resolved result can still be spoken.
 
 ---
 

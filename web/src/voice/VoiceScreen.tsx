@@ -10,6 +10,12 @@ import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { useRealtimeVoice, type RealtimeState } from "./useRealtimeVoice.js";
 import { VoiceExactTextDialog } from "./VoiceExactTextDialog.js";
 import { Mic, Keyboard, MicOff, Square, X, MessageSquarePlus, PanelsTopLeft, Type } from "lucide-react";
+import {
+  approvalRiskLabel,
+  approvalTimeoutLabel,
+  pendingApprovalCopy,
+  useApprovalTiming,
+} from "../approvals/presentation.js";
 
 export interface VoiceScreenProps {
   initialSessionId: string | null;
@@ -40,6 +46,10 @@ export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSw
   const ptt = v.inputMode === "enter_push_to_talk";
   const capturing = v.capturing;
   const showStop = shouldShowVoiceStop(v.state, v.actionPending);
+  const approvalTiming = useApprovalTiming(v.pendingApproval, v.pendingApproval != null);
+  const approvalDeadlineCopy = v.pendingApproval
+    ? pendingApprovalCopy(v.pendingApproval, approvalTiming)
+    : null;
   const setExactTextDialogOpen = (open: boolean) => {
     if (open) {
       mutedBeforeExactText.current = v.muted;
@@ -239,11 +249,18 @@ export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSw
         <div
           className="glass absolute bottom-[220px] left-1/2 z-40 w-[340px] -translate-x-1/2 rounded-2xl p-4 text-center"
           style={{ borderColor: "rgba(92,242,255,0.3)" }}
+          role="region"
+          aria-label="Approval required"
         >
-          <div className="hud mb-1 text-[9px]" style={{ color: "var(--ac)" }}>⚑ approval needed</div>
+          <div className="hud mb-1 text-[9px]" style={{ color: "var(--ac)" }}>
+            ⚑ {approvalRiskLabel(v.pendingApproval)} · {approvalTimeoutLabel(v.pendingApproval)}
+          </div>
           <div className="mb-1 text-sm leading-snug text-white/90">{v.pendingApproval.summary}</div>
           <div className="mb-3 text-[11px] text-white/50">
             Say <b style={{ color: "var(--ac-live)" }}>“yes”</b> to approve or <b style={{ color: "var(--ac-live)" }}>“no”</b> to deny — or tap.
+          </div>
+          <div className="mb-3 text-[11px] text-white/65" role="status" aria-live="polite" aria-atomic="true">
+            {approvalDeadlineCopy}
           </div>
           <div className="flex items-center justify-center gap-3">
             <button onClick={v.deny} className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs text-white/80 active:scale-95">Deny</button>

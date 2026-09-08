@@ -311,15 +311,30 @@ export function recordExplorerAgentEvent(
             approvalId: event.payload.id,
             tool: event.payload.tool,
             summary: event.payload.summary,
+            riskTier: event.payload.riskTier ?? null,
+            timeoutBehavior: event.payload.timeoutBehavior ?? null,
+            requestedAt: event.payload.requestedAt ?? null,
+            deadlineAt: event.payload.deadlineAt ?? null,
+            timeoutMs: event.payload.timeoutMs ?? null,
           },
           at,
         });
       case "approval_resolved":
         return appendEvent(db, taskId, {
           type: "approval_resolved",
-          title: `Approval ${event.payload.status}`,
+          title: event.payload.riskTier !== "medium" && event.payload.riskTier !== "high"
+            ? `Approval ${event.payload.status}`
+            : event.payload.status === "expired"
+              ? `${event.payload.riskTier === "high" ? "High" : "Medium"}-risk approval expired — action not run`
+              : `${event.payload.riskTier === "high" ? "High" : "Medium"}-risk approval ${event.payload.status}`,
           status: event.payload.status,
-          input: { approvalId: event.payload.id },
+          input: {
+            approvalId: event.payload.id,
+            riskTier: event.payload.riskTier ?? null,
+            timeoutBehavior: event.payload.timeoutBehavior ?? null,
+            deadlineAt: event.payload.deadlineAt ?? null,
+            resolutionStatus: event.payload.status,
+          },
           at,
         });
       case "final": {

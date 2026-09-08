@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
 import type { TaskReceipt } from "./task-receipt.js";
 import type { MemoryContext } from "./memory-context.js";
+import type { ApprovalPolicyEvidence } from "../approvals/presentation.js";
 
 type EventBase = { id: number; runEpoch: number };
 
@@ -18,8 +19,8 @@ export type StreamEvent =
   | (EventBase & { kind: "receipt"; payload: TaskReceipt })
   | (EventBase & { kind: "memory_context"; payload: MemoryContext })
   | (EventBase & { kind: "gap"; payload: { from: number; to: number } })
-  | (EventBase & { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } })
-  | (EventBase & { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } });
+  | (EventBase & { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } & ApprovalPolicyEvidence })
+  | (EventBase & { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } & ApprovalPolicyEvidence });
 
 export function useChatStream(sessionId: string | null, runEpoch: number, taskId: string | null = null) {
   const [events, setEvents] = useState<StreamEvent[]>([]);

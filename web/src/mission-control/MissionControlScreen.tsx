@@ -129,6 +129,41 @@ function safeJson(value: unknown): string {
   catch { return String(value); }
 }
 
+type ApprovalPolicyView = {
+  availability: "recorded" | "unavailable";
+  risk: string;
+  timeout: string;
+  deadline: string;
+};
+
+function approvalPolicyView(event: MissionEvent): ApprovalPolicyView | null {
+  if (!event.type.startsWith("approval.")) return null;
+  const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+    ? event.payload as Record<string, unknown>
+    : null;
+  const riskTier = payload?.riskTier;
+  const timeoutBehavior = payload?.timeoutBehavior;
+  const deadlineAt = payload?.deadlineAt;
+  const validPair = (riskTier === "medium" && timeoutBehavior === "auto_approve")
+    || (riskTier === "high" && timeoutBehavior === "auto_deny");
+  if (!validPair || typeof deadlineAt !== "number" || !Number.isFinite(deadlineAt)) {
+    return {
+      availability: "unavailable",
+      risk: "Not recorded",
+      timeout: "Not recorded",
+      deadline: "Not recorded",
+    };
+  }
+  return {
+    availability: "recorded",
+    risk: riskTier === "high" ? "High risk" : "Medium risk",
+    timeout: timeoutBehavior === "auto_deny"
+      ? "Silence auto-denies; the action does not run"
+      : "Silence auto-approves; the action may continue",
+    deadline: new Date(deadlineAt).toLocaleString(),
+  };
+}
+
 function flattenRunTree(runs: MissionRun[]): Array<{ run: MissionRun; depth: number }> {
   const byParent = new Map<string | null, MissionRun[]>();
   for (const run of runs) {
@@ -374,6 +409,7 @@ export function MissionControlScreen() {
   );
   const activeCount = runs.filter((run) => ACTIVE.has(run.status)).length;
   const detailEvent = selectedEvent;
+  const detailApproval = detailEvent ? approvalPolicyView(detailEvent) : null;
   const selectedCommunication = selectedRun?.runKind === "agent_communication"
     ? communicationPayload(events)
     : null;
@@ -811,6 +847,25 @@ export function MissionControlScreen() {
               </dl>
               {detailEvent.error && (
                 <div className="rounded-xl border border-red-400/20 bg-red-400/8 p-3 text-xs leading-5 text-red-100">{detailEvent.error}</div>
+              )}
+              {detailApproval && (
+                <section
+                  aria-label="Approval policy evidence"
+                  className="rounded-xl border border-amber-300/15 bg-amber-300/[0.035] p-3"
+                >
+                  <div className="text-[10px] uppercase tracking-wider text-amber-100/55">Authoritative approval policy</div>
+                  {detailApproval.availability === "recorded" ? (
+                    <dl className="mt-3 space-y-2 text-[11px]">
+                      <div className="grid grid-cols-[70px_1fr] gap-3"><dt className="text-white/28">Risk</dt><dd className="text-white/65">{detailApproval.risk}</dd></div>
+                      <div className="grid grid-cols-[70px_1fr] gap-3"><dt className="text-white/28">Timeout</dt><dd className="text-white/65">{detailApproval.timeout}</dd></div>
+                      <div className="grid grid-cols-[70px_1fr] gap-3"><dt className="text-white/28">Deadline</dt><dd className="text-white/65">{detailApproval.deadline}</dd></div>
+                    </dl>
+                  ) : (
+                    <p className="mt-2 text-[11px] leading-5 text-white/42">
+                      Risk and timeout behavior were not recorded for this retained event. Mission Control will not infer them.
+                    </p>
+                  )}
+                </section>
               )}
               {detailEvent.payload != null && (
                 <details className="rounded-xl border border-white/8 bg-black/25 p-3" open={detailEvent.visibility !== "sensitive_collapsed"}>

@@ -70,6 +70,67 @@ describe("AgentObservabilityRecorder", () => {
     db.close();
   });
 
+  it("records authoritative approval risk, deadline, and truthful terminal copy", () => {
+    const { db, observability, run, recorder } = setup();
+    const policy = {
+      riskTier: "high" as const,
+      timeoutBehavior: "auto_deny" as const,
+      requestedAt: 1_000,
+      deadlineAt: 16_000,
+      timeoutMs: 15_000,
+    };
+    recorder.record({
+      kind: "approval_required",
+      payload: {
+        id: "approval-high",
+        tool: "fs_delete",
+        args: { path: "C:/safe/delete-me.txt", password: "must-not-persist" },
+        summary: "Delete one file",
+        ...policy,
+      },
+    }, { at: 1_000 });
+    recorder.record({
+      kind: "approval_resolved",
+      payload: { id: "approval-high", status: "expired", ...policy },
+    }, { at: 16_000 });
+
+    const recorded = observability.getEvents(run.id);
+    const requested = recorded.find((event) => event.type === "approval.requested")!;
+    const resolved = recorded.find((event) => event.type === "approval.resolved")!;
+    expect(requested).toMatchObject({
+      type: "approval.requested",
+      title: "High-risk approval required for fs_delete",
+      summary: expect.stringContaining("deny this high-risk action"),
+      payload: {
+        riskTier: "high",
+        timeoutBehavior: "auto_deny",
+        deadlineAt: 16_000,
+      },
+    });
+    expect(resolved).toMatchObject({
+      type: "approval.resolved",
+      title: "High-risk approval expired — action not run",
+      status: "expired",
+      payload: { resolutionStatus: "expired", riskTier: "high" },
+    });
+    expect(JSON.stringify([requested, resolved])).not.toContain("must-not-persist");
+    db.close();
+  });
+
+  it("does not infer risk or timeout behavior for retained legacy approval events", () => {
+    const { db, observability, run, recorder } = setup();
+    recorder.record({
+      kind: "approval_required",
+      payload: { id: "legacy", tool: "unknown_tool", args: {}, summary: "Legacy request" },
+    });
+    const requested = observability.getEvents(run.id)
+      .find((event) => event.type === "approval.requested")!;
+    expect(requested.title).toBe("Approval required for unknown_tool");
+    expect(requested.summary).toContain("were not recorded");
+    expect(requested.payload).toMatchObject({ riskTier: null, timeoutBehavior: null });
+    db.close();
+  });
+
   it("projects explicit verification evidence without counting executor ok as proof", () => {
     const { db, observability, run, recorder } = setup();
     recorder.record({ kind: "tool_call", payload: { tool: "fs_write", args: {} } }, { at: 1_050 });

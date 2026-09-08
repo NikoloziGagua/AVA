@@ -83,8 +83,8 @@ export class TaskReceiptBuilder {
   private doneSeen = false;
   private errorMessage: string | null = null;
   private killedReason: "manual" | "stuck" | null = null;
-  private pendingApproval: { tool: string; summary: string } | null = null;
-  private deniedApproval: { tool: string; status: "denied" | "expired" } | null = null;
+  private pendingApproval: { tool: string; summary: string; riskTier?: "medium" | "high" } | null = null;
+  private deniedApproval: { tool: string; status: "denied" | "expired"; riskTier?: "medium" | "high" } | null = null;
   private firstProblem: string | null = null;
   private lastSuccessfulTool: string | null = null;
   private lastVerifiedEvidence: ToolVerificationEvidence | null = null;
@@ -179,11 +179,17 @@ export class TaskReceiptBuilder {
         this.pendingApproval = {
           tool: event.payload.tool,
           summary: safeText(event.payload.summary, MAX_DETAIL_CHARS),
+          riskTier: event.payload.riskTier,
         };
+        const timeoutDetail = event.payload.timeoutBehavior === "auto_deny"
+          ? "High-risk timeout policy: silence denies this action."
+          : event.payload.timeoutBehavior === "auto_approve"
+            ? "Medium-risk timeout policy: silence approves this action."
+            : "Timeout behavior was not recorded for this event.";
         this.addEvidence({
           kind: "approval",
-          label: `Approval required for ${displayTool(event.payload.tool)}`,
-          detail: this.pendingApproval.summary || "AVA is waiting for Niko's decision.",
+          label: `${event.payload.riskTier === "high" ? "High-risk " : event.payload.riskTier === "medium" ? "Medium-risk " : ""}approval required for ${displayTool(event.payload.tool)}`,
+          detail: `${this.pendingApproval.summary || "AVA is waiting for Niko's decision."} ${timeoutDetail}`,
           strength: "verified",
         });
         return;
@@ -200,11 +206,13 @@ export class TaskReceiptBuilder {
           });
         } else {
           this.pendingApproval = null;
-          this.deniedApproval = { tool, status: event.payload.status };
+          this.deniedApproval = { tool, status: event.payload.status, riskTier: event.payload.riskTier };
           this.firstProblem ??= `Approval for ${displayTool(tool)} was ${event.payload.status}.`;
           this.addEvidence({
             kind: "approval",
-            label: `Approval ${event.payload.status}`,
+            label: event.payload.status === "expired" && event.payload.riskTier === "high"
+              ? "High-risk approval expired"
+              : `Approval ${event.payload.status}`,
             detail: "The protected action was not executed.",
             strength: "verified",
           });

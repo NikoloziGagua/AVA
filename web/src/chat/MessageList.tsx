@@ -269,6 +269,11 @@ export function MessageList({
               args={e.payload.args}
               summary={e.payload.summary}
               resolvedStatus={resolved.get(e.payload.id) ?? null}
+              riskTier={e.payload.riskTier}
+              timeoutBehavior={e.payload.timeoutBehavior}
+              requestedAt={e.payload.requestedAt}
+              deadlineAt={e.payload.deadlineAt}
+              timeoutMs={e.payload.timeoutMs}
             />
           );
         }

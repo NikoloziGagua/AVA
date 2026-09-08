@@ -75,8 +75,28 @@ describe("buildPolicyHook", () => {
     // claude_code classifies "medium" → ask; an undecided medium op auto-approves.
     const r = await hook("claude_code", { prompt: "edit a file" });
     expect(r).toEqual({ allow: true });
+    const requested = events.find((e) => e.kind === "approval_required");
+    expect(requested).toMatchObject({
+      kind: "approval_required",
+      payload: {
+        riskTier: "medium",
+        timeoutBehavior: "auto_approve",
+        timeoutMs: 50,
+      },
+    });
+    if (requested?.kind === "approval_required") {
+      expect(requested.payload.deadlineAt - requested.payload.requestedAt).toBe(50);
+    }
     const resolved = events.find((e) => e.kind === "approval_resolved");
-    expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("approved");
+    expect(resolved).toMatchObject({
+      kind: "approval_resolved",
+      payload: {
+        status: "approved",
+        riskTier: "medium",
+        timeoutBehavior: "auto_approve",
+        timeoutMs: 50,
+      },
+    });
   });
 
   // ── Item 5: genuinely destructive HIGH-risk ops AUTO-DENY on timeout ──────
@@ -91,8 +111,28 @@ describe("buildPolicyHook", () => {
     const r = await hook("shell", { command: "rm -rf /tmp/x" });
     expect(r.allow).toBe(false);
     if (!r.allow) expect(r.message).toMatch(/DENIED \(expired\)/);
+    const requested = events.find((e) => e.kind === "approval_required");
+    expect(requested).toMatchObject({
+      kind: "approval_required",
+      payload: {
+        riskTier: "high",
+        timeoutBehavior: "auto_deny",
+        timeoutMs: 50,
+      },
+    });
+    if (requested?.kind === "approval_required") {
+      expect(requested.payload.deadlineAt - requested.payload.requestedAt).toBe(50);
+    }
     const resolved = events.find((e) => e.kind === "approval_resolved");
-    expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("expired");
+    expect(resolved).toMatchObject({
+      kind: "approval_resolved",
+      payload: {
+        status: "expired",
+        riskTier: "high",
+        timeoutBehavior: "auto_deny",
+        timeoutMs: 50,
+      },
+    });
   });
 
   it("undecided HIGH-risk fs_delete auto-DENIES on timeout", async () => {

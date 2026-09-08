@@ -278,7 +278,7 @@ The loop is bounded by `MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS
 
 **Hard blocks layered underneath:** the **shell allowlist** (allow-by-default + a curated destructive blocklist + `.env`/secret-read block; the whole command is scanned), the **path allowlist** (`fsRoots` = `C:/ai/**`, `C:/projects/**`, `C:/Users/nikug/**`; `.env` + secret-file patterns blocked *before* the allowlist; paths are **realpath-canonicalized** so a junction can't smuggle a blocked target), and **scrub** (secret redaction on all tool output).
 
-**Honest flags** (from the deep dive): the approval card always shows "auto-approving in Ns," but for **`high` (destructive)** actions the server actually **auto-denies** on timeout — the card copy is misleading for destructive ops (the server is authoritative). GUI tools (`computer_use`, `control_app`) reach the live desktop *outside* the shell/path text gates. Rules are LLM-parsed with no confirm-the-parse step. The `*.key` block is deliberately conservative (also refuses `public.key`).
+**Honest flags** (from the deep dive): approval events now carry the authoritative risk tier, timeout behavior and absolute deadline. Chat, voice and Mission Control distinguish **`medium` auto-approval** from **`high` auto-denial**, and reconnects resume the original deadline rather than starting a new countdown. GUI tools (`computer_use`, `control_app`) reach the live desktop *outside* the shell/path text gates. Rules are LLM-parsed with no confirm-the-parse step. The `*.key` block is deliberately conservative (also refuses `public.key`).
 
 ```mermaid
 flowchart TD

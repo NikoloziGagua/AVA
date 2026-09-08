@@ -149,9 +149,18 @@ sequenceDiagram
   S-->>U: live events → rendered answer
 ```
 
+After the final operational boundary, the chat stream also emits a sanitized
+`receipt` snapshot. The conversation renders it as a compact expected-versus-
+actual result with an expandable evidence trail, last proven-good stage,
+failure/uncertainty observation point, recovery action, and the same run ID used
+by Mission Control. Lifecycle and outcome quality remain separate, and a tool
+return is not promoted to independent external verification. The fast-finish
+replay is held in memory for five minutes; this feature adds no durable store or
+retention policy. See [`features/task-result-receipts.md`](features/task-result-receipts.md).
+
 ### W2 — A voice task ("open WhatsApp and send Luka the link")
 
-1. Your mic audio streams to the **WS voice proxy** `/api/voice/realtime`. The chosen provider (OpenAI `gpt-realtime` by default, or Hume) handles speech. [06]
+1. Your mic audio streams to the **WS voice proxy** `/api/voice/realtime`. The chosen provider (OpenAI `gpt-realtime-2.1` by default, or Hume) handles speech. [06]
 2. Your finished sentence passes the **transcript gate** (silence/noise dropped) and becomes a turn. [06]
 3. For chit-chat the realtime model just talks. For an **action**, it calls `do_on_computer`, which runs the **full `/api/chat` agent** (exactly W1's loop, with all tools) over loopback via `runVoiceAction`. [06][02]
 4. The agent does the work; the **result is spoken** back. The conversation is stored once, in the same session as your typed chats (so voice ↔ chat share memory). [06]
@@ -249,7 +258,7 @@ The loop is bounded by `MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS
 | `watch_create` / `watch_list` / `watch_delete` | `tools/watches-mcp.ts` | Register/list/delete standing background **watches** ("notify me if/when X"). The tools just manage the record; a scheduler runs the checks (see §11). | none (LLM); each *check* is a paid agent run |
 | `discuss_with_claude` / `read_discussion` | `tools/discuss-mcp.ts` | Queues a read-only background Claude consult. | none (subscription) |
 | `memory_read/remember/forget` | `tools/memory-mcp.ts` | Reads/writes durable memory files. | none |
-| `self_improve` / `self_improve_status` | `tools/self-improve-mcp.ts` | Queues a self-improvement and reports status. | none (subscription worker) |
+| `self_improve` / `self_improve_status` | `tools/self-improve-mcp.ts` | Queues an approval-gated self-improvement through the selected Claude Code or Codex worker and reports status. | none at queue time (selected CLI worker later) |
 | `read_claude_updates` | `tools/update-log-mcp.ts` | Reads Claude's dev-log so Ava can honestly say what changed. | none |
 | `read_logs` | `tools/activity-log.ts` | Reads the server's own activity logs. | none |
 | `shopify_list_products / _get_product / _update_product` | `tools/shopify-mcp.ts` | Edits a product's name + description over the **Shopify Admin API** (one `PUT`, no browser); never sends the `images` array. Registered only when `SHOPIFY_STORE` + `SHOPIFY_ADMIN_TOKEN` are set. | none (LLM); uses your Shopify billing |
@@ -300,7 +309,7 @@ flowchart TD
 
 **Two providers, picked by the `voice_engine_pref` toggle:**
 
-- **OpenAI** (`gpt-realtime`, default) — the proven path. Speaks chit-chat directly and, for an action, calls `do_on_computer`.
+- **OpenAI** (`gpt-realtime-2.1`, default) — the primary path. Speaks chit-chat directly and, for an action, calls `do_on_computer`.
 - **Hume** (Hume EVI, voice "Alice Bennett") — alternate upstream, **only when configured** (`AVA_VOICE_PROVIDER=hume` + `HUME_API_KEY`). If its socket can't open, the proxy falls back to OpenAI.
 
 **Hybrid action handoff** (the clever bit): the realtime model holds the conversation, but `do_on_computer` runs the **real `/api/chat` agent** with the full tool stack via `runVoiceAction` (`index.ts`). It POSTs to loopback, reads the run's `final` off the SSE stream, and feeds it back to be spoken. **Session continuity:** entering voice with no session resumes the most-recent conversation, so voice ↔ chat share one memory; recent turns are seeded into the model on connect.
@@ -313,7 +322,7 @@ flowchart TB
   proxy["/api/voice/realtime — WS proxy"]:::server
   mic --> proxy
   proxy --> branch{provider?}:::server
-  branch -->|openai default| oai[gpt-realtime WS]:::paid
+  branch -->|openai default| oai[gpt-realtime-2.1 WS]:::paid
   branch -->|hume + configured| hume[Hume EVI WS<br/>Alice Bennett]:::paid
   hume -. socket fails .-> oai
   oai --> gate[transcript gate<br/>drop silence/noise]:::server
@@ -333,7 +342,7 @@ flowchart TB
 
 **What it is:** Ava can change its own code. A goal is queued, an LLM reflects it into a brief, **Claude Code implements it in a throwaway git worktree**, the change is verified + built, then hot-swapped into the live tree — with a watchdog that rolls back if the new build never gets healthy. (See **W5** above for the state diagram.) **→ Full detail + every gap: [07](architecture/07-self-improvement.md).**
 
-**Who does what:** *reflect* uses the configured LLM (OpenAI by default); *implement* uses **Claude Code on your subscription**. This split is intentional — conserve OpenAI, lean on the abundant Claude subscription for the heavy code work. A **single-flight lock** means one improvement mutates the tree at a time; others queue FIFO.
+**Who does what:** *reflect* uses the configured LLM; *implement* uses the versioned **Claude Code or Codex** selection from the Self screen. Both adapters edit an isolated worktree and enter the same approval, verification, safety, swap, watchdog, and rollback gates. A **single-flight lock** means one improvement mutates the tree at a time; others queue FIFO.
 
 **The guardrails that make it safe to run unattended:** worktree isolation (a self-edit can't touch the live repo directly), the full verify+build+boot gate, a **safety-file refusal** (`assertSwapSafe` blocks any diff touching security/policy/auth or the self-improve machinery), the rollback watchdog, a **plan-approval gate** on user-asked improvements (they park at `awaiting_approval` and write no code until you approve), and a **Stop path** that cancels a running improvement end-to-end. (See `features/self-improve-stop-and-gate.md`.)
 
@@ -342,7 +351,7 @@ flowchart TB
 - ✅ **Pause is real.** The Pause/Resume toggle now flips a **server-side gate** (`improvementsPaused()` in `improver.ts`), enforced on both `POST /api/self/improve` (409) and the `self_improve` chat tool. While paused, new intake is refused; a `PAUSED` chip shows. (Was: a client-only no-op. Caveat: the flag is in-memory — it resets to *active* on restart — and it gates *intake*, not the separate overnight-loop process.)
 - ✅ **Every shipped swap appends a self-changelog.** `onSwapped` writes one line to `memory/changelog.md` (`self/changelog.ts`) — Ava keeps a durable record of how it has evolved without re-reading its own code, and Claude gets recent history so it doesn't undo past fixes. (Was: the changelog module existed but was never called.)
 - ✅ **Failures land in the friction ledger, and the overnight loop mines it first.** `onFailed` records a mistake (`self/friction.ts`); the overnight loop now drains grounded friction goals (`trigger:"friction"`) **before** asking Claude to invent ideas, and a shipped fix closes its ledger entry (a recurrence reopens it). The `npm -w server run self:loop` script finally exists to launch that loop. *Honest limit:* today the **only** writer of the ledger is self-improvement's own failures, which the loop deliberately skips — so the friction-first path is live but has no *external* source (a chat correction → ledger) feeding it yet. See [07] §3.
-- ✅ **Stop cancels an in-flight self-improvement** (commit 0bd8b93). Per-improvement `AbortController`; `POST /api/self/:id/cancel` cancels one, the red global Stop (`/kill` → `cancelAllImprovements`) cancels all; recorded `outcome="cancelled"`. *Limit:* can't reach a job inside the **separate overnight-loop process**.
+- ✅ **Stop cancels an in-flight self-improvement** (commit 0bd8b93). Per-improvement `AbortController`; `POST /api/self/:id/cancel` cancels one, the red global Stop (`/kill-all` → `cancelAllImprovements`) cancels all, while routine voice/session interruption (`/kill`) cannot cancel detached Self work. Cancellation records its source. *Limit:* can't reach a job inside the **separate overnight-loop process**.
 - ✅ **User-asked improvements gate behind a plan** (commit c539c75): they pause at `awaiting_approval` until you Approve & run / Reject. The overnight scheduler is intentionally **not** gated. *Limit:* a parked plan **holds the single-flight slot**, so a forgotten plan stalls the queue.
 
 **Remaining honest flags:**
@@ -360,12 +369,12 @@ flowchart TB
 
 **Assembly** (`orchestrator/system-prompt.ts`): persona → capability map → memory index → preferences → observations → (action mode only) the tool rubric + writable fsRoots. The same bytes are produced each turn for prompt-cache hits.
 
-**Learning (playbooks, v2 — commit 1bed65b):** when a multi-step task **reaches a final reply** (≥2 tool steps, a non-failed last step, not mostly-failed), `maybeCapture` distils it into a reusable playbook; on a similar future request the matching playbook's steps are injected into the prompt. Playbooks now **measurably improve instead of resetting**:
+**Learning (verified playbook gate):** when a multi-step task reaches its terminal receipt, `maybeCapture` may distil it into a reusable playbook only when independent task-outcome evidence marks the result verified. A final reply and executor `ok` are not proof. On a similar future request the matching playbook's steps are injected into the prompt:
 
 - **Recall is lexical, not an LLM call.** `matchPlaybook` (`playbooks/match.ts`) scores token overlap against each playbook's short canonical trigger + keywords — ~0 ms and free (it replaced a 1.7–2.8 s side-model call before every action turn). *Honest limit:* being lexical, a pure paraphrase with no shared words won't recall — Ava just runs without the hint (a deliberate precision-over-recall trade).
 - **Distillation keeps the success path, and turns failures into lessons.** A run that *recovered* from a mid-run tool failure is prime material: the distiller writes success-path steps plus a `lessons[]` list ("Google bot-walls automation — go straight to wttr.in") injected at recall so the same wall isn't hit twice.
-- **Metrics + merge + demotion.** Each playbook carries `version`, a `succ`/`fail` record, and a rolling `avg_secs`; a recalled playbook's run records a win/loss when the run ends (`recordOutcome`). Re-learning a known task class **merges** into the existing playbook (version bump, track record kept) instead of writing near-duplicates; a playbook that keeps failing on recall gets **demoted** out of matching and eventually pruned.
-- **Sir can finally see them.** `GET /api/playbooks` lists everything with its metrics; `DELETE /api/playbooks/:slug` removes one (`routes/playbooks.ts`).
+- **Evidence + merge + demotion.** Each playbook carries separate verified, partial, unverified, contradicted, failed, and not-applicable counters plus bounded task/method provenance. Re-learning a known task class merges only after verified evidence. Stable recent task IDs prevent replay or recall-plus-merge double-counting. Contradiction or repeated evidence-backed failure demotes the procedure. Pre-gate `succ`/`fail` values are immutable legacy reports.
+- **Visible and auditable.** Mind and Explorer show verification state and legacy data honestly. `GET /api/playbooks` lists everything; `DELETE /api/playbooks/:slug` removes one (`routes/playbooks.ts`). Full contract: [Verified learning gate](features/verified-learning-gate.md).
 
 **Claude → Ava dev log** (`self/dev-log.ts`, `data/claude-updates.jsonl`): Claude appends a `started`/`shipped` line per change; Ava reads it via `read_claude_updates` and the voice path folds recent entries into the prompt, so *"what's your latest update?"* is answered from the real changelog instead of confabulated LLM-training trivia.
 
@@ -427,6 +436,7 @@ flowchart LR
 | `approvals` | Pending/decided tool-approval requests with their veto status. |
 | `self_improvements` | Self-improvement records (the code type is called `Intent`): goal, status, commit, last-known-good, verify log. |
 | `discussions` | Background Claude consults: topic, status, result, the originating session. |
+| `strategy_rooms` / `strategy_messages` / `strategy_events` | Strategy Room projection, immutable attributed AVA/Niko/Codex conversation, optional exact chat-snapshot/returned-message lineage, and replayable live-event cursor. Approval and chat return record proposals only; neither executes work. See `features/strategy-room.md`. |
 | `watches` | Standing background monitors (§11): the check prompt, interval, `once`/`enabled`, the chat session holding every check, and the last run's status/result. |
 | `voice_engine_pref` | The voice provider toggle (`openai` · `hume`). |
 | `reasoning_pref` | The Fast↔Thorough level (drives OpenAI reasoning effort + voice VAD snappiness). |

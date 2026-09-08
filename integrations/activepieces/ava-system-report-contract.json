@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "workflowId": "ava.system-report",
+  "workflowVersion": 1,
+  "trigger": "synchronous webhook",
+  "input": {
+    "schemaVersion": 1,
+    "workflowId": "ava.system-report",
+    "workflowVersion": 1,
+    "requestKey": "stable AVA request identifier",
+    "snapshot": "bounded AutomationSystemSnapshot"
+  },
+  "output": {
+    "schemaVersion": 1,
+    "workflowId": "ava.system-report",
+    "workflowVersion": 1,
+    "requestKey": "must exactly echo the input",
+    "externalRunId": "Activepieces run identifier or null",
+    "providerVersion": "Activepieces release or null",
+    "status": "succeeded | failed",
+    "steps": [{ "id": "stable_step_id", "status": "completed | failed | skipped", "summary": "bounded operational summary", "durationMs": 0 }],
+    "report": { "title": "AVA System Health Report", "markdown": "# AVA System Health Report" },
+    "error": null
+  }
+}

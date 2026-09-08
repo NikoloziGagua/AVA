@@ -111,6 +111,27 @@ describe("WatchesSection", () => {
     expect(await screen.findByText(/No standing watches/)).toBeTruthy();
   });
 
+  it("makes pinned Codex delivery and cycle state visible", async () => {
+    fetchWatches.mockResolvedValue([watch({
+      id: "codex-1",
+      prompt: "build the Notes system",
+      kind: "codex",
+      continue_cycle: 1,
+      last_status: "running",
+      last_result: "Codex accepted the watcher instruction and is still working",
+      successor_status: "blocked",
+      successor_result: "AVA could not select the next Codex task: provider quota exhausted",
+      successor_attempted_at: Date.now() - 60_000,
+    })]);
+    render(<WatchesSection />);
+
+    expect(await screen.findByText("Codex task")).toBeTruthy();
+    expect(screen.getByText("continuous cycle")).toBeTruthy();
+    expect(screen.getByLabelText("last check: running")).toBeTruthy();
+    expect(screen.getByLabelText("successor planning: blocked")).toBeTruthy();
+    expect(screen.getByText(/provider quota exhausted/)).toBeTruthy();
+  });
+
   it("renders defensively: missing new columns + unknown status do not crash", async () => {
     fetchWatches.mockResolvedValue([
       // Base-schema row: no run_at / daily_at / kind at all, bogus status.

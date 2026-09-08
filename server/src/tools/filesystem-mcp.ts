@@ -2,6 +2,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Filesystem } from "./filesystem.js";
 import { scrubSecrets } from "../security/scrub.js";
+import type { ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
 
 const MAX_TEXT = 8192;
 function truncate(s: string): string {
@@ -15,7 +16,11 @@ export type FsToolEvent =
 
 export type FsToolDef = {
   tool: Tool;
-  run: (args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }>;
+  run: (args: Record<string, unknown>) => Promise<{
+    text: string;
+    ok: boolean;
+    verification?: ToolVerificationEvidence;
+  }>;
 };
 
 export function buildFilesystemTools(opts: {
@@ -80,8 +85,48 @@ export function buildFilesystemTools(opts: {
         },
       },
       run: wrap("fs_write", async (args) => {
-        const r = await fs.write(String(args.path ?? ""), String(args.content ?? ""));
-        return r.ok ? { ok: true, text: "written" } : { ok: false, text: `error: ${r.reason}` };
+        const path = String(args.path ?? "");
+        const content = String(args.content ?? "");
+        const r = await fs.write(path, content);
+        if (!r.ok) return { ok: false, text: `error: ${r.reason}` };
+        // A successful write syscall is executor-reported success. Read back the
+        // bytes through the same allowlisted filesystem boundary before emitting
+        // task-outcome evidence. Raw content never enters the evidence payload.
+        const readback = await fs.read(path);
+        if (!readback.ok) {
+          return {
+            ok: true,
+            text: `written; read-back verification unavailable: ${readback.reason}`,
+            verification: {
+              state: "unavailable",
+              scope: "task_outcome",
+              method: "fs_readback",
+              summary: "The write returned successfully, but AVA could not read the file back.",
+            },
+          };
+        }
+        if (readback.content !== content) {
+          return {
+            ok: false,
+            text: "error: write completed but read-back content did not match",
+            verification: {
+              state: "contradicted",
+              scope: "task_outcome",
+              method: "fs_readback",
+              summary: "The bytes read back did not match the requested file content.",
+            },
+          };
+        }
+        return {
+          ok: true,
+          text: "written and verified by read-back",
+          verification: {
+            state: "verified",
+            scope: "task_outcome",
+            method: "fs_readback",
+            summary: "The file was read back and its content matched exactly.",
+          },
+        };
       }),
     },
     {

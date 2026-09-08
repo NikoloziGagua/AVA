@@ -9,6 +9,8 @@ import {
   actionStartedFrame,
   bargeInFrame,
   recoverFrame,
+  transcriptPendingFrame,
+  acceptedTranscriptFrame,
   loadRealtimeVadConfig,
   vadForReasoning,
   turnDetectionFor,
@@ -17,8 +19,12 @@ import {
   speechDurationMs,
   decideTranscriptForward,
   forwardFrame,
+  shouldForwardResponseCancel,
   chooseResumeOrNew,
   seedContentType,
+  openAiHistoryFrames,
+  openAiMemoryContextFrame,
+  buildVoiceConversationSummary,
   buildHumeSessionSettings,
   buildHumeHistoryBlock,
   buildHumeVoicePrompt,
@@ -33,11 +39,11 @@ import {
 } from "./voice-realtime.js";
 import { DEFAULT_TRANSCRIPT_GATE } from "../voice/transcript-gate.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
-import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
+import { DEFAULT_REALTIME_SPEECH_RATE } from "../voice/voiceConfig.js";
 
 // Voices the OpenAI speech / realtime models expose that read as female. Used to
 // prove the no-saved-preference default speaks with a female voice.
-const FEMALE_VOICES = new Set(["nova", "shimmer", "coral", "sage", "fable"]);
+const FEMALE_VOICES = new Set(["nova", "shimmer", "coral", "sage", "fable", "marin"]);
 
 describe("hybrid voice (speak + do_on_computer)", () => {
   it("session.update enables audio out, the tool, and keeps create_response false (gate controls replies)", () => {
@@ -60,8 +66,8 @@ describe("hybrid voice (speak + do_on_computer)", () => {
     };
     expect(u.session.audio.output.voice).toBe(DEFAULT_VOICE);
     expect(FEMALE_VOICES.has(u.session.audio.output.voice)).toBe(true);
-    // The faster spoken-delivery preference must be preserved by the default.
-    expect(u.session.audio.output.speed).toBe(DEFAULT_SPEECH_RATE);
+    // Realtime stays at the model's natural cadence (no quality-degrading respeed).
+    expect(u.session.audio.output.speed).toBe(DEFAULT_REALTIME_SPEECH_RATE);
   });
 
   it("readToolCall parses a completed do_on_computer function call", () => {
@@ -277,6 +283,59 @@ describe("seedContentType — GA realtime content-part type for seeded turns", (
   });
 });
 
+describe("voice memory context transport", () => {
+  it("injects verified OpenAI memory as a system reference item", () => {
+    const frame = JSON.parse(openAiMemoryContextFrame("[VERIFIED DURABLE MEMORY]\nsource excerpt")!);
+    expect(frame).toEqual({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "system",
+        content: [{ type: "input_text", text: "[VERIFIED DURABLE MEMORY]\nsource excerpt" }],
+      },
+    });
+    expect(openAiMemoryContextFrame("  ")).toBeNull();
+  });
+
+  it("keeps preloaded Hume memory inside the priority prompt budget", () => {
+    const memory = "[VERIFIED DURABLE MEMORY]\nThe current decision uses SQLite.";
+    const prompt = buildHumeVoicePrompt({
+      voicePersona: "AVA identity",
+      updates: "latest update",
+      history: `recent chat\n${memory}`,
+      base: "x".repeat(20_000),
+    }, 11_000);
+    expect(prompt).toContain(memory);
+    expect(prompt.length).toBeLessThanOrEqual(11_000);
+  });
+});
+
+describe("voice/chat shared context", () => {
+  it("serializes typed user and assistant turns into valid realtime history items", () => {
+    const frames = openAiHistoryFrames([
+      { role: "user", content: "the discussion brief" },
+      { role: "assistant", content: "I have it" },
+      { role: "system", content: "not a conversational turn" },
+    ]).map((frame) => JSON.parse(frame));
+
+    expect(frames).toHaveLength(2);
+    expect(frames[0]).toMatchObject({
+      type: "conversation.item.create",
+      item: { role: "user", content: [{ type: "input_text", text: "the discussion brief" }] },
+    });
+    expect(frames[1]).toMatchObject({
+      type: "conversation.item.create",
+      item: { role: "assistant", content: [{ type: "output_text", text: "I have it" }] },
+    });
+  });
+
+  it("gives voice the same durable earlier-conversation summary as typed chat", () => {
+    expect(buildVoiceConversationSummary(null)).toBe("");
+    expect(buildVoiceConversationSummary(" earlier decisions ")).toContain("earlier decisions");
+    expect(buildVoiceConversationSummary("x".repeat(5_000)).length).toBeLessThan(4_100);
+  });
+});
+
 const TRANSCRIPT_TYPE = "conversation.item.input_audio_transcription.completed";
 function transcriptEvt(transcript: string, extra: Record<string, unknown> = {}) {
   return { type: TRANSCRIPT_TYPE, transcript, ...extra };
@@ -294,32 +353,34 @@ describe("buildRealtimeSessionUpdate (transcribe-only GA schema)", () => {
     expect(s.audio.output).toBeUndefined();
     expect(s.audio.input.format).toEqual({ type: "audio/pcm", rate: 24000 });
     expect(s.audio.input.transcription.model).toBe(DEFAULT_REALTIME_VAD.transcribeModel);
+    expect(s.audio.input.transcription.language).toBe("en");
   });
 
-  it("tunes server VAD and disables auto-response (no reply to silence)", () => {
+  it("uses patient semantic VAD and waits for a gated transcript before interruption", () => {
     const s = buildRealtimeSessionUpdate("x").session as Record<string, any>;
     const td = s.audio.input.turn_detection;
-    expect(td.type).toBe("server_vad");
+    expect(td.type).toBe("semantic_vad");
+    expect(td.eagerness).toBe("low");
     expect(td.create_response).toBe(false);
     expect(td.interrupt_response).toBe(false);
-    expect(td.threshold).toBe(DEFAULT_REALTIME_VAD.threshold);
-    expect(td.prefix_padding_ms).toBe(DEFAULT_REALTIME_VAD.prefixPaddingMs);
-    expect(td.silence_duration_ms).toBe(DEFAULT_REALTIME_VAD.silenceMs);
   });
 
-  it("honors a supplied VAD config", () => {
+  it("honors a supplied server-VAD fallback config", () => {
     const s = buildRealtimeSessionUpdate("x", {
       transcribeModel: "whisper-1",
+      transcribeLanguage: null,
+      mode: "server_vad",
       threshold: 0.8,
       prefixPaddingMs: 100,
       silenceMs: 900,
     }).session as Record<string, any>;
     expect(s.audio.input.transcription.model).toBe("whisper-1");
+    expect(s.audio.input.transcription.language).toBeUndefined();
     expect(s.audio.input.turn_detection.threshold).toBe(0.8);
     expect(s.audio.input.turn_detection.silence_duration_ms).toBe(900);
   });
 
-  it("does NOT send the beta-shape fields that gpt-realtime rejects", () => {
+  it("does NOT send the beta-shape fields that GA realtime models reject", () => {
     const s = buildRealtimeSessionUpdate("x").session as Record<string, any>;
     expect(s.modalities).toBeUndefined();
     expect(s.voice).toBeUndefined();
@@ -327,13 +388,14 @@ describe("buildRealtimeSessionUpdate (transcribe-only GA schema)", () => {
   });
 });
 
-describe("enter_push_to_talk session mode (server VAD disabled)", () => {
-  it("turnDetectionFor returns tuned server_vad in VAD mode", () => {
+describe("enter_push_to_talk session mode (automatic VAD disabled)", () => {
+  it("turnDetectionFor returns semantic_vad in hands-free mode", () => {
     const td = turnDetectionFor(DEFAULT_REALTIME_VAD, false) as Record<string, unknown>;
     expect(td).not.toBeNull();
-    expect(td.type).toBe("server_vad");
+    expect(td.type).toBe("semantic_vad");
+    expect(td.eagerness).toBe("low");
     expect(td.create_response).toBe(false);
-    expect(td.silence_duration_ms).toBe(DEFAULT_REALTIME_VAD.silenceMs);
+    expect(td.interrupt_response).toBe(false);
   });
 
   it("turnDetectionFor returns null (no auto endpointing) in push-to-talk mode", () => {
@@ -350,7 +412,7 @@ describe("enter_push_to_talk session mode (server VAD disabled)", () => {
 
   it("transcribe-only: the default (no opts) preserves existing VAD behaviour", () => {
     const s = buildRealtimeSessionUpdate("x").session as Record<string, any>;
-    expect(s.audio.input.turn_detection.type).toBe("server_vad");
+    expect(s.audio.input.turn_detection.type).toBe("semantic_vad");
     expect(s.audio.input.turn_detection.create_response).toBe(false);
   });
 
@@ -364,17 +426,21 @@ describe("enter_push_to_talk session mode (server VAD disabled)", () => {
 
   it("hybrid: the default (no opts) preserves existing VAD behaviour", () => {
     const s = buildHybridSessionUpdate("be ava").session as Record<string, any>;
-    expect(s.audio.input.turn_detection.type).toBe("server_vad");
+    expect(s.audio.input.turn_detection.type).toBe("semantic_vad");
     expect(s.audio.input.turn_detection.create_response).toBe(false);
+    expect(s.audio.input.transcription).toEqual({
+      model: DEFAULT_REALTIME_VAD.transcribeModel,
+      language: "en",
+    });
   });
 });
 
 describe("vadForReasoning (the toggle tunes voice snappiness)", () => {
-  it("fast rides through short mid-sentence pauses, thorough is patient", () => {
-    // 'fast' was 300ms — it ended a turn on a natural pause and Ava barged into the
-    // owner. 500ms keeps it snappy without cutting the owner off mid-sentence.
-    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "fast").silenceMs).toBe(500);
-    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "thorough").silenceMs).toBe(700);
+  it("uses semantic completeness and a patient server-VAD fallback", () => {
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "fast").semanticEagerness).toBe("low");
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "thorough").semanticEagerness).toBe("low");
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "fast").silenceMs).toBe(900);
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "thorough").silenceMs).toBe(1200);
   });
   it("leaves the other VAD fields untouched", () => {
     const out = vadForReasoning(DEFAULT_REALTIME_VAD, "fast");
@@ -392,14 +458,29 @@ describe("loadRealtimeVadConfig", () => {
   it("applies env overrides", () => {
     const cfg = loadRealtimeVadConfig({
       REALTIME_TRANSCRIBE_MODEL: "whisper-1",
+      REALTIME_TRANSCRIBE_LANGUAGE: "fr",
       REALTIME_VAD_THRESHOLD: "0.75",
       REALTIME_VAD_PREFIX_PADDING_MS: "250",
       REALTIME_VAD_SILENCE_MS: "800",
     });
     expect(cfg.transcribeModel).toBe("whisper-1");
+    expect(cfg.transcribeLanguage).toBe("fr");
     expect(cfg.threshold).toBe(0.75);
     expect(cfg.prefixPaddingMs).toBe(250);
     expect(cfg.silenceMs).toBe(800);
+  });
+
+  it("allows automatic language detection explicitly", () => {
+    expect(loadRealtimeVadConfig({
+      REALTIME_TRANSCRIBE_LANGUAGE: "auto",
+    }).transcribeLanguage).toBeNull();
+  });
+});
+
+describe("realtime response cancellation", () => {
+  it("forwards cancellation only for a confirmed active response", () => {
+    expect(shouldForwardResponseCancel(false)).toBe(false);
+    expect(shouldForwardResponseCancel(true)).toBe(true);
   });
 });
 
@@ -524,6 +605,16 @@ describe("voice barge-in + PTT recovery control frames", () => {
   });
   it("recoverFrame carries the drop reason so the client re-arms listening", () => {
     expect(JSON.parse(recoverFrame("empty"))).toEqual({ type: "ava.recover", reason: "empty" });
+  });
+  it("marks an incomplete partial without turning it into a user command", () => {
+    expect(JSON.parse(transcriptPendingFrame("I want you to go"))).toEqual({
+      type: "ava.transcript_pending",
+      text: "I want you to go",
+    });
+    expect(JSON.parse(acceptedTranscriptFrame("I want you to go into WhatsApp"))).toEqual({
+      type: "conversation.item.input_audio_transcription.completed",
+      transcript: "I want you to go into WhatsApp",
+    });
   });
 });
 

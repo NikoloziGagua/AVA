@@ -4,14 +4,15 @@ import { readFile, writeFile } from "../memory/store.js";
 
 // The people map — Ava's identity-resolution layer. Sir says "text Lasha";
 // Lasha's Instagram username is weird_username_123; this file knows that, plus
-// the DM thread id learned from the first successful message (the fast path:
-// one navigation, zero searching). Stored under memoryDir (secret-scrubbed
-// writes), one JSON file — tens of people, not thousands.
+// the last thread id observed after entering through that exact profile. The
+// username remains recipient-routing authority; thread IDs are evidence only.
+// Stored under memoryDir (secret-scrubbed writes), one JSON file — tens of
+// people, not thousands.
 
 export type PersonApp = {
   username?: string;      // instagram handle / whatsapp display name
   phone?: string;         // whatsapp
-  threadId?: string;      // learned DM thread — the speed unlock
+  threadId?: string;      // last thread verified after exact identity routing
 };
 
 export type Person = {

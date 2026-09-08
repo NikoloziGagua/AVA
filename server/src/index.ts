@@ -1,7 +1,9 @@
 import "./net-tuning.js"; // MUST be first: happy-eyeballs for IPv6-only/NAT64 networks
 import express from "express";
 import { fileURLToPath } from "node:url";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Anthropic from "@anthropic-ai/sdk";
@@ -14,9 +16,9 @@ import { buildRealtimeProxy } from "./routes/voice-realtime.js";
 import { resolveVoiceProvider } from "./routes/voice-provider-config.js";
 import { issuePairingCode } from "./auth/pairing.js";
 import { requireToken } from "./auth/middleware.js";
-import { issueToken, revokeTokensByLabel } from "./auth/tokens.js";
+import { rotateInternalTokens } from "./auth/internal-tokens.js";
 import { authRoutes } from "./routes/auth.js";
-import { chatRoutes } from "./routes/chat.js";
+import { chatRoutes, type AgentDeps } from "./routes/chat.js";
 import { healthRoutes } from "./routes/health.js";
 import { sessionsRoutes } from "./routes/sessions.js";
 import { statusRoutes } from "./routes/status.js";
@@ -28,31 +30,76 @@ import { voiceEngineRoutes } from "./routes/voice-engine.js";
 import { chipsRoutes } from "./routes/chips.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
+import { notesRoutes } from "./routes/notes.js";
+import { visualExplanationRoutes } from "./routes/visual-explanations.js";
+import {
+  buildCapabilitySnapshot,
+  capabilityRoutes,
+  type BrowserReadiness,
+  type CapabilityRouteDeps,
+} from "./routes/capabilities.js";
+import { explorerRoutes } from "./routes/explorer.js";
+import { missionControlRoutes } from "./routes/mission-control.js";
+import { strategyRoutes } from "./routes/strategy.js";
+import { apiNotFound } from "./routes/api-fallback.js";
+import { markStaleExplorerTasksInterrupted } from "./explorer/store.js";
+import { ObservabilityService } from "./observability/store.js";
+import type { ObservabilityParentContext } from "./observability/types.js";
 import { playbooksRoutes } from "./routes/playbooks.js";
 import { watchesRoutes } from "./routes/watches.js";
 import { peopleRoutes } from "./routes/people.js";
 import { startWatchScheduler } from "./watches/scheduler.js";
+import { buildCodexDispatcher } from "./watches/codex-dispatch.js";
 import { ActiveRuns } from "./orchestrator/active-runs.js";
 import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
+import { acquireServerLock } from "./process/server-lock.js";
 import { killTree } from "./process/kill-tree.js";
 import { runRecovery } from "./state/recovery.js";
 import { buildChrome } from "./tools/chrome.js";
 import { buildVoiceClients } from "./tools/voice-clients.js";
+import { DEFAULT_VOICE } from "./routes/voice-defaults.js";
 import { buildDeliverer } from "./push/deliver.js";
 import { buildProvider } from "./orchestrator/llm/factory.js";
 import { bootstrapMemoryDir } from "./memory/bootstrap.js";
+import { MemoryIndexService } from "./memory-index/store.js";
+import { OpenAIMemoryEmbedder } from "./memory-index/embedding.js";
+import { AutoMemoryCaptureCoordinator } from "./memory-index/auto-capture.js";
+import { ActivepiecesWebhookExecutor } from "./automations/activepieces.js";
+import { AutomationPlaybookService, buildAutomationWorkflowRegistrations } from "./automations/playbooks.js";
+import { GeneratedPlaybookService } from "./automations/generated-playbooks.js";
+import { buildGeneratedPlaybookExecutor } from "./automations/generated-playbook-executor.js";
+import { buildOperationsBriefSnapshot } from "./automations/snapshots.js";
+import { buildChromeTools } from "./tools/chrome-mcp.js";
+import { buildInstagramTools } from "./apps/instagram-mcp.js";
+import { GitImprovementCommitSource, ImprovementIndexCoordinator } from "./memory-index/improvement-index.js";
 import { buildClaudeCode } from "./tools/claude-code.js";
 import { reflect } from "./self/reflect.js";
 import { loadSelfKnowledge } from "./self/identity.js";
-import { addWorktree, removeWorktree, pruneOrphanWorktrees } from "./self/worktree.js";
+import {
+  addWorktree,
+  commitWorktreeChanges,
+  reconcileCandidate,
+  preserveCandidateRef,
+  releaseCandidateRef,
+  removeWorktree,
+  pruneOrphanWorktrees,
+} from "./self/worktree.js";
 import { headSha, swapTo, revertTo } from "./self/swap.js";
 import { assertSwapSafe } from "./self/safety-guard.js";
 import { verify } from "./self/verify.js";
 import { flightcheck } from "./self/flightcheck.js";
 import { buildRunner } from "./self/verify-runner.js";
 import { bootSmoke } from "./self/boot-smoke.js";
-import { runImprovement, cancelImprovement, approveImprovement, rejectImprovement, improvementsPaused, type ImproverDeps } from "./self/improver.js";
+import {
+  runImprovement,
+  resumeBlockedImprovement,
+  cancelImprovement,
+  approveImprovement,
+  rejectImprovement,
+  improvementsPaused,
+  type ImproverDeps,
+} from "./self/improver.js";
 import { appendChangelog } from "./self/changelog.js";
 import { recordMistake } from "./self/friction.js";
 import { createIntent, getIntent, listIntents, failStaleIntents } from "./self/intents.js";
@@ -60,17 +107,96 @@ import { createDiscussion, getDiscussion, listDiscussions, failStaleDiscussions 
 import { runDiscussion } from "./self/discuss.js";
 import { appendMessage } from "./state/messages.js";
 import { selfRoutes } from "./routes/self.js";
+import { StrategyRoomStore } from "./strategy/store.js";
+import { StrategyRoomCoordinator } from "./strategy/coordinator.js";
+import { buildCodexConsultant } from "./strategy/codex-consultant.js";
+import { loadUfoExperimentConfig, UfoExperimentService } from "./ufo/experiment.js";
+import { ufoExperimentRoutes } from "./routes/ufo-experiment.js";
+import { getSelfWorkerSelection } from "./self/worker-selection.js";
+import { buildClaudeSelfWorker, buildCodexSelfWorker, buildSelfWorkerRegistry } from "./self/workers.js";
+
+function loadRuntimeBuildId(): string {
+  try {
+    // Read once at process boot. Rebuilding files underneath a live process
+    // must not let that stale process impersonate the newly installed build.
+    return readFileSync(fileURLToPath(new URL("./build-id.txt", import.meta.url)), "utf8").trim() || "unknown";
+  } catch {
+    // `tsx src/index.ts` intentionally has no generated production build ID.
+    return "dev";
+  }
+}
 
 const startedAt = Date.now();
+const runtimeBuildId = loadRuntimeBuildId();
 const cfg = loadConfig();
+// Claim the singleton before opening shared runtime state. On Windows a second
+// listener can briefly reach its callback before EADDRINUSE; the file lock is
+// the authoritative boundary that keeps a losing boot away from live tokens.
+const serverLock = acquireServerLock(join(cfg.dataDir, "ava-server.lock"));
 const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
+let voiceInternalToken = "";
+let watchInternalToken = "";
+const codexDispatcher = buildCodexDispatcher({
+  repoRoot: cfg.repoRoot,
+  logsDir: cfg.logsDir,
+  handoffDir: join(cfg.dataDir, "codex-watch-inbox"),
+});
+const observability = new ObservabilityService(db);
+const ufoExperiment = new UfoExperimentService(db, loadUfoExperimentConfig(process.env, cfg.dataDir), observability);
+const strategyStore = new StrategyRoomStore(db);
+const interruptedStrategyRooms = strategyStore.failInterruptedRooms();
+if (interruptedStrategyRooms > 0) {
+  log.info({ interruptedStrategyRooms }, "strategy: paused rooms orphaned by restart");
+}
+const orphanedMissionRuns = observability.store.markOrphanedRuns();
+const purgedMissionDetails = observability.store.purgeExpiredDetails();
+if (
+  orphanedMissionRuns > 0 ||
+  purgedMissionDetails.compactedRuns > 0 ||
+  purgedMissionDetails.deletedRuns > 0
+) {
+  log.info(
+    { orphanedMissionRuns, purgedMissionDetails },
+    "mission-control: reconciled persisted observability state",
+  );
+}
+const missionRetentionTimer = setInterval(() => {
+  try {
+    const result = observability.store.purgeExpiredDetails();
+    if (result.compactedRuns > 0 || result.deletedRuns > 0) {
+      log.info({ result }, "mission-control: applied retention policy");
+    }
+  } catch (error) {
+    log.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      "mission-control: retention pass failed",
+    );
+  }
+}, 6 * 60 * 60 * 1_000);
+missionRetentionTimer.unref?.();
+const interruptedExplorerTasks = markStaleExplorerTasksInterrupted(db);
+if (interruptedExplorerTasks > 0) {
+  log.info(
+    { interruptedExplorerTasks },
+    "explorer: closed tasks orphaned by restart",
+  );
+}
 // Reconcile self-improvement intents orphaned by a previous restart: nothing is
 // in flight at boot, so any non-terminal intent is dead — mark it failed so it
 // doesn't report as forever-"implementing".
 {
   const reconciled = failStaleIntents(db);
-  if (reconciled > 0) log.info({ reconciled }, "self: failed stale intents orphaned by restart");
+  if (reconciled > 0) log.info({ reconciled }, "self: reconciled stale intents orphaned by restart");
+  for (const intent of listIntents(db).filter((row) => row.status === "blocked" && row.commit_sha)) {
+    try { preserveCandidateRef(cfg.repoRoot, intent.id, intent.commit_sha!); }
+    catch (error) {
+      log.warn(
+        { id: intent.id, err: error instanceof Error ? error.message : String(error) },
+        "self: could not preserve blocked candidate ref",
+      );
+    }
+  }
 }
 // Prune git worktrees/branches leaked by a crash mid-improvement (failStaleIntents
 // only reconciles DB rows; the temp worktree dir + self/<id> branch are left
@@ -96,22 +222,182 @@ await runRecovery({ db, pidfiles, kill: (pid) => killTree(pid) });
 bootstrapMemoryDir({ dir: cfg.memoryDir });
 
 let chromePromise: ReturnType<typeof buildChrome> | null = null;
+let chromeLauncherPromise: Promise<void> | null = null;
+let lastChromeEndpointSuccessAt = 0;
+const CHROME_READINESS_GRACE_MS = 15_000;
+const chromeLauncherPath = fileURLToPath(
+  new URL("../../scripts/start-ava-browser.ps1", import.meta.url),
+);
+
+/**
+ * Run the same visible-browser launcher the owner could double-click. It is
+ * idempotent: when AVA Chrome is already listening, it verifies and foregrounds
+ * the window; otherwise it creates the dedicated profile window.
+ */
+async function runChromeLauncher(): Promise<void> {
+  if (process.platform !== "win32") return;
+  if (chromeLauncherPromise) return chromeLauncherPromise;
+  chromeLauncherPromise = new Promise<void>((resolve, reject) => {
+    execFile(
+      "powershell.exe",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        chromeLauncherPath,
+      ],
+      { timeout: 30_000, windowsHide: true },
+      (error) => error ? reject(error) : resolve(),
+    );
+  }).finally(() => {
+    chromeLauncherPromise = null;
+  });
+  return chromeLauncherPromise;
+}
+
+async function chromeEndpointAlive(
+  cdpUrl: string,
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const endpoint = new URL("/json/version", cdpUrl).toString();
+    const response = await fetch(endpoint, { signal: controller.signal });
+    if (!response.ok) return false;
+    const body = await response.json() as { webSocketDebuggerUrl?: unknown };
+    const alive =
+      typeof body.webSocketDebuggerUrl === "string" &&
+      body.webSocketDebuggerUrl.length > 0;
+    if (alive) lastChromeEndpointSuccessAt = Date.now();
+    return alive;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function chromeEndpointReachable(
+  cdpUrl: string,
+  timeoutMs = 400,
+): Promise<boolean> {
+  let endpoint: URL;
+  try {
+    endpoint = new URL(cdpUrl);
+  } catch {
+    return false;
+  }
+  const port = Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80));
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) return false;
+  const host = endpoint.hostname.replace(/^\[(.*)\]$/, "$1");
+
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const socket = createConnection({ host, port });
+    const finish = (reachable: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(reachable);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+  });
+}
+
 async function getChrome() {
   if (chromePromise) {
     try {
       const existing = await chromePromise;
-      if (existing.isAlive()) return existing;
+      const endpointReady =
+        !cfg.chromeCdpUrl || await chromeEndpointAlive(cfg.chromeCdpUrl, 1_500);
+      if (existing.isAlive() && endpointReady) return existing;
     } catch {
       // build previously rejected — fall through and rebuild
     }
     log.info("chrome window was closed/disconnected — rebuilding");
     chromePromise = null;
   }
+  // A fresh Chrome request runs AVA's launcher herself, creating the dedicated
+  // logged-in CDP window before Playwright attaches.
+  if (cfg.chromeCdpUrl) {
+    try {
+      await runChromeLauncher();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(
+        { err: message },
+        "AVA Chrome launcher failed",
+      );
+      throw new Error(`AVA Chrome launcher failed: ${message}`);
+    }
+  }
   chromePromise = buildChrome({
     profileDir: cfg.chromeProfileDir,
     screenshotDir: cfg.screenshotDir,
+    executablePath: cfg.chromeExecutablePath,
+    cdpUrl: cfg.chromeCdpUrl,
   });
   return chromePromise;
+}
+
+/**
+ * Read-only browser health for the Capability Center. Never launches Chrome:
+ * it checks an already-built context, then the configured local CDP helper.
+ */
+async function browserReadiness(): Promise<BrowserReadiness> {
+  // The PWA's initial WebGL render can briefly delay Chrome's DevTools HTTP
+  // endpoint. Preserve a very recent successful probe so opening Explorer
+  // cannot turn a known-live browser into a false red status while it renders.
+  if (
+    lastChromeEndpointSuccessAt > 0 &&
+    Date.now() - lastChromeEndpointSuccessAt <= CHROME_READINESS_GRACE_MS
+  ) {
+    return { ready: true, mode: "attached" };
+  }
+  if (chromePromise) {
+    try {
+      const existing = await Promise.race([
+        chromePromise,
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 150)),
+      ]);
+      const endpointReady =
+        !cfg.chromeCdpUrl || await chromeEndpointAlive(cfg.chromeCdpUrl);
+      if (existing?.isAlive() && endpointReady) {
+        return { ready: true, mode: "attached" };
+      }
+    } catch {
+      // A rejected prior launch is the state the Capability Center should show.
+    }
+  }
+  const cdp = cfg.chromeCdpUrl?.replace(/\/+$/, "");
+  if (cdp) {
+    // Chrome's DevTools HTTP endpoint can briefly take over a second to answer
+    // while the AVA interface and its WebGL shell are loading. A 900 ms probe
+    // produced false "Chrome unavailable" cards even though the endpoint was
+    // healthy. This remains bounded, but allows a busy local browser to answer.
+    if (await chromeEndpointAlive(cdp, 1_200)) {
+      return { ready: true, mode: "attached" };
+    }
+    // A busy renderer can delay /json/version even while Chrome's dedicated
+    // CDP listener is accepting connections. Preserve that weaker distinction
+    // instead of displaying the browser and every account workflow as offline.
+    if (await chromeEndpointReachable(cdp)) {
+      return { ready: true, mode: "reachable" };
+    }
+  }
+  return { ready: false, mode: "offline" };
+}
+
+// The desktop runtime starts AVA Chrome before Node. Warm the short-lived
+// readiness evidence before accepting UI traffic, when the browser is idle.
+if (cfg.chromeCdpUrl) {
+  await chromeEndpointAlive(cfg.chromeCdpUrl, 2_500);
 }
 // Single-tenant by design: the persistent chromium context is shared across all
 // chat runs in this process. Concurrent runs would race on the same active page;
@@ -142,6 +428,13 @@ const provider = buildProvider({
   anthropicApiKey: cfg.anthropicApiKey,
   log,
 });
+const strategyCoordinator = new StrategyRoomCoordinator({
+  store: strategyStore,
+  provider,
+  codex: buildCodexConsultant({ pidfiles }),
+  repoRoot: cfg.repoRoot,
+  log,
+});
 
 // ─── Self-improvement wiring ─────────────────────────────────────────────
 // claude_code for self-edits runs in a git worktree under the OS temp dir, so
@@ -151,6 +444,10 @@ const selfClaudeCode = buildClaudeCode({
   pidfiles,
   check: (p) => p.startsWith(tmpdir()) ? { ok: true } : { ok: false, reason: "self-improve cwd must be a worktree" },
 });
+const selfWorkers = buildSelfWorkerRegistry([
+  buildClaudeSelfWorker({ claude: selfClaudeCode, timeoutMs: cfg.selfWorkerTimeoutMs }),
+  buildCodexSelfWorker({ pidfiles, timeoutMs: cfg.selfWorkerTimeoutMs }),
+]);
 const selfRunner = buildRunner();
 
 function buildImproverDeps(): ImproverDeps {
@@ -168,14 +465,10 @@ function buildImproverDeps(): ImproverDeps {
         : Promise.resolve("CHANGE: (no LLM provider configured)"),
     addWorktree: (id) => addWorktree(cfg.repoRoot, id),
     removeWorktree: (wt) => removeWorktree(cfg.repoRoot, wt),
-    implement: async (brief, cwd, signal) => {
-      // The edit worker runs in a throwaway worktree (a new directory each run),
-      // and Claude sessions are directory-scoped — so this step does NOT use the
-      // persistent session (resuming it from a different worktree fails). Ava's
-      // persistent chat lives in the stable-cwd advisory/planning conversation.
-      // `signal` lets a Stop/Cancel kill the claude worker mid-edit.
-      const r = await selfClaudeCode.run({ prompt: brief, cwd, runId: nanoid(12), signal });
-      return r.ok ? { ok: true, output: r.output } : { ok: false, output: r.reason };
+    implement: async (workerProvider, brief, cwd, signal) => {
+      // The selected adapter runs only inside the throwaway worktree. Both
+      // providers share the cancellation and downstream release gates.
+      return selfWorkers.run(workerProvider, { brief, cwd, runId: `self-${nanoid(12)}`, signal });
     },
     verify: async (cwd, signal) => {
       const v = await verify({ cwd, run: selfRunner, bootSmoke, signal });
@@ -190,20 +483,10 @@ function buildImproverDeps(): ImproverDeps {
       return { ok: v.ok, log: v.log + fcLine };   // v.ok UNCHANGED — flightcheck NEVER gates the swap
     },
     headSha: () => headSha(cfg.repoRoot),
-    commitWorktree: (cwd, msg) => {
-      execFileSync("git", ["add", "-A"], { cwd });
-      // A no-op implement (the worker reported success but changed nothing) leaves
-      // an empty index — surface that plainly instead of a cryptic git failure.
-      const staged = execFileSync("git", ["status", "--porcelain"], { cwd }).toString().trim();
-      if (!staged) throw new Error("implement produced no changes — the worker reported success but edited nothing");
-      try {
-        execFileSync("git", ["commit", "-m", msg], { cwd, stdio: ["ignore", "pipe", "pipe"] });
-      } catch (e) {
-        const stderr = (e as { stderr?: Buffer }).stderr?.toString().trim();
-        throw new Error(`git commit failed: ${stderr || (e instanceof Error ? e.message : String(e))}`);
-      }
-      return execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
-    },
+    commitWorktree: commitWorktreeChanges,
+    reconcileCandidate,
+    preserveCandidate: (id, sha) => preserveCandidateRef(cfg.repoRoot, id, sha),
+    releaseCandidate: (id) => releaseCandidateRef(cfg.repoRoot, id),
     swapTo: (sha, lastKnownGood) => {
       // HARD GUARD: never hot-swap a change that touches safety-critical code
       // (security/policy/auth, self-improve machinery, approval flow, path
@@ -234,6 +517,16 @@ function buildImproverDeps(): ImproverDeps {
     // history so it doesn't undo past fixes.
     onSwapped: (intent, sha) => {
       appendChangelog(cfg.memoryDir, { summary: intent.goal, commit: sha });
+      // The swap is already committed and verified by the Self pipeline. Feed
+      // that exact commit into the same source-verified index used for every
+      // other AVA product change; failure here never rewrites shipment state.
+      void improvementIndex.indexCommit(sha, {
+        actor: "ava",
+        sourceKind: "self_swap",
+        body: intent.goal,
+      }).catch((error) => {
+        log.warn({ err: error instanceof Error ? error.message : String(error), sha }, "self: improvement indexing deferred to boot reconciliation");
+      });
     },
     // Real failures land in the friction ledger — the overnight loop mines it
     // for grounded goals before inventing new ideas.
@@ -252,11 +545,16 @@ function startImprovement(id: string): void {
   void runImprovement(db, id, buildImproverDeps()).catch((e) =>
     log.error({ err: e instanceof Error ? e.message : String(e), id }, "self-improvement crashed"));
 }
-function queueSelfImprove(goal: string): string {
+async function queueSelfImprove(goal: string): Promise<string> {
   if (improvementsPaused()) {
     throw new Error("self-improvement is paused — Sir can resume it from the Self screen");
   }
-  const id = createIntent(db, { trigger: "explicit", goal });
+  const worker = getSelfWorkerSelection(db);
+  const state = await selfWorkers.availability(worker.provider);
+  if (!state.available) {
+    throw new Error(`${state.label} is unavailable: ${state.reason ?? "CLI not ready"}`);
+  }
+  const id = createIntent(db, { trigger: "explicit", goal, worker });
   startImprovement(id);
   return id;
 }
@@ -297,46 +595,136 @@ function queueDiscussion(topic: string, sessionId: string | null): string {
   return id;
 }
 
-const agentDeps = {
+const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;
+const openai = cfg.openaiApiKey ? new (await import("openai")).default({ apiKey: cfg.openaiApiKey }) : null;
+const improvementCommits = new GitImprovementCommitSource(cfg.repoRoot);
+const memoryIndex = new MemoryIndexService(
+  db,
+  openai
+    ? new OpenAIMemoryEmbedder(openai, process.env.MEMORY_EMBEDDING_MODEL?.trim() || undefined)
+    : null,
+  (sha) => improvementCommits.existsOnCurrentBranch(sha),
+  join(cfg.dataDir, "automation-artifacts"),
+);
+const improvementIndex = new ImprovementIndexCoordinator(memoryIndex, improvementCommits);
+void improvementIndex.reconcileRecent(1_000).then((result) => {
+  log.info({ improvementIndex: result }, "memory: committed AVA improvements reconciled");
+}).catch((error) => {
+  // Search and conversation delivery remain available even if Git evidence is
+  // temporarily unreadable. The next boot retries the same idempotent scan.
+  log.warn({ err: error instanceof Error ? error.message : String(error) }, "memory: improvement reconciliation unavailable");
+});
+const memoryAutoCapture = provider
+  ? new AutoMemoryCaptureCoordinator(db, provider, memoryIndex).consider
+  : undefined;
+
+const agentDeps: AgentDeps = {
   pidfiles,
   fsRoots: cfg.fsRoots,
   memoryDir: cfg.memoryDir,
+  memoryIndex,
+  memoryAutoCapture,
   dataDir: cfg.dataDir,
   getChrome,
   pushDeliver,
   notifyDone,
   provider,  // LLMProvider | null
+  observability,
+  ufoExperiment,
   logsDir: cfg.logsDir,
   // Reliable API integrations — wired only when BOTH/the needed creds are set in .env.
   shopify: cfg.shopifyStore && cfg.shopifyAdminToken
     ? { store: cfg.shopifyStore, token: cfg.shopifyAdminToken } : null,
   googlePlacesApiKey: cfg.googlePlacesApiKey,
+  resolveCodexWatchTarget: codexDispatcher.resolveTarget,
   queueSelfImprove,
   // Discuss-with-Claude: queue a background consult, and read past ones back.
   queueDiscussion,
   listDiscussions: () => listDiscussions(db),
   getDiscussion: (id: string) => getDiscussion(db, id),
+  openStrategyRoomFromSession: (sessionId: string) => strategyCoordinator.createFromSession(sessionId),
   // Lets Ava report the live state of each self-improvement task (queued →
   // reflecting → implementing → verifying → swapped/failed/rolled_back).
   listSelfImprovements: () =>
     listIntents(db).map((r) => ({
-      id: r.id, goal: r.goal, status: r.status, trigger: r.trigger,
+      id: r.id, goal: r.goal, status: r.status, trigger: r.trigger, worker: r.worker_provider,
       error: r.error, outcome: r.outcome, created_at: r.created_at,
       commit: r.commit_sha,
       // The reflect brief (what the change set out to do), trimmed for speech.
       detail: r.diff_summary
-        ? r.diff_summary.replace(/^BRIEF:\s*/, "").split(/\n\nWORKER:/)[0]!.trim().slice(0, 500)
+        ? r.diff_summary.replace(/^BRIEF:\s*/, "").split(/\n\nWORKER(?: \([^)]*\))?:/)[0]!.trim().slice(0, 500)
         : null,
     })),
 };
 
-const anthropic = cfg.anthropicApiKey ? new Anthropic({ apiKey: cfg.anthropicApiKey }) : null;
-const openai = cfg.openaiApiKey ? new (await import("openai")).default({ apiKey: cfg.openaiApiKey }) : null;
-
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
-app.use("/api", healthRoutes(startedAt));
+const capabilityRouteDeps: CapabilityRouteDeps = {
+  db,
+  startedAt,
+  provider: provider?.name ?? null,
+  memoryDir: cfg.memoryDir,
+  browserReadiness,
+  brainModel: provider?.defaultOrchestratorModel ?? "not configured",
+  voiceModel: process.env.REALTIME_MODEL || "gpt-realtime-2.1",
+  voiceName: process.env.REALTIME_VOICE || DEFAULT_VOICE,
+  voiceReady: !!(cfg.openaiApiKey || process.env.HUME_API_KEY),
+  shopifyReady: !!(cfg.shopifyStore && cfg.shopifyAdminToken),
+  googlePlacesReady: !!cfg.googlePlacesApiKey,
+  screenVisionReady: !!cfg.openaiApiKey,
+  pushReady: !!(cfg.vapidPublicKey && cfg.vapidPrivateKey),
+  ufoHealth: () => ufoExperiment.health(),
+};
+
+const activepiecesExecutor = new ActivepiecesWebhookExecutor({
+  enabled: cfg.activepiecesEnabled,
+  systemReportWebhookUrl: cfg.activepiecesSystemReportWebhookUrl,
+  operationsBriefWebhookUrl: cfg.activepiecesOperationsBriefWebhookUrl,
+  approvedActionPlanWebhookUrl: cfg.activepiecesApprovedActionPlanWebhookUrl,
+  webhookToken: cfg.activepiecesWebhookToken,
+  timeoutMs: cfg.activepiecesTimeoutMs,
+});
+const buildSystemAutomationSnapshot = async () => {
+  const current = await buildCapabilitySnapshot(capabilityRouteDeps);
+  return {
+    generatedAt: current.generatedAt,
+    generatedAtIso: new Date(current.generatedAt).toISOString(),
+    ready: current.core.brain.ready && current.core.memory.ready,
+    provider: current.core.brain.provider,
+    core: { brainReady: current.core.brain.ready, voiceReady: current.core.voice.ready,
+      browserReady: current.core.browser.ready, memoryReady: current.core.memory.ready },
+    counts: { preferences: current.core.memory.preferences, observations: current.core.memory.observations,
+      projects: current.core.memory.projects, people: current.core.memory.people,
+      playbooks: current.core.memory.playbooks, watches: current.automations.watches },
+    integrations: { instagram: current.integrations.instagram, whatsapp: current.integrations.whatsapp,
+      shopify: current.integrations.shopify, googlePlaces: current.integrations.googlePlaces,
+      screenVision: current.integrations.screenVision, push: current.integrations.push,
+      microsoftUfoAvailable: current.integrations.microsoftUfo.runtime.dependency === "available"
+        && current.integrations.microsoftUfo.runtime.adapter === "microsoft_ufo" },
+  };
+};
+const automationService = new AutomationPlaybookService(db, activepiecesExecutor, cfg.dataDir,
+  buildAutomationWorkflowRegistrations({
+    systemReportSnapshot: buildSystemAutomationSnapshot,
+    operationsBriefSnapshot: async () => buildOperationsBriefSnapshot(db, await buildSystemAutomationSnapshot()),
+  }), observability, async (recordId) => (await memoryIndex.captureAutomationArtifact({ recordId })).result.entry.id);
+agentDeps.automationService = automationService;
+const generatedPlaybooks = new GeneratedPlaybookService(
+  db,
+  automationService,
+  cfg.memoryDir,
+  buildGeneratedPlaybookExecutor([
+    ...buildChromeTools({ getChrome: agentDeps.getChrome, emit: () => {} }),
+    ...buildInstagramTools({ getChrome: agentDeps.getChrome, memoryDir: cfg.memoryDir }),
+  ]),
+);
+agentDeps.generatedPlaybooks = generatedPlaybooks;
+
+app.use("/api", healthRoutes(startedAt, {
+  provider: provider?.name ?? null,
+  buildId: runtimeBuildId,
+}));
 app.use("/api/auth", authRoutes(db, requireToken(db)));
 app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps, { anthropic, openai }));
 app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
@@ -347,7 +735,20 @@ app.use("/api/chips", chipsRoutes(db, requireToken(db), { memoryDir: cfg.memoryD
 app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
   supported: provider?.name === "openai",
 }));
-app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
+app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir, index: memoryIndex }));
+app.use("/api/notes", notesRoutes(db, requireToken(db), { queueSelfImprove }));
+app.use("/api/visual-explanations", visualExplanationRoutes(db, requireToken(db)));
+app.use("/api/capabilities", capabilityRoutes(requireToken(db), capabilityRouteDeps));
+app.use("/api/explorer", explorerRoutes(requireToken(db), {
+  db,
+  runs,
+  startedAt,
+  memoryDir: cfg.memoryDir,
+  capabilitySnapshot: () => buildCapabilitySnapshot(capabilityRouteDeps),
+}));
+app.use("/api/mission-control", missionControlRoutes(requireToken(db), observability));
+app.use("/api/ufo-experiment", ufoExperimentRoutes(requireToken(db), ufoExperiment));
+app.use("/api/strategy", strategyRoutes(requireToken(db), strategyCoordinator));
 app.use("/api/playbooks", playbooksRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
 app.use("/api/watches", watchesRoutes(db, requireToken(db)));
 app.use("/api/people", peopleRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
@@ -355,8 +756,11 @@ app.use("/api/self", selfRoutes(db, requireToken(db), {
   startImprovement,
   revert: (id) => { const row = getIntent(db, id); if (row?.last_known_good) revertTo(cfg.repoRoot, row.last_known_good); },
   cancel: (id) => cancelImprovement(db, id),
-  approve: (id) => approveImprovement(id),
+  approve: (id, worker) => approveImprovement(id, worker),
   reject: (id) => rejectImprovement(id),
+  headSha: () => headSha(cfg.repoRoot),
+  resumeSwap: (id, expected) => resumeBlockedImprovement(db, id, buildImproverDeps(), expected),
+  workers: selfWorkers,
 }));
 
 const voiceClients = buildVoiceClients({ apiKey: cfg.openaiApiKey });
@@ -370,8 +774,19 @@ app.use("/api", voiceRoutes({
 }));
 // Get/set how Ava's voice is produced (openai | hume).
 app.use("/api/voice/engine", voiceEngineRoutes(db, requireToken(db)));
+// API misses must stay JSON. Without this, a stale/mismatched frontend receives
+// Express's HTML 404 and can only report an opaque JSON parse error.
+app.use("/api", apiNotFound());
 
-app.use("/", statusRoutes({ db, runs, startedAt }));
+app.use("/", statusRoutes({
+  db,
+  runs,
+  startedAt,
+  provider: provider?.name ?? null,
+  memoryDir: cfg.memoryDir,
+  bindAddr: cfg.bindAddr,
+  port: cfg.port,
+}));
 
 const webDistDir = fileURLToPath(new URL("../../web/dist/", import.meta.url));
 app.use("/", express.static(webDistDir));
@@ -381,6 +796,7 @@ async function shutdown(reason: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info({ reason }, "shutting down");
+  strategyCoordinator.shutdown();
   // Stop accepting new connections first so the port frees promptly for the
   // next process (tsx watch / self-dev restart) instead of racing EADDRINUSE.
   try { httpServer.close(); } catch { /* may not be listening yet */ }
@@ -395,6 +811,7 @@ async function shutdown(reason: string) {
   // Pino buffers asynchronously — flush so the shutdown reason actually lands
   // in the log file instead of dying with the process.
   try { (log as unknown as { flush?: () => void }).flush?.(); } catch { /* best-effort */ }
+  serverLock.release();
   process.exit(0);
 }
 process.on("SIGINT", () => void shutdown("SIGINT"));
@@ -413,6 +830,17 @@ process.on("uncaughtException", (err) => {
 });
 
 const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
+  // Rotate only after this process successfully owns the port. A losing hot-
+  // reload process must not revoke the live server's loopback credentials.
+  const internalTokens = rotateInternalTokens(db);
+  voiceInternalToken = internalTokens.voice;
+  watchInternalToken = internalTokens.watch;
+  if (internalTokens.retiredVoice > 0) {
+    log.info({ retired: internalTokens.retiredVoice }, "auth: revoked stale voice-internal tokens at boot");
+  }
+  if (internalTokens.retiredWatch > 0) {
+    log.info({ retired: internalTokens.retiredWatch }, "auth: revoked stale watch-internal tokens at boot");
+  }
   log.info({ port: cfg.port, bind: cfg.bindAddr }, "ava server listening");
   // Long-term monitoring: re-checks standing watches through this server's own
   // /api/chat (full toolset + audit trail in each watch's session). Started
@@ -424,6 +852,8 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
       token: () => watchInternalToken,
       notify: (text) => notifyDone?.(text),
       log,
+      dispatchCodex: codexDispatcher.dispatch,
+      inspectCodex: codexDispatcher.inspect,
     });
   } else {
     log.warn({}, "watch scheduler disabled — no LLM provider");
@@ -439,6 +869,7 @@ httpServer.on("error", (err: NodeJS.ErrnoException) => {
     log.error({ err: err.stack ?? err.message }, "http server error — exiting");
   }
   try { (log as unknown as { flush?: () => void }).flush?.(); } catch { /* best-effort */ }
+  serverLock.release();
   process.exit(1);
 });
 
@@ -455,30 +886,31 @@ httpServer.on("error", (err: NodeJS.ErrnoException) => {
 // realtime model always speaks for the OpenAI engine. The internal token must
 // therefore always exist.
 const hybridVoice = !!process.env.REALTIME_HYBRID;
-// Retire any prior run's internal token(s) before minting this run's, so the
-// device_tokens table holds exactly one live voice-internal credential instead of
-// accumulating an unbounded set of standing god-tokens (one per restart/reload).
-{
-  const retired = revokeTokensByLabel(db, "voice-internal");
-  if (retired > 0) log.info({ retired }, "auth: revoked stale voice-internal tokens at boot");
-}
-const voiceInternalToken = issueToken(db, { label: "voice-internal" }).secret;
-// Same hygiene for the watch scheduler's internal credential.
-{
-  const retired = revokeTokensByLabel(db, "watch-internal");
-  if (retired > 0) log.info({ retired }, "auth: revoked stale watch-internal tokens at boot");
-}
-const watchInternalToken = issueToken(db, { label: "watch-internal" }).secret;
 async function runVoiceAction(
   sessionId: string | null,
   task: string,
   onStep?: (tool: string, args: unknown) => void,
   signal?: AbortSignal,
+  observabilityContext?: ObservabilityParentContext,
 ): Promise<{ text: string; sessionId: string | null }> {
+  if (!voiceInternalToken) throw new Error("voice loopback authentication is not ready");
   const base = `http://127.0.0.1:${cfg.port}`;
   const auth = { authorization: `Bearer ${voiceInternalToken}` };
+  const cancelled = () => {
+    const error = new Error("voice action cancelled");
+    error.name = "AbortError";
+    return error;
+  };
+  const responseFailure = async (response: Response, stage: string) => {
+    let detail = "";
+    try {
+      const body = await response.json() as { error?: string; message?: string };
+      detail = body.error || body.message || "";
+    } catch { /* status is still enough */ }
+    return new Error(`${stage} failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+  };
   // If the voice connection already dropped before we started, don't run at all.
-  if (signal?.aborted) return { text: "", sessionId };
+  if (signal?.aborted) throw cancelled();
   try {
     const postChat = () => fetch(`${base}/api/chat`, {
       method: "POST",
@@ -487,7 +919,12 @@ async function runVoiceAction(
       // the spoken result, so this internal run executes tools but persists nothing
       // (single source of truth for voice turns; no double-store). Independent of
       // `voice` (do NOT overload it): this flag only gates message storage.
-      body: JSON.stringify({ sessionId, text: task, persist: false }),
+      body: JSON.stringify({
+        sessionId,
+        text: task,
+        persist: false,
+        observability: observabilityContext,
+      }),
       signal,
     });
     let post = await postChat();
@@ -498,21 +935,27 @@ async function runVoiceAction(
     if (post.status === 409 && sessionId) {
       await fetch(`${base}/api/chat/${sessionId}/kill`, { method: "POST", headers: auth }).catch(() => {});
       await new Promise((r) => setTimeout(r, 250));
+      if (signal?.aborted) throw cancelled();
       post = await postChat();
     }
-    const started = (await post.json()) as { sessionId?: string };
+    if (!post.ok) throw await responseFailure(post, "action start");
+    const started = (await post.json()) as { sessionId?: string; taskId?: string };
     const sid = started.sessionId ?? sessionId;
-    if (!sid) return { text: "I couldn't start that, Sir.", sessionId };
+    if (!sid) throw new Error("action start returned no session");
     // If the voice connection drops mid-run, kill the loopback run so it stops
     // executing tools (and frees the shared browser) instead of finishing into a
     // dead socket — the zombie-run fix.
     const killOnAbort = () => { void fetch(`${base}/api/chat/${sid}/kill`, { method: "POST", headers: auth }).catch(() => {}); };
     signal?.addEventListener("abort", killOnAbort, { once: true });
-    const res = await fetch(`${base}/api/chat/${sid}/stream`, { headers: auth, signal });
+    const streamUrl = `${base}/api/chat/${sid}/stream`
+      + (started.taskId ? `?taskId=${encodeURIComponent(started.taskId)}` : "");
+    const res = await fetch(streamUrl, { headers: auth, signal });
+    if (!res.ok) throw await responseFailure(res, "action stream");
     const reader = res.body?.getReader();
-    if (!reader) return { text: "Done.", sessionId: sid };
+    if (!reader) throw new Error("action stream returned no readable body");
     const decoder = new TextDecoder();
     let buf = "", curEvent = "", finalText = "", stop = false;
+    let terminal: "completed" | "failed" | "cancelled" | null = null;
     while (!stop) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -523,10 +966,21 @@ async function runVoiceAction(
         if (line.startsWith("event:")) curEvent = line.slice(6).trim();
         else if (line.startsWith("data:")) {
           const data = line.slice(5).trim();
-          if (curEvent === "final") { try { finalText = (JSON.parse(data) as { text: string }).text; } catch { /* */ } stop = true; }
+          if (curEvent === "final") {
+            try { finalText = (JSON.parse(data) as { text: string }).text; } catch { /* */ }
+            terminal = "completed";
+            stop = true;
+          }
           else if (curEvent === "tool_call") { try { const p = JSON.parse(data) as { tool: string; args?: unknown }; onStep?.(p.tool, p.args); } catch { /* */ } }
-          else if (curEvent === "error") { try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ } stop = true; }
-          else if (curEvent === "killed") stop = true;
+          else if (curEvent === "error") {
+            try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ }
+            terminal = "failed";
+            stop = true;
+          }
+          else if (curEvent === "killed") {
+            terminal = "cancelled";
+            stop = true;
+          }
           // approval_required no longer stalls voice: the policy auto-approves
           // after the 15s veto window, so we keep reading and speak the result.
         }
@@ -534,10 +988,21 @@ async function runVoiceAction(
     }
     try { await reader.cancel(); } catch { /* */ }
     signal?.removeEventListener("abort", killOnAbort); // ran to completion — don't kill on a later close
-    return { text: finalText || "Done.", sessionId: sid };
+    if (signal?.aborted || terminal === "cancelled") throw cancelled();
+    if (terminal === "failed") {
+      return {
+        text: finalText || "That didn't work, Sir — the action stream failed without an error message.",
+        sessionId: sid,
+      };
+    }
+    if (terminal !== "completed" || !finalText.trim()) {
+      throw new Error("action ended without a final, verifiable result");
+    }
+    return { text: finalText, sessionId: sid };
   } catch (e) {
-    // An abort surfaces here as an AbortError; the connection is gone, so the
-    // (now-empty) result is never spoken anyway.
+    if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) {
+      throw cancelled();
+    }
     return { text: `That didn't work, Sir — ${e instanceof Error ? e.message : String(e)}`, sessionId };
   }
 }
@@ -555,6 +1020,9 @@ const realtimeProxy = buildRealtimeProxy({
   apiKey: cfg.openaiApiKey,
   memoryDir: cfg.memoryDir,
   runAction: runVoiceAction,
+  memoryIndex,
+  memoryAutoCapture,
+  observability,
   voice: process.env.REALTIME_VOICE || undefined,
   providerConfig: resolveVoiceProvider(),
   log,
@@ -570,6 +1038,6 @@ try {
 } catch (e) {
   log.warn(
     { err: e instanceof Error ? e.message : String(e) },
-    "systray failed to start — server still running. Mint a pairing code with: npm -w server run pair",
+    "systray failed to start — server still running. Mint a pairing code with: npm.cmd -w server run pair",
   );
 }

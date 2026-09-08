@@ -102,10 +102,19 @@ Things worth noting from the diagram:
 
 1. **New chat, no id.** From home: `onOpenChat(null)` (the "New" nav item) or `onCommand(text)` (the command bar) opens `{ name: "chat", sessionId: null, initialText? }`. Inside `ChatScreen`, the first `send()` POSTs with `sessionId: null`; the server replies `{ sessionId }`, which the screen stores in local state (`ChatScreen.tsx:144-146`).
 2. **Opening an existing chat.** `onOpenChat(sid)` from the chat list passes a real id; `ChatScreen` fetches its history and adopts that id (`ChatScreen.tsx:49-61`).
-3. **Chat → voice.** `chat`'s `onEnterVoice` builds `{ name: "voice", from: "chat", sessionId: view.sessionId }` (`App.tsx:115`) — the **current** session id is handed to voice, so spoken turns continue the same conversation.
+3. **Chat → voice.** `ChatScreen` passes its own current session id through
+   `onEnterVoice`. If it has already sent a typed turn, voice resumes that exact
+   ID. If the New chat is still blank, `App` passes `startFresh=true`; voice asks
+   the server to create a new session rather than applying the Home-orb
+   resume-latest fallback.
 4. **Voice → chat.** On exit/keyboard-switch, `VoiceScreen` calls back with the (possibly newly-created) session id, and `App.tsx:131-134` reopens `chat` with it. So a conversation can start typed, continue spoken, and return to typed without losing thread.
 
-> Important subtlety: the `view.sessionId` carried in `App` and the `sessionId` held *inside* `ChatScreen` are two different variables. `App` passes its value in as the `requestedSessionId` prop; `ChatScreen` keeps its own `sessionId` state and updates it after the first send. When you open a brand-new chat and send a message, `App.view.sessionId` stays `null` (App never hears about the new id) — only `ChatScreen` knows the real id. That's why **chat→voice from a freshly-created, never-reopened chat passes `null`**, and voice has to create/adopt its own session. This is a real edge in the current design, called out here so it isn't mistaken for a bug.
+> Important subtlety: `App.view.sessionId` and `ChatScreen`'s local `sessionId`
+> are different variables. The mic callback deliberately sends the local value,
+> so a typed New chat keeps its server-assigned ID without remounting the running
+> chat. Only a genuinely blank New chat sends `null`; its origin is carried
+> separately as `startFresh`, preventing it from being mistaken for Home-orb
+> resume-latest entry.
 
 ---
 
@@ -117,7 +126,7 @@ Two animation systems cooperate, and the split is deliberate.
 
 A load-bearing comment at `App.tsx:81-84` explains why there is **no `mode="wait"`**: the home and voice screens run *infinite* CSS animations (nebula drift, orb morph) that never fire an exit-complete, so `mode="wait"` would block the next view from ever mounting (panels appeared "dead/black"). Default concurrent mode cross-fades instead.
 
-**The deck nav is persistent.** The `TubelightNav` pill is mounted **once, outside** the `AnimatePresence`; it fades/lifts out only on the immersive hero views (splash/voice, via `showNav`) and tracks the current view through `NAV_FOR_VIEW`. As of commit `b4e6ada` **chat is included** — `NAV_FOR_VIEW.chat = "New"` (`App.tsx:72`), so the nav now shows on chat too and chat no longer renders its own header. Because it never unmounts across panel swaps, the cyan "lamp" springs smoothly between items, and panels/chat no longer render an in-panel back button — the nav handles navigation.
+**The app sidebar is persistent.** `AppSidebar` is mounted once outside `AnimatePresence` and becomes inert only for immersive Splash and Voice. Its collapsed rail holds stable product destinations; its expanded state adds the current-chat shortcut and authenticated recent conversations. `ChatScreen.onSessionChange` lifts the canonical server session into `App`, which stores only the opaque ID and restores it after reload. Desktop expansion moves `.ava-app-stage`; narrow expansion overlays it behind a dismiss scrim. See [Persistent sidebar navigation](../features/persistent-sidebar-navigation.md).
 
 **GSAP Flip** owns the **shared Orb**. The mercury orb carries a stable `flipId="ava-orb"` on `splash`, `orbit`, `voice`, and — since commit `b4e6ada` — `chat` via the **`ThinkingIndicator`** (the old chat header avatar that used to carry it is gone with the header). The `useLayoutEffect` at `App.tsx:39-59` snapshots the orb's geometry before a view change and `Flip.from(...)` animates it from its old position/size to its new one — so the orb *flies* between surfaces (splash center → home hero → chat thinking row → voice hero) instead of cutting. On chat the orb only exists while the thinking row is mounted, so `document.querySelector` returns null otherwise and the Flip cleanly degrades. **Exactly one element may carry `flipId="ava-orb"` at a time** — see the [Premium Chat feature doc](../features/premium-chat.md) for that invariant. Guards:
 
@@ -447,8 +456,22 @@ A small shadcn-style kit — `button`, `card`, `textarea`, `badge`, `dialog` (Ra
 
 ## Unresolved questions / notes for follow-up
 
-1. **`view.sessionId` vs. `ChatScreen.sessionId` divergence.** As detailed in §2, opening a brand-new chat and then going to voice passes `null` (App never learns the id `ChatScreen` created). Voice has to create/adopt its own session. Is that intended, or should `ChatScreen` lift the new id back up to `App` so chat→voice always continues the same thread? (I documented it as a known edge, not a bug, but it's worth a decision.)
+1. **Resolved: `view.sessionId` vs. `ChatScreen.sessionId`.** Chat keeps its server-assigned ID locally to avoid a keyed remount, but the mic callback now passes that exact local ID to voice. A new typed chat therefore continues in the same session when its input mode changes.
 2. **`VoiceScreen` is out of this doc's scope** but is a first-class node in the navigation state machine (it owns the `from`/`sessionId` return logic). A dedicated voice-frontend doc should cover the realtime WS, mic amplitude → orb, and the `openai`/`hume` engine handling.
 3. **Like/Dislike are client-only.** `MessageActions` toggles reaction state locally but no feedback endpoint is called. If this is meant to train/inform Ava, the wiring is missing.
 4. **`SessionsScreen.tsx` is dead code.** Recommend deleting it (or noting it as deprecated) to avoid confusion, since `ChatListScreen` fully replaces it.
 5. **Reasoning `supported` flag.** The Rules UI degrades gracefully when `supported:false`, but the exact set of models that report `false` isn't visible from the client; that lives server-side (`/api/reasoning`).
+
+### Voice/chat handoff correction (2026-08-27)
+
+The former `view.sessionId` / `ChatScreen.sessionId` divergence is no longer a
+voice continuity edge. `ChatScreen` now invokes `onEnterVoice` with its canonical
+local session ID, so a freshly created chat never hands the stale route-level
+`null` to voice. Voice also closes its socket and media resources on explicit
+navigation and unmount. `App` still avoids lifting the new ID during a running
+chat because doing so would change the keyed view and remount the live stream.
+For a still-blank New chat, `null` is intentional and paired with `startFresh`;
+for Home-orb voice, `null` intentionally retains resume-latest behavior.
+When returning from voice, the requested session ID is also used by the mic
+button during asynchronous history hydration, closing the rapid re-entry window
+where local chat state has not adopted it yet.

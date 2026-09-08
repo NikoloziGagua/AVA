@@ -1,6 +1,7 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Db } from "../state/db.js";
 import { createWatch, listWatches, deleteWatch } from "../state/watches.js";
+import type { CodexWatchTarget } from "../watches/codex-dispatch.js";
 
 // Watch tools — how "notify me if the RTX 5090 drops below $1800" becomes a
 // standing background check. Ava creates the watch herself in the same turn;
@@ -8,7 +9,7 @@ import { createWatch, listWatches, deleteWatch } from "../state/watches.js";
 
 type ToolDef = { tool: Tool; run: (args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }> };
 
-export function buildWatchTools(o: { db: Db }): ToolDef[] {
+export function buildWatchTools(o: { db: Db; resolveCodexTarget?: () => CodexWatchTarget | null }): ToolDef[] {
   return [
     {
       tool: {
@@ -21,19 +22,25 @@ export function buildWatchTools(o: { db: Db }): ToolDef[] {
           "(2) MONITOR: a check that re-runs every interval_minutes and push-notifies when its " +
           "condition is met (price drops, site changes, news). prompt must be self-contained " +
           "(runs without conversation context). Be frugal: every check is a real agent run. " +
-          "(3) DAILY: daily_at='HH:MM' runs the prompt once per day at that time (e.g. a " +
-          "morning briefing). Args: { prompt, kind?: 'check'|'reminder', interval_minutes?, " +
-          "run_in_minutes?, at_local?, daily_at?, once? (default true; ignored for daily) }.",
+          "(3) DAILY: daily_at='HH:MM' runs the prompt once per day at that time (e.g. a morning briefing). " +
+          "(4) CODEX: kind='codex' pins the newest Codex TUI thread for AVA's repo, submits one sanitized " +
+          "message through Codex's acknowledged exact-thread queue, and verifies the unique marker appeared and " +
+          "completed without terminal keystrokes or a competing Codex writer. Set continue_cycle=true " +
+          "only when Sir explicitly authorized AVA to select a successor task. Args: { prompt, kind?: " +
+          "'check'|'reminder'|'codex', interval_minutes?, run_in_minutes?, at_local?, daily_at?, once?, " +
+          "continue_cycle?, parent_watch_id? }.",
         inputSchema: {
           type: "object",
           properties: {
             prompt: { type: "string", description: "Check+condition (self-contained), or the reminder text itself." },
-            kind: { type: "string", enum: ["check", "reminder"], description: "reminder = direct push, no agent run." },
+            kind: { type: "string", enum: ["check", "reminder", "codex"], description: "codex = verified delivery into a pinned Codex thread." },
             interval_minutes: { type: "number", description: "Monitor mode: minutes between checks (>=5 recommended)." },
             run_in_minutes: { type: "number", description: "One-shot: fire this many minutes from now." },
             at_local: { type: "string", description: "One-shot: fire at next 'HH:MM' (24h local)." },
             daily_at: { type: "string", description: "Recurring: fire every day at 'HH:MM' (24h local)." },
             once: { type: "boolean", description: "Monitor mode: disable after first trigger (default true)." },
+            continue_cycle: { type: "boolean", description: "Codex only: ask AVA to select and schedule the next bounded AVA task after completion." },
+            parent_watch_id: { type: "string", description: "Codex cycle only: predecessor ID used to prevent duplicate successor watches." },
           },
           required: ["prompt"],
         },
@@ -41,7 +48,7 @@ export function buildWatchTools(o: { db: Db }): ToolDef[] {
       run: async (args) => {
         const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
         if (!prompt) return { ok: false, text: "watch_create needs a non-empty prompt" };
-        const kind = args.kind === "reminder" ? "reminder" as const : "check" as const;
+        const kind = args.kind === "reminder" ? "reminder" as const : args.kind === "codex" ? "codex" as const : "check" as const;
         let runAt: number | undefined;
         if (Number.isFinite(Number(args.run_in_minutes)) && Number(args.run_in_minutes) > 0) {
           runAt = Date.now() + Number(args.run_in_minutes) * 60_000;
@@ -57,15 +64,25 @@ export function buildWatchTools(o: { db: Db }): ToolDef[] {
           return { ok: false, text: "need one schedule: run_in_minutes / at_local / daily_at / interval_minutes" };
         }
         try {
+          const target = kind === "codex" ? o.resolveCodexTarget?.() ?? null : null;
+          if (kind === "codex" && !target) {
+            return { ok: false, text: "no active Codex TUI thread for the AVA repository could be pinned" };
+          }
           const w = createWatch(o.db, {
             prompt, kind, runAt, dailyAt,
             intervalMinutes: Number.isFinite(interval) ? interval : undefined,
             once: args.once !== false,
+            target: target ?? undefined,
+            continueCycle: kind === "codex" && args.continue_cycle === true,
+            parentWatchId: kind === "codex" && typeof args.parent_watch_id === "string" && args.parent_watch_id.trim()
+              ? args.parent_watch_id.trim()
+              : undefined,
           });
           const when = runAt
             ? `once at ${new Date(runAt).toLocaleString()}`
             : dailyAt ? `daily at ${dailyAt}` : `every ${w.interval_minutes}min${w.once ? ", stops after first trigger" : ""}`;
-          return { ok: true, text: `${kind === "reminder" ? "reminder" : "watch"} created (${w.id}) — ${when}.` };
+          const pin = kind === "codex" ? ` Pinned Codex thread ${w.target_thread_id}.` : "";
+          return { ok: true, text: `${kind === "reminder" ? "reminder" : kind === "codex" ? "Codex watch" : "watch"} created (${w.id}) — ${when}.${pin}` };
         } catch (e) {
           return { ok: false, text: e instanceof Error ? e.message : String(e) };
         }
@@ -86,7 +103,10 @@ export function buildWatchTools(o: { db: Db }): ToolDef[] {
               : `every ${w.interval_minutes}min`;
         const lines = all.map((w) =>
           `${w.id} [${w.enabled ? "on" : "off"}] ${w.kind} ${sched(w)} — ${w.prompt.slice(0, 100)}` +
-          (w.last_status ? ` | last: ${w.last_status}${w.last_result ? ` (${w.last_result.slice(0, 80)})` : ""}` : " | never run"));
+          (w.last_status ? ` | last: ${w.last_status}${w.last_result ? ` (${w.last_result.slice(0, 80)})` : ""}` : " | never run") +
+          (w.kind === "codex" && w.continue_cycle && w.successor_status
+            ? ` | next: ${w.successor_status}${w.successor_result ? ` (${w.successor_result.slice(0, 120)})` : ""}`
+            : ""));
         return { ok: true, text: lines.join("\n") };
       },
     },

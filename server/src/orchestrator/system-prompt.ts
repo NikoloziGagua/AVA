@@ -4,6 +4,12 @@ import { autoPruneObservations, SOFT_CAPS } from "../memory/budgets.js";
 import { bootstrapMemoryDir } from "../memory/bootstrap.js";
 import { TOOL_RUBRIC } from "./tool-rubric.js";
 import { CAPABILITIES_MD } from "./capabilities-content.js";
+import {
+  PERSONA_COLLABORATION_CONTRACT,
+  PERSONA_REGISTER_GUIDE,
+  buildActivePersonaRegister,
+  type PersonaChannel,
+} from "../persona/runtime.js";
 
 export type BuildSystemPromptOpts = {
   memoryDir: string;
@@ -30,6 +36,8 @@ export type BuildSystemPromptOpts = {
    * outside the allowlist. Config-fixed, so it stays byte-stable across turns.
    */
   fsRoots?: string[];
+  /** Closed-enum delivery context derived from the literal current user turn. */
+  personaContext?: { userText: string; channel: PersonaChannel };
 };
 
 function isoToday(): string {
@@ -76,6 +84,11 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
   // memory write invalidates only the tail of the prompt-cache prefix instead of
   // busting the ~6k chars of static rubric that used to sit behind observations.
   if (persona.trim()) layers.push(persona.replace(/\s+$/, "") + "\n");
+  // Identity, collaboration and context selection are deliberately separate.
+  // The latter two are code-owned behavioral guidance and cannot grant tools or
+  // permissions. Keeping them static here preserves the prompt-cache prefix.
+  layers.push(PERSONA_COLLABORATION_CONTRACT);
+  layers.push(PERSONA_REGISTER_GUIDE);
   // Canonical capability map — present in both modes so Ava recalls its own reach
   // in voice/conversation as well as action. Skipped in `compact` (Hume voice) —
   // the model there can't run tools, so the 4.4k map is dead prefill.
@@ -91,6 +104,14 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
   if (observations.trim()) layers.push(block("Observations", observations));
   if (opts.projectContext && opts.projectContext.trim()) {
     layers.push(block("Project context", opts.projectContext));
+  }
+  // Only the selected register is dynamic. Raw user text never enters this
+  // system layer; it selects one closed enum and remains a normal user message.
+  if (opts.personaContext) {
+    layers.push(buildActivePersonaRegister({
+      text: opts.personaContext.userText,
+      channel: opts.personaContext.channel,
+    }));
   }
 
   return layers.join("\n");

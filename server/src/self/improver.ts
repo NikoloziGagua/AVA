@@ -1,5 +1,14 @@
 import type { Db } from "../state/db.js";
-import { getIntent, updateIntent, type Intent } from "./intents.js";
+import {
+  getIntent,
+  updateIntent,
+  type ImprovementCancellationSource,
+  type Intent,
+} from "./intents.js";
+import type { SelfWorkerProvider, SelfWorkerSelection } from "./worker-selection.js";
+import { buildSelfWorkerExecutionPrompt, sanitizeWorkerEvidence } from "./workers.js";
+import { SwapBlockedError } from "./swap.js";
+import { CandidateReconcileError } from "./worktree.js";
 
 export type ImproverDeps = {
   reflect: (goal: string, failureLog: string | null, signal?: AbortSignal) => Promise<string>;
@@ -10,12 +19,17 @@ export type ImproverDeps = {
   /** Fired when an improvement parks at awaiting_approval — used to push the user so
    *  they know a plan is waiting for review. `plan` is the drafted change brief. */
   onAwaitingApproval?: (id: string, plan: string) => void;
-  addWorktree: (id: string) => { path: string; branch: string };
-  removeWorktree: (wt: { path: string; branch: string }) => void;
-  implement: (brief: string, cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; output: string }>;
+  addWorktree: (id: string) => { path: string; branch: string; baseSha?: string };
+  removeWorktree: (wt: { path: string; branch: string; baseSha?: string }) => void;
+  implement: (provider: SelfWorkerProvider, brief: string, cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; output: string }>;
   verify: (cwd: string, signal?: AbortSignal) => Promise<{ ok: boolean; log: string }>;
   headSha: () => string;
-  commitWorktree: (cwd: string, msg: string) => string;
+  commitWorktree: (cwd: string, msg: string, baseSha: string) => string;
+  /** Reapply an approved candidate onto a recovery worktree created from the
+   * current HEAD. Required only when HEAD advanced after original verification. */
+  reconcileCandidate?: (cwd: string, originalBaseSha: string, candidateSha: string) => string;
+  preserveCandidate?: (id: string, sha: string) => void;
+  releaseCandidate?: (id: string) => void;
   /** Move the live tree to the verified commit. `lastKnownGood` is the pre-swap
    *  HEAD; the binding uses it to refuse a swap whose diff touches
    *  safety-critical code (Ava must not hot-swap a weakening of its guardrails). */
@@ -26,7 +40,7 @@ export type ImproverDeps = {
    *  `swapped` is the commit the swap moved HEAD to, so the watchdog can SKIP the
    *  rollback if newer work was committed on top in the meantime. */
   watch: (knownGood: string, swapped: string) => Promise<void>;
-  emit: (e: { intentId: string; step: string; ok?: boolean }) => void;
+  emit: (e: { intentId: string; step: string; ok?: boolean; provider?: SelfWorkerProvider }) => void;
   /** Fired after a successful swap — bindings append the self-changelog here so
    *  Ava keeps a cheap, durable record of how she has changed. */
   onSwapped?: (intent: Intent, sha: string) => void;
@@ -50,9 +64,17 @@ const pending: string[] = []; // intents waiting their turn (FIFO), drained on c
 // Stop). A pending (not-yet-running) improvement has no controller — it's cancelled
 // by removing it from `pending`.
 const controllers = new Map<string, AbortController>();
+const cancellationSources = new Map<string, ImprovementCancellationSource>();
 // Resolver per improvement currently parked at awaiting_approval. approve/reject (or
 // a cancel via the abort signal) settles the promise the run is blocked on.
-const planDecisions = new Map<string, (approved: boolean) => void>();
+type PlanDecision =
+  | { approved: true; worker: SelfWorkerSelection }
+  | { approved: false };
+const planDecisions = new Map<string, (decision: PlanDecision) => void>();
+
+export type ResumeBlockedResult =
+  | { ok: true; status: "started" }
+  | { ok: false; error: "not_found" | "not_blocked" | "candidate_missing" | "stale_candidate" | "stale_head" | "busy"; currentHead?: string; currentCandidate?: string | null; status?: string };
 
 /** True if any self-improvement is running or queued. */
 export function hasActiveImprovement(): boolean {
@@ -61,10 +83,10 @@ export function hasActiveImprovement(): boolean {
 
 /** Approve a plan parked at awaiting_approval → the run proceeds to implement.
  *  Returns true if an improvement was actually waiting for this id. */
-export function approveImprovement(id: string): boolean {
+export function approveImprovement(id: string, worker: SelfWorkerSelection): boolean {
   const decide = planDecisions.get(id);
   if (!decide) return false;
-  decide(true);
+  decide({ approved: true, worker });
   return true;
 }
 
@@ -72,20 +94,39 @@ export function approveImprovement(id: string): boolean {
 export function rejectImprovement(id: string): boolean {
   const decide = planDecisions.get(id);
   if (!decide) return false;
-  decide(false);
+  decide({ approved: false });
   return true;
+}
+
+function cancellationText(source: ImprovementCancellationSource): string {
+  if (source === "self_stop") return "cancelled from Self";
+  if (source === "global_stop") return "cancelled by global Stop";
+  return "cancelled by the system";
 }
 
 /** Cancel one self-improvement by id — whether it's the running one (abort its
  *  signal, which propagates into reflect/implement/verify) or a queued one (drop
  *  it from the FIFO). Returns true if something was cancelled. */
-export function cancelImprovement(db: Db, id: string): boolean {
+export function cancelImprovement(
+  db: Db,
+  id: string,
+  source: ImprovementCancellationSource = "self_stop",
+): boolean {
   const ac = controllers.get(id);
-  if (ac) { try { ac.abort(); } catch { /* */ } return true; }
+  if (ac) {
+    cancellationSources.set(id, source);
+    try { ac.abort(); } catch { /* */ }
+    return true;
+  }
   const i = pending.indexOf(id);
   if (i >= 0) {
     pending.splice(i, 1);
-    updateIntent(db, id, { status: "failed", outcome: "cancelled", error: "cancelled before it started" });
+    updateIntent(db, id, {
+      status: "failed",
+      outcome: "cancelled",
+      cancellation_source: source,
+      error: `${cancellationText(source)} before it started`,
+    });
     return true;
   }
   return false;
@@ -93,15 +134,145 @@ export function cancelImprovement(db: Db, id: string): boolean {
 
 /** Cancel EVERY running and queued self-improvement (the global Stop — what the red
  *  button reaches for). Returns how many were cancelled. */
-export function cancelAllImprovements(db: Db): number {
+export function cancelAllImprovements(
+  db: Db,
+  source: ImprovementCancellationSource = "global_stop",
+): number {
   let n = 0;
-  for (const ac of controllers.values()) { try { ac.abort(); } catch { /* */ } n++; }
+  for (const [id, ac] of controllers) {
+    cancellationSources.set(id, source);
+    try { ac.abort(); } catch { /* */ }
+    n++;
+  }
   while (pending.length) {
     const id = pending.shift()!;
-    updateIntent(db, id, { status: "failed", outcome: "cancelled", error: "cancelled" });
+    updateIntent(db, id, {
+      status: "failed",
+      outcome: "cancelled",
+      cancellation_source: source,
+      error: cancellationText(source),
+    });
     n++;
   }
   return n;
+}
+
+function drainNext(db: Db, deps: ImproverDeps): void {
+  const next = pending.shift();
+  if (next) void runImprovement(db, next, deps);
+}
+
+/** Claim and asynchronously resume installation of one preserved, verified
+ * candidate. Candidate SHA and repository HEAD are explicit stale guards from
+ * the Self UI; no provider is re-run and no approval boundary is reopened. */
+export function resumeBlockedImprovement(
+  db: Db,
+  id: string,
+  deps: ImproverDeps,
+  expected: { candidateSha: string; headSha: string },
+): ResumeBlockedResult {
+  const intent = getIntent(db, id);
+  if (!intent) return { ok: false, error: "not_found" };
+  if (intent.status !== "blocked") {
+    return { ok: false, error: "not_blocked", status: intent.status };
+  }
+  if (!intent.commit_sha || !intent.last_known_good) {
+    return { ok: false, error: "candidate_missing", currentCandidate: intent.commit_sha };
+  }
+  if (intent.commit_sha !== expected.candidateSha) {
+    return { ok: false, error: "stale_candidate", currentCandidate: intent.commit_sha };
+  }
+  const currentHead = deps.headSha();
+  if (currentHead !== expected.headSha) {
+    return { ok: false, error: "stale_head", currentHead };
+  }
+  if (inFlight || pending.length > 0) return { ok: false, error: "busy" };
+
+  inFlight = true;
+  const ac = new AbortController();
+  controllers.set(id, ac);
+  updateIntent(db, id, { status: "recovering", error: null, cancellation_source: null });
+  deps.emit({ intentId: id, step: "recovering", provider: intent.worker_provider });
+  void runBlockedRecovery(db, intent, currentHead, deps, ac).catch(() => { /* state is settled inside */ });
+  return { ok: true, status: "started" };
+}
+
+async function runBlockedRecovery(
+  db: Db,
+  original: Intent,
+  knownGood: string,
+  deps: ImproverDeps,
+  ac: AbortController,
+): Promise<void> {
+  const { id } = original;
+  const signal = ac.signal;
+  let wt: { path: string; branch: string; baseSha?: string } | null = null;
+  let candidate = original.commit_sha!;
+  try {
+    deps.preserveCandidate?.(id, candidate);
+    if (knownGood !== original.last_known_good) {
+      if (!deps.reconcileCandidate) throw new Error("candidate recovery is unavailable in this runtime");
+      wt = deps.addWorktree(`${id}-recovery`);
+      if (wt.baseSha !== knownGood) {
+        throw new SwapBlockedError("stale_head", "swap blocked: repository HEAD changed while recovery worktree was created");
+      }
+      candidate = deps.reconcileCandidate(wt.path, original.last_known_good!, candidate);
+      if (signal.aborted) throw new Error("cancelled");
+      updateIntent(db, id, { status: "verifying", branch: wt.branch });
+      deps.emit({ intentId: id, step: "verifying", provider: original.worker_provider });
+      const verification = await deps.verify(wt.path, signal);
+      updateIntent(db, id, { verify_log: verification.log });
+      if (!verification.ok) throw new Error(verification.log);
+      if (signal.aborted) throw new Error("cancelled");
+      updateIntent(db, id, {
+        status: "recovering",
+        commit_sha: candidate,
+        last_known_good: knownGood,
+        branch: wt.branch,
+        outcome: "reconciled and re-verified; installation pending",
+      });
+      deps.preserveCandidate?.(id, candidate);
+    }
+
+    deps.swapTo(candidate, knownGood);
+    deps.emit({ intentId: id, step: "swapped", ok: true });
+    updateIntent(db, id, { status: "swapped", outcome: "shipped", error: null });
+    deps.releaseCandidate?.(id);
+    const shipped = getIntent(db, id) ?? original;
+    try { deps.onSwapped?.(shipped, candidate); } catch { /* changelog is best-effort */ }
+    void deps.watch(knownGood, candidate);
+    await deps.restart();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (signal.aborted) {
+      const source = cancellationSources.get(id) ?? "system_abort";
+      updateIntent(db, id, {
+        status: "blocked",
+        outcome: "verified candidate preserved",
+        cancellation_source: source,
+        error: `${cancellationText(source)} during safe installation; candidate preserved`,
+      });
+      deps.emit({ intentId: id, step: "blocked", ok: false });
+    } else if (error instanceof SwapBlockedError || error instanceof CandidateReconcileError) {
+      updateIntent(db, id, {
+        status: "blocked",
+        outcome: "verified candidate preserved",
+        error: message,
+      });
+      deps.emit({ intentId: id, step: "blocked", ok: false });
+    } else {
+      updateIntent(db, id, { status: "failed", error: message });
+      deps.releaseCandidate?.(id);
+      deps.emit({ intentId: id, step: "failed", ok: false });
+      try { deps.onFailed?.(original, message); } catch { /* ledger is best-effort */ }
+    }
+  } finally {
+    controllers.delete(id);
+    cancellationSources.delete(id);
+    if (wt) deps.removeWorktree(wt);
+    inFlight = false;
+    drainNext(db, deps);
+  }
 }
 
 export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Promise<void> {
@@ -118,60 +289,87 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
   controllers.set(id, ac);
   const signal = ac.signal;
   const throwIfAborted = () => { if (signal.aborted) throw new Error("cancelled"); };
-  const intent = getIntent(db, id)!;
-  let wt: { path: string; branch: string } | null = null;
+  let intent = getIntent(db, id)!;
+  let wt: { path: string; branch: string; baseSha?: string } | null = null;
   try {
     throwIfAborted();
     updateIntent(db, id, { status: "reflecting" }); deps.emit({ intentId: id, step: "reflecting" });
     const brief = await deps.reflect(intent.goal, null, signal);
     throwIfAborted();
+    const approvalRequired = deps.requireApproval?.(intent) ?? false;
 
     // PLAN GATE: user-triggered improvements show the drafted plan and wait for the
     // user to approve it BEFORE any code is written — so nothing runs away unseen.
     // (The unattended overnight loop sets requireApproval=false and skips this.)
-    if (deps.requireApproval?.(intent)) {
-      updateIntent(db, id, { status: "awaiting_approval", diff_summary: `PLAN:\n${brief}`.slice(0, 4000) });
-      deps.emit({ intentId: id, step: "awaiting_approval" });
-      deps.onAwaitingApproval?.(id, brief);
-      const approved = await new Promise<boolean>((resolve) => {
+    if (approvalRequired) {
+      const safePlan = sanitizeWorkerEvidence(brief, 3_990);
+      updateIntent(db, id, { status: "awaiting_approval", diff_summary: `PLAN:\n${safePlan}`.slice(0, 4000) });
+      deps.emit({ intentId: id, step: "awaiting_approval", provider: intent.worker_provider });
+      deps.onAwaitingApproval?.(id, safePlan);
+      const decision = await new Promise<PlanDecision>((resolve) => {
         planDecisions.set(id, resolve);
         // A cancel (abort) while parked counts as "do not proceed".
-        signal.addEventListener("abort", () => resolve(false), { once: true });
+        signal.addEventListener("abort", () => resolve({ approved: false }), { once: true });
       });
       planDecisions.delete(id);
-      if (!approved) {
+      if (!decision.approved) {
         const cancelled = signal.aborted;
+        const cancellationSource = cancellationSources.get(id) ?? "system_abort";
         updateIntent(db, id, {
           status: "failed",
           outcome: cancelled ? "cancelled" : "rejected",
-          error: cancelled ? "cancelled by user" : "plan rejected by user",
+          cancellation_source: cancelled ? cancellationSource : null,
+          error: cancelled ? cancellationText(cancellationSource) : "plan rejected by user",
         });
         deps.emit({ intentId: id, step: cancelled ? "cancelled" : "rejected", ok: false });
         return; // no worktree created yet; finally just frees the slot
       }
+      // Approval is the authoritative worker lock. The user can change the
+      // selector while AVA drafts the plan; the exact approved provider/version
+      // is persisted before any worktree or provider process exists.
+      updateIntent(db, id, {
+        worker_provider: decision.worker.provider,
+        worker_selection_version: decision.worker.version,
+      });
+      intent = getIntent(db, id)!;
     }
 
-    updateIntent(db, id, { status: "implementing" }); deps.emit({ intentId: id, step: "implementing" });
+    const execution = buildSelfWorkerExecutionPrompt({
+      intentId: id,
+      approvedGoal: intent.goal,
+      approvedPlan: brief,
+      authorization: approvalRequired
+        ? "explicit_user_approval"
+        : "owner_configured_unattended_policy",
+    });
+    const safeBrief = sanitizeWorkerEvidence(brief, 2_000);
+    updateIntent(db, id, {
+      diff_summary: `APPROVED SCOPE SHA-256: ${execution.scopeSha256}\n\nBRIEF:\n${safeBrief}`.slice(0, 4000),
+    });
+    updateIntent(db, id, { status: "implementing" }); deps.emit({ intentId: id, step: "implementing", provider: intent.worker_provider });
     wt = deps.addWorktree(id);
-    const impl = await deps.implement(brief, wt.path, signal);
+    const impl = await deps.implement(intent.worker_provider, execution.prompt, wt.path, signal);
     // Record what the worker was told and what it produced, so a no-op or a bad
     // edit is diagnosable from the intent instead of vanishing.
-    updateIntent(db, id, { diff_summary: `BRIEF:\n${brief}\n\nWORKER:\n${impl.output ?? ""}`.slice(0, 4000) });
+    const safeOutput = sanitizeWorkerEvidence(impl.output ?? "", 1_900);
+    updateIntent(db, id, { diff_summary: `APPROVED SCOPE SHA-256: ${execution.scopeSha256}\n\nBRIEF:\n${safeBrief}\n\nWORKER (${intent.worker_provider}):\n${safeOutput}`.slice(0, 4000) });
     if (!impl.ok) throw new Error(`implement failed: ${impl.output.slice(0, 500)}`);
     throwIfAborted();
 
-    updateIntent(db, id, { status: "verifying" }); deps.emit({ intentId: id, step: "verifying" });
+    updateIntent(db, id, { status: "verifying" }); deps.emit({ intentId: id, step: "verifying", provider: intent.worker_provider });
     const v = await deps.verify(wt.path, signal);
     updateIntent(db, id, { verify_log: v.log });
     if (!v.ok) throw new Error(v.log);
     throwIfAborted();
 
     const knownGood = deps.headSha();
-    const sha = deps.commitWorktree(wt.path, `self: ${intent.goal}`);
+    const sha = deps.commitWorktree(wt.path, `self: ${intent.goal}`, wt.baseSha ?? knownGood);
     updateIntent(db, id, { last_known_good: knownGood, commit_sha: sha, branch: wt.branch });
+    deps.preserveCandidate?.(id, sha);
     deps.swapTo(sha, knownGood);
     deps.emit({ intentId: id, step: "swapped", ok: true });
     updateIntent(db, id, { status: "swapped", outcome: "shipped" });
+    deps.releaseCandidate?.(id);
     try { deps.onSwapped?.(intent, sha); } catch { /* changelog is best-effort */ }
 
     void deps.watch(knownGood, sha); // transient watchdog; rolls back if unhealthy (skips if newer work landed)
@@ -181,19 +379,33 @@ export async function runImprovement(db: Db, id: string, deps: ImproverDeps): Pr
     // A cancel surfaces here (either the throwIfAborted, or a worker/subprocess that
     // was killed by the signal). Record it as cancelled, not a failure.
     if (signal.aborted) {
-      updateIntent(db, id, { status: "failed", outcome: "cancelled", error: "cancelled by user" });
+      const cancellationSource = cancellationSources.get(id) ?? "system_abort";
+      updateIntent(db, id, {
+        status: "failed",
+        outcome: "cancelled",
+        cancellation_source: cancellationSource,
+        error: cancellationText(cancellationSource),
+      });
       deps.emit({ intentId: id, step: "cancelled", ok: false });
+    } else if (err instanceof SwapBlockedError) {
+      updateIntent(db, id, {
+        status: "blocked",
+        outcome: "verified candidate preserved",
+        error: msg,
+      });
+      deps.emit({ intentId: id, step: "blocked", ok: false });
     } else {
       updateIntent(db, id, { status: "failed", error: msg });
+      deps.releaseCandidate?.(id);
       deps.emit({ intentId: id, step: "failed", ok: false });
       try { deps.onFailed?.(intent, msg); } catch { /* ledger is best-effort */ }
     }
   } finally {
     controllers.delete(id);
+    cancellationSources.delete(id);
     if (wt) deps.removeWorktree(wt);
     inFlight = false;
     // Hand the slot to the next waiting intent, if any.
-    const next = pending.shift();
-    if (next) void runImprovement(db, next, deps);
+    drainNext(db, deps);
   }
 }

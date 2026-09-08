@@ -381,7 +381,7 @@ through `Config` — worth knowing because they won't appear in the `Config` typ
 |---|---|---|
 | `VAPID_SUBJECT` | `index.ts:121` | `mailto:`/URL identity for web-push; defaults to `mailto:nobody@example.com`. |
 | `REALTIME_HYBRID` | `index.ts:372,473` | Legacy default-seed for the voice-engine preference. **No longer gates** the voice action handoff; the persisted engine value decides speak vs transcribe. |
-| `REALTIME_VOICE` | `index.ts:468` | Overrides the realtime model's voice name (e.g. `shimmer`). Passed straight to the proxy. |
+| `REALTIME_VOICE` | `index.ts:468` | Overrides the realtime model's voice name (e.g. `marin`). Passed straight to the proxy. |
 | `AVA_MAX_AGENT_TURNS` | `orchestrator/agent.ts:148` | Overrides the agent loop's runaway backstop (default 1000 turns). This is a safety ceiling, **not** a task budget — the real brakes are Stop, the stuck-loop detector, per-tool timeouts, and approvals. |
 
 ### 5.3 Voice-provider env vars — `voice-provider-config.ts`
@@ -592,6 +592,12 @@ npm -w server run build      # tsc + copy schema.sql & SELF.md into dist/
 npm -w server run start      # node dist/index.js
 ```
 No hot-reload; self-improve swaps won't take effect until a manual restart.
+
+The production build also writes `server/dist/build-id.txt`. AVA captures that
+identifier once at process boot and returns it from `/api/health`. The desktop
+runtime launcher compares the live value with the installed file: an already
+healthy but older AVA listener is safely replaced instead of being mistaken
+for the new build. A matching live build is left running.
 
 ### Pair a device
 Tray → **Show pairing code**, *or*:

@@ -67,7 +67,7 @@ export function voiceRoutes(deps: VoiceRoutesDeps): ExpressRouter {
     // persisted/displayed text the client sent is unaffected.
     const r = await deps.clients.openai.audio.speech.create({
       model: "gpt-4o-mini-tts",
-      voice: voice as "alloy" | "ash" | "ballad" | "coral" | "echo" | "fable" | "onyx" | "nova" | "sage" | "shimmer" | "verse",
+      voice: voice as "alloy" | "ash" | "ballad" | "coral" | "echo" | "fable" | "onyx" | "nova" | "sage" | "shimmer" | "verse" | "marin" | "cedar",
       input: formatSpeechText(text),
       // Faster default delivery per Sir's preference; a caller may override.
       speed: resolveSpeechRate(speed),

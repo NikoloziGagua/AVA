@@ -22,7 +22,8 @@
       "Bash(curl -s \"https://registry.npmjs.org/better-sqlite3/12.9.0\")",
       "Bash(echo \"EXIT=$?\")",
       "Bash(npx vitest *)",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "Bash(git -C \"C:/Users/nikug/ai/forge\" log -2 --format=\"%an <%ae>\")"
     ]
   }
 }

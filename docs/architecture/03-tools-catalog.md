@@ -22,6 +22,8 @@ Two columns need a word of explanation:
 | `fs_list` | same | List one directory level | none | `read-only` |
 | `fs_stat` | same | Stat a path (size, mtime, isDir) | none | `read-only` |
 | `fs_delete` | same | Delete one file or empty dir | none | `high` (always) |
+| `chrome_open` | `tools/chrome-mcp.ts` + `tools/chrome.ts` | Open/foreground Ava's persistent browser, optionally at one URL | none | `low` |
+| `chrome_google_search` | same + `orchestrator/computer-execution-router.ts` | Open one exact encoded Google query in the persistent browser and verify the active host, route and query | none | `low` (credential-shaped text is refused before navigation) |
 | `chrome_navigate` | `tools/chrome-mcp.ts` + `tools/chrome.ts` | Navigate Ava's Chromium tab to a URL | none | `low` |
 | `chrome_click` | same | Click an element by selector | none | `low` (submit/checkout-like selector → `high`) |
 | `chrome_type` | same | Fill text into an input | none | `low` |
@@ -38,7 +40,7 @@ Two columns need a word of explanation:
 | `memory_remember` | same | Append/refresh/supersede a memory observation | none | `low` |
 | `memory_forget` | same | Drop a memory entry (last / match / project) | none | `low` |
 | `read_claude_updates` | `tools/update-log-mcp.ts` | Read Claude's dev-log notes about changes to Ava's own code | none | n/a (read) |
-| `self_improve` | `tools/self-improve-mcp.ts` | Queue an autonomous change to Ava's OWN code | (queue only; worker later uses Claude subscription) | n/a (queue) |
+| `self_improve` | `tools/self-improve-mcp.ts` | Queue an approval-gated change to Ava's OWN code | (queue only; selected Claude Code or Codex CLI worker runs later) | n/a (queue) |
 | `self_improve_status` | same | Report state of self-improvement tasks | none | n/a (read) |
 | `read_logs` | `tools/activity-log-mcp.ts` + `tools/activity-log.ts` | Read Ava's own activity/error logs | none | n/a (read) |
 | `shopify_list_products` / `shopify_get_product` / `shopify_update_product` | `tools/shopify-mcp.ts` | List/read/edit Shopify products' name + description over the **Admin API** (no browser) | none (vendor API; no metered LLM call) | n/a — only registered when `SHOPIFY_*` creds set |
@@ -105,7 +107,7 @@ buildShellTool        → shell
 buildControlAppTool   → control_app
 buildFilesystemTools  → fs_read, fs_write, fs_list, fs_stat, fs_delete
 buildClaudeCodeTool   → claude_code
-buildChromeTools      → chrome_navigate … chrome_tabs
+buildChromeTools      → chrome_open, chrome_google_search, chrome_navigate … chrome_tabs
 buildComputerUseTool  → computer_use
 buildScreenshotTool   → take_screenshot
 buildSelfImproveTool / buildSelfImproveStatusTool (if deps present)
@@ -135,7 +137,7 @@ Several tools spawn OS processes (`shell` → `powershell.exe`; `control_app` �
 
 ### How Stop reaches running work
 
-When the user presses Stop, `POST /api/chat/:sessionId/kill` (`chat.ts:494–516`) does three things in order:
+When the user presses the red global Stop, `POST /api/chat/:sessionId/kill-all` does three things in order. Voice barge-in calls the session-only `/kill` sibling, which deliberately omits detached self-development cancellation:
 
 1. **Abort the model loop** (`runs.abort` → `AbortController.abort()`), which also fires the `signal` inside any in-flight tool.
 2. **Tree-kill the run's PID subtree**: `for (pid of pidfiles.listForRun(runId)) killTree(pid)` — so `claude_code`'s `claude -p` child, `shell`'s `powershell.exe` subtree, and `control_app`'s PowerShell subtree all die, not just the next model turn.
@@ -273,6 +275,8 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 
 | Tool | Input | Action | Output |
 |---|---|---|---|
+| `chrome_open` | `{ url? }` | Start/attach to Ava's persistent browser and foreground it; optionally navigate the active tab | Browser-visible status/title |
+| `chrome_google_search` | `{ query }` | Open `https://www.google.com/search?q=…`, or foreground the already-matching page; then compare the live URL's host, path, and exact decoded query | Verified result, or a contradicted/error result if redirected or mismatched |
 | `chrome_navigate` | `{ url }` | `page.goto(url, { waitUntil:"domcontentloaded", timeout:30s })` | `loaded: <title>` |
 | `chrome_click` | `{ selector }` | `page.click(selector, 10s)` (CSS or `text=` selector) | `clicked` |
 | `chrome_type` | `{ selector, text }` | `page.fill(selector, text, 10s)` | `typed` |
@@ -408,6 +412,43 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 
 **Edge cases.** Missing required fields return precise errors (`missing project slug`, `missing text`, `refresh: no matching observation`, etc.). The exact observation line format the model must use is dictated by the system prompt's "Memory" section, not enforced here — this tool trusts the caller's `text`.
 
+#### Source-linked index tools
+
+When a chat has an active SQLite session, the same builder also exposes
+`memory_index_capture`, `memory_index_search`, `memory_index_open`,
+`memory_index_forget`, `memory_index_correct`, `memory_index_pin`,
+`memory_index_supersede`, and `memory_index_conflict`.
+
+- **Capture** persists a bounded sanitized summary and a fingerprinted reference
+  to an exact conversation range. Repeating the same range and scope reuses the
+  entry rather than duplicating it.
+- **Search** combines semantic similarity with exact/keyword evidence and returns
+  the match explanation. Without a configured/working embedding provider it
+  falls back to lexical retrieval and says so.
+- **Open** loads the exact verified source range only after retrieval, bounded to
+  24,000 sanitized characters by default. This lets AVA answer from authoritative
+  detail without copying transcripts into the index.
+- **Forget** requires the entry's current version, removes it from retrieval and
+  deletes its embedding while leaving the source chat alone.
+- **Correct** appends a bounded overlay for the compact current view and keeps the
+  original checkpoint visible. It does not claim the source supports the edit.
+- **Pin** is a versioned priority hint among candidates that already match; it is
+  not a relevance bypass.
+- **Supersede** preserves an obsolete thread as history and points it to an exact,
+  source-verified replacement in the same privacy scope.
+- **Conflict** suppresses both contradictory threads until an explicit resolution
+  names the verified winner and supersedes the loser.
+
+Every returned source is rechecked against the canonical `messages` rows. A
+changed or unavailable source is `usable=false`; vector similarity alone is never
+proof. Project-scoped entries are returned only when that project is explicitly
+selected. The compact index is SQLite-backed and intentionally separate from the
+small Markdown blocks injected into every prompt.
+All four governance mutations require exact IDs, the current governance version,
+a reason and a stable retry key. Their append-only actor/time/reason history makes
+UI and agent changes inspectable; stale, replayed and cross-scope writes fail
+closed.
+
 ---
 
 ### 5.10 `read_claude_updates` — read Claude's dev-log notes
@@ -432,11 +473,11 @@ All paths must be **absolute and inside an allowlisted root**. Failures return `
 
 **Purpose.** `self_improve` queues an autonomous change to **Ava's own codebase**; `self_improve_status` reports where each such task is.
 
-**`self_improve`** `{ goal }` → `deps.queue(goal)` returns an intent id; tool replies `queued self-improvement <id>: <goal>`. The heavy lifting happens out-of-band: the queued intent is reflected on, implemented by a **Claude Code worker in a git worktree**, verified (tests + build + boot-smoke), and hot-swapped — auto-reverted if it fails verification or breaks at boot. (Wiring in `index.ts`; `selfClaudeCode` restricts the worker's cwd to the temp-dir worktree.)
+**`self_improve`** `{ goal }` → `deps.queue(goal)` returns an intent id; tool replies `queued self-improvement <id>: <goal>`. The heavy lifting happens out-of-band: an explicit intent waits for plan approval and locks the Self screen's current **Claude Code or Codex** selection at that approval boundary, runs that worker in an isolated git worktree, verifies (tests + build + boot-smoke), and hot-swaps — auto-reverted if it fails verification or breaks at boot. Both adapters enter the identical downstream gates, and an unavailable or stale selected worker fails closed without fallback.
 
 **`self_improve_status`** `{ id? }` → list of tasks (id, status, goal) or, with an id, full detail (what it changed, commit sha, failure reason). States: `queued → reflecting → implementing → verifying → swapped (=shipped/live) → failed | rolled_back`. Concurrent requests queue and run one at a time.
 
-**API cost.** The wrappers only queue/read (no cost). The downstream worker uses the **Claude subscription**; the reflect step uses the configured provider (OpenAI in production per the token-economics memory). Honest caveat: triggering `self_improve` *does* eventually spend model calls in the background pipeline, even though the tool call itself returns instantly and free.
+**API cost.** The wrappers only queue/read (no cost). The downstream worker uses the selected CLI's saved subscription/account; the reflect step uses the configured provider. Triggering `self_improve` therefore does eventually spend model capacity in the background pipeline even though the queue tool returns immediately.
 
 **Gating.** Not in `classifyRisk` (queue/read wrappers). The real safety is the verify-and-auto-revert harness around the worker, not a per-call veto.
 

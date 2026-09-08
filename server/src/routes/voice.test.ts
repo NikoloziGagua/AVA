@@ -10,7 +10,7 @@ import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
 
 // Voices the OpenAI speech model exposes that read as female. Used to prove the
 // no-saved-preference default speaks with a female voice.
-const FEMALE_VOICES = new Set(["nova", "shimmer", "coral", "sage", "fable"]);
+const FEMALE_VOICES = new Set(["nova", "shimmer", "coral", "sage", "fable", "marin"]);
 
 function setup(clients: VoiceClients, engine?: VoiceEngine) {
   const app = express();

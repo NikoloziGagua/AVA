@@ -8,6 +8,8 @@ import { CONSISTENCY_REMINDER_MARKER } from "./tool-result-consistency.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { openInMemoryDb, type Db } from "../state/db.js";
 import { bootstrapMemoryDir } from "../memory/bootstrap.js";
+import { planComputerExecution } from "./computer-execution-router.js";
+import { TaskReceiptBuilder } from "../receipts/task-receipt.js";
 
 function makeMemDir(): string {
   const d = mkdtempSync(join(tmpdir(), "ava-test-mem-"));
@@ -31,23 +33,189 @@ function makeShellTool(): ToolDef {
 }
 
 describe("runAgent (v2 loop)", () => {
+  it("executes a deterministic Google route without a provider round-trip", async () => {
+    const provider = new MockLLMProvider({});
+    const tool: ToolDef = {
+      tool: {
+        name: "chrome_google_search",
+        description: "search",
+        inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      },
+      run: vi.fn(async () => ({
+        ok: true,
+        text: "Google is open in AVA Chrome with results for “router proof”.",
+        verification: {
+          state: "verified" as const,
+          scope: "task_outcome" as const,
+          method: "chrome_google_search_url",
+          summary: "The active page is Google's search route with the exact requested query.",
+          observedAt: 1,
+        },
+      })),
+    };
+    const events: AgentEvent[] = [];
+    const db = openInMemoryDb();
+    await runAgent({
+      prompt: "Open Google and search for router proof",
+      computerExecutionPlan: planComputerExecution("Open Google and search for router proof"),
+      abort: new AbortController(),
+      emit: (event) => events.push(event),
+      runId: "route-run",
+      sessionId: "route-session",
+      db,
+      deps: {
+        chrome: null as never,
+        pidfiles: null as never,
+        fsRoots: [],
+        memoryDir: makeMemDir(),
+        provider,
+        tools: [tool],
+      } as never,
+    });
+
+    expect(provider.calls.stream).toHaveLength(0);
+    expect(tool.run).toHaveBeenCalledWith(
+      { query: "router proof" },
+      expect.objectContaining({ runId: "route-run" }),
+    );
+    expect(events.map((event) => event.kind)).toEqual(["tool_call", "tool_result", "final", "done"]);
+    const result = events.find((event) => event.kind === "tool_result");
+    expect(result?.payload).toMatchObject({
+      tool: "chrome_google_search",
+      ok: true,
+      verification: { state: "verified", method: "chrome_google_search_url" },
+    });
+
+    const receipt = new TaskReceiptBuilder({
+      taskId: "route-run",
+      objective: "Open Google and search for router proof",
+      mode: "action",
+      startedAt: 0,
+    });
+    for (const event of events) receipt.observe(event);
+    expect(receipt.snapshot(10)).toMatchObject({
+      lifecycle: "finished",
+      outcome: "verified",
+      verificationScope: "task_outcome",
+      verificationMethod: "chrome_google_search_url",
+    });
+  });
+
+  it("executes a deterministic website route without a provider round-trip", async () => {
+    const provider = new MockLLMProvider({});
+    const tool: ToolDef = {
+      tool: {
+        name: "chrome_open_url",
+        description: "open URL",
+        inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+      },
+      run: vi.fn(async () => ({
+        ok: true,
+        text: "example.com is open in AVA Chrome.",
+        verification: {
+          state: "verified" as const,
+          scope: "task_outcome" as const,
+          method: "chrome_exact_url",
+          summary: "The active page URL exactly matches the requested destination.",
+          observedAt: 1,
+        },
+      })),
+    };
+    const events: AgentEvent[] = [];
+    const db = openInMemoryDb();
+    await runAgent({
+      prompt: "Open https://example.com",
+      computerExecutionPlan: planComputerExecution("Open https://example.com"),
+      abort: new AbortController(),
+      emit: (event) => events.push(event),
+      runId: "website-route-run",
+      sessionId: "website-route-session",
+      db,
+      deps: {
+        chrome: null as never,
+        pidfiles: null as never,
+        fsRoots: [],
+        memoryDir: makeMemDir(),
+        provider,
+        tools: [tool],
+      } as never,
+    });
+
+    expect(provider.calls.stream).toHaveLength(0);
+    expect(tool.run).toHaveBeenCalledWith(
+      { url: "https://example.com/" },
+      expect.objectContaining({ runId: "website-route-run" }),
+    );
+    expect(events.find((event) => event.kind === "tool_result")?.payload).toMatchObject({
+      tool: "chrome_open_url",
+      ok: true,
+      verification: { state: "verified", method: "chrome_exact_url" },
+    });
+  });
+
+  it("fails closed without invoking the fixed UFO tool for an explicit UFO web request", async () => {
+    const provider = new MockLLMProvider({});
+    const ufo = vi.fn();
+    const events: AgentEvent[] = [];
+    const db = openInMemoryDb();
+    await runAgent({
+      prompt: "Use Microsoft UFO to open Google and search for AVA",
+      computerExecutionPlan: planComputerExecution("Use Microsoft UFO to open Google and search for AVA"),
+      abort: new AbortController(),
+      emit: (event) => events.push(event),
+      runId: "ufo-web-run",
+      sessionId: "ufo-web-session",
+      db,
+      deps: {
+        chrome: null as never,
+        pidfiles: null as never,
+        fsRoots: [],
+        memoryDir: makeMemDir(),
+        provider,
+        tools: [{
+          tool: { name: "ufo_runtime_run", description: "fixed proof", inputSchema: { type: "object", properties: {} } },
+          run: ufo,
+        }],
+      } as never,
+    });
+
+    expect(provider.calls.stream).toHaveLength(0);
+    expect(ufo).not.toHaveBeenCalled();
+    expect(events.find((event) => event.kind === "tool_call")).toBeUndefined();
+    expect(events.find((event) => event.kind === "final")?.payload).toMatchObject({
+      text: expect.stringContaining("cannot operate Google or a browser"),
+    });
+  });
+
   it("conversation-only path: no tools dispatched, emits final + done", async () => {
     const provider = new MockLLMProvider({
       scripts: [
         [
           { kind: "delta", text: "Good morning, " },
           { kind: "delta", text: "Sir." },
+          {
+            kind: "usage",
+            usage: {
+              providerRequestId: "resp-conversation-1",
+              model: "gpt-5.6",
+              inputTokens: 80,
+              outputTokens: 12,
+              cachedTokens: 30,
+            },
+          },
           { kind: "done", stop_reason: "end_turn" },
         ],
       ],
     });
     const events: AgentEvent[] = [];
+    const usage = vi.fn(() => { throw new Error("isolated accounting failure"); });
     const db = openInMemoryDb();
     seedAllowAllRule(db);
     await runAgent({
       prompt: "hi",
       abort: new AbortController(),
       emit: (e: AgentEvent) => events.push(e),
+      recordUsage: usage,
       runId: "r1",
       sessionId: "s1",
       db,
@@ -59,6 +227,11 @@ describe("runAgent (v2 loop)", () => {
     expect(events.find((e) => e.kind === "final")?.payload).toEqual({ text: "Good morning, Sir." });
     expect(events.find((e) => e.kind === "tool_call")).toBeUndefined();
     expect(events.find((e) => e.kind === "done")).toBeDefined();
+    expect(usage).toHaveBeenCalledWith(expect.objectContaining({
+      providerRequestId: "resp-conversation-1",
+      inputTokens: 80,
+      outputTokens: 12,
+    }));
   });
 
   it("tool path: dispatches a tool_call, packages the result, finalizes", async () => {
@@ -350,6 +523,52 @@ describe("runAgent (v2 loop)", () => {
     ac.abort();
     await promise;
     expect(events.find((e) => e.kind === "killed")).toBeDefined();
+  });
+
+  it("treats Stop during an active tool as cancellation, not a failed result", async () => {
+    const ac = new AbortController();
+    let toolStarted!: () => void;
+    const started = new Promise<void>((resolve) => { toolStarted = resolve; });
+    const tool: ToolDef = {
+      tool: { name: "shell", description: "shell",
+        inputSchema: { type: "object", properties: { command: { type: "string" } } } as const },
+      run: vi.fn(async (_args, ctx) => {
+        toolStarted();
+        await new Promise<void>((resolve) => {
+          if (ctx.signal.aborted) return resolve();
+          ctx.signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return { text: "ERROR: aborted", ok: false };
+      }),
+    };
+    const provider = new MockLLMProvider({
+      scripts: [[
+        { kind: "tool_call", call: { id: "c-stop", name: "shell", args: { command: "wait" } } },
+        { kind: "done", stop_reason: "tool_use" },
+      ]],
+    });
+    const events: AgentEvent[] = [];
+    const db = openInMemoryDb();
+    seedAllowAllRule(db);
+    const running = runAgent({
+      prompt: "wait until I stop this",
+      abort: ac,
+      emit: (event) => events.push(event),
+      runId: "r-stop-tool", sessionId: "s-stop-tool", db,
+      mode: "action",
+      deps: { chrome: null as never, pidfiles: null as never, fsRoots: [],
+        memoryDir: makeMemDir(), provider, tools: [tool] } as never,
+    });
+
+    await started;
+    ac.abort();
+    await running;
+
+    expect(events.filter((event) => event.kind === "tool_call")).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "tool_result")).toHaveLength(0);
+    expect(events.filter((event) => event.kind === "killed")).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "final")).toHaveLength(0);
+    expect(events.at(-1)?.kind).toBe("done");
   });
 });
 

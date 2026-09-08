@@ -3,18 +3,22 @@ import { gsap, useGSAP, ScrollTrigger } from "../lib/gsap.js";
 import { D, EASE, SHADOW, hoverLift } from "../lib/deckMotion.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { Orb } from "../components/ava/Orb.js";
-import { WordReveal } from "../components/ava/WordReveal.js";
 import { ThinkingIndicator, type ThinkingState } from "./ThinkingIndicator.js";
 import { ToolCallChip } from "./ToolCallChip.js";
 import { humanizeTool } from "./humanize.js";
 import { MessageActions } from "./MessageActions.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
-import { stripMarkdown } from "./strip-markdown.js";
+import { AssistantMarkdown } from "./AssistantMarkdown.js";
 import type { StreamEvent } from "./useChatStream.js";
+import { TaskReceiptCard } from "./TaskReceiptCard.js";
+import { VisualMessageCard, type VisualSemanticActionHandler } from "../visuals/VisualMessageCard.js";
+import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
+import { MemoryContextCapsule } from "./MemoryContextCapsule.js";
+import type { MemoryContext } from "./memory-context.js";
 
 export type ChatMessage =
-  | { role: "user"; text: string; id: string }
-  | { role: "assistant"; text: string; id: string }
+  | { role: "user"; text: string; id: string; visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" }
+  | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[]; memoryContext?: MemoryContext }
   // `system` rows are server notices (e.g. the "Server restarted…" recovery
   // message) — rendered as a centered notice, never attributed to Ava.
   | { role: "system"; text: string; id: string };
@@ -53,6 +57,7 @@ export interface MessageListProps {
    * collapsed) the chips stay, as they're the only live-step surface.
    */
   toolChipsDocked?: boolean;
+  onVisualSemanticAction?: VisualSemanticActionHandler;
 }
 
 export function MessageList({
@@ -66,6 +71,7 @@ export function MessageList({
   runningTool,
   headerState = "idle",
   toolChipsDocked = false,
+  onVisualSemanticAction,
 }: MessageListProps) {
   const reduced = useReducedMotion();
   const internalRef = useRef<HTMLDivElement>(null);
@@ -90,6 +96,10 @@ export function MessageList({
   }
 
   const lastFinal = [...liveEvents].reverse().find((e) => e.kind === "final");
+  // Approval snapshots and the terminal result use the same receipt event. Only
+  // the newest snapshot is authoritative for the current run.
+  const lastReceipt = [...liveEvents].reverse().find((e) => e.kind === "receipt");
+  const liveMemoryContext = [...liveEvents].reverse().find((e) => e.kind === "memory_context");
 
   // Retry re-runs the LAST turn (ChatScreen's retryLast), so it only belongs on
   // the LAST assistant bubble — on every bubble it implied re-running THAT turn.
@@ -118,9 +128,9 @@ export function MessageList({
   // No live token-by-token bubble. Reasoning models (gpt-5.5) "think" for seconds then
   // emit the WHOLE reply in a sub-100ms burst, so a live bubble either flashed past
   // unseen or (worse) rendered empty. Instead the thinking indicator stays up until the
-  // reply is ready, then the FINAL block reveals it WORD-BY-WORD (WordReveal) — exactly
-  // "it thinks, then outputs word by word". `streamingText` is still accumulated so a
-  // Stop mid-reply can show whatever was generated.
+  // reply is ready, then the FINAL block renders its complete Markdown tree in one
+  // stable pass. `streamingText` is still accumulated so Stop can show the partial
+  // answer without discarding headings, lists, or code that already arrived.
 
   // Caption: backward-walk the live stream (verified mechanism). Before any
   // liveEvent (the optimistic window) it seeds "thinking…", then upgrades the
@@ -138,7 +148,7 @@ export function MessageList({
       ? "responding"
       : "thinking";
 
-  // Thinking row shows from send until the final reply arrives (then WordReveal takes over).
+  // Thinking row shows from send until the final reply arrives.
   const showThinking = optimisticThinking && !lastFinal && !runTerminated;
 
   // ── Single source of truth for bubble reveals: ScrollTrigger.batch ──
@@ -214,22 +224,34 @@ export function MessageList({
         return (
         <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
           {m.role === "user" ? (
-            <OwnerBubble text={m.text} reduced={reduced} />
+            <div className="flex max-w-[78%] flex-col items-end gap-1.5">
+              <OwnerBubble text={m.text} reduced={reduced} />
+              {m.inputSource === "voice_exact_text" && (
+                <span className="rounded-full border border-violet-300/20 bg-violet-300/[0.07] px-2.5 py-1 text-[10px] text-violet-100/65">
+                  Exact text · entered in voice
+                </span>
+              )}
+              {m.visualContext && (
+                <span className="rounded-full border border-cyan-300/20 bg-cyan-300/[0.06] px-2.5 py-1 text-[10px] text-cyan-100/60">
+                  Visual context · rev {m.visualContext.revision} · {m.visualContext.selectedElementIds.length || "scene"}
+                </span>
+              )}
+            </div>
           ) : (
             <AvaBubble reduced={reduced}>
-              <div
-                className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
-                }}
-              >
-                {stripMarkdown(m.text)}
-              </div>
+              <AssistantMarkdown text={m.text} />
+              {m.memoryContext && <MemoryContextCapsule context={m.memoryContext} />}
               <MessageActions
                 text={m.text}
                 onRetry={!lastFinal && m.id === lastAssistantHistoryId ? onRetry : undefined}
               />
+              {m.visualMessages?.map((visual) => (
+                <VisualMessageCard
+                  key={`${visual.visualMessageId}:${visual.revision}`}
+                  visual={visual}
+                  onSemanticAction={onVisualSemanticAction}
+                />
+              ))}
             </AvaBubble>
           )}
         </div>
@@ -282,12 +304,7 @@ export function MessageList({
               {showPartial && (
                 <div className="flex justify-start" data-testid="stopped-partial">
                   <AvaBubble reduced={reduced}>
-                    <WordReveal
-                      text={stripMarkdown(streamingText)}
-                      animate={false}
-                      className="text-[15px] leading-[1.65] whitespace-pre-wrap"
-                      gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
-                    />
+                    <AssistantMarkdown text={streamingText} partial />
                   </AvaBubble>
                 </div>
               )}
@@ -302,24 +319,32 @@ export function MessageList({
             </div>
           );
         }
+        if (e.kind === "receipt") return null;
+        if (e.kind === "memory_context") return null;
         return null;
       })}
 
       {lastFinal && (
         <div className="flex justify-start" data-testid="final-message">
           <AvaBubble reduced={reduced}>
-            <WordReveal
-              text={stripMarkdown(lastFinal.payload.text)}
-              // Always reveal the reply word-by-word — there's no live bubble to hand
-              // off from, so this IS the reveal the owner asked for.
-              animate
-              className="text-[15px] leading-[1.65] whitespace-pre-wrap"
-              gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
+            <AssistantMarkdown
+              text={lastFinal.payload.text}
             />
+            {liveMemoryContext?.kind === "memory_context" && (
+              <MemoryContextCapsule context={liveMemoryContext.payload} />
+            )}
             <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
           </AvaBubble>
         </div>
       )}
+
+      {!lastFinal && runTerminated && liveMemoryContext?.kind === "memory_context" && (
+        <div className="ml-9 max-w-[92%]" data-testid="terminated-memory-context">
+          <MemoryContextCapsule context={liveMemoryContext.payload} />
+        </div>
+      )}
+
+      {lastReceipt?.kind === "receipt" && <TaskReceiptCard receipt={lastReceipt.payload} />}
 
       {showThinking && (
         <div className="flex justify-start">
@@ -396,7 +421,7 @@ function AvaBubble({ children, reduced }: { children: React.ReactNode; reduced: 
   return (
     // group/msg: desktop hover-reveals the action row (see MessageActions) —
     // scoped/named so it can't collide with other `group` uses in the tree.
-    <div className="group/msg flex items-start gap-3 max-w-[88%] lg:max-w-[92%]">
+    <div className="group/msg flex w-full max-w-[96%] items-start gap-3 lg:max-w-[94%]">
       <div className="shrink-0 mt-1">
         <Orb state="idle" size={22} />
       </div>
@@ -405,7 +430,7 @@ function AvaBubble({ children, reduced }: { children: React.ReactNode; reduced: 
         data-bubble
         onPointerEnter={() => ref.current && hoverLift(ref.current, true, reduced)}
         onPointerLeave={() => ref.current && hoverLift(ref.current, false, reduced)}
-        className="lg-slab lg-sweep flex flex-col gap-2 px-4 py-3"
+        className="lg-slab lg-sweep flex min-w-0 w-full flex-col gap-2 px-4 py-3"
         style={{ boxShadow: SHADOW.rest }}
       >
         {children}

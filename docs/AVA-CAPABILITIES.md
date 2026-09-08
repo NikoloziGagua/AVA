@@ -19,23 +19,23 @@ OpenAI (default) or Anthropic.
 Events (`thought`, `tool_call`, `tool_result`, `final`, `approval_required`, …).
 Typed messages always run in **action mode** (full tools).
 
-**Voice** — fully hands-free, two architectures (switched by `REALTIME_HYBRID`):
-- **Transcribe-only (committed default):** the realtime model only does
-  voice-activity endpointing + transcription; the browser submits the transcript
-  to `/api/chat` and speaks the reply with TTS.
-- **Hybrid (live via the gitignored `.env`):** the realtime model **speaks
-  directly** for low latency and holds a single `do_on_computer` tool — for
-  chitchat it just talks; for any real action it calls `do_on_computer`, which
-  runs the **full `/api/chat` tool agent** over loopback and feeds the result back
-  to be spoken. Talking and doing are one loop.
-- **Responsiveness follows the Fast/Thorough toggle:** silence-wait is 300 ms on
-  Fast (snappy) vs 700 ms on Thorough (patient — won't talk over you).
+**Voice** — fully hands-free through one continuous OpenAI Realtime session.
+- The realtime model **speaks directly** for low latency and holds a single
+  `do_on_computer` tool. Chitchat stays in the realtime conversation; any real
+  action runs the full `/api/chat` tool agent over loopback, then its final result
+  returns to the **same** realtime session and `marin` voice. Tool steps are visual
+  only, so a task never changes speaker halfway through.
+- **Responsiveness follows the Fast/Thorough toggle:** OpenAI semantic VAD uses
+  eager endpointing in Fast mode and more patient endpointing in Thorough mode.
+- **True interruption:** speech onset immediately cancels the active response,
+  stops queued playback, truncates the assistant item at the amount actually
+  heard, and rejects late audio packets from the cancelled response.
 - **Transcript gating:** a pure-function chokepoint drops empty/too-brief/
   low-confidence transcripts and known whisper hallucinations ("you", "thank you",
   "thanks for watching", …) before they ever become a turn — no phantom replies.
 - **Speech smoothing:** the commas hugging a standalone "Sir" are stripped for
   spoken output only ("Yes, Sir," → "Yes Sir"), never for stored/displayed text.
-- STT `gpt-4o-transcribe`; TTS `gpt-4o-mini-tts`; realtime `gpt-realtime`.
+- STT `gpt-4o-transcribe`; TTS `gpt-4o-mini-tts`; realtime `gpt-realtime-2.1`.
 
 ## 2. Acting on the PC — Tools
 
@@ -53,12 +53,16 @@ approval row + a push notification, blocking up to 10 minutes). `.env` access an
 |---|---|---|
 | **shell** | Run a shell command (cmd.exe). Allowlisted first tokens only: `git, npm, node, python, pip, where, echo, ls, dir, cat`; shell metacharacters (`; & \| \` $ > <`) blocked. | Non-allowlisted = ask; `rm -rf`/`git push`/`curl\|sh`/`sudo` = high. `.env` blocked. |
 | **fs_read / fs_write / fs_list / fs_stat / fs_delete** | Read/write/list/stat/delete files within allowlisted roots (`C:/ai/**`, `C:/projects/**`, `Downloads/**`). Writes create parent dirs. | Reads read-only; write low; **delete always asks**. `.env` blocked. |
-| **chrome_navigate / _click / _type / _press_key / _read_page / _screenshot / _tabs** | Drive a single **persistent, non-headless Chromium** that keeps Sir's cookies/logins. Boots lazily on first use. | Mostly low; clicks that look like submit/checkout/buy/place-order/add-payment = high. |
+| **chrome_open / chrome_google_search / _navigate / _click / _type / _press_key / _read_page / _screenshot / _tabs** | Open/foreground and drive a single **persistent, non-headless Chrome/Edge** that keeps Sir's cookies/logins. A direct request such as “Open Google and search for X” bypasses model and visual-control overhead: `chrome_google_search` opens the encoded results URL and independently verifies the active Google host, `/search` route, and exact `q` value. On a fresh request Ava runs `scripts/start-ava-browser.cmd /quiet` herself, attaches to that dedicated CDP profile, and reuses it while alive. Direct Playwright launch remains the fallback. | Mostly low; credential-shaped search text is blocked before network access; clicks that look like submit/checkout/buy/place-order/add-payment = high. |
 | **computer_use** | Vision-driven control of the screen when no direct tool fits (screenshot → decide → click/scroll/type → loop). Prefers Anthropic computer-use, falls back to OpenAI. **The OpenAI path needs the gated `computer-use-preview` model** — accounts without it get a 404, so `look_at_screen` is the reliable everyday eyes. | Medium. |
 | **claude_code** | Spawn a headless `claude -p` worker for multi-file coding in an allowlisted project dir (`acceptEdits`; uses the Claude subscription login). | Medium; dangerous-skip blocked; output secret-scrubbed. |
 | **take_screenshot** | Capture a PNG of the Windows desktop under `Downloads/Ava/screenshots` and return **only the path** — the model has *not* seen the image. Its description and result say so plainly, so Ava never narrates a screenshot it can't actually see (fixes a live case of Ava confidently "describing" screenshots it never viewed). | Low. |
 | **look_at_screen** | Ava's honest eyes: capture the desktop **and** run ONE vision call on a standard multimodal model, returning a factual 2–4 sentence description (or an answer to a specific `question`). This is what Ava uses to describe the screen or verify a visual result. Registered **only when an OpenAI key is set**; 60 s tool budget. | Medium (a paid vision call). |
 | **memory_read / memory_remember / memory_forget** | Durable cross-session memory (see §3). | Low; secrets scrubbed on write. |
+| **memory_index_capture / memory_index_search / memory_index_open / memory_index_forget / memory_index_correct / memory_index_pin / memory_index_supersede / memory_index_conflict** | Automatically index completed research and meaningfully developed ideas, preserve immutable linked checkpoints, recover source-linked work across chat/voice, and let Sir correct the compact view, pin priorities, replace obsolete threads or resolve contradictions without rewriting original evidence. | Search/open are read-only; governance is versioned, append-only and low-risk local persistence. Unresolved conflicts and superseded history are excluded from automatic recall; privacy scope and source verification fail closed. |
+| **notes_capture / notes_search / notes_update / notes_promote** | Capture, find and organise general or project Notes; move cards through Ideas/Doing/Review/Done; promote a note to a task or explicit self-improvement request. | Note changes are low-risk local persistence. Self-improvement promotion enters the existing approval gate. |
+| **visual_explanation_create / research_visual_create / visual_explanation_list** | Create, revise or reopen progressive inline visuals. Ordinary mechanisms use the stable-ID process model. Deep research automatically chooses a genuine geographic map, timeline, evidence-gap matrix, claim-evidence graph, sourced chart or process diagram and carries claim-level sources, confidence, disagreement and gaps into every scene. | Low-risk local persistence. Inputs are schema-validated and recursively secret-scrubbed; renderers never execute generated HTML/JavaScript and work offline after installation. |
+| **strategy_room_open** | Move the authoritative current AVA chat snapshot into the shared Niko + AVA + Codex Strategy Room. | Low-risk, bounded discussion only. Returning an approved conclusion adds a proposal to the source chat and never executes it. |
 | **self_improve / self_improve_status** | Queue an autonomous change to Ava's own code / report task states (see §4). | Gated pipeline. |
 | **read_claude_updates** | Read the notes Claude — Sir's developer/coding agent — leaves about changes to Ava's own code (a started/shipped/note JSON-lines log at `<dataDir>/claude-updates.jsonl`). Used when Sir asks what's happening / what changed / what Claude did; surfaces any in-flight update. Available in **both** action and conversation/voice mode. Attribution stays honest — Claude's work is Claude's. | Read-only. |
 | **shopify_list_products / shopify_get_product / shopify_update_product** | Edit a product's name + description over the **Shopify Admin API** — one `PUT`, no browser. Never sends the `images` array (a name/description edit can't disturb the pictures), and instructs the model to keep any `<img>` tags inside the description. Registered only when `SHOPIFY_STORE` + `SHOPIFY_ADMIN_TOKEN` are set. | No LLM cost (uses Shopify billing). |
@@ -83,20 +87,88 @@ subscriptions, rules, and self-improvement intents.
   `password/secret/token:` lines).
 - **Projects:** a matching project note auto-loads as context when a prompt or
   tool path mentions its roots.
-- **Playbooks (procedural memory, self-optimizing):** after a run **reaches a
-  final reply** with ≥2 tool steps, a side model distills it into a playbook —
+- **Source-linked research, idea and improvement index:** completed research and ideas
+  meaningfully developed by Sir and AVA are conservatively captured after a
+  clean typed or spoken turn; every committed product improvement is reconciled
+  from its exact reachable Git commit, and successful Self swaps enter through
+  the same boundary. Explicit "remember this" remains available. AVA
+  stores compact immutable checkpoints in SQLite plus
+  the exact conversation range and a fingerprint. Retrieval combines semantic
+  similarity with exact/keyword evidence, explains why an item matched, and
+  refuses to treat it as usable if the original messages changed or vanished.
+  An OpenAI embedding is used when configured; keyword retrieval remains an
+  honest fallback. Automatic capture is replay-idempotent and excludes routine,
+  failed, contradicted, cancelled and interrupted work. Completed read-only
+  research may preserve an honest unverified-evidence limitation. Later material
+  Idea changes retain thread/parent/sequence/type/reason lineage; superficial
+  continuation does not create another checkpoint. Failed or uncommitted work,
+  docs/test-only commits and conversation claims are never promoted as shipped
+  improvements.
+- **Playbooks (procedural memory, evidence-gated):** after a run reaches a
+  terminal receipt with an independently **verified task outcome** and ≥2 tool
+  steps, a side model distills it into a playbook —
   short canonical trigger, keywords, success-path steps, and **`lessons[]`**
   (avoidance advice mined from failed/blocked detours, e.g. *"Google bot-walls
   automation — go straight to wttr.in"*). On a later matching request the steps +
   lessons are recalled. Recall is **lexical token-overlap** (instant, free — no
   side-model call per turn), so a pure paraphrase with no shared words may not
-  recall (precision over recall, by design). Playbooks then *improve*: each carries
-  a `version`, a `succ`/`fail` record, and a rolling `avg_secs`; re-learning a task
-  **merges** into the existing playbook (keeps its track record) rather than
-  duplicating; one that keeps failing on recall is **demoted** out of matching and
-  eventually pruned. `GET /api/playbooks` lists them with metrics; `DELETE
+  recall (precision over recall, by design). Playbooks record verified, partial,
+  unverified, contradicted, failed, and not-applicable outcomes separately. A
+  final response or executor `ok` never counts as proof. Re-learning a task
+  **merges** only after verified evidence; contradiction or repeated verified
+  failure demotes it. Old `succ`/`fail` values remain visible only as legacy
+  reports. `GET /api/playbooks` lists the evidence metrics; `DELETE
   /api/playbooks/:slug` removes one. Routine playbooks are followed directly;
-  consequential ones are followed but verified.
+consequential ones are followed but verified.
+
+See [Verified learning gate](features/verified-learning-gate.md) for evidence,
+idempotency, privacy, compatibility, and current verifier coverage.
+
+### Structured Notes workspace
+
+The **Notes** navigation section is a shared workspace for Sir and AVA. It has a
+General space plus explicit project spaces that remain visible even before their
+first note. Each project uses the same lightweight template: Quick capture,
+Pinned priorities, Decisions, and Documentation. A four-column board moves work
+through Ideas, Doing, Review, and Done.
+
+Notes retain structured content, tags, safe links, pinned state, edit history,
+source and an optimistic version number. AVA can capture and reorganise Notes
+from ordinary text or voice requests. A note may be promoted into a prefilled AVA
+task or an approval-gated self-improvement request without deleting or rewriting
+the source note. Saving or promoting a note never implies that the downstream
+task is complete. See `docs/features/notes.md` for the data and safety contract.
+
+### Progressive visual explanations
+
+Visual explanations appear directly beneath AVA's answer in Chat. The **Visuals**
+navigation section remains an optional workspace for browsing and reopening
+them. Ask AVA to "explain this visually" or start from the workspace; a successful
+tool result attaches its exact immutable revision to the assistant message, and
+conversation reload restores it.
+
+Canonical state is a versioned renderer-neutral VisualMessage: stable semantic
+elements and relationships, a storyboard, validated renderer metadata and an
+accessible fallback. React Flow renders a native interactive canvas and Dagre
+creates its disposable scene layout; neither replaces the semantic source of
+truth. Mermaid remains a restricted legacy ingest format only. AVA stores no
+generated HTML, SVG or PNG. The native card projects one scene locally and
+supports captions, selection, keyboard access, reduced motion, zoom/pan, an
+optional minimap, in-app expansion and explicit SVG/PNG export. Explicit
+Explain/branch/attach actions send server-validated visual context; ordinary view
+state remains local. The renderer is PWA-precached and recent validated messages
+are cached for offline reopening. See `docs/features/visual-explanations.md`.
+
+For substantial research, schema v2 keeps the written synthesis, methodology,
+limitations, source-quality panel and visual entities in one immutable artifact.
+AVA selects the form from the question/evidence unless Sir explicitly asks for
+one. A migration, conflict or trade-route request uses an actual offline Natural
+Earth geographic projection with sourced coordinates, directions, periods,
+regions, legends and geographic uncertainty. Timelines retain date precision;
+charts retain ranges and unavailable values; matrices and claim graphs make
+weak, disputed and missing evidence visible rather than smoothing it away.
+Mission Control records sanitized planning, validation, persistence and failure
+stages under the initiating run.
 
 ## 4. Self-Improvement
 
@@ -177,11 +249,20 @@ React 19, phone-first, reached over Tailscale. A shared liquid-mercury **Orb**
 animates between surfaces (GSAP Flip).
 
 - **Home / command-deck** — moving dotted + nebula backdrop, glass tubelight nav
-  (New / Chats / Memory / Rules / Self), the Orb hero, AVA wordmark, command bar.
+  (New / Chats / Memory / Explore / Rules / Self), the Orb hero, AVA wordmark,
+  command bar, and a visible "Explore what AVA can do" entry point.
 - **Chat** — streaming messages, ethereal-shadows background, word-by-word answer
   reveal, a 3-dot thinking indicator, and a live **Activity panel** that shows the
   running tool steps while Ava works.
 - **Voice mode** — orb-centric, captions, mute, push-to-talk, inline approvals.
+- **Capability Center / Explore** — a searchable map of AVA's capabilities,
+  examples, and live readiness for the brain, voice, persistent browser, memory,
+  account workflows, optional APIs, watches, and self-improvement. It polls every
+  15 seconds, explains the exact browser helper step when needed, and never exposes
+  secrets or account identifiers.
+- **Mission Deck** — one-tap, readiness-aware prompts for a memory mirror, account
+  check, automation scout, desktop pulse, recent-update briefing, and a rotating
+  useful/fun side quest. Unavailable missions cannot launch accidentally.
 - **Sessions / Chats list**, **Memory view** (editable persona/preferences/
   observations/projects), **Rules** (autonomy rules + Fast/Thorough), **Self**
   (self-improvement journal with a goal box to queue an improvement, a real
@@ -202,8 +283,9 @@ animates between surfaces (GSAP Flip).
 
 ## 8. Known nuances
 
-- The committed default voice mode is transcribe-only; **hybrid speaking is live
-  via the gitignored `.env`** (`REALTIME_HYBRID=1`).
+- GPT-Live is OpenAI's newest ChatGPT voice experience, but it is not currently a
+  public API model. Ava uses the newest public Realtime API model available to
+  developers, `gpt-realtime-2.1`, with the recommended `marin` voice.
 - `server/src/self/SELF.md` is the knowledge given to the **self-improvement
   worker** — it is NOT part of the live conversational prompt. The live prompt is
   assembled by `buildSystemPrompt()` from the persona, this capability map, memory,

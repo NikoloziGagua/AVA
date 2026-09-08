@@ -5,6 +5,7 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import type { ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
 
 export type RunCtx = {
   runId: string;
@@ -17,7 +18,11 @@ export type RunCtx = {
 
 export type ToolDef = {
   tool: Tool;
-  run: (args: Record<string, unknown>, ctx: RunCtx) => Promise<{ text: string; ok: boolean }>;
+  run: (args: Record<string, unknown>, ctx: RunCtx) => Promise<{
+    text: string;
+    ok: boolean;
+    verification?: ToolVerificationEvidence;
+  }>;
 };
 
 export function buildAvaMcp(opts: { tools: ToolDef[]; ctx: RunCtx }): Server {

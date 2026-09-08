@@ -3,6 +3,12 @@ import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMemoryTools } from "./memory-mcp.js";
+import { loadProjectIndex } from "../memory/project-index.js";
+import { openInMemoryDb } from "../state/db.js";
+import { createSession } from "../state/sessions.js";
+import { appendMessage } from "../state/messages.js";
+import { MemoryIndexService } from "../memory-index/store.js";
+import type { MemoryEmbedder } from "../memory-index/types.js";
 
 let dir: string;
 beforeEach(() => {
@@ -93,6 +99,19 @@ describe("memory_remember", () => {
     const r = await t.run({ file: "project", project: "yov", text: "uses C:/ai/yov" }, ctx);
     expect(r.ok).toBe(true);
     expect(readFileSync(join(dir, "projects", "yov.md"), "utf8")).toBe("uses C:/ai/yov\n");
+    expect(readFileSync(join(dir, "MEMORY.md"), "utf8"))
+      .toBe("- [yov](projects/yov.md)\n");
+    expect(loadProjectIndex(dir)).toEqual([{ slug: "yov", roots: ["c:/ai/yov"] }]);
+  });
+
+  it("indexes a project only once across repeated writes", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    await t.run({ file: "project", project: "yov", text: "Root: C:/ai/yov" }, ctx);
+    await t.run({ file: "project", project: "yov", text: "uses TypeScript" }, ctx);
+
+    expect(readFileSync(join(dir, "MEMORY.md"), "utf8"))
+      .toBe("- [yov](projects/yov.md)\n");
   });
 
   it("refresh=<substring> bumps the matching observation's confidence and date", async () => {
@@ -198,11 +217,13 @@ describe("memory_forget", () => {
   it("mode=project removes the project file and references", async () => {
     writeFileSync(join(dir, "projects", "yov.md"), "# yov", "utf8");
     writeFileSync(join(dir, "preferences.md"), "yov layout\n", "utf8");
+    writeFileSync(join(dir, "MEMORY.md"), "- [yov](projects/yov.md)\n", "utf8");
     const tools = buildMemoryTools({ memoryDir: dir });
     const t = tools.find((x) => x.tool.name === "memory_forget")!;
     const r = await t.run({ mode: "project", target: "yov" }, ctx);
     expect(r.ok).toBe(true);
     expect(readFileSync(join(dir, "preferences.md"), "utf8")).toBe("");
+    expect(readFileSync(join(dir, "MEMORY.md"), "utf8")).toBe("");
   });
 
   it("mode=match returns not_found when the only matching line is superseded", async () => {
@@ -214,5 +235,127 @@ describe("memory_forget", () => {
     const r = await t.run({ mode: "match", target: "pwsh" }, ctx);
     expect(r.ok).toBe(false);
     expect(r.text).toContain("not found");
+  });
+});
+
+describe("source-linked memory tools", () => {
+  const embedder: MemoryEmbedder = {
+    provider: "fixture",
+    model: "fixture-v1",
+    async embed(text) {
+      const related = /archive|remember prior research|durable recall/i.test(text);
+      return { provider: "fixture", model: "fixture-v1", vector: related ? [1, 0] : [0, 1] };
+    },
+  };
+
+  it("captures a selected current-chat segment and retrieves it from another chat", async () => {
+    const db = openInMemoryDb();
+    const source = createSession(db, { title: "Research archive idea" });
+    appendMessage(db, { sessionId: source.id, role: "user", content: "Start of memory architecture: build a knowledge archive." });
+    appendMessage(db, { sessionId: source.id, role: "assistant", content: "Keep SQLite canonical and verify source ranges. password=source-fixture-secret" });
+    // A real capture instruction normally quotes the marker. The tool must use
+    // the first source occurrence, not this later command occurrence.
+    appendMessage(db, {
+      sessionId: source.id,
+      role: "user",
+      content: "Index this discussion beginning Start of memory architecture.",
+    });
+    const index = new MemoryIndexService(db, embedder);
+    const sourceTools = buildMemoryTools({ memoryDir: dir, db, index, sessionId: source.id });
+    const captureTool = sourceTools.find((tool) => tool.tool.name === "memory_index_capture")!;
+    const captured = await captureTool.run({
+      kind: "idea",
+      title: "Durable research archive",
+      summary: "A source-linked archive should retrieve research while SQLite remains authoritative.",
+      conclusions: ["Verify source before using a memory"],
+      start_marker: "Start of memory architecture",
+      tags: ["memory", "research"],
+    }, ctx);
+    expect(captured.ok).toBe(true);
+    expect(JSON.parse(captured.text)).toMatchObject({ created: true, source: { status: "verified", messageCount: 3 } });
+
+    const other = createSession(db, { title: "Later chat" });
+    appendMessage(db, { sessionId: other.id, role: "user", content: "How should AVA remember prior research?" });
+    const otherTools = buildMemoryTools({ memoryDir: dir, db, index, sessionId: other.id });
+    const searchTool = otherTools.find((tool) => tool.tool.name === "memory_index_search")!;
+    const found = await searchTool.run({ query: "How should AVA remember prior research?" }, ctx);
+    expect(found.ok).toBe(true);
+    const foundPayload = JSON.parse(found.text);
+    expect(foundPayload).toMatchObject({
+      semanticAvailable: true,
+      results: [{ usable: true, entry: { title: "Durable research archive" }, source: { status: "verified" } }],
+    });
+
+    const openTool = otherTools.find((tool) => tool.tool.name === "memory_index_open")!;
+    const opened = await openTool.run({ id: foundPayload.results[0].entry.id }, ctx);
+    expect(opened.ok).toBe(true);
+    expect(opened.text).toContain("Start of memory architecture");
+    expect(opened.text).toContain("password: ***");
+    expect(opened.text).not.toContain("source-fixture-secret");
+  });
+
+  it("does not add index tools without a database, service and source session", () => {
+    expect(buildMemoryTools({ memoryDir: dir }).map((tool) => tool.tool.name))
+      .toEqual(["memory_read", "memory_remember", "memory_forget"]);
+  });
+
+  it("governs a memory through explicit versioned tools with idempotent run evidence", async () => {
+    const db = openInMemoryDb();
+    const source = createSession(db, { title: "Governed launch plan" });
+    const first = appendMessage(db, { sessionId: source.id, role: "user", content: "Develop the launch plan." });
+    const last = appendMessage(db, { sessionId: source.id, role: "assistant", content: "Launch on Monday." });
+    const index = new MemoryIndexService(db, null);
+    const captured = await index.capture({
+      sessionId: source.id,
+      fromMessageId: first.id,
+      throughMessageId: last.id,
+      kind: "idea",
+      title: "Launch plan",
+      summary: "Launch on Monday.",
+    });
+    const tools = buildMemoryTools({ memoryDir: dir, db, index, sessionId: source.id });
+    expect(tools.map((tool) => tool.tool.name)).toEqual(expect.arrayContaining([
+      "memory_index_correct", "memory_index_pin", "memory_index_supersede", "memory_index_conflict",
+    ]));
+
+    const correct = tools.find((tool) => tool.tool.name === "memory_index_correct")!;
+    const corrected = await correct.run({
+      id: captured.result.entry.id,
+      expected_version: 1,
+      reason: "Sir corrected the approved day.",
+      summary: "Launch on Tuesday. token sk-abcdefghijklmnopqrstuvwxyz123456",
+    }, { runId: "governance-run" });
+    expect(corrected.ok).toBe(true);
+    const payload = JSON.parse(corrected.text);
+    expect(payload).toMatchObject({
+      event: { actor: "ava", kind: "corrected", resultingVersion: 2 },
+      governance: { corrected: true, threadVersion: 2 },
+    });
+    expect(corrected.text).not.toContain("abcdefghijklmnopqrstuvwxyz123456");
+    const replay = await correct.run({
+      id: captured.result.entry.id,
+      expected_version: 1,
+      reason: "Sir corrected the approved day.",
+      summary: "A replay must not replace the correction.",
+    }, { runId: "governance-run" });
+    expect(JSON.parse(replay.text).event.id).toBe(payload.event.id);
+
+    const pin = tools.find((tool) => tool.tool.name === "memory_index_pin")!;
+    const stale = await pin.run({
+      thread_id: captured.result.lineage.threadId,
+      expected_version: 1,
+      pinned: true,
+      reason: "Keep visible.",
+    }, { runId: "pin-run" });
+    expect(stale.ok).toBe(false);
+    expect(stale.text).toContain("version_conflict");
+    const pinned = await pin.run({
+      thread_id: captured.result.lineage.threadId,
+      expected_version: 2,
+      pinned: true,
+      reason: "Keep visible.",
+    }, { runId: "pin-run-current" });
+    expect(pinned.ok).toBe(true);
+    expect(JSON.parse(pinned.text)).toMatchObject({ governance: { pinned: true, threadVersion: 3 } });
   });
 });

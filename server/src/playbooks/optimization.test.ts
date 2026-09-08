@@ -10,6 +10,7 @@ import { matchPlaybook, isDemoted } from "./match.js";
 import { recordOutcome, mergePlaybook } from "./mutate.js";
 import { shouldCapture, maybeCapture } from "./capture.js";
 import type { LLMProvider } from "../orchestrator/llm/types.js";
+import { EMPTY_PLAYBOOK_LEARNING } from "./store.js";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "pb-v2-")); });
@@ -23,6 +24,7 @@ const base: Playbook = {
   steps: ["Go straight to wttr.in with a format string", "Write summary to the file", "Read back to confirm"],
   version: 1, succ: 2, fail: 0, avg_secs: 12,
   lessons: ["Google search bot-walls automation — skip it"],
+  learning: { ...EMPTY_PLAYBOOK_LEARNING },
 };
 
 describe("store v2 fields", () => {
@@ -83,40 +85,54 @@ describe("match v2", () => {
   });
 });
 
-describe("capture gate v2 (shouldCapture)", () => {
+describe("verified capture gate (shouldCapture)", () => {
   const ok = (tool: string) => ({ tool, args: {}, ok: true });
   const bad = (tool: string) => ({ tool, args: {}, ok: false });
 
   it("accepts a recovered-failure run (the v1 gate rejected these)", () => {
-    expect(shouldCapture({ succeeded: true, steps: [bad("chrome_navigate"), ok("chrome_navigate"), ok("fs_write")] })).toBe(true);
+    expect(shouldCapture({ outcome: "verified", steps: [bad("chrome_navigate"), ok("chrome_navigate"), ok("fs_write")] })).toBe(true);
   });
   it("rejects a trailing failure (the model gave up)", () => {
-    expect(shouldCapture({ succeeded: true, steps: [ok("chrome_navigate"), bad("fs_write")] })).toBe(false);
+    expect(shouldCapture({ outcome: "verified", steps: [ok("chrome_navigate"), bad("fs_write")] })).toBe(false);
   });
   it("rejects mostly-failed runs", () => {
-    expect(shouldCapture({ succeeded: true, steps: [bad("a"), bad("b"), ok("c")] })).toBe(false);
+    expect(shouldCapture({ outcome: "verified", steps: [bad("a"), bad("b"), ok("c")] })).toBe(false);
   });
-  it("rejects short and unsuccessful runs", () => {
-    expect(shouldCapture({ succeeded: true, steps: [ok("a")] })).toBe(false);
-    expect(shouldCapture({ succeeded: false, steps: [ok("a"), ok("b")] })).toBe(false);
+  it("rejects short and unverified runs", () => {
+    expect(shouldCapture({ outcome: "verified", steps: [ok("a")] })).toBe(false);
+    expect(shouldCapture({ outcome: "unverified", steps: [ok("a"), ok("b")] })).toBe(false);
   });
 });
 
 describe("recordOutcome", () => {
-  it("rolls avg_secs on success and counts wins", () => {
-    writePlaybook(dir, base); // succ 2, avg 12
-    recordOutcome(dir, base.slug, { succeeded: true, secs: 24 });
+  const evidence = { taskId: "task-weather", method: "file_readback", observedAt: 123 };
+
+  it("rolls avg_secs on verified evidence without mutating legacy wins", () => {
+    writePlaybook(dir, base);
+    recordOutcome(dir, base.slug, { outcome: "verified", secs: 24, evidence });
     const pb = readPlaybook(dir, base.slug)!;
-    expect(pb.succ).toBe(3);
-    expect(pb.avg_secs).toBe(16); // (12*2 + 24) / 3
+    expect(pb.succ).toBe(2);
+    expect(pb.learning?.verified).toBe(1);
+    expect(pb.learning?.last_method).toBe("file_readback");
+    expect(pb.avg_secs).toBe(24);
     expect(pb.fail).toBe(0);
   });
-  it("counts losses without touching avg", () => {
+  it("records contradiction separately without touching legacy counters or average", () => {
     writePlaybook(dir, base);
-    recordOutcome(dir, base.slug, { succeeded: false });
+    recordOutcome(dir, base.slug, { outcome: "contradicted", evidence });
     const pb = readPlaybook(dir, base.slug)!;
-    expect(pb.fail).toBe(1);
+    expect(pb.fail).toBe(0);
+    expect(pb.learning?.contradicted).toBe(1);
     expect(pb.avg_secs).toBe(12);
+  });
+
+  it("is idempotent when a terminal task is replayed", () => {
+    writePlaybook(dir, base);
+    recordOutcome(dir, base.slug, { outcome: "verified", secs: 24, evidence });
+    recordOutcome(dir, base.slug, { outcome: "verified", secs: 24, evidence });
+    const pb = readPlaybook(dir, base.slug)!;
+    expect(pb.learning?.verified).toBe(1);
+    expect(pb.learning?.recent_task_ids).toEqual(["task-weather"]);
   });
 });
 
@@ -132,6 +148,14 @@ describe("mergePlaybook", () => {
       steps: ["Use timeanddate.com directly", "Write file", "Verify"],
       version: 1, succ: 0, fail: 0, avg_secs: 20,
       lessons: ["timeanddate.com is a reliable fallback"],
+      learning: {
+        ...EMPTY_PLAYBOOK_LEARNING,
+        verified: 1,
+        last_task_id: "task-fresh",
+        last_method: "fixture",
+        last_evidence_at: 123,
+        recent_task_ids: ["task-fresh"],
+      },
     };
     mergePlaybook(dir, base.slug, fresh, "2026-07-03");
     const merged = readPlaybook(dir, base.slug)!;
@@ -143,7 +167,8 @@ describe("mergePlaybook", () => {
     expect(merged.trigger).toBe(base.trigger); // shorter trigger wins
     expect(merged.keywords).toContain("timeanddate");
     expect(merged.lessons).toHaveLength(2);
-    expect(merged.avg_secs).toBe(16);      // (12+20)/2
+    expect(merged.avg_secs).toBe(20);      // only the fresh run has verified evidence
+    expect(merged.learning?.verified).toBe(1);
     // no duplicate file under the fresh slug
     expect(readPlaybook(dir, fresh.slug)).toBeNull();
   });
@@ -164,6 +189,7 @@ describe("maybeCapture merge-on-capture", () => {
     { tool: "chrome_navigate", args: {}, ok: true },
     { tool: "fs_write", args: {}, ok: true },
   ];
+  const evidence = { taskId: "task-capture", method: "file_readback", observedAt: 123 };
 
   it("second capture of the same task class merges instead of duplicating", async () => {
     await maybeCapture({
@@ -171,7 +197,7 @@ describe("maybeCapture merge-on-capture", () => {
         trigger: "Check city weather and save summary",
         keywords: ["weather", "save"], steps: ["A", "B"], lessons: [],
       }),
-      goal: "weather please", steps, outcome: "done", succeeded: true,
+      goal: "weather please", steps, resultText: "done", learningOutcome: "verified", evidence,
       today: "2026-07-03", durationSecs: 10,
     });
     await maybeCapture({
@@ -179,7 +205,8 @@ describe("maybeCapture merge-on-capture", () => {
         trigger: "Check weather for a city and save the summary",
         keywords: ["weather", "summary"], steps: ["A2", "B2"], lessons: ["lesson"],
       }),
-      goal: "weather please again", steps, outcome: "done", succeeded: true,
+      goal: "weather please again", steps, resultText: "done", learningOutcome: "verified",
+      evidence: { ...evidence, taskId: "task-capture-2", observedAt: 124 },
       today: "2026-07-04", durationSecs: 8,
     });
     const files = readdirSync(join(dir, "playbooks")).filter((f) => f.endsWith(".md"));

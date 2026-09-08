@@ -5,13 +5,23 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import type { Db } from "../state/db.js";
 import { createSession, getSession, getSessionFull, touchSession, updateTitle } from "../state/sessions.js";
-import { appendMessage, listMessages, listMessagesAfterId } from "../state/messages.js";
+import {
+  appendMessage,
+  listMessages,
+  listMessagesAfterId,
+  type Message,
+  type MessageMemoryContext,
+  type MessageVisualContext,
+  type MessageVisualReference,
+} from "../state/messages.js";
+import { getVisualExplanation } from "../state/visual-explanations.js";
+import { researchEntityRecords } from "../visual-explanations/research-model.js";
 import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
 import { classifyIntent, classifyTypedIntent } from "../orchestrator/intent-classifier.js";
 import { decideGreeting } from "../orchestrator/greeting.js";
-import { ActiveRuns } from "../orchestrator/active-runs.js";
+import { ActiveRuns, type ActiveRun } from "../orchestrator/active-runs.js";
 import { autoTitle } from "../orchestrator/auto-title.js";
 import { maybeSummarize } from "../orchestrator/auto-summary.js";
 import type { Chrome } from "../tools/chrome.js";
@@ -40,9 +50,19 @@ import type { Discussion } from "../state/discussions.js";
 import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
+import { buildNotesTools } from "../tools/notes-mcp.js";
+import { buildStrategyRoomTools } from "../tools/strategy-room-mcp.js";
+import { buildVisualExplanationTools } from "../tools/visual-explanations-mcp.js";
+import type { StrategyChatHandoffResult } from "../strategy/coordinator.js";
 import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
 import { buildShopifyTools } from "../tools/shopify-mcp.js";
 import { buildPlacesTools } from "../tools/places-mcp.js";
+import { buildUfoExperimentTools } from "../tools/ufo-experiment-mcp.js";
+import { buildAutomationTools } from "../tools/automations-mcp.js";
+import type { AutomationPlaybookService } from "../automations/playbooks.js";
+import type { GeneratedPlaybookService } from "../automations/generated-playbooks.js";
+import type { UfoExperimentService } from "../ufo/experiment.js";
+import type { CodexWatchTarget } from "../watches/codex-dispatch.js";
 import { getReasoningLevel } from "../state/reasoning-pref.js";
 import { mapReasoning } from "../orchestrator/reasoning.js";
 import { detectCorrection, formatCorrection } from "../orchestrator/correction-detector.js";
@@ -52,6 +72,29 @@ import { matchPlaybook } from "../playbooks/match.js";
 import { loadPlaybookIndex, readPlaybook } from "../playbooks/store.js";
 import { bumpUse, recordOutcome } from "../playbooks/mutate.js";
 import type { RunStep } from "../playbooks/distill.js";
+import { learningEvidenceFromReceipt, learningOutcomeFromReceipt } from "../playbooks/learning.js";
+import {
+  cancelExplorerTaskIfRunning,
+  createExplorerTask,
+  failExplorerTaskIfRunning,
+  recordExplorerAgentEvent,
+} from "../explorer/store.js";
+import { AgentObservabilityRecorder } from "../observability/agent-adapter.js";
+import type { ObservabilityService } from "../observability/store.js";
+import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
+import { TaskReceiptBuilder, type TaskReceipt } from "../receipts/task-receipt.js";
+import { resolveRunObjective } from "../orchestrator/objective-lineage.js";
+import { getTaskReceipt, pruneTaskReceipts, saveTaskReceipt } from "../state/task-receipts.js";
+import type { MemoryIndexService } from "../memory-index/store.js";
+import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
+import {
+  memoryContextFromDecision,
+  recordAutomaticMemoryDecision,
+  retrieveAutomaticMemory,
+  type AutomaticMemoryDecision,
+} from "../memory-index/auto-retrieve.js";
+import { detectProject, loadProjectIndex } from "../memory/project-index.js";
+import { planComputerExecution } from "../orchestrator/computer-execution-router.js";
 
 const Body = z.object({
   sessionId: z.string().nullish(),
@@ -59,12 +102,90 @@ const Body = z.object({
   // Voice turns ask for minimal reasoning so spoken replies come back fast.
   // Capability is unchanged — the full tool stack still runs.
   voice: z.boolean().optional(),
+  // Explicit keyboard input submitted without leaving voice mode. This is
+  // presentation/provenance metadata only; it never changes the agent/tool gate.
+  inputSource: z.literal("voice_exact_text").optional(),
   // When false, this run executes tools but persists NO messages. Used by the
   // HYBRID voice proxy's do_on_computer handoff: the realtime proxy already owns
   // the voice-turn storage (user transcript + spoken result), so the internal
   // /api/chat run must not double-store. Independent of `voice`. Defaults to true.
   persist: z.boolean().optional(),
+  // Only explicit visual-card actions or composer attachments send this. Zoom,
+  // pan, hover, animation and unsubmitted selection remain browser-local.
+  visualContext: z.object({
+    visualMessageId: z.string().regex(/^visual_[A-Za-z0-9_-]{8,32}$/),
+    revision: z.number().int().positive(),
+    action: z.enum(["explain", "branch", "attach"]),
+    sceneId: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{1,63}$/),
+    selectedElementIds: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{1,63}$/)).max(14),
+  }).strict().optional(),
+  // An internal handoff may attach this run beneath a voice/Forge/Codex span.
+  // It carries identifiers only; AVA still owns dispatch and policy.
+  observability: z.object({
+    traceId: z.string().min(1).max(160),
+    parentRunId: z.string().min(1).max(160),
+    parentSpanId: z.string().min(1).max(160).nullish(),
+    causationEventId: z.string().min(1).max(160).nullish(),
+  }).optional(),
 });
+
+function validateVisualContext(
+  db: Db,
+  context: MessageVisualContext | undefined,
+): { context: MessageVisualContext; prompt: string } | null {
+  if (!context) return null;
+  const current = getVisualExplanation(db, context.visualMessageId);
+  if (!current) throw Object.assign(new Error("visual message not found"), { code: "visual_message_not_found", status: 404 });
+  if (current.revision !== context.revision) {
+    throw Object.assign(new Error("visual revision is stale"), {
+      code: "stale_visual_revision",
+      status: 409,
+      currentRevision: current.revision,
+    });
+  }
+  const scene = current.storyboard.scenes.find((item) => item.id === context.sceneId);
+  if (!scene) throw Object.assign(new Error("visual scene is invalid"), { code: "invalid_visual_context", status: 400 });
+  const records = current.schemaVersion === "1.0"
+    ? current.semanticModel.elements.map((element) => ({ id: element.id, label: element.label, claimIds: [] as string[], sourceIds: [] as string[] }))
+    : researchEntityRecords(current.semanticModel);
+  const elements = new Map(records.map((element) => [element.id, element]));
+  const sceneEntityIds = "nodeIds" in scene ? scene.nodeIds : scene.entityIds;
+  const selected = [...new Set(context.selectedElementIds)];
+  if (selected.some((id) => !sceneEntityIds.includes(id) || !elements.has(id))) {
+    throw Object.assign(new Error("selected visual elements are invalid"), { code: "invalid_visual_context", status: 400 });
+  }
+  const safeContext: MessageVisualContext = { ...context, selectedElementIds: selected };
+  const selectedLabels = selected.map((id) => {
+    const element = elements.get(id)!;
+    if (current.schemaVersion === "1.0") return `${id}: ${element.label}`;
+    const claimText = element.claimIds.map((claimId) => current.claims.find((claim) => claim.id === claimId)?.text).filter(Boolean);
+    const sourceText = element.sourceIds.map((sourceId) => current.sources.find((source) => source.id === sourceId)).filter(Boolean)
+      .map((source) => `${source!.title} (${source!.url})`);
+    return `${id}: ${element.label}${claimText.length ? `\n  claims: ${claimText.join(" | ")}` : ""}${sourceText.length ? `\n  sources: ${sourceText.join(" | ")}` : ""}`;
+  });
+  const prompt = [
+    "[EXPLICIT VISUAL CONTEXT — server validated]",
+    `visualMessageId: ${current.visualMessageId}`,
+    `revision: ${current.revision}`,
+    `action: ${context.action}`,
+    `scene: ${scene.id} — ${scene.title}`,
+    `scene caption: ${scene.caption}`,
+    selectedLabels.length ? `selected elements:\n${selectedLabels.map((line) => `- ${line}`).join("\n")}` : "selected elements: none (use the current scene)",
+    "[/EXPLICIT VISUAL CONTEXT]",
+  ].join("\n");
+  return { context: safeContext, prompt };
+}
+
+function messageContentForAgent(db: Db, message: Message): string {
+  if (message.role !== "user" || !message.metadata?.visualContext) return message.content;
+  try {
+    const resolved = validateVisualContext(db, message.metadata.visualContext);
+    return resolved ? `${resolved.prompt}\n\n${message.content}` : message.content;
+  } catch {
+    // Never substitute a newer visual revision into immutable chat history.
+    return message.content;
+  }
+}
 
 
 // Shown/persisted in place of a blank assistant turn when the model produces an
@@ -77,24 +198,38 @@ export type AgentDeps = {
   pidfiles: PidfileRegistry;
   fsRoots: string[];
   memoryDir: string;
+  /** AVA-owned compact semantic index; absent only in isolated legacy tests. */
+  memoryIndex?: MemoryIndexService;
+  /** Best-effort post-turn research/idea capture; never delays or changes chat delivery. */
+  memoryAutoCapture?: AutoMemoryCapture;
   dataDir: string;
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
   notifyDone?: (summary: string) => void;
   provider: LLMProvider | null;
-  queueSelfImprove?: (goal: string) => string;
+  queueSelfImprove?: (goal: string) => string | Promise<string>;
   listSelfImprovements?: () => IntentStatusSummary[];
   /** Discuss-with-Claude: queue a background, read-only consult and recount past ones. */
   queueDiscussion?: (topic: string, sessionId: string | null) => string;
   listDiscussions?: () => Discussion[];
   getDiscussion?: (id: string) => Discussion | null;
+  /** Move the authoritative current chat snapshot into AVA's Strategy Room. */
+  openStrategyRoomFromSession?: (sessionId: string) => StrategyChatHandoffResult;
   logsDir?: string;
   /** Shopify Admin API creds — when present, the shopify_* product tools are offered. */
   shopify?: { store: string; token: string } | null;
   /** Google Places API key — when present, the find_places tool is offered. */
   googlePlacesApiKey?: string | null;
+  /** Pins watcher delivery to one concrete Codex TUI thread for this repo. */
+  resolveCodexWatchTarget?: () => CodexWatchTarget | null;
   /** Optional override; lets tests substitute a fake agent loop. Defaults to runAgent. */
   runAgentImpl?: typeof runAgent;
+  /** Shared Mission Control stream. Optional keeps isolated route tests simple. */
+  observability?: ObservabilityService;
+  /** Default-off experimental UFO boundary; never represents host capability. */
+  ufoExperiment?: UfoExperimentService;
+  automationService?: AutomationPlaybookService;
+  generatedPlaybooks?: GeneratedPlaybookService;
 };
 
 export type Metered = { anthropic: Anthropic | null; openai: OpenAI | null };
@@ -107,6 +242,28 @@ export function chatRoutes(
   metered: Metered,
 ): Router {
   const r = Router();
+  // A just-finished fast run can unregister before the browser opens its SSE
+  // stream. Keep the latest sanitized receipt per session in memory for five
+  // minutes as the fast path; SQLite provides restart-safe replay for 30 days.
+  // Mission Control remains the richer technical record.
+  const recentReceipts = new Map<string, { receipt: TaskReceipt; expiresAt: number }>();
+  // persist:false voice handoffs deliberately have no assistant message to
+  // reconstruct after a fast-finish/connect race. Retain the already-sanitized
+  // final beside its task id for the same short replay window as the receipt.
+  const recentFinals = new Map<string, { taskId: string; text: string; expiresAt: number }>();
+  const recentMemoryContexts = new Map<string, { taskId: string; context: MessageMemoryContext; expiresAt: number }>();
+  const RECEIPT_REPLAY_TTL_MS = 5 * 60_000;
+  const pruneRecentReceipts = (now = Date.now()) => {
+    for (const [sid, value] of recentReceipts) {
+      if (value.expiresAt <= now) recentReceipts.delete(sid);
+    }
+    for (const [sid, value] of recentFinals) {
+      if (value.expiresAt <= now) recentFinals.delete(sid);
+    }
+    for (const [sid, value] of recentMemoryContexts) {
+      if (value.expiresAt <= now) recentMemoryContexts.delete(sid);
+    }
+  };
 
   r.post("/", auth, async (req, res) => {
     const parsed = Body.safeParse(req.body);
@@ -114,8 +271,27 @@ export function chatRoutes(
       res.status(400).json({ error: "bad_request", details: parsed.error.flatten() });
       return;
     }
+    if (parsed.data.inputSource === "voice_exact_text" && (parsed.data.voice !== true || parsed.data.persist === false)) {
+      res.status(400).json({
+        error: "invalid_input_source",
+        message: "voice_exact_text requires a persisted voice turn",
+      });
+      return;
+    }
     if (!agentDeps.provider) {
       res.status(503).json({ error: "no_llm_provider" });
+      return;
+    }
+    let resolvedVisualContext: ReturnType<typeof validateVisualContext> = null;
+    try {
+      resolvedVisualContext = validateVisualContext(db, parsed.data.visualContext);
+    } catch (error) {
+      const failure = error as Error & { code?: string; status?: number; currentRevision?: number };
+      res.status(failure.status ?? 400).json({
+        error: failure.code ?? "invalid_visual_context",
+        message: failure.message,
+        ...(failure.currentRevision ? { currentRevision: failure.currentRevision } : {}),
+      });
       return;
     }
     let sessionId = parsed.data.sessionId;
@@ -175,8 +351,19 @@ export function chatRoutes(
     // unanswered user lines).
     // persist:false (HYBRID voice handoff) runs the tools but stores nothing —
     // the realtime proxy is the single source of truth for voice turns.
+    let persistedUserMessageId: number | null = null;
     if (parsed.data.persist !== false) {
-      appendMessage(db, { sessionId, role: "user", content: parsed.data.text });
+      const metadata = {
+        ...(resolvedVisualContext ? { visualContext: resolvedVisualContext.context } : {}),
+        ...(parsed.data.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
+      };
+      const storedUser = appendMessage(db, {
+        sessionId,
+        role: "user",
+        content: parsed.data.text,
+        ...(Object.keys(metadata).length ? { metadata } : {}),
+      });
+      persistedUserMessageId = storedUser.id;
     }
 
     // Fire-and-forget: summarization must NOT block the response. Awaiting it
@@ -206,8 +393,11 @@ export function chatRoutes(
     // The same id keys the agent run, the tool ctx, and the pidfiles — letting
     // the kill endpoint find this run's child PIDs and kill the whole subtree.
     const runId = nanoid(12);
-    const activeRun = { sessionId, runId, abort, buffer };
+    const activeRun: ActiveRun = { sessionId, runId, abort, buffer };
     runs.register(activeRun);
+    pruneRecentReceipts();
+    recentReceipts.delete(sessionId);
+    recentMemoryContexts.delete(sessionId);
 
     const full = getSessionFull(db, sessionId);
     const recent = full?.summary_through_message_id
@@ -225,13 +415,24 @@ export function chatRoutes(
     // prefix and is sent as the final user message.
     const priorRows = recent.slice(0, -1);
     const latestRow = recent.at(-1);
+    const objectiveForRun = resolveRunObjective(parsed.data.text, priorRows);
     const priorMessages: LLMMessage[] = priorRows
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => ({
         role: m.role as "user" | "assistant",
-        content: m.content,
+        content: messageContentForAgent(db, m),
       }));
-    const latestUserText = latestRow?.content ?? parsed.data.text;
+    // A persist:false voice handoff deliberately does not append its generated
+    // computer-action instruction to chat history. The latest stored row is the
+    // owner's spoken transcript that caused that handoff, so using it here would
+    // silently discard the more precise action instruction (for example, a
+    // generated "focus Codex and run /resume" task became the fragment "You are").
+    // Keep the earlier rows as history, but make the transient request itself the
+    // final user prompt that the tool-capable agent executes.
+    const latestUserText =
+      parsed.data.persist === false
+        ? parsed.data.text
+        : latestRow?.content ?? parsed.data.text;
     // TEXT defaults to "action" mode so every typed turn has the full tool stack
     // (the classifier was too conservative — casual "look up X" stayed in
     // conversation mode and Ava said "I can't access Google"). VOICE, however,
@@ -249,6 +450,9 @@ export function chatRoutes(
       : classifyTypedIntent(parsed.data.text);
     const mode: "conversation" | "action" =
       process.env.FORCE_INTENT === "conversation" ? "conversation" : intent;
+    const computerExecutionPlan = mode === "action"
+      ? planComputerExecution(latestUserText)
+      : null;
 
     // Recall: in action mode with saved playbooks, match this request to a known
     // playbook locally and inject its steps + a stakes rubric. This used to be a
@@ -257,10 +461,10 @@ export function chatRoutes(
     // (documented in match.test.ts) is that pure paraphrases with no lexical
     // overlap no longer recall — the agent then simply runs without the hint.
     let playbookPrefix = "";
-    // Which playbook steered this run, if any — its win/loss record and
-    // rolling duration are updated when the run ends (recordOutcome below).
+    // Which playbook steered this run, if any — its typed evidence record and
+    // verified-duration trend are updated from the terminal receipt.
     let recalledSlug: string | null = null;
-    if (mode === "action" && !parsed.data.voice) {
+    if (mode === "action" && !parsed.data.voice && !computerExecutionPlan) {
       try {
         const index = loadPlaybookIndex(agentDeps.memoryDir);
         if (index.length) {
@@ -285,23 +489,252 @@ export function chatRoutes(
       }
     }
 
-    const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix + latestUserText;
+    // Durable cross-chat recall is a pre-agent discovery gate, not another
+    // model tool call. The index selects only the latest checkpoint in each
+    // lineage, verifies its authoritative source, enforces project scope, and
+    // returns a bounded scrubbed excerpt. Failure is fail-open for conversation
+    // delivery and fail-closed for memory injection.
+    const memoryProject = (() => {
+      try { return detectProject(latestUserText, loadProjectIndex(agentDeps.memoryDir))?.slug ?? null; }
+      catch { return null; }
+    })();
+    const memoryRetrieval: AutomaticMemoryDecision = computerExecutionPlan
+      ? {
+          channel: "chat",
+          status: "suppressed",
+          reason: "A deterministic computer route was selected; durable memory is not needed for this action.",
+          project: memoryProject,
+          mode: null,
+          semanticAvailable: false,
+          notice: null,
+          selected: [],
+          prompt: "",
+        }
+      : await retrieveAutomaticMemory(agentDeps.memoryIndex, {
+          query: latestUserText,
+          channel: "chat",
+          currentSessionId: sessionId,
+          project: memoryProject,
+        });
+    const memoryContext = memoryContextFromDecision(memoryRetrieval);
+    // This is the same bounded projection persisted with the answer. Raw
+    // retrieval queries, source excerpts, and generated prompt text never
+    // cross the live event boundary.
+    buffer.append({ kind: "memory_context", payload: memoryContext });
+    recentMemoryContexts.set(sessionId, {
+      taskId: runId,
+      context: memoryContext,
+      expiresAt: Date.now() + RECEIPT_REPLAY_TTL_MS,
+    });
+
+    const generatedPlaybook = mode === "action"
+      ? agentDeps.generatedPlaybooks?.matchActive(latestUserText) ?? null
+      : null;
+    const generatedPlaybookPrefix = generatedPlaybook
+      ? `[APPROVED ACTIVEPIECES PLAYBOOK]\nThis request matches ${generatedPlaybook.displayName}. ` +
+        `Use automation_run_playbook with playbookId ${generatedPlaybook.playbookId}. ` +
+        `Do not substitute the ordinary app tool unless the approved playbook reports unavailable.\n[/APPROVED ACTIVEPIECES PLAYBOOK]\n\n`
+      : "";
+    const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix + generatedPlaybookPrefix
+      + (resolvedVisualContext ? `${resolvedVisualContext.prompt}\n\n` : "")
+      + (memoryRetrieval.prompt ? `${memoryRetrieval.prompt}\n\n` : "")
+      + latestUserText;
     const reasoningEffort = agentDeps.provider!.name === "openai"
       ? (parsed.data.voice ? "none" : mapReasoning(getReasoningLevel(db), mode))
       : undefined;
+
+    const runStartMs = Date.now();
+    const receiptBuilder = new TaskReceiptBuilder({
+      taskId: runId,
+      objective: objectiveForRun,
+      mode,
+      startedAt: runStartMs,
+    });
+    let explorerTraceReady = false;
+    try {
+      createExplorerTask(db, {
+        id: runId,
+        sessionId,
+        originalRequest: parsed.data.text,
+        mode,
+        startedAt: runStartMs,
+      });
+      explorerTraceReady = true;
+    } catch (err) {
+      // Observability must never prevent the requested task from running.
+      console.warn("[explorer] task start record failed:", err instanceof Error ? err.message : err);
+    }
+
+    let missionRecorder: AgentObservabilityRecorder | null = null;
+    let unregisterMissionStop = () => {};
+    if (agentDeps.observability) {
+      try {
+        const parentContext = parsed.data.observability;
+        const parentRun = parentContext
+          ? agentDeps.observability.getRun(parentContext.parentRunId)
+          : null;
+        agentDeps.observability.startRun({
+          id: runId,
+          traceId: parentContext?.traceId,
+          parentRunId: parentContext?.parentRunId ?? null,
+          rootTaskId: parentRun?.rootTaskId ?? parentRun?.id ?? runId,
+          sessionId,
+          runKind: parsed.data.persist === false ? "voice_action" : "chat_agent",
+          runtimeId: "ava:agent",
+          runtimeType: "ava",
+          hostRuntimeId: parentContext ? "ava:voice" : null,
+          ownerType: "ava",
+          ownerId: "agent-runtime",
+          ownerRole: mode === "action" ? "tool-agent" : "conversation-agent",
+          title: parsed.data.persist === false
+            ? "Voice delegated an action"
+            : "AVA chat request",
+          objective: objectiveForRun,
+          privacyLevel: "personal",
+          staleAfterMs: 90_000,
+          startedAt: runStartMs,
+        });
+        missionRecorder = new AgentObservabilityRecorder(
+          agentDeps.observability,
+          runId,
+          parentContext?.parentSpanId ?? null,
+          parentContext?.causationEventId ?? null,
+        );
+        recordAutomaticMemoryDecision(
+          agentDeps.observability,
+          runId,
+          memoryRetrieval,
+          "ava:memory-retrieval",
+        );
+        const observedSessionId = sessionId;
+        unregisterMissionStop = agentDeps.observability.registerStopHandler(
+          runId,
+          async () => {
+            if (runs.get(observedSessionId) !== activeRun) return false;
+            abort.abort();
+            activeRun.cancel?.();
+            for (const pid of agentDeps.pidfiles.listForRun(runId)) {
+              try { await killTree(pid); } catch { /* already exited */ }
+            }
+            if (explorerTraceReady) {
+              try { cancelExplorerTaskIfRunning(db, runId); } catch { /* best effort */ }
+            }
+            return true;
+          },
+        );
+      } catch (err) {
+        // The observed work always wins over its telemetry.
+        console.warn("[mission-control] run start failed:", err instanceof Error ? err.message : err);
+      }
+    }
 
     void (async () => {
       const sid = sessionId!;
       // Collect the run's tool steps so a successful >=2-tool run can be
       // distilled into a reusable playbook (best-effort, fire-and-forget).
       const runSteps: RunStep[] = [];
-      const runStartMs = Date.now();
+      const runVisualReferences = new Map<string, MessageVisualReference>();
+      const toolStartedAt = new Map<string, number[]>();
+      let terminalReceiptPublished = false;
+      let finalTextForLearning: string | null = null;
+      let persistedAssistantMessageId: number | null = null;
+      let playbookLearningSettled = false;
+      const publishReceipt = (at: number, remember: boolean): TaskReceipt => {
+        const receipt = receiptBuilder.snapshot(at);
+        buffer.append({ kind: "receipt", payload: receipt });
+        if (remember) {
+          recentReceipts.set(sid, {
+            receipt,
+            expiresAt: at + RECEIPT_REPLAY_TTL_MS,
+          });
+          try {
+            saveTaskReceipt(db, sid, receipt, at);
+            pruneTaskReceipts(db, at);
+          } catch (err) {
+            console.warn("[receipt] durable snapshot failed:", err instanceof Error ? err.message : err);
+          }
+        }
+        return receipt;
+      };
+      const settlePlaybookLearning = (at: number) => {
+        if (playbookLearningSettled) return;
+        playbookLearningSettled = true;
+        const receipt = receiptBuilder.snapshot(at);
+        const learningOutcome = learningOutcomeFromReceipt(receipt);
+        const evidence = learningEvidenceFromReceipt(receipt);
+        const durationSecs = Math.max(0, (at - runStartMs) / 1000);
+        try {
+          agentDeps.generatedPlaybooks?.observeVerifiedRun({
+            taskId: receipt.taskId,
+            goal: objectiveForRun,
+            steps: runSteps,
+            outcome: learningOutcome,
+          });
+        } catch (err) {
+          console.warn("[automations] generated playbook observation failed:", err instanceof Error ? err.message : err);
+        }
+        if (finalTextForLearning && agentDeps.provider) {
+          void maybeCapture({
+            memoryDir: agentDeps.memoryDir,
+            provider: agentDeps.provider,
+            goal: objectiveForRun,
+            steps: runSteps,
+            resultText: finalTextForLearning,
+            learningOutcome,
+            evidence,
+            durationSecs,
+            today: new Date(at).toISOString().slice(0, 10),
+          });
+        }
+        if (recalledSlug) {
+          try {
+            recordOutcome(agentDeps.memoryDir, recalledSlug, {
+              outcome: learningOutcome,
+              secs: durationSecs,
+              evidence,
+            });
+          } catch (err) {
+            console.warn("[playbooks] outcome record failed:", err instanceof Error ? err.message : err);
+          }
+          recalledSlug = null;
+        }
+      };
       const emit = (e: AgentEvent) => {
+        // Stop publishes `killed` immediately through activeRun.cancel below.
+        // Ignore the agent's later cooperative cancellation/done so one run has
+        // exactly one terminal receipt and one terminal stream event.
+        if (receiptBuilder.terminal &&
+            (e.kind === "error" || e.kind === "killed" || e.kind === "done")) {
+          return 0;
+        }
         if (e.kind === "tool_call") {
           runSteps.push({ tool: e.payload.tool, args: e.payload.args, ok: true });
         } else if (e.kind === "tool_result") {
           const s = runSteps[runSteps.length - 1];
-          if (s && s.tool === e.payload.tool) s.ok = e.payload.ok;
+          if (s && s.tool === e.payload.tool) {
+            s.ok = e.payload.ok;
+            if (e.payload.verification) s.verification = e.payload.verification;
+          }
+          if (e.payload.ok && (e.payload.tool === "visual_explanation_create" || e.payload.tool === "research_visual_create")) {
+            try {
+              const result = JSON.parse(e.payload.result) as {
+                visualMessageId?: unknown;
+                visualExplanationId?: unknown;
+                revision?: unknown;
+              };
+              const id = typeof result.visualMessageId === "string"
+                ? result.visualMessageId
+                : typeof result.visualExplanationId === "string" ? result.visualExplanationId : "";
+              const requestedRevision = typeof result.revision === "number" ? result.revision : null;
+              const visual = /^visual_[A-Za-z0-9_-]{8,32}$/.test(id)
+                ? getVisualExplanation(db, id, requestedRevision)
+                : null;
+              if (visual && visual.sourceSessionId === sid) {
+                const reference = { visualMessageId: visual.visualMessageId, revision: visual.revision };
+                runVisualReferences.set(`${reference.visualMessageId}:${reference.revision}`, reference);
+              }
+            } catch { /* malformed output cannot become a trusted attachment */ }
+          }
         }
         // Normalize an empty/whitespace final to a graceful message so we never
         // stream or persist a blank assistant turn (the run did something — the
@@ -310,46 +743,80 @@ export function chatRoutes(
           e = { kind: "final", payload: { text: GRACEFUL_FINAL } };
         }
         if (e.kind === "final") {
-          const prov = agentDeps.provider;
-          const durationSecs = (Date.now() - runStartMs) / 1000;
-          if (prov) {
-            void maybeCapture({
-              memoryDir: agentDeps.memoryDir,
-              provider: prov,
-              goal: parsed.data.text,
-              steps: runSteps,
-              outcome: e.payload.text,
-              // "succeeded" = the run delivered a final reply. Mid-run tool
-              // failures Ava recovered from are wanted material — the capture
-              // gate (shouldCapture) rejects trailing failures and mostly-
-              // failed runs, and distill turns recovered detours into lessons.
-              succeeded: true,
-              durationSecs,
-              today: new Date().toISOString().slice(0, 10),
+          recentFinals.set(sid, {
+            taskId: runId,
+            text: e.payload.text,
+            expiresAt: Date.now() + RECEIPT_REPLAY_TTL_MS,
+          });
+        }
+        // This is the one complete operational event seam shared by all tools.
+        // Explorer omits model thought/delta events and applies its own broader
+        // secret scrub before committing anything to the execution history.
+        const eventAt = Date.now();
+        receiptBuilder.observe(e);
+        if (e.kind === "final") finalTextForLearning = e.payload.text;
+        let toolDurationMs: number | null = null;
+        if (e.kind === "tool_call") {
+          const starts = toolStartedAt.get(e.payload.tool) ?? [];
+          starts.push(eventAt);
+          toolStartedAt.set(e.payload.tool, starts);
+        } else if (e.kind === "tool_result") {
+          const starts = toolStartedAt.get(e.payload.tool);
+          const started = starts?.shift();
+          if (started !== undefined) toolDurationMs = Math.max(0, eventAt - started);
+          if (starts?.length === 0) toolStartedAt.delete(e.payload.tool);
+        }
+        if (explorerTraceReady) {
+          try {
+            recordExplorerAgentEvent(db, runId, e, {
+              at: eventAt,
+              durationMs: toolDurationMs,
             });
-          }
-          // Update the steering playbook's track record: reaching a final
-          // reply counts as a win for the procedure.
-          if (recalledSlug) {
-            try { recordOutcome(agentDeps.memoryDir, recalledSlug, { succeeded: true, secs: durationSecs }); }
-            catch (err) { console.warn("[playbooks] outcome record failed:", err instanceof Error ? err.message : err); }
-            recalledSlug = null; // count each run exactly once
+          } catch (err) {
+            console.warn("[explorer] event record failed:", err instanceof Error ? err.message : err);
           }
         }
-        if ((e.kind === "error" || e.kind === "killed") && recalledSlug) {
-          // The recalled playbook steered this run into a wall — count the loss
-          // so repeat offenders get demoted out of recall (match.isDemoted).
-          try { recordOutcome(agentDeps.memoryDir, recalledSlug, { succeeded: false }); }
-          catch (err) { console.warn("[playbooks] outcome record failed:", err instanceof Error ? err.message : err); }
-          recalledSlug = null; // a killed run can also emit error — count once
+        if (missionRecorder) {
+          try {
+            missionRecorder.record(e, {
+              at: eventAt,
+              durationMs: toolDurationMs,
+            });
+          } catch (err) {
+            console.warn("[mission-control] event record failed:", err instanceof Error ? err.message : err);
+          }
+        }
+        // A terminal receipt must precede error/killed/done: the browser closes
+        // its EventSource as soon as it sees one of those terminal events.
+        if ((e.kind === "error" || e.kind === "killed" || e.kind === "done") &&
+            !terminalReceiptPublished) {
+          settlePlaybookLearning(eventAt);
+          publishReceipt(eventAt, true);
+          terminalReceiptPublished = true;
         }
         const id = buffer.append({ kind: e.kind, payload: e.payload });
+        // Approval is a live lifecycle boundary, not a terminal outcome. Emit a
+        // replaceable snapshot after the approval event so the card and receipt
+        // describe the same current state. A later snapshot supersedes it.
+        if (e.kind === "approval_required" || e.kind === "approval_resolved") {
+          publishReceipt(eventAt, false);
+        }
         // persist:false (HYBRID voice handoff) still streams final/error over SSE
         // so the proxy can speak the result — but it stores NO assistant message
         // here; the realtime proxy persists the spoken turn instead (no double-store).
         if (parsed.data.persist !== false) {
           if (e.kind === "final") {
-            appendMessage(db, { sessionId: sid, role: "assistant", content: e.payload.text });
+            const visualMessages = [...runVisualReferences.values()];
+            const storedAssistant = appendMessage(db, {
+              sessionId: sid,
+              role: "assistant",
+              content: e.payload.text,
+              metadata: {
+                memoryContext,
+                ...(visualMessages.length ? { visualMessages } : {}),
+              },
+            });
+            persistedAssistantMessageId = storedAssistant.id;
           } else if (e.kind === "error") {
             // Surface a run-ending error (LLM quota/timeout, stream failure) in the
             // transcript instead of leaving the chat silent — the run otherwise
@@ -357,10 +824,19 @@ export function chatRoutes(
             appendMessage(db, {
               sessionId: sid, role: "assistant",
               content: `That didn't work, Sir — ${e.payload.message}`,
+              metadata: {
+                memoryContext,
+                ...([...runVisualReferences.values()].length
+                  ? { visualMessages: [...runVisualReferences.values()] }
+                  : {}),
+              },
             });
           }
         }
         return id;
+      };
+      activeRun.cancel = () => {
+        if (!receiptBuilder.terminal) emit({ kind: "killed", payload: { reason: "manual" } });
       };
       try {
         const impl = agentDeps.runAgentImpl ?? runAgent;
@@ -372,7 +848,40 @@ export function chatRoutes(
         // Conversation mode skips the Chromium boot wait and the heavy tool
         // builders, but memory tools stay available so the agent can still
         // record observations or recall facts mid-conversation.
-        const memoryTools = buildMemoryTools({ memoryDir: agentDeps.memoryDir });
+        const memoryTools = buildMemoryTools({
+          memoryDir: agentDeps.memoryDir,
+          db,
+          index: agentDeps.memoryIndex,
+          sessionId: sid,
+        });
+        // Notes stay available in both routing modes: "put this in Notes" is a
+        // lightweight conversational instruction, but it must still persist a
+        // structured visible record. Voice records the same source lineage.
+        const notesTools = buildNotesTools({
+          db,
+          sessionId: sid,
+          source: parsed.data.voice ? "ava_voice" : "ava_chat",
+          queueSelfImprove: agentDeps.queueSelfImprove,
+        });
+        const strategyRoomTools = agentDeps.openStrategyRoomFromSession
+          ? buildStrategyRoomTools({
+              sessionId: sid,
+              openFromSession: agentDeps.openStrategyRoomFromSession,
+            })
+          : [];
+        const visualExplanationTools = buildVisualExplanationTools({
+          db,
+          sessionId: sid,
+          source: parsed.data.voice ? "ava_voice" : "ava_chat",
+          observability: agentDeps.observability,
+          request: parsed.data.text,
+        });
+        const ufoExperimentTools = agentDeps.ufoExperiment
+          ? buildUfoExperimentTools(agentDeps.ufoExperiment)
+          : [];
+        const automationTools = agentDeps.automationService
+          ? buildAutomationTools(agentDeps.automationService, agentDeps.generatedPlaybooks)
+          : [];
         // Discuss-with-Claude is available in BOTH modes (Sir may ask by voice):
         // it queues a background, read-only consult bound to THIS session (sid),
         // returns immediately, and can recount past discussions. Only wired when
@@ -426,12 +935,17 @@ export function chatRoutes(
             ...(agentDeps.googlePlacesApiKey ? buildPlacesTools({ apiKey: agentDeps.googlePlacesApiKey }) : []),
             ...discussTools,
             ...memoryTools,
+            ...notesTools,
+            ...strategyRoomTools,
+            ...visualExplanationTools,
+            ...ufoExperimentTools,
+            ...automationTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
             // Standing background checks ("notify me if/when …") — the
             // scheduler re-runs them; Ava just registers/lists/deletes here.
-            ...(buildWatchTools({ db }) as ToolDef[]),
+            ...(buildWatchTools({ db, resolveCodexTarget: agentDeps.resolveCodexWatchTarget }) as ToolDef[]),
             // App modules: deterministic Instagram workflows + the people map
-            // (identity resolution + learned DM threads = the fast path).
+            // (saved usernames are authoritative; sends re-verify the profile).
             ...(buildInstagramTools({ getChrome: agentDeps.getChrome, memoryDir: agentDeps.memoryDir }) as ToolDef[]),
             ...(buildWhatsappTools({ getChrome: agentDeps.getChrome, memoryDir: agentDeps.memoryDir }) as ToolDef[]),
             ...(buildPeopleTools({ memoryDir: agentDeps.memoryDir }) as ToolDef[]),
@@ -445,11 +959,20 @@ export function chatRoutes(
             buildControlAppTool({ signal: abort.signal, pidfiles: agentDeps.pidfiles }),
             ...discussTools,
             ...memoryTools,
+            ...notesTools,
+            ...strategyRoomTools,
+            ...visualExplanationTools,
+            ...ufoExperimentTools.filter((tool) => tool.tool.name === "ufo_experiment_status"),
+            ...automationTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
           ];
         }
         await impl({
           prompt: promptForAgent,
+          personaContext: {
+            userText: parsed.data.text,
+            channel: parsed.data.voice ? "voice" : "chat",
+          },
           priorMessages,
           abort,
           emit,
@@ -457,7 +980,16 @@ export function chatRoutes(
           db,
           sessionId: sid,
           mode,
+          computerExecutionPlan,
           reasoningEffort,
+          recordUsage: (usage) => {
+            if (!missionRecorder) return;
+            try { missionRecorder.recordUsage(usage); }
+            catch (err) {
+              // Accounting must never become a failure in the work it observes.
+              console.warn("[mission-control] usage record failed:", err instanceof Error ? err.message : err);
+            }
+          },
           deps: {
             // The orchestrator never reads chrome directly; tools carry their own
             // lazy accessor. Kept null so the browser stays unbooted until used.
@@ -471,25 +1003,108 @@ export function chatRoutes(
             tools,
           },
         });
+        // Test adapters and future runtimes are allowed to return after a final
+        // without emitting the bookkeeping `done` event. Close that seam here
+        // so the stream always receives one terminal receipt and one terminator.
+        if (!receiptBuilder.terminal) emit({ kind: "done", payload: {} });
+        const completed = receiptBuilder.snapshot(Date.now());
+        if (
+          parsed.data.persist !== false
+          && persistedUserMessageId !== null
+          && persistedAssistantMessageId !== null
+          && completed.lifecycle === "finished"
+          && completed.failedToolResults === 0
+          && completed.outcome !== "failed"
+          && completed.outcome !== "contradicted"
+          && agentDeps.memoryAutoCapture
+        ) {
+          // Memory is an optional post-turn side effect. Chat is already complete,
+          // and a failed/slow memory editor must never hold the session run open.
+          void agentDeps.memoryAutoCapture({
+            sessionId: sid,
+            userMessageId: persistedUserMessageId,
+            assistantMessageId: persistedAssistantMessageId,
+            channel: parsed.data.voice ? "voice" : "chat",
+          }).catch((err) => {
+            console.warn("[memory-index] automatic capture failed:", err instanceof Error ? err.message : err);
+          });
+        }
       } catch (err) {
         // Last-resort guard: an exception escaping the agent loop (e.g. a SQLite
         // write failing inside emit) must end THIS run — not become an unhandled
         // rejection that crashes the whole server mid-task.
         const msg = err instanceof Error ? err.message : String(err);
         try {
+          const eventAt = Date.now();
+          receiptBuilder.observe({ kind: "error", payload: { message: msg } });
+          settlePlaybookLearning(eventAt);
+          if (!terminalReceiptPublished) {
+            const receipt = receiptBuilder.snapshot(eventAt);
+            buffer.append({ kind: "receipt", payload: receipt });
+            recentReceipts.set(sid, {
+              receipt,
+              expiresAt: eventAt + RECEIPT_REPLAY_TTL_MS,
+            });
+            try { saveTaskReceipt(db, sid, receipt, eventAt); }
+            catch { /* the run-ending error must still reach the stream */ }
+            terminalReceiptPublished = true;
+          }
           buffer.append({ kind: "error", payload: { message: msg } });
           buffer.append({ kind: "done", payload: {} });
+          if (explorerTraceReady) {
+            recordExplorerAgentEvent(db, runId, {
+              kind: "error",
+              payload: { message: msg },
+            });
+          }
+          missionRecorder?.record({
+            kind: "error",
+            payload: { message: msg },
+          });
           if (parsed.data.persist !== false) {
-            appendMessage(db, { sessionId: sid, role: "assistant", content: `That didn't work, Sir — ${msg}` });
+            appendMessage(db, {
+              sessionId: sid,
+              role: "assistant",
+              content: `That didn't work, Sir — ${msg}`,
+              metadata: { memoryContext },
+            });
           }
         } catch { /* even the error path failed; finally still unregisters */ }
         console.error("[chat] run crashed:", msg);
       } finally {
+        unregisterMissionStop();
+        if (agentDeps.observability) {
+          try {
+            const missionRun = agentDeps.observability.getRun(runId);
+            if (missionRun && !TERMINAL_RUN_STATUSES.has(missionRun.status)) {
+              agentDeps.observability.record(runId, {
+                producerId: "ava:agent",
+                type: "agent.runtime.orphan_closed",
+                status: "error",
+                title: "Agent runtime ended without a terminal event",
+                summary: "AVA closed the run conservatively because its worker exited without a final outcome.",
+                terminal: true,
+                runStatus: "failed",
+                outcome: "runtime_ended_without_terminal_event",
+                verificationStatus: "not_verified",
+              });
+            }
+          } catch (err) {
+            console.warn("[mission-control] run close failed:", err instanceof Error ? err.message : err);
+          }
+        }
+        if (explorerTraceReady) {
+          try {
+            failExplorerTaskIfRunning(db, runId);
+          } catch (err) {
+            console.warn("[explorer] task close failed:", err instanceof Error ? err.message : err);
+          }
+        }
         runs.unregister(sid, activeRun);
       }
     })();
 
-    res.json({ sessionId });
+    res.json({ sessionId, taskId: runId });
   });
 
   r.get("/:sessionId/stream", auth, (req, res) => {
@@ -510,9 +1125,34 @@ export function chatRoutes(
       const sink = createSink(res);
       // Ids just need to be > what the client already has so they aren't deduped.
       let id = lastEventId;
-      const latest = latestAssistantAfterLastUser(db, sessionId);
-      if (latest) {
-        sink.write({ id: ++id, kind: "final", payload: { text: latest }, bytes: 0, ts: Date.now() });
+      pruneRecentReceipts();
+      const requestedTaskId = typeof req.query.taskId === "string" ? req.query.taskId : null;
+      const memoryFinal = recentFinals.get(sessionId);
+      const replayFinal = memoryFinal && (!requestedTaskId || requestedTaskId === memoryFinal.taskId)
+        ? memoryFinal.text
+        // A task-scoped client must never receive a persisted answer from a
+        // different turn. An unscoped legacy client may still use the durable
+        // conversation fallback after a server restart.
+        : requestedTaskId ? null : latestAssistantAfterLastUser(db, sessionId);
+      const rememberedContext = recentMemoryContexts.get(sessionId);
+      if (rememberedContext && (!requestedTaskId || requestedTaskId === rememberedContext.taskId)) {
+        sink.write({
+          id: ++id,
+          kind: "memory_context",
+          payload: rememberedContext.context,
+          bytes: 0,
+          ts: Date.now(),
+        });
+      }
+      if (replayFinal) {
+        sink.write({ id: ++id, kind: "final", payload: { text: replayFinal }, bytes: 0, ts: Date.now() });
+      }
+      const memoryReceipt = recentReceipts.get(sessionId)?.receipt;
+      const recent = memoryReceipt && (!requestedTaskId || requestedTaskId === memoryReceipt.taskId)
+        ? memoryReceipt
+        : getTaskReceipt(db, { sessionId, taskId: requestedTaskId });
+      if (recent) {
+        sink.write({ id: ++id, kind: "receipt", payload: recent, bytes: 0, ts: Date.now() });
       }
       // Always emit `done` so the EventSource finishes (sets finished, clears
       // busy) even when there is no assistant message yet.
@@ -554,17 +1194,26 @@ export function chatRoutes(
     req.on("close", () => clearInterval(interval));
   });
 
-  r.post("/:sessionId/kill", auth, async (req, res) => {
+  const stopSession = (includeSelfImprovements: boolean): RequestHandler => async (req, res) => {
     const sessionId = req.params.sessionId;
     if (typeof sessionId !== "string") {
       res.status(400).json({ error: "bad_request" });
       return;
     }
     // Look up the run's id BEFORE unregistering so we can find its child PIDs.
-    const runId = runs.getRunId(sessionId);
+    const activeRun = runs.get(sessionId);
+    const runId = activeRun?.runId ?? null;
     // 1. Abort the model read-loop and signal in-flight tools (computer_use's
     //    GUI loop, claude_code's child via its abort listener).
     const ok = runs.abort(sessionId);
+    if (ok) activeRun?.cancel?.();
+    if (runId) {
+      try {
+        cancelExplorerTaskIfRunning(db, runId);
+      } catch (err) {
+        console.warn("[explorer] cancellation record failed:", err instanceof Error ? err.message : err);
+      }
+    }
     // 2. Kill the run's spawned process subtree — claude_code's `claude -p`
     //    child and everything it spawned — so Stop actually halts running work,
     //    not just the next model turn. Best-effort: never let a dead/missing pid
@@ -575,12 +1224,18 @@ export function chatRoutes(
       }
     }
     runs.unregister(sessionId); // free the slot immediately so a new turn can start (preempt)
-    // 3. Stop ALSO halts any background self-improvement — a self-improvement isn't
-    //    a session run (it runs detached in a worktree), so without this the red
-    //    button couldn't reach a runaway self-edit. Cancel them all here.
-    const cancelledImprovements = cancelAllImprovements(db);
+    // 3. The deliberate global Stop also halts detached self-development. A
+    //    session-only interrupt (including voice barge-in) leaves it alone.
+    const cancelledImprovements = includeSelfImprovements
+      ? cancelAllImprovements(db, "global_stop")
+      : 0;
     res.json({ aborted: ok, cancelledImprovements });
-  });
+  };
+
+  // Voice barge-in/new-turn cancellation is session-scoped. The explicit red
+  // Stop uses kill-all so it can still halt detached self-development.
+  r.post("/:sessionId/kill", auth, stopSession(false));
+  r.post("/:sessionId/kill-all", auth, stopSession(true));
 
   return r;
 }

@@ -1,6 +1,8 @@
 // web/src/chat/useChatStream.ts
 import { useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
+import type { TaskReceipt } from "./task-receipt.js";
+import type { MemoryContext } from "./memory-context.js";
 
 type EventBase = { id: number; runEpoch: number };
 
@@ -11,13 +13,15 @@ export type StreamEvent =
   | (EventBase & { kind: "tool_result"; payload: { tool: string; ok: boolean; result: string } })
   | (EventBase & { kind: "final"; payload: { text: string } })
   | (EventBase & { kind: "error"; payload: { message: string } })
-  | (EventBase & { kind: "killed"; payload: { reason?: "stuck" } })
+  | (EventBase & { kind: "killed"; payload: { reason?: "stuck" | "manual" } })
   | (EventBase & { kind: "done"; payload: Record<string, never> })
+  | (EventBase & { kind: "receipt"; payload: TaskReceipt })
+  | (EventBase & { kind: "memory_context"; payload: MemoryContext })
   | (EventBase & { kind: "gap"; payload: { from: number; to: number } })
   | (EventBase & { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } })
   | (EventBase & { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } });
 
-export function useChatStream(sessionId: string | null, runEpoch: number) {
+export function useChatStream(sessionId: string | null, runEpoch: number, taskId: string | null = null) {
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const lastIdRef = useRef(0);
   const esRef = useRef<EventSource | null>(null);
@@ -41,7 +45,8 @@ export function useChatStream(sessionId: string | null, runEpoch: number) {
       const token = getToken() ?? "";
       const url =
         `/api/chat/${sessionId}/stream` +
-        `?lastEventId=${lastIdRef.current}&t=${encodeURIComponent(token)}`;
+        `?lastEventId=${lastIdRef.current}&t=${encodeURIComponent(token)}` +
+        (taskId ? `&taskId=${encodeURIComponent(taskId)}` : "");
       const es = new EventSource(url);
       esRef.current = es;
       es.addEventListener("open", () => { failStreak = 0; });
@@ -79,7 +84,7 @@ export function useChatStream(sessionId: string | null, runEpoch: number) {
           es.close();
         }
       };
-      for (const k of ["thought", "delta", "tool_call", "tool_result", "final", "error", "killed", "done", "gap", "approval_required", "approval_resolved"] as const) {
+      for (const k of ["thought", "delta", "tool_call", "tool_result", "final", "error", "killed", "done", "receipt", "memory_context", "gap", "approval_required", "approval_resolved"] as const) {
         es.addEventListener(k, handle(k));
       }
     }
@@ -106,7 +111,7 @@ export function useChatStream(sessionId: string | null, runEpoch: number) {
       window.removeEventListener("ava:unauthorized", onUnauthorized);
       esRef.current?.close();
     };
-  }, [sessionId, runEpoch]);
+  }, [sessionId, runEpoch, taskId]);
 
   return { events };
 }

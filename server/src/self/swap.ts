@@ -1,5 +1,22 @@
 import { execFileSync, spawnSync } from "node:child_process";
 
+export type SwapBlockedCode = "stale_head" | "overlapping_edits" | "merge_refused";
+
+/** A verified candidate cannot be installed right now without risking live
+ * work. Callers preserve it and expose a retry boundary instead of converting
+ * this into a terminal implementation failure. */
+export class SwapBlockedError extends Error {
+  readonly code: SwapBlockedCode;
+  readonly blockers: string[];
+
+  constructor(code: SwapBlockedCode, message: string, blockers: string[] = []) {
+    super(message);
+    this.name = "SwapBlockedError";
+    this.code = code;
+    this.blockers = blockers;
+  }
+}
+
 export function headSha(repoRoot: string): string {
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot }).toString().trim();
 }
@@ -12,31 +29,60 @@ function isAncestor(repoRoot: string, ancestor: string, descendant: string): boo
   return r.status === 0;
 }
 
+function nulPaths(repoRoot: string, args: string[]): string[] {
+  const raw = execFileSync("git", args, { cwd: repoRoot }).toString();
+  return raw.split("\0").map((path) => path.trim()).filter(Boolean);
+}
+
+/** Tracked edits only. Untracked paths are protected by Git's own merge
+ * collision check and are never removed by this module. */
+export function trackedWorkingTreePaths(repoRoot: string): string[] {
+  return [...new Set([
+    ...nulPaths(repoRoot, ["diff", "--name-only", "-z"]),
+    ...nulPaths(repoRoot, ["diff", "--cached", "--name-only", "-z"]),
+  ])].sort();
+}
+
 export function swapTo(repoRoot: string, sha: string): void {
   // SAFETY: only ever fast-forward. If commits landed on the live branch AFTER
   // the self-improve worktree was created (Sir editing, a concurrent session,
   // another improvement), the current HEAD is NOT an ancestor of the candidate
   // — resetting onto the candidate would silently DROP those in-between commits.
-  // Refuse: runImprovement's try/catch then marks the intent failed instead of
-  // clobbering work (recoverable only via reflog otherwise).
+  // Preserve the candidate and expose a resumable reconciliation boundary.
   const head = headSha(repoRoot);
   if (head !== sha && !isAncestor(repoRoot, head, sha)) {
-    throw new Error(
-      `refusing non-fast-forward swap: HEAD (${head.slice(0, 12)}) has commits not in the candidate (${sha.slice(0, 12)})`,
+    throw new SwapBlockedError(
+      "stale_head",
+      `swap blocked: HEAD (${head.slice(0, 12)}) advanced beyond candidate (${sha.slice(0, 12)}); reconcile and re-verify before installing`,
     );
   }
   // SAFETY: the fast-forward check protects COMMITS; this protects UNCOMMITTED
   // work. `reset --hard` silently destroys tracked edits in progress — the exact
   // recorded collision with concurrent dev sessions. Refuse instead.
-  const dirty = execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: repoRoot })
-    .toString().trim();
-  if (dirty) {
-    throw new Error(
-      `refusing swap: working tree has uncommitted changes (concurrent edits in progress):\n${dirty.slice(0, 400)}`,
+  const dirtyPaths = trackedWorkingTreePaths(repoRoot);
+  const changedPaths = new Set(nulPaths(repoRoot, ["diff", "--name-only", "-z", head, sha]));
+  const overlaps = dirtyPaths.filter((path) => changedPaths.has(path));
+  if (overlaps.length > 0) {
+    throw new SwapBlockedError(
+      "overlapping_edits",
+      `swap blocked: candidate overlaps ${overlaps.length} uncommitted tracked ${overlaps.length === 1 ? "file" : "files"}:\n${overlaps.slice(0, 20).join("\n")}`,
+      overlaps,
     );
   }
-  // Move the live working tree + current branch to the verified commit.
-  execFileSync("git", ["reset", "--hard", sha], { cwd: repoRoot });
+  // Move the live branch with Git's non-destructive fast-forward machinery.
+  try {
+    execFileSync("git", ["merge", "--ff-only", sha], {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const stderr = (error as { stderr?: Buffer }).stderr?.toString().trim();
+    throw new SwapBlockedError(
+      "merge_refused",
+      `swap blocked: Git refused the safe fast-forward${stderr ? `: ${stderr.slice(0, 500)}` : ""}`,
+      dirtyPaths,
+    );
+  }
 }
 
 /**

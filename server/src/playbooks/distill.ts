@@ -1,7 +1,16 @@
 import type { LLMProvider } from "../orchestrator/llm/types.js";
-import { slugify, type Playbook, type Stakes } from "./store.js";
+import type { ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
+import { EMPTY_PLAYBOOK_LEARNING, slugify, type Playbook, type Stakes } from "./store.js";
 
-export type RunStep = { tool: string; args: unknown; ok: boolean };
+export type RunStep = {
+  tool: string;
+  args: unknown;
+  ok: boolean;
+  /** Bounded evidence emitted by the authoritative tool-result boundary.
+   * Ordinary playbook distillation may ignore it; executable automation
+   * compilation requires every retained step to be independently verified. */
+  verification?: ToolVerificationEvidence;
+};
 
 // Tools that change state or take (potentially) irreversible action. A task that
 // used any of them is "consequential" → it gets a result-check at recall. Pure
@@ -53,5 +62,6 @@ export async function distillPlaybook(o: {
     version: 1, succ: 0, fail: 0,
     avg_secs: Math.round(o.durationSecs ?? 0),
     lessons: Array.isArray(parsed.lessons) ? parsed.lessons.map(String).filter(Boolean) : [],
+    learning: { ...EMPTY_PLAYBOOK_LEARNING },
   };
 }

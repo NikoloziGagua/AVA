@@ -1,0 +1,6 @@
+portable-backup/**/*.7z.* binary -delta
+portable-backup/**/CURRENT-INVENTORY.tsv binary -delta
+portable-backup/**/*.txt text eol=lf
+portable-backup/**/*.json text eol=lf
+portable-backup/**/*.md text eol=lf
+portable-backup/**/*.ps1 text eol=crlf

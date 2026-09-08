@@ -2,6 +2,7 @@ import { Router, type RequestHandler } from "express";
 import type { Db } from "../state/db.js";
 import { listSessions, getSession, softDeleteSession, setPinned } from "../state/sessions.js";
 import { listMessages } from "../state/messages.js";
+import { getVisualExplanation } from "../state/visual-explanations.js";
 
 export function sessionsRoutes(db: Db, auth: RequestHandler): Router {
   const r = Router();
@@ -21,7 +22,13 @@ export function sessionsRoutes(db: Db, auth: RequestHandler): Router {
       res.status(404).json({ error: "not_found" });
       return;
     }
-    res.json({ session, messages: listMessages(db, session.id) });
+    const messages = listMessages(db, session.id).map((message) => ({
+      ...message,
+      visualMessages: (message.metadata?.visualMessages ?? [])
+        .map((reference) => getVisualExplanation(db, reference.visualMessageId, reference.revision))
+        .filter((visual) => visual !== null),
+    }));
+    res.json({ session, messages });
   });
 
   r.patch("/:id", auth, (req, res) => {

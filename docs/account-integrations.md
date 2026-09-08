@@ -5,6 +5,34 @@ Whatever you log into in *her* browser window stays logged in — cookies and
 sessions survive across runs. That's the whole trick: one manual login each,
 then she can act on your behalf.
 
+Start the dedicated AVA browser once from a normal PowerShell window:
+
+```powershell
+.\scripts\start-ava-browser.cmd
+```
+
+AVA attaches to that browser over `http://127.0.0.1:9222`. This also works on
+Windows installations where managed Node processes are not allowed to spawn
+Chrome directly. The helper uses installed Chrome or Edge, so downloading a
+separate Playwright Chromium build is not required.
+
+The same persistent browser covers Instagram, WhatsApp Web, Gmail, Calendar,
+Outlook, and other websites. Instagram and WhatsApp have dedicated verified
+workflows; other sites use AVA's general browser tools.
+
+### Instagram message routing
+
+Instagram sends are profile-first. AVA resolves the person from the local
+people map, reads that person's saved Instagram username, opens the exact
+`https://www.instagram.com/<username>/` profile, verifies that the browser
+remained on that username, and clicks the profile's exact **Message** action.
+Instagram may open the conversation as a drawer over that profile or navigate
+to its direct-thread URL; both are accepted only as the result of that verified
+profile click. Only then does she type, send, and verify the requested text.
+She does not search the Instagram inbox and does not use a stored
+thread ID to choose the recipient. If the username, profile, Message action,
+login, or verification is missing, she stops without trying another account.
+
 ## One-time setup per service
 
 ### WhatsApp

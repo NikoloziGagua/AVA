@@ -1,0 +1,323 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import {
+  buildCodexDispatcher,
+  inspectCodexThread,
+  resolveLatestCodexTarget,
+  type CodexWatchTarget,
+} from "./codex-dispatch.js";
+
+const temps: string[] = [];
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  while (temps.length) rmSync(temps.pop()!, { recursive: true, force: true });
+});
+
+function tempRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), "ava-codex-watch-"));
+  temps.push(root);
+  return root;
+}
+
+function event(type: string, extra: Record<string, unknown> = {}) {
+  return JSON.stringify({ timestamp: new Date().toISOString(), type: "event_msg", payload: { type, ...extra } });
+}
+
+function hookPrompt(marker: string) {
+  return JSON.stringify({
+    timestamp: new Date().toISOString(),
+    type: "response_item",
+    payload: {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: `<hook_prompt hook_run_id="hook-1">${marker} build</hook_prompt>` }],
+    },
+  });
+}
+
+function makeSession(root: string, input: { id: string; cwd: string; state: "idle" | "busy"; mtimeHint?: number }): CodexWatchTarget {
+  const sessionFile = join(root, "sessions", "2026", "08", "04", `rollout-${input.id}.jsonl`);
+  mkdirSync(dirname(sessionFile), { recursive: true });
+  const meta = JSON.stringify({
+    timestamp: new Date().toISOString(),
+    type: "session_meta",
+    payload: { session_id: input.id, id: input.id, cwd: input.cwd, originator: "codex-tui" },
+  });
+  const lifecycle = input.state === "busy"
+    ? [event("task_started", { turn_id: "turn-current" }), event("user_message", { message: "working" })]
+    : [event("task_started", { turn_id: "turn-old" }), event("task_complete", { turn_id: "turn-old" })];
+  writeFileSync(sessionFile, [meta, ...lifecycle, ""].join("\n"));
+  if (input.mtimeHint) {
+    const date = new Date(input.mtimeHint);
+    utimesSync(sessionFile, date, date);
+  }
+  return { threadId: input.id, sessionFile, cwd: input.cwd };
+}
+
+describe("Codex watcher target resolution", () => {
+  it("pins the newest Codex TUI session for the exact repository", () => {
+    const root = tempRoot();
+    makeSession(root, { id: "older", cwd: "C:/repo/AVA", state: "idle", mtimeHint: Date.now() - 10_000 });
+    const latest = makeSession(root, { id: "latest", cwd: "C:/repo/AVA", state: "busy", mtimeHint: Date.now() });
+    makeSession(root, { id: "other", cwd: "C:/repo/other", state: "idle", mtimeHint: Date.now() + 10_000 });
+
+    expect(resolveLatestCodexTarget("C:/repo/AVA", root)).toEqual(latest);
+  });
+});
+
+describe("Codex thread evidence", () => {
+  it("separates busy, delivered, and completed boundaries", () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-1", cwd: "C:/repo/AVA", state: "idle" });
+    const offset = inspectCodexThread(target).fileSize;
+    appendFileSync(target.sessionFile, `${event("task_started", { turn_id: "turn-watch" })}\n`);
+    appendFileSync(target.sessionFile, `${event("user_message", { message: "[AVA-WATCH:w1] build notes" })}\n`);
+
+    const running = inspectCodexThread(target, "[AVA-WATCH:w1]", offset);
+    expect(running).toMatchObject({ state: "busy", markerSeen: true, markerTurnCompleted: false, turnId: "turn-watch" });
+
+    appendFileSync(target.sessionFile, `${event("task_complete", { turn_id: "turn-watch" })}\n`);
+    expect(inspectCodexThread(target, "[AVA-WATCH:w1]", offset)).toMatchObject({
+      state: "idle",
+      markerSeen: true,
+      markerTurnCompleted: true,
+      turnId: "turn-watch",
+    });
+  });
+
+  it("recognizes a Stop-hook continuation marker without pretending it was a user message", () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-hook", cwd: "C:/repo/AVA", state: "busy" });
+    const offset = inspectCodexThread(target).fileSize;
+    appendFileSync(target.sessionFile, `${hookPrompt("[AVA-WATCH:hook-1]")}\n`);
+    expect(inspectCodexThread(target, "[AVA-WATCH:hook-1]", offset)).toMatchObject({
+      markerSeen: true,
+      markerTurnCompleted: false,
+    });
+  });
+
+  it("does not accept marker text echoed in diagnostics or tool arguments as delivery", () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-echo", cwd: "C:/repo/AVA", state: "busy" });
+    const offset = inspectCodexThread(target).fileSize;
+    appendFileSync(target.sessionFile, `${event("tool_call", { input: "debug [AVA-WATCH:echo-1]" })}\n`);
+    appendFileSync(target.sessionFile, `${JSON.stringify({
+      type: "response_item",
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text: "ordinary [AVA-WATCH:echo-1] text" }] },
+    })}\n`);
+    appendFileSync(target.sessionFile, `${event("task_complete", { turn_id: "turn-echo" })}\n`);
+    expect(inspectCodexThread(target, "[AVA-WATCH:echo-1]", offset)).toMatchObject({
+      markerSeen: false,
+      markerTurnCompleted: false,
+    });
+  });
+});
+
+describe("Codex watcher delivery", () => {
+  it("uses Codex's acknowledged exact-thread queue even while the pinned thread is busy", async () => {
+    const root = tempRoot();
+    const inbox = join(root, "inbox");
+    const target = makeSession(root, { id: "thread-queue", cwd: "C:/repo/AVA", state: "busy" });
+    const spawnCodex = vi.fn(() => ({ pid: 1 }));
+    const submitQueue = vi.fn()
+      .mockReturnValueOnce({ status: "accepted" as const, detail: "acknowledged" })
+      .mockReturnValue({ status: "already_accepted" as const, detail: "no duplicate" });
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      handoffDir: inbox,
+      submitQueue,
+      spawnCodex,
+    });
+
+    const first = await dispatcher.dispatch({
+      watchId: "queue-1",
+      prompt: "build safely",
+      target,
+    });
+    expect(first).toMatchObject({ status: "pending", pid: null });
+    expect(spawnCodex).not.toHaveBeenCalled();
+    expect(submitQueue).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: "thread-queue",
+      prompt: expect.stringContaining("[AVA-WATCH:queue-1]"),
+    }));
+
+    const replay = await dispatcher.dispatch({
+      watchId: "queue-1",
+      prompt: "build safely",
+      target,
+      marker: "[AVA-WATCH:queue-1]",
+      dispatchOffset: "dispatchOffset" in first ? first.dispatchOffset : 0,
+    });
+    expect(replay).toMatchObject({ status: "pending" });
+    expect(submitQueue).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back to the trusted in-thread Stop hook for an older CLI while busy", async () => {
+    const root = tempRoot();
+    const inbox = join(root, "inbox");
+    const target = makeSession(root, { id: "thread-hook", cwd: "C:/repo/AVA", state: "busy" });
+    const spawnCodex = vi.fn(() => ({ pid: 1 }));
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      handoffDir: inbox,
+      submitQueue: () => ({ status: "unavailable", detail: "queue unsupported", retryable: true }),
+      spawnCodex,
+    });
+
+    const result = await dispatcher.dispatch({
+      watchId: "hook-1",
+      prompt: "build notes",
+      target,
+      continueCycle: true,
+    });
+    expect(result).toMatchObject({ status: "pending", pid: null });
+    expect(readFileSync(join(inbox, "pending", "hook-1.json"), "utf8")).toContain("[AVA-WATCH:hook-1]");
+    expect(spawnCodex).not.toHaveBeenCalled();
+
+    const replay = await dispatcher.dispatch({
+      watchId: "hook-1",
+      prompt: "build notes",
+      target,
+      marker: "[AVA-WATCH:hook-1]",
+      dispatchOffset: "dispatchOffset" in result ? result.dispatchOffset : 0,
+      continueCycle: true,
+    });
+    expect(replay).toMatchObject({ status: "pending" });
+    expect(spawnCodex).not.toHaveBeenCalled();
+  });
+
+  it("reports an unsupported exact-thread wake path honestly when the thread is idle", async () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-idle-old-cli", cwd: "C:/repo/AVA", state: "idle" });
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      handoffDir: join(root, "inbox"),
+      submitQueue: () => ({ status: "unavailable", detail: "queue unsupported", retryable: true }),
+    });
+
+    expect(await dispatcher.dispatch({ watchId: "old-cli", prompt: "probe", target })).toMatchObject({
+      status: "error",
+      retryable: true,
+      detail: expect.stringContaining("idle pinned thread cannot be woken"),
+    });
+  });
+
+  it("fails closed without a Stop-hook duplicate when queue acknowledgement is uncertain", async () => {
+    const root = tempRoot();
+    const inbox = join(root, "inbox");
+    const target = makeSession(root, { id: "thread-uncertain", cwd: "C:/repo/AVA", state: "busy" });
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      handoffDir: inbox,
+      submitQueue: () => ({ status: "ambiguous", detail: "acknowledgement lost" }),
+    });
+
+    expect(await dispatcher.dispatch({ watchId: "uncertain-1", prompt: "probe", target })).toEqual({
+      status: "error",
+      detail: "acknowledgement lost",
+      retryable: false,
+    });
+    expect(() => readFileSync(join(inbox, "pending", "uncertain-1.json"), "utf8")).toThrow();
+  });
+
+  it("does not dispatch while the pinned thread is busy", async () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-busy", cwd: "C:/repo/AVA", state: "busy" });
+    const spawnCodex = vi.fn(() => ({ pid: 1 }));
+    const dispatcher = buildCodexDispatcher({ repoRoot: target.cwd, logsDir: root, codexHome: root, spawnCodex, verifyMs: 20, pollMs: 1 });
+
+    expect(await dispatcher.dispatch({ watchId: "w1", prompt: "build notes", target })).toMatchObject({ status: "busy" });
+    expect(spawnCodex).not.toHaveBeenCalled();
+  });
+
+  it("verifies the prompt inside the exact thread and never dispatches it twice", async () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-idle", cwd: "C:/repo/AVA", state: "idle" });
+    const spawnCodex = vi.fn((input: { prompt: string }) => {
+      appendFileSync(target.sessionFile, `${event("task_started", { turn_id: "turn-delivered" })}\n`);
+      appendFileSync(target.sessionFile, `${event("user_message", { message: input.prompt })}\n`);
+      return { pid: 32148 };
+    });
+    const dispatcher = buildCodexDispatcher({ repoRoot: target.cwd, logsDir: root, codexHome: root, spawnCodex, verifyMs: 100, pollMs: 1 });
+
+    const delivered = await dispatcher.dispatch({ watchId: "w2", prompt: "build notes", target });
+    expect(delivered).toMatchObject({ status: "delivered", pid: 32148, turnId: "turn-delivered" });
+    expect(spawnCodex).toHaveBeenCalledOnce();
+
+    const second = await dispatcher.dispatch({
+      watchId: "w2",
+      prompt: "build notes",
+      target,
+      marker: "[AVA-WATCH:w2]",
+      dispatchOffset: "dispatchOffset" in delivered ? delivered.dispatchOffset : 0,
+    });
+    expect(second).toMatchObject({ status: "already_delivered" });
+    expect(spawnCodex).toHaveBeenCalledOnce();
+  });
+
+  it("never launches a duplicate while an earlier dispatch is pending", async () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-pending", cwd: "C:/repo/AVA", state: "idle" });
+    const spawnCodex = vi.fn(() => ({ pid: 42 }));
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      spawnCodex,
+      isProcessRunning: () => true,
+      verifyMs: 5,
+      pollMs: 1,
+    });
+
+    const first = await dispatcher.dispatch({ watchId: "w3", prompt: "build notes", target });
+    expect(first).toMatchObject({ status: "pending", pid: 42 });
+
+    const second = await dispatcher.dispatch({
+      watchId: "w3",
+      prompt: "build notes",
+      target,
+      marker: "[AVA-WATCH:w3]",
+      dispatchOffset: "dispatchOffset" in first ? first.dispatchOffset : 0,
+      dispatchPid: 42,
+    });
+    expect(second).toMatchObject({ status: "pending" });
+    expect(spawnCodex).toHaveBeenCalledOnce();
+  });
+
+  it("reports a lost delivery process without silently retrying", async () => {
+    const root = tempRoot();
+    const target = makeSession(root, { id: "thread-lost", cwd: "C:/repo/AVA", state: "idle" });
+    const spawnCodex = vi.fn(() => ({ pid: 43 }));
+    const dispatcher = buildCodexDispatcher({
+      repoRoot: target.cwd,
+      logsDir: root,
+      codexHome: root,
+      spawnCodex,
+      isProcessRunning: () => false,
+      verifyMs: 5,
+      pollMs: 1,
+    });
+    const first = await dispatcher.dispatch({ watchId: "w4", prompt: "build notes", target });
+    const second = await dispatcher.dispatch({
+      watchId: "w4",
+      prompt: "build notes",
+      target,
+      marker: "[AVA-WATCH:w4]",
+      dispatchOffset: "dispatchOffset" in first ? first.dispatchOffset : 0,
+      dispatchPid: 43,
+    });
+    expect(second).toMatchObject({ status: "error", retryable: false });
+    expect(spawnCodex).toHaveBeenCalledOnce();
+  });
+});

@@ -1,0 +1,21 @@
+Independent path coverage verification
+======================================
+
+Inventory paths: 447986
+Archive union paths: 447986
+Missing paths: 0
+Unexpected paths: 0
+
+The union is:
+
+1. AVA-plaintext-current-20260902-v2.7z
+2. AVA-plaintext-nested-git-20260902.7z
+
+The second archive restores the two nested integration source repositories.
+The root AVA .git directory is represented by the private remote and by the
+verified current Git bundle carried inside the main archive metadata.
+
+Representative presence checks passed for the root .env, AVA SQLite state,
+dedicated Chrome profile, local Claude settings, Codex agent files, untracked
+persona research, another-PC run guide, Activepieces nested .git, and Microsoft
+UFO nested .git.

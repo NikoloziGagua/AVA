@@ -1,8 +1,14 @@
-# Watches — standing background monitoring ("notify me if/when X")
+# Watches — reminders, monitoring, and scheduled task delivery
 
 ## What it does
 
-A **watch** is a standing instruction that Ava re-checks on a schedule and
+A **watch** is a durable instruction that Ava handles on a schedule. An ordinary
+watch is re-checked by AVA with her full toolset, so it can use Instagram,
+WhatsApp, Chrome, web research, files, Claude tools, or any other available AVA
+capability. A reminder is pushed directly. A targeted-agent watch uses a delivery
+adapter that pins a concrete session and records delivery/completion evidence.
+
+For standing monitoring, AVA re-checks a condition and
 push-notifies Sir about when its condition is met — *"tell me if the RTX 5090
 drops below $1800"*, *"let me know when the visa page changes"*, *"ping me if it's
 going to rain in Tbilisi tomorrow"*. Sir asks once; Ava turns it into a durable
@@ -35,16 +41,50 @@ interval, and confirms it created the watch. From then on it is hands-off:
   each watch, its interval, and its latest status.
 - **Sir can cancel one** — *"stop watching the GPU price"* → `watch_delete`.
 
-There is **no dedicated Watches screen** today — the surface is conversational
-plus the push notification. A JSON management API exists (`/api/watches`) for a
-future UI. Each watch also owns a chat session (linked on its first run), so its
-check history shows up in the normal Chats list once it has run at least once.
+The primary navigation includes a dedicated **Watches** workspace. It shows
+active, paused and attention-needed counts; lets Sir create an ordinary AVA
+check or reminder on an interval, at one future time, or at a daily time; and
+provides search, filtering, refresh, pause/resume, deletion and a direct link to
+the watch's chat history after its first run. The compact **Standing watches**
+section remains in Memory as an at-a-glance read surface over the same API and
+SQLite records. It is not a second scheduler.
+
+The screen deliberately has no **Run now** button: the authoritative watch API
+does not currently expose that action, and treating a local UI transition as a
+real scheduler run would be false. Codex-targeted watch creation also remains an
+internal/conversational path because it requires a pinned thread identity; the
+general form creates only `check` and `reminder` watches. Each ordinary check
+owns a chat session after its first run, so its full history is inspectable.
+Pinned task watches additionally show whether delivery is waiting, dispatching,
+delivered, running, completed, or failed. For continuous Codex cycles, task
+completion and successor planning are separate visible states: a planner outage
+cannot rewrite a verified completion as a failed task.
 
 ## How it works
 
 Two halves: **tools** (Ava registers/lists/deletes watches during a turn) and a
 **scheduler** (a background timer that actually runs the checks). They share the
 `watches` SQLite table.
+
+### Execution modes
+
+- **check** — AVA runs the prompt through `/api/chat` with the complete toolset.
+  This is the general path for scheduled Instagram, browser, web, Claude, file,
+  and other AVA work.
+- **reminder** — the prompt is the notification; no model call is made.
+- **codex** — the adapter pins the exact repository TUI thread and submits one
+  sanitized instruction through Codex's supported
+  `codex queue --thread <exact-id> --message <text>` command. Codex's own queue
+  owns busy-versus-idle behavior: a busy turn receives a queued follow-up and an
+  idle thread is woken directly. AVA never guesses from window titles, process
+  counts, or simulated Tab/Enter keys. A trusted project Stop hook remains an
+  older-client same-writer fallback only when a busy Codex client does not
+  support the queue command. Neither path starts a competing
+  `codex exec resume` writer.
+  AVA verifies the unique marker in the immutable JSONL session record. The
+  adapter contract is deliberately
+  isolated so another session target, such as Claude Code, can implement the
+  same resolve/dispatch/inspect boundary without changing ordinary watches.
 
 ### The marker protocol
 
@@ -101,12 +141,17 @@ audit. It is the same trick the voice pipeline uses for `do_on_computer`.
 
 | Concern | File | Notes |
 |---|---|---|
-| Table | `server/src/state/schema.sql` (`watches`) | `prompt`, `interval_minutes`, `once`, `enabled`, `session_id`, `last_run_at`, `last_status`, `last_result`. |
+| Table | `server/src/state/schema.sql` (`watches`) | Schedule/result fields plus pinned target, delivery marker, process, completion, and cycle ancestry evidence. |
 | State module | `server/src/state/watches.ts` | `createWatch`, `dueWatches` (`:49`), `recordWatchRun` (`:54`), `setWatchEnabled`, `deleteWatch`. |
 | Scheduler | `server/src/watches/scheduler.ts` | `startWatchScheduler` (`:130`, 60s tick), `tickOnce` (`:106`), `runCheckViaHttp` (`:50`), marker helpers (`:30`, `:40`). |
 | Tools (Ava) | `server/src/tools/watches-mcp.ts` | `watch_create` / `watch_list` / `watch_delete` — action mode only. |
 | HTTP API | `server/src/routes/watches.ts` | `GET /` · `POST /` · `POST /:id/enabled` · `DELETE /:id` (token-auth'd). |
-| Boot wiring | `server/src/index.ts` | scheduler started **after** the port is live and **only if an LLM provider exists**; `watch-internal` token minted, stale ones revoked. |
+| Target adapter | `server/src/watches/codex-dispatch.ts` | Exact Codex target resolution, lifecycle inspection, idempotent dispatch, and delivery evidence. |
+| Exact-thread queue | `server/src/watches/codex-queue.ts` | Supported Codex CLI queue acknowledgement, exact thread identity, content-free prompt-hash receipts, and fail-closed uncertainty. |
+| In-thread handoff | `server/src/watches/codex-handoff.ts`, `scripts/codex-watch-stop-hook.mjs`, `.codex/hooks.json` | Sanitized atomic inbox, same-writer Stop-hook delivery, completion receipt, and bounded successor wait. |
+| Boot singleton | `server/src/process/server-lock.ts` | Atomic process ownership claim in AVA's data root, acquired before shared boot state can change. |
+| UI | `web/src/watches/WatchesScreen.tsx`, `web/src/memory/WatchesSection.tsx` | First-class create/manage workspace plus compact Memory read surface, both over the same authenticated routes. |
+| Boot wiring | `server/src/index.ts` | Scheduler and internal credentials start **only after this process owns the port** and only when an LLM provider exists. |
 
 ### Frugality guidance (baked into the tool)
 
@@ -123,6 +168,31 @@ HTTP route caps it at 24 h.
   (`unref`'d so it never keeps the process alive). If the PC is asleep or the Ava
   server is down, **no checks happen** and none are back-filled — the next check is
   simply the next tick after the server is up. This is not a cloud cron.
+- **The project Stop hook must be trusted for the older-client busy fallback.** Codex hashes unmanaged
+  hooks and will not run a new or changed definition until that exact hash is
+  trusted. Run `npm run codex:trust-watch` after installing or changing
+  `.codex/hooks.json`; the helper uses Codex's typed `hooks/list` and
+  `config/batchWrite` APIs, then verifies the resulting trusted hash. A staged instruction stays
+  pending safely while the hook is unavailable; AVA never falls back to a
+  competing writer or raw terminal keystrokes.
+- **Codex queue acknowledgement is submission evidence, not task completion.**
+  Exit 0 from `codex queue` proves Codex accepted the exact-thread message. AVA
+  then requires the unique marker in Codex's immutable rollout before reporting
+  delivery, and the following task-complete event before reporting completion.
+  A content-free prompt-hash receipt prevents a scheduler retry from submitting
+  the message twice. A timeout or lost acknowledgement is terminally ambiguous
+  and is never replayed automatically.
+- **Delivery occurs at a clean task boundary.** Codex itself queues a message
+  received while work is active and begins it after that turn finishes. An idle
+  pinned thread starts directly. AVA no longer needs to infer whether the TUI is
+  accepting normal input or follow-up input. For
+  `continue_cycle`, the Stop hook records completion and
+  waits up to six minutes for AVA to plan and stage exactly one child; a planner
+  outage ends the turn honestly rather than waiting forever. AVA preserves the
+  parent's completed state, records the successor as blocked with the provider
+  error, notifies Sir, and retries only after the watch interval. It never
+  redispatches the completed task. Once planning recovers, the unique parent-child
+  constraint still permits exactly one successor.
 - **Disabled without an LLM provider.** If no provider is configured at boot, the
   scheduler logs `watch scheduler disabled — no LLM provider` and never starts
   (`index.ts`). Checks are agent runs; no brain, no checks.
@@ -142,7 +212,7 @@ HTTP route caps it at 24 h.
   billing the check touches, e.g. a browser run). A watch on a 5-minute interval is
   ~288 agent runs/day. There is no spend cap — frugality is enforced only by the
   prompt guidance and Sir's judgment.
-- **No editing.** A watch can be created, listed, and deleted, but not edited —
+- **No editing.** A watch can be created, listed, paused/resumed, and deleted, but not edited —
   change the interval or condition by deleting and re-creating.
 - **Per-check wall clock.** A single check is capped at 240 s (`checkTimeoutMs`,
   `scheduler.ts:51`); a timeout is recorded as an `error` status and the scheduler
@@ -176,17 +246,43 @@ any watch is deletable, so a given row won't necessarily still be present later.
   single notification, and recurring watches with no de-dup can spam. Defaulting
   `once:true` matches intent and caps noise; Sir can ask for a repeating watch
   explicitly.
-- **An internal bearer token, minted fresh at boot.** The scheduler authenticates
+- **An internal bearer token, rotated only after port ownership.** The scheduler authenticates
   to Ava's own API exactly like a paired device (single-tenant, so any valid token
-  effectively has Sir's shell). Stale `watch-internal` tokens are revoked at every
-  boot — the same hygiene already used for the `voice-internal` loopback token — so
-  a crashed process doesn't leave a long-lived credential lying around.
+  effectively has Sir's shell). Stale `watch-internal` tokens are revoked only in
+  the successful HTTP listen callback. This is critical: a losing hot-reload
+  process that receives `EADDRINUSE` must not revoke the healthy server's token.
+  `voice-internal` follows the same rule, and neither appears in the user-facing
+  paired-device list.
+- **A process singleton guards that boundary.** Windows can briefly let a losing
+  Node listener reach its callback before the later `EADDRINUSE` exit. AVA now
+  claims an atomic PID/instance lock before opening shared runtime state. A
+  duplicate boot exits before it can touch either internal credential; a stale
+  lock is recovered only after its recorded PID is no longer alive.
+- **Target delivery is idempotent.** The scheduler persists a unique marker and
+  session offset before advancing. Exact-thread queue prompt-hash receipts, plus the
+  Stop hook's atomic pending → claimed → completed files, are keyed by
+  watch ID; replay cannot claim or execute the same instruction twice. The
+  unique marker plus post-stage session offset remains the user-visible
+  delivery evidence.
+- **Codex's queue remains the active writer boundary.** The earlier adapter launched
+  `codex exec resume`, which fails when an open Codex window owns the thread's
+  writer lock. Current delivery asks the installed Codex runtime to queue an
+  exact-thread message through its supported command; a file handoff can still
+  be consumed by an older existing writer's Stop hook.
+  Both transports use sanitized content and stable watcher identity. No
+  approval bypass or second rollout writer is used.
+- **Lost dispatches fail closed once.** If a persisted Codex delivery process
+  exits before its marker appears, the failure is terminal for that watch. AVA
+  preserves the error and disables the watch instead of repeating the same
+  error forever or risking a duplicate resume. Busy and temporarily unknown
+  target states remain retryable.
 - **In-process scheduler, not an external cron.** Keeping it inside the Node
   process means zero extra infrastructure and it shares the DB/browser directly;
   the accepted trade-off is that watches only run while Ava is running (documented
   above), which fits the "one PC, always-on when in use" model.
-- **Ava creates the watch itself, mid-conversation.** Rather than a form, the
-  agent translates *"notify me if …"* into a self-contained check prompt in the
-  same turn. It keeps the interaction natural, but the quality of the check depends
-  on Ava writing a genuinely self-contained prompt — it runs later with **no**
+- **Conversation and form share one contract.** Ava can still translate
+  *"notify me if …"* into a self-contained check prompt in the same turn. The
+  dedicated Watches form is the visible alternative when Sir wants explicit
+  schedule control. Both paths write the same table and run through the same
+  scheduler. A check prompt is still self-contained and runs later with **no**
   conversation context, so an under-specified watch can drift.

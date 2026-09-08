@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { MessagesSquare } from "lucide-react";
 import { api, fetchSession, ApiError } from "../api.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
@@ -9,18 +10,25 @@ import { EdgeFade } from "../components/ava/EdgeFade.js";
 import { ActivityPanel } from "./ActivityPanel.js";
 import { deriveSteps, isExecuting, currentTool } from "./activity-steps.js";
 import { isSmallScreen } from "../lib/media.js";
+import { fetchVisualExplanation } from "../visuals/api.js";
+import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
 
 export interface ChatScreenProps {
   sessionId: string | null;
   /** When opening a fresh chat from the home command bar: auto-send this once. */
   initialText?: string;
-  // Navigation now lives in the persistent TubelightNav (App.tsx). These props
+  // Navigation now lives in the persistent AppSidebar (App.tsx). These props
   // are kept inert so the App.tsx call site doesn't need to change.
   onOpenSessions: () => void;
   onOpenRules: () => void;
   onOpenMemory: () => void;
   onOpenList?: () => void;
-  onEnterVoice?: () => void;
+  /** Continue this exact canonical conversation using speech input. */
+  onEnterVoice?: (sessionId: string | null) => void;
+  /** Reports the canonical server session once a fresh draft becomes durable. */
+  onSessionChange?: (sessionId: string) => void;
+  onOpenStrategy?: (sessionId: string) => void;
+  onOpenVisual?: (visualId: string) => void;
 }
 
 /**
@@ -50,16 +58,24 @@ export function ChatScreen({
   sessionId: requestedSessionId,
   initialText,
   onEnterVoice,
+  onSessionChange,
+  onOpenStrategy,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [runEpoch, setRunEpoch] = useState(0);
+  // The server's run id is also the diagnostic id carried by the receipt. Pass
+  // it back on the SSE connection so a fast-finish replay cannot accidentally
+  // surface an older receipt from the same conversation.
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [visualsByEpoch, setVisualsByEpoch] = useState<Record<number, VisualMessage[]>>({});
+  const [attachedVisualContext, setAttachedVisualContext] = useState<VisualMessageContext | null>(null);
   // Reopen fetch failure (401 / network / deleted id). Non-null → render a
   // retry/error panel instead of a silent blank screen with a live composer.
   const [loadError, setLoadError] = useState<unknown>(null);
   // Bumped by the error panel's Retry to re-run the reopen fetch.
   const [reloadNonce, setReloadNonce] = useState(0);
-  const { events } = useChatStream(sessionId, runEpoch);
+  const { events } = useChatStream(sessionId, runEpoch, taskId);
   const [seed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
   // Synchronous optimistic-send flag: flips true the same frame send() fires,
   // BEFORE the awaited POST resolves — `busy` lags by the full round-trip, so
@@ -77,6 +93,8 @@ export function ChatScreen({
   // would duplicate the final bubble. Captured once per fetch (the `s-` rows
   // never change), so the dedupe stays stable across later re-renders.
   const seededLastAssistantRef = useRef<string | null>(null);
+  const openedRoomEventRef = useRef<string | null>(null);
+  const loadedVisualEventRefs = useRef(new Set<string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +103,9 @@ export function ChatScreen({
       setSessionId(null);
       setHistory([]);
       setRunEpoch(0);
+      setTaskId(null);
+      setVisualsByEpoch({});
+      setAttachedVisualContext(null);
       seededLastAssistantRef.current = null;
       return;
     }
@@ -98,13 +119,21 @@ export function ChatScreen({
           // reopen dedupe below.
           role: m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant",
           text: m.content,
+          ...(m.role === "user" && m.metadata?.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
+          ...(m.role === "user" && m.metadata?.visualContext ? { visualContext: m.metadata.visualContext } : {}),
+          ...(m.role === "assistant" && m.visualMessages?.length ? { visualMessages: m.visualMessages } : {}),
+          ...(m.role === "assistant" && m.metadata?.memoryContext ? { memoryContext: m.metadata.memoryContext } : {}),
         }));
         // Dedupe target = server's replay rule over the RAW rows (not the last
         // mapped bubble), so a trailing `system` row can't shadow the real final.
         seededLastAssistantRef.current = latestAssistantAfterLastUser(data.messages);
         setHistory(loaded);
         setSessionId(requestedSessionId);
+        onSessionChange?.(requestedSessionId);
         setRunEpoch(0);
+        setTaskId(null);
+        setVisualsByEpoch({});
+        setAttachedVisualContext(null);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -114,7 +143,7 @@ export function ChatScreen({
         setLoadError(e);
       });
     return () => { cancelled = true; };
-  }, [requestedSessionId, reloadNonce]);
+  }, [onSessionChange, requestedSessionId, reloadNonce]);
 
   // Promote a completed run's final into history exactly once.
   // Bug fix: previously the lastFinal lived in `events` only; on the next
@@ -132,7 +161,24 @@ export function ChatScreen({
       let next = prev;
       for (const epoch of completedEpochs) {
         const id = `a-${epoch}`;
-        if (next.some((m) => m.id === id)) continue;
+        const inlineVisuals = visualsByEpoch[epoch] ?? [];
+        const memoryContext = [...events]
+          .reverse()
+          .find((event) => event.runEpoch === epoch && event.kind === "memory_context");
+        const existingIndex = next.findIndex((m) => m.id === id);
+        if (existingIndex >= 0) {
+          const existing = next[existingIndex];
+          if (existing?.role === "assistant" &&
+              ((inlineVisuals.length && existing.visualMessages !== inlineVisuals) ||
+               (memoryContext?.kind === "memory_context" && existing.memoryContext !== memoryContext.payload))) {
+            next = next.map((message, index) => index === existingIndex ? {
+              ...existing,
+              ...(inlineVisuals.length ? { visualMessages: inlineVisuals } : {}),
+              ...(memoryContext?.kind === "memory_context" ? { memoryContext: memoryContext.payload } : {}),
+            } : message);
+          }
+          continue;
+        }
         const final = [...events]
           .reverse()
           .find((e) => e.runEpoch === epoch && e.kind === "final");
@@ -143,10 +189,71 @@ export function ChatScreen({
         // Locally-run epochs are never deduped, so an intentionally repeated
         // reply still shows.
         if (epoch === 0 && final.payload.text === seededLastAssistantRef.current) continue;
-        next = [...next, { id, role: "assistant", text: final.payload.text }];
+        next = [...next, {
+          id,
+          role: "assistant",
+          text: final.payload.text,
+          ...(inlineVisuals.length ? { visualMessages: inlineVisuals } : {}),
+          ...(memoryContext?.kind === "memory_context" ? { memoryContext: memoryContext.payload } : {}),
+        }];
       }
       return next;
     });
+  }, [events, visualsByEpoch]);
+
+  // A natural-language "take this to the Room" request calls the same
+  // server-authoritative tool as the manual shortcut. Move only after its
+  // successful tool result is observed, and only once for that event.
+  useEffect(() => {
+    if (!sessionId || !onOpenStrategy) return;
+    const opened = [...events].reverse().find((event) =>
+      event.kind === "tool_result" &&
+      event.payload.tool === "strategy_room_open" &&
+      event.payload.ok,
+    );
+    if (!opened) return;
+    const key = `${opened.runEpoch}-${opened.id}`;
+    if (openedRoomEventRef.current === key) return;
+    openedRoomEventRef.current = key;
+    onOpenStrategy(sessionId);
+  }, [events, onOpenStrategy, sessionId]);
+
+  // A successful visual tool result carries the exact server-issued revision.
+  // Resolve it into the assistant message rather than navigating away. Repeated
+  // SSE delivery is idempotent by event key and visual id/revision.
+  useEffect(() => {
+    const created = events.filter((event) =>
+      event.kind === "tool_result" &&
+      (event.payload.tool === "visual_explanation_create" || event.payload.tool === "research_visual_create") &&
+      event.payload.ok,
+    );
+    for (const event of created) {
+      if (event.kind !== "tool_result") continue;
+      const key = `${event.runEpoch}-${event.id}`;
+      if (loadedVisualEventRefs.current.has(key)) continue;
+      let visualId = "";
+      let revision: number | undefined;
+      try {
+        const parsed = JSON.parse(event.payload.result) as {
+          visualMessageId?: unknown;
+          visualExplanationId?: unknown;
+          revision?: unknown;
+        };
+        visualId = typeof parsed.visualMessageId === "string"
+          ? parsed.visualMessageId
+          : typeof parsed.visualExplanationId === "string" ? parsed.visualExplanationId : "";
+        if (typeof parsed.revision === "number" && Number.isInteger(parsed.revision)) revision = parsed.revision;
+      } catch { continue; }
+      if (!/^visual_[A-Za-z0-9_-]{8,32}$/.test(visualId)) continue;
+      loadedVisualEventRefs.current.add(key);
+      void fetchVisualExplanation(visualId, revision)
+        .then((visual) => setVisualsByEpoch((current) => {
+          const existing = current[event.runEpoch] ?? [];
+          if (existing.some((item) => item.visualMessageId === visual.visualMessageId && item.revision === visual.revision)) return current;
+          return { ...current, [event.runEpoch]: [...existing, visual] };
+        }))
+        .catch(() => { loadedVisualEventRefs.current.delete(key); });
+    }
   }, [events]);
 
   const currentRunFinished = events.some(
@@ -174,10 +281,13 @@ export function ChatScreen({
   // epoch-0 replay of the last persisted assistant message (same dedupe as the
   // promote effect above, so neither path renders the duplicate).
   const promotedCurrent = history.some((m) => m.id === `a-${runEpoch}`);
+  const seededAssistant = [...history].reverse().find((message) => message.role === "assistant");
   const liveEvents = events.filter((e) => {
     if (e.runEpoch !== runEpoch) return false;
     if (e.kind === "final" && (promotedCurrent ||
         (e.runEpoch === 0 && e.payload.text === seededLastAssistantRef.current))) return false;
+    if (e.kind === "memory_context" && (promotedCurrent ||
+        (e.runEpoch === 0 && seededAssistant?.role === "assistant" && seededAssistant.memoryContext))) return false;
     return true;
   });
 
@@ -225,16 +335,25 @@ export function ChatScreen({
 
   function retryLast() {
     const lastUser = [...history].reverse().find((m) => m.role === "user");
-    if (lastUser) void send(lastUser.text);
+    if (lastUser) void send(lastUser.text, lastUser.visualContext);
   }
 
-  async function send(text: string) {
-    setHistory((prev) => [...prev, { role: "user", text, id: `u-${Date.now()}` }]);
+  async function send(text: string, explicitVisualContext?: VisualMessageContext) {
+    const visualContext = explicitVisualContext ?? attachedVisualContext ?? undefined;
+    setHistory((prev) => [...prev, {
+      role: "user",
+      text,
+      id: `u-${Date.now()}`,
+      ...(visualContext ? { visualContext } : {}),
+    }]);
     setPending(true); // optimistic — same frame as send, before the awaited POST
     try {
-      const r = await api.sendMessage(sessionId, text);
+      const r = await api.sendMessage(sessionId, text, { visualContext });
       setSessionId(r.sessionId);
+      onSessionChange?.(r.sessionId);
+      setTaskId(r.taskId ?? null);
       setRunEpoch((n) => n + 1);
+      if (visualContext && attachedVisualContext === visualContext) setAttachedVisualContext(null);
     } catch (e) {
       // A failed POST (401 / offline / 5xx / 409) must NOT strand the chat: drop
       // the optimistic thinking flag (no events will ever arrive to clear it) and
@@ -243,6 +362,10 @@ export function ChatScreen({
       // 401 is centrally handled in api.ts (clearToken + ava:unauthorized).
       setPending(false);
       const is401 = e instanceof ApiError && e.status === 401;
+      const isMissingProvider =
+        e instanceof ApiError &&
+        e.status === 503 &&
+        e.message === "no_llm_provider";
       setHistory((prev) => [
         ...prev,
         {
@@ -250,10 +373,25 @@ export function ChatScreen({
           role: "assistant",
           text: is401
             ? "Session expired — re-pair this device to continue."
-            : "That didn't send, Sir. Tap retry to try again.",
+            : isMissingProvider
+              ? "AVA is running, but no AI provider is configured. Add OPENAI_API_KEY or ANTHROPIC_API_KEY to AVA's .env file, then restart AVA."
+              : e instanceof ApiError && e.code === "stale_visual_revision"
+                ? "That visual changed before the context was sent. Reopen its newest revision and try again."
+                : "That didn't send, Sir. Tap retry to try again.",
         },
       ]);
     }
+  }
+
+  function handleVisualSemanticAction(context: VisualMessageContext, visual: VisualMessage) {
+    if (context.action === "attach") {
+      setAttachedVisualContext(context);
+      return;
+    }
+    const text = context.action === "branch"
+      ? `Explain the selected branch of “${visual.title}” and what it means for the next decision.`
+      : `Explain this scene of “${visual.title}” in more detail.`;
+    void send(text, context);
   }
 
   // Command bar on home opens a fresh chat with text to send — fire it exactly
@@ -271,7 +409,7 @@ export function ChatScreen({
 
   async function kill() {
     if (!sessionId) return;
-    await api.kill(sessionId);
+    await api.killAll(sessionId);
   }
 
   return (
@@ -344,6 +482,19 @@ export function ChatScreen({
                 </div>
               ) : (
                 <>
+                  {sessionId && history.length > 0 && onOpenStrategy && (
+                    <div className="flex justify-end px-4 pb-1 lg:px-6">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => onOpenStrategy(sessionId)}
+                        title="Bring this conversation into the Strategy Room with AVA and Codex"
+                        className="btn-deck btn-ghost flex items-center gap-2 disabled:opacity-40"
+                      >
+                        <MessagesSquare size={13} /> Take to Room
+                      </button>
+                    </div>
+                  )}
                   <MessageList
                     history={history}
                     liveEvents={liveEvents}
@@ -355,6 +506,7 @@ export function ChatScreen({
                     runningTool={runningTool}
                     headerState={headerState}
                     toolChipsDocked={railDocked}
+                    onVisualSemanticAction={handleVisualSemanticAction}
                   />
                   <EdgeFade edge="top" />
                   <EdgeFade edge="bottom" />
@@ -379,10 +531,19 @@ export function ChatScreen({
         <div
           className={`xl:transition-transform xl:duration-300 ${railDocked ? "xl:-translate-x-[166px]" : "xl:translate-x-0"}`}
         >
+          {attachedVisualContext && (
+            <div className="mx-auto mb-2 flex w-[calc(100%-2rem)] max-w-[760px] items-center justify-between gap-3 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.07] px-3 py-2 text-xs text-cyan-50/75 lg:max-w-[860px]" role="status">
+              <span>Selected visual context attached · revision {attachedVisualContext.revision} · {attachedVisualContext.selectedElementIds.length} element{attachedVisualContext.selectedElementIds.length === 1 ? "" : "s"}</span>
+              <button type="button" onClick={() => setAttachedVisualContext(null)} className="text-white/45 hover:text-white" aria-label="Remove attached visual context">Remove</button>
+            </div>
+          )}
           <Composer
-            onSend={send}
+            onSend={(text) => { void send(text); }}
             onKill={kill}
-            onMicTap={() => onEnterVoice?.()}
+            // Reopening a persisted chat hydrates its local state asynchronously.
+            // During that short window the requested ID is already canonical;
+            // never turn it into null and accidentally invoke fresh-voice policy.
+            onMicTap={() => onEnterVoice?.(sessionId ?? requestedSessionId)}
             busy={busy}
             seed={seed}
           />

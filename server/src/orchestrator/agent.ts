@@ -1,8 +1,9 @@
 import { buildSystemPrompt } from "./system-prompt.js";
 import { buildToolRegistry } from "./tool-registry.js";
-import type { LLMProvider, Message, ToolCall } from "./llm/types.js";
+import type { LLMProvider, Message, ProviderUsage, ToolCall, ToolResult } from "./llm/types.js";
 import type { ReasoningEffort } from "./reasoning.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
+import type { ToolVerificationEvidence } from "./verification-evidence.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 import { buildPolicyHook, type PolicyHook } from "../policy/runtime.js";
@@ -18,12 +19,20 @@ import {
   buildConsistencyReminder,
   type ActionResultClass,
 } from "./tool-result-consistency.js";
+import type { PersonaChannel } from "../persona/runtime.js";
+import type { ComputerExecutionPlan } from "./computer-execution-router.js";
+import { scrubSecrets } from "../security/scrub.js";
 
 export type AgentEvent =
   | { kind: "thought"; payload: { text: string } }
   | { kind: "delta"; payload: { text: string } }
   | { kind: "tool_call"; payload: { tool: string; args: unknown } }
-  | { kind: "tool_result"; payload: { tool: string; ok: boolean; result: string } }
+  | { kind: "tool_result"; payload: {
+      tool: string;
+      ok: boolean;
+      result: string;
+      verification?: ToolVerificationEvidence;
+    } }
   | { kind: "final"; payload: { text: string } }
   | { kind: "error"; payload: { message: string } }
   | { kind: "killed"; payload: { reason?: "stuck" | "manual" } }
@@ -75,6 +84,12 @@ export type RunOpts = {
    * default (conversation=minimal, action=low) when undefined.
    */
   reasoningEffort?: ReasoningEffort;
+  /** Provider-reported usage is accounting data, not conversational output. */
+  recordUsage?: (usage: ProviderUsage) => void;
+  /** Literal current turn used only to select a closed delivery register. */
+  personaContext?: { userText: string; channel: PersonaChannel };
+  /** Narrow deterministic route selected from the literal user turn. */
+  computerExecutionPlan?: ComputerExecutionPlan | null;
 };
 
 export async function runAgent(opts: RunOpts): Promise<void> {
@@ -123,6 +138,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     projectContext: initialProjectContext,
     mode,
     fsRoots: deps.fsRoots,
+    personaContext: opts.personaContext,
   });
   let loadedProjectSlug: string | null = initialProject?.slug ?? null;
   // Pass the run's abort signal into every tool's ctx so the red Stop button
@@ -153,9 +169,118 @@ export async function runAgent(opts: RunOpts): Promise<void> {
   // exhaustion we still emit a graceful final below rather than ending silently.
   const MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS) || 1000;
   let concluded = false;
+  const concludeCancelled = () => {
+    if (killed) return;
+    emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : { reason: "manual" } });
+    concluded = true;
+    killed = true;
+  };
 
-  for (let turn = 0; turn < MAX_AGENT_TURNS; turn++) {
-    if (abort.signal.aborted) break;
+  const dispatchToolCall = async (call: ToolCall): Promise<{
+    classification: ActionResultClass;
+    result: ToolResult;
+  } | null> => {
+    if (abort.signal.aborted) return null;
+    // Tool arguments become UI and observability evidence, so only the shared
+    // redacted representation crosses that boundary. Dispatch still receives
+    // the original args.
+    emit({ kind: "tool_call", payload: { tool: call.name, args: redactSensitiveArgs(call.args) } });
+
+    const detected = detectProjectInArgs(call.args, projectIndex);
+    if (detected && detected.slug !== loadedProjectSlug) {
+      const body = readProjectFile(deps.memoryDir, detected.slug);
+      if (body) {
+        messages.push({
+          role: "user",
+          content: `[PROJECT CONTEXT â€” ${detected.slug}]\n${body}`,
+        });
+      }
+      loadedProjectSlug = detected.slug;
+    }
+
+    const decision = await policy(call.name, call.args);
+    if (abort.signal.aborted) return null;
+    if (!decision.allow) {
+      const result: ToolResult = { call_id: call.id, output: decision.message, is_error: true };
+      emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: result.output } });
+      messages.push({ role: "tool", content: result });
+      return { classification: classifyActionResult(result), result };
+    }
+    toolsUsed++;
+
+    const budget = TOOL_BUDGET_MS[call.name] ?? 30_000;
+    const callAbort = new AbortController();
+    const onRunAbort = () => callAbort.abort();
+    abort.signal.addEventListener("abort", onRunAbort, { once: true });
+    try {
+      if (abort.signal.aborted) return null;
+      const result = await withTimeout(registry.dispatch(call, callAbort.signal), budget, call.name);
+      if (abort.signal.aborted) return null;
+      emit({
+        kind: "tool_result",
+        payload: {
+          tool: call.name,
+          ok: !result.is_error,
+          result: result.output,
+          ...(result.verification ? { verification: result.verification } : {}),
+        },
+      });
+      messages.push({ role: "tool", content: result });
+      return { classification: classifyActionResult(result), result };
+    } catch (err) {
+      callAbort.abort();
+      if (abort.signal.aborted) return null;
+      const message = err instanceof Error ? err.message : String(err);
+      const result: ToolResult = { call_id: call.id, output: message, is_error: true };
+      emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: message } });
+      messages.push({ role: "tool", content: result });
+      return { classification: "error", result };
+    } finally {
+      abort.signal.removeEventListener("abort", onRunAbort);
+    }
+  };
+
+  // A fully specified route is executed before provider inference. It still
+  // passes through the same registry, policy, timeout, event, receipt, and
+  // verification seams as model-selected tool calls.
+  if (mode === "action" && opts.computerExecutionPlan) {
+    const plan = opts.computerExecutionPlan;
+    if (plan.status === "unsupported") {
+      finalText = plan.userMessage;
+      emit({ kind: "final", payload: { text: finalText } });
+      concluded = true;
+    } else {
+      const call: ToolCall = {
+        id: `ava-route-${runId}`,
+        name: plan.toolName,
+        args: plan.args,
+      };
+      messages.push({ role: "assistant", content: "", tool_calls: [call] });
+      const dispatched = await dispatchToolCall(call);
+      if (abort.signal.aborted) {
+        concludeCancelled();
+      } else if (dispatched) {
+        const verification = dispatched.result.verification;
+        if (!dispatched.result.is_error && verification?.state === "verified") {
+          finalText = dispatched.result.output;
+        } else if (!dispatched.result.is_error) {
+          finalText =
+            `I ran the selected ${plan.executor.replaceAll("_", " ")} route, Sir, ` +
+            `but could not independently verify the requested outcome. ${scrubSecrets(dispatched.result.output)}`;
+        } else {
+          finalText = `I couldn't complete the selected route, Sir â€” ${scrubSecrets(dispatched.result.output)}`;
+        }
+        emit({ kind: "final", payload: { text: finalText } });
+        concluded = true;
+      }
+    }
+  }
+
+  for (let turn = 0; !concluded && turn < MAX_AGENT_TURNS; turn++) {
+    if (abort.signal.aborted) {
+      concludeCancelled();
+      break;
+    }
     let assistantText = "";
     const pendingCalls: ToolCall[] = [];
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error" = "end_turn";
@@ -198,6 +323,11 @@ export async function runAgent(opts: RunOpts): Promise<void> {
           // a tool event.
           flushDelta();
           pendingCalls.push(ev.call);
+        } else if (ev.kind === "usage") {
+          // Keep accounting out of the user-facing event grammar while still
+          // making real provider usage visible in Mission Control. Telemetry
+          // can never fail the response it observes.
+          try { opts.recordUsage?.(ev.usage); } catch { /* observation only */ }
         } else if (ev.kind === "done") {
           stopReason = ev.stop_reason;
           if (ev.stop_reason === "error") {
@@ -209,6 +339,10 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       }
     } catch (err) {
       flushDelta();
+      if (abort.signal.aborted) {
+        concludeCancelled();
+        break;
+      }
       emit({ kind: "error", payload: { message: err instanceof Error ? err.message : String(err) } });
       return;
     }
@@ -219,9 +353,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
     flushDelta();
 
     if (stopReason === "abort" || abort.signal.aborted) {
-      emit({ kind: "killed", payload: stuckReason ? { reason: stuckReason } : { reason: "manual" } });
-      concluded = true;
-      killed = true;
+      concludeCancelled();
       break;
     }
 
@@ -293,11 +425,24 @@ export async function runAgent(opts: RunOpts): Promise<void> {
         // narrow gap between the policy decision and the tool actually running.
         if (abort.signal.aborted) break;
         const r = await withTimeout(registry.dispatch(call, callAbort.signal), budget, call.name);
-        emit({ kind: "tool_result", payload: { tool: call.name, ok: !r.is_error, result: r.output } });
+        // A cooperative tool may resolve with an "aborted" result after Stop.
+        // Cancellation is a lifecycle event, not a failed tool outcome: do not
+        // poison the receipt or ask the model for another turn.
+        if (abort.signal.aborted) break;
+        emit({
+          kind: "tool_result",
+          payload: {
+            tool: call.name,
+            ok: !r.is_error,
+            result: r.output,
+            ...(r.verification ? { verification: r.verification } : {}),
+          },
+        });
         messages.push({ role: "tool", content: r });
         turnResultClasses.push(classifyActionResult(r));
       } catch (err) {
         callAbort.abort();
+        if (abort.signal.aborted) break;
         const msg = err instanceof Error ? err.message : String(err);
         emit({ kind: "tool_result", payload: { tool: call.name, ok: false, result: msg } });
         messages.push({ role: "tool", content: { call_id: call.id, output: msg, is_error: true } });
@@ -305,6 +450,11 @@ export async function runAgent(opts: RunOpts): Promise<void> {
       } finally {
         abort.signal.removeEventListener("abort", onRunAbort);
       }
+    }
+
+    if (abort.signal.aborted) {
+      concludeCancelled();
+      break;
     }
 
     // Before the next turn generates the model's wording, if any action-tool

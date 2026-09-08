@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "snapshot": "AVA plaintext private-repository portable snapshot",
+  "capturedAt": "2026-09-02T20:02:38.685Z",
+  "metadataFinalizedAt": "2026-09-02T20:22:35.6540605Z",
+  "encryption": "none",
+  "source": {
+    "root": "C:\\Users\\nikug\\ai\\AVA",
+    "remote": "https://github.com/NikoloziGagua/AVA.git",
+    "masterCommit": "f756ea401b39b5467d9eecc71560a58f99862f20",
+    "repositoryPrivacyCheck": {
+      "unauthenticatedGitHubApi": "HTTP 404",
+      "authenticatedGitAccess": "success",
+      "result": "private at capture and upload preparation time"
+    }
+  },
+  "inventory": {
+    "files": 379377,
+    "directories": 52996,
+    "symbolicLinks": 15613,
+    "totalPaths": 447986,
+    "fileBytes": 9553789218,
+    "skippedErrors": 0
+  },
+  "archives": {
+    "main": {
+      "name": "AVA-plaintext-current-20260902-v2.7z",
+      "bytes": 5018668156,
+      "sha256": "49132acc6fb4679bf00f014244059f22f8f9d14d37bd0c6abf1119f3a38692a5",
+      "integrity": "Everything is Ok"
+    },
+    "nestedGitSupplement": {
+      "name": "AVA-plaintext-nested-git-20260902.7z",
+      "bytes": 136083472,
+      "sha256": "8bc8ec04fad55a3b13e2a620fa5b899b6caf4994bceddd02bbb4f90044af0d2b",
+      "integrity": "Everything is Ok"
+    },
+    "uploadWrapper": {
+      "baseName": "AVA-plaintext-upload-20260902.7z",
+      "parts": 55,
+      "totalBytes": 5154751848,
+      "maximumPartBytes": 94371840,
+      "compression": "copy",
+      "integrity": "Everything is Ok"
+    }
+  },
+  "coverage": {
+    "comparison": "independent inventory versus union of main and supplement archives",
+    "missingPaths": 0,
+    "unexpectedPaths": 0,
+    "rootGitExcluded": true,
+    "rootGitRepresentation": "private remote plus bundled complete non-backup refs",
+    "nestedGitDirectoriesIncluded": true
+  },
+  "representativePresenceChecks": [
+    ".env",
+    "server/data/state.db",
+    "server/data/chrome-profile",
+    ".claude/settings.local.json",
+    ".codex/agents",
+    "docs/reviews/2026-08-27-persona-framework-repository-research.md",
+    "docs/RUN-AVA-ON-ANOTHER-PC.md",
+    "server/data/activepieces-source/.git",
+    "server/data/ufo-runtime/source/.git"
+  ],
+  "notes": [
+    "The 558839294-byte abandoned slow-compression partial file was not wrapped, copied, staged, or uploaded.",
+    "The portable archive intentionally contains plaintext credentials and session data because Niko explicitly requested an unencrypted private-repository backup."
+  ]
+}

@@ -11,6 +11,8 @@ import { MemoryBrain, type BrainNode } from "../components/ava/MemoryBrain.js";
 import { PlaybooksSection } from "./PlaybooksSection.js";
 import { WatchesSection } from "./WatchesSection.js";
 import { PeopleSection } from "./PeopleSection.js";
+import { PersonaProfileCard } from "./PersonaProfileCard.js";
+import { MemoryIndexSection } from "./MemoryIndexSection.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { isCoarsePointer } from "../lib/media.js";
@@ -29,9 +31,9 @@ const CONF_COLOR = {
   low: "var(--conf-low)",
 } as const;
 
-type ViewMode = "list" | "mind";
+type ViewMode = "list" | "mind" | "index";
 
-export function MemoryScreen(_props: { onClose?: () => void }) {
+export function MemoryScreen({ onOpenChat }: { onClose?: () => void; onOpenChat?: (sessionId: string) => void }) {
   const [m, setM] = useState<MemoryView | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [cat, setCat] = useState<Filter>("all");
@@ -86,12 +88,13 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
         <SegmentedTabs<ViewMode>
           options={[
             { value: "mind", label: "Mind" },
+            { value: "index", label: "Index" },
             { value: "list", label: "List" },
           ]}
           value={view}
           onChange={(v) => {
             setView(v);
-            if (v === "list") setSelected(null);
+            if (v !== "mind") setSelected(null);
           }}
           layout="auto"
         />
@@ -99,6 +102,8 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
 
       {view === "mind" ? (
         <MindStage memory={m} selected={selected} onSelect={setSelected} />
+      ) : view === "index" ? (
+        <MemoryIndexSection onOpenChat={onOpenChat} />
       ) : (
         <>
           {/* PRIMARY — the live observation feed (wide left column, the densest content). */}
@@ -173,15 +178,16 @@ export function MemoryScreen(_props: { onClose?: () => void }) {
         }
         onClickHeader={() => setShowPersonality((v) => !v)}
       >
+        <PersonaProfileCard profile={m.personaProfile} />
         {showPersonality ? (
-          <Reveal>
+          <Reveal className="mt-4">
             <pre className="whitespace-pre-wrap text-xs leading-relaxed text-white/75">{m.personality || "(empty)"}</pre>
             <div className="mt-3 hud text-[9px] tracking-[0.16em] text-white/30">
               Edit data/memory/personality.md directly to change.
             </div>
           </Reveal>
         ) : (
-          <div className="text-xs text-white/40">Ava's tone &amp; voice. Tap to reveal.</div>
+          <div className="mt-3 text-xs text-white/40">Tap the header to inspect the identity contract.</div>
         )}
       </PanelSection>
 

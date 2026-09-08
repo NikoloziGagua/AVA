@@ -7,6 +7,17 @@ describe("classifyRealtimeEvent", () => {
       .toEqual({ kind: "audio", b64: "AAAA" });
   });
 
+  it("tracks the assistant output item needed for WebSocket truncation", () => {
+    expect(classifyRealtimeEvent({
+      type: "response.output_item.added",
+      item: { id: "item_123", type: "message" },
+    })).toEqual({ kind: "output_item", itemId: "item_123", contentIndex: 0 });
+    expect(classifyRealtimeEvent({
+      type: "response.output_item.added",
+      item: { id: "call_123", type: "function_call" },
+    })).toEqual({ kind: "ignore" });
+  });
+
   it("still recognizes the legacy beta audio delta", () => {
     expect(classifyRealtimeEvent({ type: "response.audio.delta", delta: "AAAA" }))
       .toEqual({ kind: "audio", b64: "AAAA" });
@@ -60,6 +71,11 @@ describe("classifyRealtimeEvent", () => {
   it("recognizes a per-step narration frame (tool + args)", () => {
     expect(classifyRealtimeEvent({ type: "ava.step", tool: "shell", args: { command: "ls" } }))
       .toEqual({ kind: "action_step", tool: "shell", args: { command: "ls" } });
+  });
+
+  it("recognizes a held, non-actionable partial user turn", () => {
+    expect(classifyRealtimeEvent({ type: "ava.transcript_pending", text: "I want you to go" }))
+      .toEqual({ kind: "user_transcript_pending", text: "I want you to go" });
   });
 
   it("ignores a step frame with no tool", () => {

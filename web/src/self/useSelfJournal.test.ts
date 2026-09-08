@@ -37,6 +37,82 @@ describe("useSelfJournal", () => {
     unmount();
   });
 
+  it("parses worker availability and sends a version-guarded selector update", async () => {
+    const worker = {
+      provider: "claude", version: 4, updatedAt: 1,
+      options: [
+        { provider: "claude", label: "Claude Code", installed: true, configuration: "not_checked", available: true, version: "2.1", reason: null },
+        { provider: "codex", label: "Codex", installed: true, configuration: "not_checked", available: true, version: "0.147", reason: null },
+      ],
+    };
+    let selected = worker;
+    const fn = mockFetch({
+      "/api/self": () => ({ status: 200, body: { intents: [], paused: false, worker: selected } }),
+      "/api/self/worker": (init) => {
+        expect(JSON.parse(String(init?.body))).toEqual({ provider: "codex", expectedVersion: 4 });
+        selected = { ...worker, provider: "codex", version: 5 };
+        return { status: 200, body: { worker: selected } };
+      },
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.worker?.version).toBe(4));
+    await act(async () => { await result.current.selectWorker("codex"); });
+    expect(result.current.worker).toMatchObject({ provider: "codex", version: 5 });
+    const call = fn.mock.calls.find(([url]) => String(url) === "/api/self/worker");
+    expect((call?.[1] as RequestInit).headers).toMatchObject({ authorization: "Bearer test-token" });
+    unmount();
+  });
+
+  it("locks the displayed worker version when approving a plan", async () => {
+    const worker = {
+      provider: "codex", version: 7, updatedAt: 1,
+      options: [
+        { provider: "claude", label: "Claude Code", installed: true, configuration: "not_checked", available: true, version: "2.1", reason: null },
+        { provider: "codex", label: "Codex", installed: true, configuration: "not_checked", available: true, version: "0.147", reason: null },
+      ],
+    };
+    const fn = mockFetch({
+      "/api/self": () => ({
+        status: 200,
+        body: { intents: [{ id: "plan-1", goal: "g", status: "awaiting_approval" }], paused: false, worker },
+      }),
+      "/api/self/plan-1/approve": (init) => {
+        expect(JSON.parse(String(init?.body))).toEqual({ expectedWorkerVersion: 7 });
+        return { status: 200, body: { ok: true, approved: true, worker } };
+      },
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.worker?.provider).toBe("codex"));
+    await act(async () => { await result.current.approve("plan-1"); });
+    const call = fn.mock.calls.find(([url]) => String(url) === "/api/self/plan-1/approve");
+    expect((call?.[1] as RequestInit).headers).toMatchObject({
+      authorization: "Bearer test-token",
+      "content-type": "application/json",
+    });
+    unmount();
+  });
+
+  it("surfaces stale approval instead of launching a worker different from the display", async () => {
+    const worker = {
+      provider: "codex", version: 7, updatedAt: 1,
+      options: [
+        { provider: "codex", label: "Codex", installed: true, configuration: "not_checked", available: true, version: "0.147", reason: null },
+      ],
+    };
+    mockFetch({
+      "/api/self": () => ({ status: 200, body: { intents: [], paused: false, worker } }),
+      "/api/self/plan-1/approve": () => ({
+        status: 409,
+        body: { error: "stale_version", worker: { ...worker, provider: "claude", version: 8 } },
+      }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.worker?.version).toBe(7));
+    await act(async () => { await result.current.approve("plan-1"); });
+    expect(result.current.workerError).toMatch(/changed elsewhere/i);
+    unmount();
+  });
+
   it("treats a legacy bare-array response as unpaused", async () => {
     mockFetch({
       "/api/self": () => ({ status: 200, body: [{ id: "a", goal: "g", status: "swapped" }] }),
@@ -99,6 +175,18 @@ describe("useSelfJournal", () => {
     unmount();
   });
 
+  it("improve reports an unavailable selected worker honestly", async () => {
+    mockFetch({
+      "/api/self": () => ({ status: 200, body: { improvements: [], paused: false } }),
+      "/api/self/improve": () => ({ status: 409, body: { error: "worker_unavailable", reason: "Codex CLI is missing" } }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    let out: { ok: boolean; error?: string } | undefined;
+    await act(async () => { out = await result.current.improve("do a thing"); });
+    expect(out).toEqual({ ok: false, error: "Codex CLI is missing" });
+    unmount();
+  });
+
   it("setPaused POSTs /api/self/pause and follows the server's answer", async () => {
     let serverPaused = false;
     const fn = mockFetch({
@@ -121,6 +209,64 @@ describe("useSelfJournal", () => {
     const init = call![1] as RequestInit;
     expect(init.method).toBe("POST");
     expect(init.body).toBe(JSON.stringify({ paused: true }));
+    unmount();
+  });
+
+  it("resumes a preserved candidate with explicit candidate and HEAD guards", async () => {
+    const candidate = "a".repeat(40);
+    const head = "b".repeat(40);
+    const fn = mockFetch({
+      "/api/self": () => ({
+        status: 200,
+        body: {
+          improvements: [{ id: "blocked-1", goal: "g", status: "blocked", commit_sha: candidate }],
+          paused: false,
+          repositoryHead: head,
+        },
+      }),
+      "/api/self/blocked-1/resume-swap": (init) => {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedCandidateSha: candidate,
+          expectedHead: head,
+        });
+        return { status: 202, body: { ok: true, status: "started" } };
+      },
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.repositoryHead).toBe(head));
+    await act(async () => {
+      await result.current.resumeSwap(result.current.intents[0]!);
+    });
+    const call = fn.mock.calls.find(([url]) => String(url).includes("resume-swap"));
+    expect((call?.[1] as RequestInit).headers).toMatchObject({ authorization: "Bearer test-token" });
+    expect(result.current.recoveryError).toBeNull();
+    unmount();
+  });
+
+  it("surfaces a stale recovery guard and refreshes current repository state", async () => {
+    const candidate = "a".repeat(40);
+    let reads = 0;
+    mockFetch({
+      "/api/self": () => ({
+        status: 200,
+        body: {
+          improvements: [{ id: "blocked-1", goal: "g", status: "blocked", commit_sha: candidate }],
+          paused: false,
+          repositoryHead: reads++ === 0 ? "b".repeat(40) : "c".repeat(40),
+        },
+      }),
+      "/api/self/blocked-1/resume-swap": () => ({
+        status: 409,
+        body: { error: "stale_head", currentHead: "c".repeat(40) },
+      }),
+    });
+    const { result, unmount } = renderHook(() => useSelfJournal());
+    await waitFor(() => expect(result.current.repositoryHead).toBe("b".repeat(40)));
+    await act(async () => {
+      await result.current.resumeSwap(result.current.intents[0]!);
+    });
+    expect(result.current.recoveryError).toMatch(/repository or candidate changed/i);
+    await waitFor(() => expect(result.current.repositoryHead).toBe("c".repeat(40)));
     unmount();
   });
 });

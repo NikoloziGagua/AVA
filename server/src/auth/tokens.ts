@@ -41,7 +41,7 @@ export function validateToken(db: Db, secret: string): string | null {
 // Internal (loopback) token labels are hidden from the user-facing device list:
 // they are not real devices Sir manages, and listing them invited an accidental
 // revoke that would break loopback auth (e.g. hybrid-voice actions) until restart.
-const INTERNAL_LABELS = new Set(["voice-internal"]);
+const INTERNAL_LABELS = new Set(["voice-internal", "watch-internal"]);
 
 export function listTokens(db: Db): DeviceToken[] {
   const rows = db

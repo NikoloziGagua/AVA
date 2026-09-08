@@ -1,0 +1,2 @@
+49132acc6fb4679bf00f014244059f22f8f9d14d37bd0c6abf1119f3a38692a5  AVA-plaintext-current-20260902-v2.7z
+8bc8ec04fad55a3b13e2a620fa5b899b6caf4994bceddd02bbb4f90044af0d2b  AVA-plaintext-nested-git-20260902.7z

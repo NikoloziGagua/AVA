@@ -28,7 +28,7 @@ vi.mock("../api.js", () => {
     denyApproval: () => Promise.resolve(),
     api: {
       sendMessage: (...a: unknown[]) => sendMessage(...a),
-      kill: (...a: unknown[]) => kill(...a),
+      killAll: (...a: unknown[]) => kill(...a),
     },
   };
 });
@@ -211,6 +211,103 @@ describe("ChatScreen send failure", () => {
 
     await typeAndSend("are you there");
     expect(await screen.findByText(/re-pair this device/i)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
+  });
+
+  it("restores persisted assistant Markdown as semantic content after reload", async () => {
+    fetchSession.mockResolvedValue({
+      session,
+      messages: [
+        msg(1, "user", "show the saved result"),
+        msg(2, "assistant", "## Saved result\n\n- **Verified**\n- [Evidence](https://example.com/evidence)"),
+      ],
+    });
+
+    render(<ChatScreen sessionId="s1" {...noNav} />);
+
+    expect(await screen.findByRole("heading", { level: 3, name: "Saved result" })).toBeTruthy();
+    expect(screen.getByText("Verified").tagName).toBe("STRONG");
+    expect(screen.getByRole("link", { name: /Evidence/ }).getAttribute("href")).toBe("https://example.com/evidence");
+  });
+
+  it("restores the persisted memory receipt and does not duplicate its fast replay", async () => {
+    const memoryContext = {
+      schemaVersion: 1 as const,
+      status: "used" as const,
+      reason: "A source-verified checkpoint matched.",
+      project: "Aurora",
+      mode: "hybrid" as const,
+      semanticAvailable: true,
+      notice: null,
+      selected: [{
+        entryId: "memory_checkpoint_01",
+        title: "Aurora observation plan",
+        kind: "idea",
+        project: "Aurora",
+        sourceStatus: "verified" as const,
+        matchMode: "hybrid" as const,
+        matchReason: "Matched the observation-plan topic.",
+        sourceTruncated: false,
+      }],
+    };
+    fetchSession.mockResolvedValue({
+      session,
+      messages: [
+        msg(1, "user", "What was our aurora plan?"),
+        { ...msg(2, "assistant", "Use the flexible two-night plan."), metadata: { memoryContext } },
+      ],
+    });
+    render(<ChatScreen sessionId="s1" {...noNav} />);
+    expect(await screen.findByText("Memory used · 1 source")).toBeTruthy();
+
+    act(() => {
+      lastES().emit("memory_context", memoryContext, 1);
+      lastES().emit("final", { text: "Use the flexible two-night plan." }, 2);
+      lastES().emit("done", {}, 3);
+    });
+    expect(screen.getAllByTestId("memory-context")).toHaveLength(1);
+    expect(screen.getAllByText("Use the flexible two-night plan.")).toHaveLength(1);
+  });
+
+  it("passes the server-assigned new-chat session to voice", async () => {
+    const onEnterVoice = vi.fn();
+    sendMessage.mockResolvedValue({ sessionId: "created-session", taskId: "task-1" });
+    render(<ChatScreen sessionId={null} {...noNav} onEnterVoice={onEnterVoice} />);
+
+    await typeAndSend("remember this brief");
+    await waitFor(() => expect(sendMessage).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "voice" }));
+
+    expect(onEnterVoice).toHaveBeenCalledWith("created-session");
+  });
+
+  it("preserves a requested session when voice is re-entered before history hydration", () => {
+    const onEnterVoice = vi.fn();
+    fetchSession.mockReturnValue(new Promise(() => {}));
+    render(<ChatScreen sessionId="returning-session" {...noNav} onEnterVoice={onEnterVoice} />);
+
+    // Deliberately click in the first render, before fetchSession's promise can
+    // populate ChatScreen's local session state.
+    fireEvent.click(screen.getByRole("button", { name: "voice" }));
+
+    expect(onEnterVoice).toHaveBeenCalledWith("returning-session");
+  });
+
+  it("reports a still-blank New chat as having no canonical session yet", () => {
+    const onEnterVoice = vi.fn();
+    render(<ChatScreen sessionId={null} {...noNav} onEnterVoice={onEnterVoice} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "voice" }));
+
+    expect(onEnterVoice).toHaveBeenCalledWith(null);
+  });
+
+  it("explains when the server has no LLM provider configured", async () => {
+    sendMessage.mockRejectedValue(new ApiError(503, "no_llm_provider"));
+    render(<ChatScreen sessionId={null} {...noNav} />);
+
+    await typeAndSend("are you there");
+    expect(await screen.findByText(/no AI provider is configured/i)).toBeTruthy();
     await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
   });
 });

@@ -94,6 +94,7 @@ export function realtimeActionToIntent(action: RealtimeAction): VoiceIntent {
 export type HybridEffect =
   | { kind: "session"; sessionId: string }
   | { kind: "caption_user"; text: string }
+  | { kind: "caption_user_pending"; text: string }
   | { kind: "working"; task: string }
   | { kind: "step"; tool: string; args: unknown }
   | { kind: "result"; text: string }
@@ -111,6 +112,8 @@ export function realtimeActionToHybridEffect(action: RealtimeAction): HybridEffe
       return action.sessionId ? { kind: "session", sessionId: action.sessionId } : { kind: "ignore" };
     case "user_transcript":
       return { kind: "caption_user", text: action.text };
+    case "user_transcript_pending":
+      return { kind: "caption_user_pending", text: action.text };
     case "action_started":
       return { kind: "working", task: action.task };
     case "action_step":
@@ -152,6 +155,7 @@ export type RealtimeState = "idle" | "connecting" | "listening" | "thinking" | "
 export interface RealtimeCaption {
   who: "you" | "ava";
   text: string;
+  inputSource?: "voice_exact_text";
 }
 
 // A committed conversation turn shown in the voice transcript scrollback. `id` is
@@ -160,6 +164,32 @@ export interface VoiceTurn {
   id: string;
   who: "you" | "ava";
   text: string;
+  createdAt?: number;
+  inputSource?: "voice_exact_text";
+}
+
+export const VOICE_HISTORY_LIMIT = 10;
+
+export function recentVoiceTurns(
+  messages: Array<{
+    id: number;
+    role: string;
+    content: string;
+    created_at: number;
+    metadata?: { inputSource?: "voice_exact_text" };
+  }>,
+  limit = VOICE_HISTORY_LIMIT,
+): VoiceTurn[] {
+  return messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .slice(-Math.max(0, limit))
+    .map((m) => ({
+      id: `seed-${m.id}`,
+      who: m.role === "user" ? "you" : "ava",
+      text: m.content,
+      createdAt: m.created_at,
+      ...(m.metadata?.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
+    }));
 }
 
 export interface PendingApproval {
@@ -210,7 +240,14 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(s);
 }
 
-export function useRealtimeVoice({ initialSessionId }: { initialSessionId: string | null }) {
+export function useRealtimeVoice({
+  initialSessionId,
+  startFresh = false,
+}: {
+  initialSessionId: string | null;
+  /** Force the first connection to create a session when entered from blank New chat. */
+  startFresh?: boolean;
+}) {
   const [state, setState] = useState<RealtimeState>("idle");
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
   const [caption, setCaption] = useState<RealtimeCaption | null>(null);
@@ -227,6 +264,9 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [muted, setMuted] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+  // Render-visible mirror of actionPendingRef. The ref remains the synchronous
+  // source used by audio/mic gates; this state powers honest busy/Stop UI.
+  const [actionPending, setActionPending] = useState(false);
   // Endpointing mode. "vad" (default): hands-free server VAD. "enter_push_to_talk":
   // mic audio is sent ONLY while a turn is captured (Enter starts, Enter finishes);
   // background/external audio between turns is never transmitted. Persisted.
@@ -250,10 +290,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const prevVoiceEngineRef = useRef<VoiceEngine>(voiceEngine); // last engine we connected with (reconnect on change)
   const capturingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(initialSessionId);
-  // When the user taps "+new", the next connect forces a fresh server session
-  // (?new=1) instead of resuming the most-recent conversation. Consumed (reset)
-  // once the server hands back the new session id.
-  const forceNewRef = useRef(false);
+  // A blank New chat and the in-voice "+new" action both force a fresh server
+  // session (?new=1) instead of resuming the most-recent conversation. The flag
+  // is consumed only when the proxy hands back that new canonical session id,
+  // so a connection attempt that fails before acknowledgement can retry safely.
+  const forceNewRef = useRef(startFresh && initialSessionId === null);
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
   const esRef = useRef<EventSource | null>(null);
   const ttsRef = useRef<HTMLAudioElement | null>(null);
@@ -325,11 +366,14 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   const genDoneRef = useRef(false);      // response.done seen for the current turn
   const actionPendingRef = useRef(false); // do_on_computer running (suppress early "listening")
   const actionResultReceivedRef = useRef(false); // task's final result spoken (mic may reopen)
+  const actionFallbackTextRef = useRef(""); // visible fallback if Realtime returns no audio/transcript
+  const responseTextSeenRef = useRef(false); // avoids committing the fallback over a real reply
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // end-of-turn debounce
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // hands-free recovery (Fix 1)
   const pttRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // stuck-in-thinking recovery (PTT)
   const pttBytesRef = useRef(0); // bytes forwarded in the current push-to-talk turn (Fix 3)
   const turnSeqRef = useRef(0); // monotonic id source for committed transcript turns
+  const exactSubmitPendingRef = useRef(false); // explicit-submit dedupe gate
   const seededSessionRef = useRef<string | null>(null); // session whose history we've already seeded
   const lastAmpTsRef = useRef(0); // throttle the amplitude state updates (~audio-callback rate is too fast)
   // Barge-in epoch (Item 1). interrupt() bumps interruptEpochRef AND sends
@@ -340,6 +384,14 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   // a barged-in reply can't resume playing / re-arm "responding".
   const interruptEpochRef = useRef(0);
   const playTurnEpochRef = useRef(0);
+  // Audio is blocked after an interruption until a gate-accepted user caption
+  // (or completed action result) explicitly arms the next response. This stops
+  // a late response.created from resurrecting a cancelled tail.
+  const realtimeAudioBlockedRef = useRef(true);
+  const awaitingFreshResponseRef = useRef(false);
+  // OpenAI conversation item currently feeding the speakers. Used with the
+  // player's actual heard duration for conversation.item.truncate.
+  const outputItemRef = useRef<{ itemId: string; contentIndex: number } | null>(null);
 
   const stopAgentStream = useCallback(() => {
     try { esRef.current?.close(); } catch { /* */ }
@@ -372,7 +424,13 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     avaCaptionRef.current = "";
     genDoneRef.current = false;
     actionPendingRef.current = false;
+    setActionPending(false);
     actionResultReceivedRef.current = false;
+    actionFallbackTextRef.current = "";
+    responseTextSeenRef.current = false;
+    realtimeAudioBlockedRef.current = true;
+    awaitingFreshResponseRef.current = false;
+    outputItemRef.current = null;
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
     if (pttRecoveryTimerRef.current) { clearTimeout(pttRecoveryTimerRef.current); pttRecoveryTimerRef.current = null; }
@@ -383,13 +441,22 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
   // Append a committed turn to the transcript scrollback, skipping empties and an
   // immediate exact duplicate of the last row (a streamed turn that's also flushed).
-  const commitTurn = useCallback((who: "you" | "ava", text: string) => {
-    const t = text.trim();
-    if (!t) return;
+  const commitTurn = useCallback((
+    who: "you" | "ava",
+    text: string,
+    inputSource?: "voice_exact_text",
+  ) => {
+    if (!text.trim()) return;
     setTurns((prev) => {
       const last = prev[prev.length - 1];
-      if (last && last.who === who && last.text === t) return prev;
-      return [...prev, { id: `vt-${turnSeqRef.current++}`, who, text: t }];
+      if (last && last.who === who && last.text === text && last.inputSource === inputSource) return prev;
+      return [...prev, {
+        id: `vt-${turnSeqRef.current++}`,
+        who,
+        text,
+        createdAt: Date.now(),
+        ...(inputSource ? { inputSource } : {}),
+      }].slice(-VOICE_HISTORY_LIMIT);
     });
   }, []);
 
@@ -479,7 +546,11 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     const audioSettled = !playerRef.current?.playing;
     const genSettled = !hybridRef.current || genDoneRef.current;
     if (wantReopen && audioSettled && genSettled) {
-      if (actionPendingRef.current) { actionPendingRef.current = false; actionResultReceivedRef.current = false; }
+      if (actionPendingRef.current) {
+        actionPendingRef.current = false;
+        setActionPending(false);
+        actionResultReceivedRef.current = false;
+      }
       setState("listening");
     }
   }, [fetchClip]);
@@ -498,20 +569,19 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   // Route an ACCEPTED transcript through the exact same backend path as a typed
   // message: POST /api/chat → full tool-using agent → SSE stream of the run. We
   // adopt the session id the server returns and speak the final reply.
-  const runAgentTurn = useCallback((text: string) => {
+  const runAgentTurn = useCallback(async (
+    text: string,
+    inputSource?: "voice_exact_text",
+  ): Promise<boolean> => {
     stopAgentStream();
     // The server accepted our turn → the PTT commit succeeded; disarm the recovery
     // net and drop any stale hint. Commit the user turn to the scrollback so it
     // stays visible when Ava replies.
     clearPttRecovery();
     setHint(null);
-    setCaption({ who: "you", text });
-    commitTurn("you", text);
-    setInterim(null);
     setState("thinking");
 
-    void (async () => {
-      // Per-turn streaming state.
+    // Per-turn streaming state.
       let replyText = "";
       let firstSpoken = "";
       let acked = false;
@@ -519,14 +589,21 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       try {
         // voice:true → minimal reasoning on the server for a faster spoken reply
         // (full tool stack is unchanged).
-        const r = await api.sendMessage(sessionIdRef.current, text, { voice: true });
+        const r = await api.sendMessage(sessionIdRef.current, text, { voice: true, inputSource });
         sid = r.sessionId;
       } catch (err) {
         setErrorMsg(err instanceof Error ? err.message : "send failed");
+        setInterim(null);
         setState("listening");
-        return;
+        return false;
       }
       setSessionId(sid);
+      // Only surface/commit the owner turn after the authoritative API accepted
+      // it. A rejected request remains in the dialog draft instead of becoming a
+      // ghost transcript row that never existed in persisted conversation.
+      setCaption({ who: "you", text, ...(inputSource ? { inputSource } : {}) });
+      commitTurn("you", text, inputSource);
+      setInterim({ who: "you", text, ...(inputSource ? { inputSource } : {}) });
 
       const token = getToken() ?? "";
       const es = new EventSource(`/api/chat/${sid}/stream?t=${encodeURIComponent(token)}`);
@@ -599,7 +676,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       const finish = () => { stopAgentStream(); if (stateRef.current === "thinking") setState("listening"); };
       es.addEventListener("done", finish);
       es.addEventListener("killed", finish);
-    })();
+      return true;
   }, [enqueueSpeak, stopAgentStream, commitTurn, clearPttRecovery]);
 
   const clearSettle = useCallback(() => {
@@ -677,7 +754,9 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         // A genuinely new turn begins here: snapshot the current barge-in epoch so
         // this turn's audio is allowed to play. (Item 1 — a later interrupt() bumps
         // the epoch, which then strands any in-flight deltas from THIS turn.)
-        playTurnEpochRef.current = interruptEpochRef.current;
+        realtimeAudioBlockedRef.current = true;
+        awaitingFreshResponseRef.current = true;
+        outputItemRef.current = null;
         // Item 3: only clear the action guards for a genuinely NEW turn (no task
         // running). A do_on_computer task emits its tool-call response.done while
         // its tools are still executing; a transcript accepted in that window must
@@ -687,7 +766,9 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         // task's own result will clear them when it finishes).
         if (!actionPendingRef.current) {
           actionResultReceivedRef.current = false;
+          actionFallbackTextRef.current = "";
         }
+        responseTextSeenRef.current = false;
         avaCaptionRef.current = "";
         genDoneRef.current = false;
         // The server accepted our turn → the PTT commit landed; disarm the recovery
@@ -698,11 +779,20 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         commitTurn("you", eff.text);
         setInterim(null);
         setState("thinking");
+        return false;
+      case "caption_user_pending":
+        // Automatic VAD ended too early, but the structural gate knows the
+        // sentence is unfinished. Show what AVA heard without committing it,
+        // creating a response, or changing the mic/listening state.
+        setHint(null);
+        setCaption({ who: "you", text: eff.text });
+        setInterim({ who: "you", text: `${eff.text} …` });
         return;
       case "working":
         // do_on_computer is running on the server — show progress, keep the mic
         // closed, and don't let the tool-call response's done flip us to idle.
         actionPendingRef.current = true;
+        setActionPending(true);
         clearPttRecovery();
         setCaption({ who: "ava", text: eff.task ? `…${eff.task}` : "…working on it" });
         setInterim({ who: "ava", text: eff.task ? `…${eff.task}` : "…working on it" });
@@ -710,33 +800,41 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         return;
       case "step":
         actionPendingRef.current = true;
+        setActionPending(true);
         clearPttRecovery();
         {
           const phrase = humanizeTool(eff.tool, eff.args);
           setCaption({ who: "ava", text: phrase });
           setInterim({ who: "ava", text: phrase });
-          enqueueSpeak(phrase);
         }
         return;
       case "result":
         actionResultReceivedRef.current = true;
+        actionFallbackTextRef.current = eff.text;
+        responseTextSeenRef.current = false;
         clearPttRecovery();
-        setCaption({ who: "ava", text: eff.text });
-        commitTurn("ava", eff.text.trim() || "Done.");
-        setInterim(null);
-        // The mic reopens when the speak queue drains, so an empty result must
-        // still enqueue a clip — otherwise hands-free would hang after the task.
-        // Don't depend on the server's "Done." fallback for this safety property.
-        enqueueSpeak(eff.text.trim() || "Done.");
+        // The result frame is display/control only. The server now feeds the
+        // result back to the SAME realtime model, so its next response is the
+        // only spoken voice and its transcript is the only committed reply.
+        realtimeAudioBlockedRef.current = true;
+        awaitingFreshResponseRef.current = true;
+        outputItemRef.current = null;
+        setCaption({ who: "ava", text: "Finishing…" });
+        setInterim({ who: "ava", text: "Finishing…" });
         return;
       case "thinking":
-        // A fresh generation (response.created) — refresh the turn's epoch snapshot
-        // so its upcoming audio is allowed. A response.created always precedes a
-        // post-barge-in reply, so this is the reliable "new speaking turn" marker
-        // even when no new caption_user preceded it.
+        // Only a response armed by an accepted caption or a completed tool result
+        // may unblock audio. A late response.created from a cancelled turn is
+        // ignored, which prevents stop→resume after a barge-in.
+        if (realtimeAudioBlockedRef.current && !awaitingFreshResponseRef.current) return;
+        awaitingFreshResponseRef.current = false;
+        realtimeAudioBlockedRef.current = false;
         playTurnEpochRef.current = interruptEpochRef.current;
+        outputItemRef.current = null;
+        ensurePlayer().beginTurn();
         genDoneRef.current = false;
         avaCaptionRef.current = "";
+        responseTextSeenRef.current = false;
         clearPttRecovery(); // a fresh generation started → not stuck
         setState("thinking");
         return;
@@ -746,16 +844,28 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         // — don't play it and DON'T re-arm "responding", or the realtime model's
         // cancelled tail resumes and Ava talks over Sir. (response.cancel upstream
         // stops further generation; this guards the deltas already in flight.)
-        if (shouldDropAudioDelta(playTurnEpochRef.current, interruptEpochRef.current)) return;
+        if (
+          realtimeAudioBlockedRef.current ||
+          shouldDropAudioDelta(playTurnEpochRef.current, interruptEpochRef.current)
+        ) return;
         clearSettle();              // new audio → cancel any pending end-of-turn
         clearPttRecovery();         // Ava is speaking → the commit wasn't dropped
-        actionPendingRef.current = false; // audio = Ava speaking the reply/result
-        actionResultReceivedRef.current = false;
+        // Status/progress audio can arrive while a computer action is still
+        // executing. Only the response explicitly armed by ava.result proves the
+        // action itself has completed; arbitrary audio must retain the busy guard.
+        if (actionPendingRef.current && actionResultReceivedRef.current) {
+          actionPendingRef.current = false;
+          setActionPending(false);
+          actionResultReceivedRef.current = false;
+          actionFallbackTextRef.current = "";
+        }
         genDoneRef.current = false;
         setState("responding");
         ensurePlayer().enqueue(eff.b64);
         return;
       case "ava_delta":
+        if (realtimeAudioBlockedRef.current) return;
+        responseTextSeenRef.current = true;
         avaCaptionRef.current += eff.text;
         setCaption({ who: "ava", text: avaCaptionRef.current });
         // Ava's streaming transcript rides the ONE interim line (stable identity),
@@ -763,11 +873,14 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
         setInterim({ who: "ava", text: avaCaptionRef.current });
         return;
       case "ava_done":
+        if (realtimeAudioBlockedRef.current) return;
+        responseTextSeenRef.current = true;
         if (eff.text) setCaption({ who: "ava", text: eff.text });
-        // Promote the streamed chit-chat turn to a committed scrollback row.
+        // Keep the completed line on screen until the next turn instead of
+        // flashing it away while the last audio samples are still playing.
         commitTurn("ava", eff.text || avaCaptionRef.current);
         avaCaptionRef.current = "";
-        setInterim(null);
+        setInterim({ who: "ava", text: eff.text });
         return;
       case "gen_done":
         genDoneRef.current = true;
@@ -778,6 +891,23 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
           commitTurn("ava", avaCaptionRef.current);
           avaCaptionRef.current = "";
           setInterim(null);
+        }
+        // A tool result normally comes back as speech from the same realtime
+        // voice. If the upstream ends that response without either audio or a
+        // transcript, do not strand the UI on "Finishing…": show the verified
+        // action result as text and reopen the mic. This is a silent fallback,
+        // so it cannot reintroduce the mid-task voice switch.
+        if (actionPendingRef.current && actionResultReceivedRef.current) {
+          const fallback = actionFallbackTextRef.current.trim();
+          if (!responseTextSeenRef.current && fallback) {
+            setCaption({ who: "ava", text: fallback });
+            setInterim({ who: "ava", text: fallback });
+            commitTurn("ava", fallback);
+          }
+          actionPendingRef.current = false;
+          setActionPending(false);
+          actionResultReceivedRef.current = false;
+          actionFallbackTextRef.current = "";
         }
         // Don't end the turn on the raw event — debounce it. A tool-call response
         // also emits done (no audio, actionPending) and is correctly ignored; the
@@ -790,7 +920,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       case "ignore":
         return;
     }
-  }, [ensurePlayer, clearSettle, scheduleListen, enqueueSpeak, commitTurn, clearPttRecovery]);
+  }, [ensurePlayer, clearSettle, scheduleListen, commitTurn, clearPttRecovery]);
 
   // Stop ALL of Ava's spoken output locally — the realtime PCM player, the TTS
   // clip queue, and any in-flight clip — and advance the barge-in epoch so late
@@ -799,7 +929,10 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
   // voice barge-in (where the proxy already cancelled upstream).
   const stopSpokenOutput = useCallback(() => {
     interruptEpochRef.current += 1;
+    realtimeAudioBlockedRef.current = true;
+    awaitingFreshResponseRef.current = false;
     try { playerRef.current?.interrupt(); } catch { /* */ }
+    outputItemRef.current = null;
     speakEpochRef.current += 1;
     speakQueueRef.current.length = 0;
     try { ttsRef.current?.pause(); } catch { /* */ }
@@ -810,13 +943,40 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
   }, []);
 
+  // WebSocket Realtime clients own playback, so OpenAI cannot know how much of
+  // an assistant item Sir actually heard. Truncate at the player's measured
+  // playhead before clearing it; this also removes the unheard transcript tail
+  // from the model's conversation state.
+  const truncatePlayedResponse = useCallback(() => {
+    const item = outputItemRef.current;
+    const player = playerRef.current;
+    const ws = wsRef.current;
+    if (!item || !player || !ws || ws.readyState !== WebSocket.OPEN) return;
+    try {
+      ws.send(JSON.stringify({
+        type: "conversation.item.truncate",
+        item_id: item.itemId,
+        content_index: item.contentIndex,
+        audio_end_ms: player.playedMs,
+      }));
+    } catch { /* */ }
+  }, []);
+
   const handleServerEvent = useCallback((evt: { type?: string;[k: string]: unknown }) => {
     const action = classifyRealtimeEvent(evt);
     // The session hello carries the proxy mode; latch it before branching so the
     // very first non-session frame is handled by the right path.
     if (action.kind === "session") {
       if (action.mode) hybridRef.current = action.mode === "hybrid";
-      if (action.sessionId) setSessionId(action.sessionId);
+      if (action.sessionId) {
+        // This is the authoritative acknowledgement for both a resumed and a
+        // newly-created conversation. Consume the one-shot ?new=1 intent here
+        // (the common early-return path), and update the ref synchronously so a
+        // reconnect racing React's state effect cannot create a second session.
+        forceNewRef.current = false;
+        sessionIdRef.current = action.sessionId;
+        setSessionId(action.sessionId);
+      }
       return;
     }
     // Ava-specific control frames, handled the same in hybrid + transcribe:
@@ -824,6 +984,12 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       // A push-to-talk commit was dropped server-side — recover deterministically
       // instead of waiting out the client timer.
       clearPttRecovery();
+      if (action.reason === "incomplete_fragment") {
+        setInterim(null);
+        setHint("Still listening — finish the thought.");
+        if (stateRef.current === "thinking") setState("listening");
+        return;
+      }
       if (stateRef.current === "thinking") {
         setInterim(null);
         setHint("Didn't catch that, Sir — hold and try again.");
@@ -836,13 +1002,22 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       // upstream and is opening a new turn (its caption_user + response follow).
       // Stop her audio locally and move to "thinking" so her cancelled tail can't
       // keep us in "responding" while the new turn spins up.
+      truncatePlayedResponse();
       stopSpokenOutput();
-      actionPendingRef.current = false;
-      actionResultReceivedRef.current = false;
+      // This event only means the owner spoke over current audio. It does not
+      // prove that an in-flight computer action finished or was cancelled.
+      responseTextSeenRef.current = false;
       genDoneRef.current = false;
       avaCaptionRef.current = "";
       setInterim(null);
-      if (stateRef.current === "responding") setState("thinking");
+      // This frame arrives only after the proxy accepts the transcript as an
+      // intentional interruption. Stay in a mic-forwarding state for the turn;
+      // the accepted caption will then move us to thinking.
+      setState("listening");
+      return;
+    }
+    if (action.kind === "output_item") {
+      outputItemRef.current = { itemId: action.itemId, contentIndex: action.contentIndex };
       return;
     }
     if (hybridRef.current) {
@@ -862,7 +1037,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
       default:
         return;
     }
-  }, [handleHybridAction, runAgentTurn, stopSpokenOutput, clearPttRecovery]);
+  }, [handleHybridAction, runAgentTurn, stopSpokenOutput, truncatePlayedResponse, clearPttRecovery]);
 
   const startingRef = useRef(false);
   // Auto-reconnect on a transient abnormal close (e.g. 1006, or upstream 1011),
@@ -1079,6 +1254,15 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     setHint(null);
   }, [cleanup]);
 
+  // Navigation can remove VoiceScreen without going through one of its buttons
+  // (for example a parent view replacement or a browser history transition).
+  // Always retire capture, playback and the WebSocket on unmount so a stale
+  // realtime model cannot keep an old context alive or speak over a new session.
+  useEffect(() => () => {
+    intentionalStopRef.current = true;
+    cleanup();
+  }, [cleanup]);
+
   // "+new conversation": drop the current session and reconnect forcing a fresh
   // one (?new=1). Same teardown→reconnect dance as the engine-change effect, so
   // it reuses the proven reconnect path rather than inventing a new one.
@@ -1103,9 +1287,9 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
   // Barge-in: stop Ava speaking / abort the in-flight agent run and return to
   // listening. Kills the server-side run too so tools don't keep executing.
-  const interrupt = useCallback(() => {
+  const interrupt = useCallback(async (): Promise<void> => {
     const sid = sessionIdRef.current;
-    if (sid) void api.kill(sid).catch(() => {});
+    const kill = sid ? api.kill(sid).catch(() => ({ aborted: false, cancelledImprovements: 0 })) : Promise.resolve();
     stopAgentStream();
     // Item 1 (CRITICAL): in hybrid chit-chat Ava's voice IS the realtime model
     // streaming audio deltas. Stopping the local player/queue is not enough —
@@ -1114,25 +1298,47 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     // doesn't immediately re-respond. Bump the interrupt epoch FIRST so any delta
     // racing in after this (already in flight before cancel lands) is dropped by
     // the audio branch instead of re-arming "responding".
-    interruptEpochRef.current += 1;
+    truncatePlayedResponse();
+    stopSpokenOutput();
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       try { ws.send(JSON.stringify({ type: "response.cancel" })); } catch { /* */ }
       try { ws.send(JSON.stringify({ type: "input_audio_buffer.clear" })); } catch { /* */ }
     }
-    // Hybrid: cut the model's spoken audio immediately and end the turn. Also stop
-    // the TTS voice (task steps/results + transcribe-path replies speak via
-    // /api/speak) so the owner can cut Ava off mid-sentence — this bumps the
-    // barge-in + speak epochs, drops the queue, halts the clip, and clears timers.
-    stopSpokenOutput();
+    // The realtime player and any legacy transcribe-path TTS are already silent.
     clearPttRecovery();
     genDoneRef.current = false;
     actionPendingRef.current = false;
+    setActionPending(false);
     actionResultReceivedRef.current = false;
+    actionFallbackTextRef.current = "";
+    responseTextSeenRef.current = false;
     avaCaptionRef.current = "";
     setInterim(null);
     setState("listening");
-  }, [stopAgentStream, stopSpokenOutput, clearPttRecovery]);
+    await kill;
+  }, [stopAgentStream, stopSpokenOutput, truncatePlayedResponse, clearPttRecovery]);
+
+  // Exact typed wording is still a normal AVA voice turn. It uses the canonical
+  // session and /api/chat orchestration, but carries a tiny provenance marker so
+  // chat history can distinguish it after reload. Awaiting interrupt retirement
+  // closes the run-in-progress race; the ref closes double-click/shortcut races.
+  const submitExactText = useCallback(async (text: string): Promise<boolean> => {
+    if (!text.trim() || exactSubmitPendingRef.current) return false;
+    if (!sessionIdRef.current) {
+      setErrorMsg("The shared voice session is still connecting. Try again in a moment.");
+      return false;
+    }
+    exactSubmitPendingRef.current = true;
+    try {
+      if (shouldInterruptForNewTurn(stateRef.current) || actionPendingRef.current) {
+        await interrupt();
+      }
+      return await runAgentTurn(text, "voice_exact_text");
+    } finally {
+      exactSubmitPendingRef.current = false;
+    }
+  }, [interrupt, runAgentTurn]);
 
   // ─── Enter push-to-talk turn-taking ────────────────────────────────────────
   // Start a turn: re-open the mic, and — because pressing Enter is an EXPLICIT
@@ -1255,9 +1461,7 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     void fetchSession(sessionId)
       .then(({ messages }) => {
         if (!live) return;
-        const seeded: VoiceTurn[] = messages
-          .filter((m) => m.role === "user" || m.role === "assistant")
-          .map((m) => ({ id: `seed-${m.id}`, who: m.role === "user" ? "you" : "ava", text: m.content }));
+        const seeded = recentVoiceTurns(messages);
         if (seeded.length === 0) return;
         setTurns((prev) => (prev.length === 0 ? seeded : prev));
       })
@@ -1267,9 +1471,15 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
 
   useEffect(() => () => { intentionalStopRef.current = true; cleanup(); }, [cleanup]);
 
+  // Navigation sometimes follows the session hello before React has committed
+  // the corresponding state render. The ref is updated in that event handler,
+  // so callers can always return to the canonical chat rather than stale null.
+  const getSessionId = useCallback(() => sessionIdRef.current, []);
+
   return {
     state,
     sessionId,
+    getSessionId,
     caption,
     // Transcript display: committed scrollback + one live interim line + orb meter.
     turns,
@@ -1282,11 +1492,13 @@ export function useRealtimeVoice({ initialSessionId }: { initialSessionId: strin
     muted,
     setMuted,
     pendingApproval,
+    actionPending,
     approve,
     deny,
     start,
     stop,
     interrupt,
+    submitExactText,
     newConversation,
     // Input-mode (endpointing) controls.
     inputMode,

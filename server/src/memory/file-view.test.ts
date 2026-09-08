@@ -25,6 +25,14 @@ describe("readMemoryView", () => {
 
     const v = readMemoryView(dir);
     expect(v.personality).toBe("I am Ava.\n");
+    expect(v.personaProfile).toMatchObject({
+      version: "2.0",
+      architecture: "identity + collaboration + context registers",
+      lab: { kind: "deterministic_contract", scenarioCount: 50, valid: true },
+    });
+    expect(v.personaProfile.registers.map((register) => register.id)).toEqual([
+      "casual", "execution", "brainstorming", "repair", "high_stakes",
+    ]);
     expect(v.memoryIndex).toBe("- index\n");
     expect(v.preferences.lines).toEqual([
       "Sir prefers concise replies.",
@@ -44,6 +52,7 @@ describe("readMemoryView", () => {
   it("returns empty defaults on missing files", () => {
     const v = readMemoryView(dir);
     expect(v.personality).toBe("");
+    expect(v.personaProfile.lab.scenarioCount).toBe(50);
     expect(v.preferences.lines).toEqual([]);
     expect(v.observations.lines).toEqual([]);
     expect(v.projects).toEqual([]);

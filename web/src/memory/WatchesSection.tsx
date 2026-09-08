@@ -46,6 +46,11 @@ const STATUS_GLYPH = {
   triggered: { glyph: "●", cls: "text-[var(--ac)]", label: "triggered" },
   error: { glyph: "✗", cls: "text-[var(--ac-stop)]", label: "error" },
   unclear: { glyph: "?", cls: "text-white/45", label: "unclear" },
+  busy: { glyph: "◌", cls: "text-[var(--ac-warn)]", label: "waiting for target" },
+  dispatching: { glyph: "↗", cls: "text-[var(--ac-exec)]", label: "dispatching" },
+  delivered: { glyph: "●", cls: "text-[var(--ac-exec)]", label: "delivered" },
+  running: { glyph: "◌", cls: "text-[var(--ac-exec)]", label: "running" },
+  completed: { glyph: "✓", cls: "text-[var(--ac)]", label: "completed" },
 } as const;
 
 function statusGlyph(status: WatchRow["last_status"]) {
@@ -181,6 +186,8 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 hud text-[9px] tracking-[0.16em] text-white/40">
           <span>{scheduleLabel(w)}</span>
           {w.kind === "reminder" && <span className="text-[var(--ac-exec)]/85">reminder</span>}
+          {w.kind === "codex" && <span className="text-[var(--ac)]/85">Codex task</span>}
+          {w.kind === "codex" && w.continue_cycle ? <span>continuous cycle</span> : null}
         </div>
 
         {w.last_run_at != null ? (
@@ -202,6 +209,24 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
           </div>
         ) : (
           <div className="mt-1.5 text-[11px] text-white/35">no checks yet</div>
+        )}
+
+        {w.kind === "codex" && w.continue_cycle && w.successor_status && (
+          <div
+            className={
+              "mt-2 rounded-lg border px-2.5 py-2 text-[10px] leading-relaxed " +
+              (w.successor_status === "blocked"
+                ? "border-[var(--ac-stop)]/25 bg-[var(--ac-stop)]/[0.06] text-white/65"
+                : w.successor_status === "scheduled"
+                  ? "border-[var(--ac)]/20 bg-[var(--ac)]/[0.05] text-white/60"
+                  : "border-[var(--ac-warn)]/20 bg-[var(--ac-warn)]/[0.05] text-white/60")
+            }
+            aria-label={`successor planning: ${w.successor_status}`}
+          >
+            <span className="hud mr-2 tracking-[0.14em] text-white/45">NEXT</span>
+            {w.successor_result || w.successor_status}
+            {w.successor_attempted_at ? ` · ${timeAgo(w.successor_attempted_at)}` : ""}
+          </div>
         )}
       </div>
 

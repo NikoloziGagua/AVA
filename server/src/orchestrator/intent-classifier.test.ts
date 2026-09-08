@@ -18,6 +18,13 @@ describe("classifyIntent", () => {
   it("treats explicit tool requests as action", () => {
     expect(classifyIntent("use claude_code to summarize this repo")).toBe("action");
     expect(classifyIntent("open chrome to news.ycombinator.com")).toBe("action");
+    expect(classifyIntent("open Google and search for AVA")).toBe("action");
+    expect(classifyIntent("search Google for AVA")).toBe("action");
+    expect(classifyIntent("use chrome_google_search for AVA")).toBe("action");
+    expect(classifyIntent("open YouTube")).toBe("action");
+    expect(classifyIntent("search YouTube for AVA")).toBe("action");
+    expect(classifyIntent("use chrome_open_url for https://example.com")).toBe("action");
+    expect(classifyIntent("use chrome_youtube_search for AVA")).toBe("action");
     expect(classifyIntent("take a screenshot")).toBe("action");
   });
 
@@ -48,6 +55,27 @@ describe("classifyIntent", () => {
     expect(classifyIntent("remember me as terse")).toBe("action");
     expect(classifyIntent("remember I'm allergic to dairy")).toBe("action");
     expect(classifyIntent("remember you should always confirm before pushing")).toBe("action");
+    expect(classifyIntent("index this discussion")).toBe("action");
+    expect(classifyIntent("capture our research")).toBe("action");
+    expect(classifyIntent("what did we decide about memory?")).toBe("action");
+  });
+
+  it("keeps Notes capture available to conservative voice routing", () => {
+    expect(classifyIntent("put this idea in my notes")).toBe("action");
+    expect(classifyIntent("save that to the AVA project notes")).toBe("action");
+    expect(classifyIntent("make a note about the browser issue")).toBe("action");
+  });
+
+  it("keeps pinned Activepieces playbooks available to conservative voice routing", () => {
+    expect(classifyIntent("Create AVA's operations brief for the last 24 hours.")).toBe("action");
+    expect(classifyIntent("Generate the system health report now")).toBe("action");
+    expect(classifyIntent("Show Activepieces automation status")).toBe("action");
+    expect(classifyIntent("use automation_operations_brief")).toBe("action");
+  });
+
+  it("keeps exact Instagram thread opening on the voice action path", () => {
+    expect(classifyIntent("Open Lasha's Instagram chat")).toBe("action");
+    expect(classifyIntent("Open the Instagram conversation with Lasha")).toBe("action");
   });
 
   it("treats file ops imperatives as action", () => {

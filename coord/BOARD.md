@@ -5367,6 +5367,85 @@ NEEDS: codex
 
 ---
 
+### 2026-09-08 - codex - COMPLETE: risk-aware approval countdown and terminal copy
+
+Implemented and committed the bounded approval truthfulness correction as
+`5a42b772b03b3b86f3e702a74c50d136a58bc468`
+(`fix(approvals): show risk-aware timeout outcomes`). The server remains the
+only approval authority and its policy semantics did not change: `medium`
+silence auto-approves, while `high` silence expires/auto-denies and the action
+does not run.
+
+The authoritative policy event now carries `riskTier`, `timeoutBehavior`,
+`requestedAt`, `deadlineAt`, and `timeoutMs` through chat, voice, task-receipt,
+Explorer and normalized Mission Control evidence. Chat and voice render the
+same risk-aware copy, use the original absolute deadline after remount or SSE
+reconnect, announce countdown/terminal changes accessibly, and wait for the
+server's resolved event instead of settling locally. High-risk expiry and
+explicit denial say the action did not run; medium approval says it may
+continue. Mission Control shows a read-only authoritative policy-evidence
+section. Legacy or malformed retained events remain neutral and explicitly
+say the policy was not recorded rather than inferring it from a tool name.
+
+Changed areas:
+
+- policy/event contract and tests: `server/src/policy/runtime.ts`,
+  `server/src/policy/runtime.test.ts`, `server/src/orchestrator/agent.ts`;
+- sanitized operational evidence and receipts:
+  `server/src/observability/agent-adapter.ts` plus its test,
+  `server/src/explorer/store.ts`, `server/src/receipts/task-receipt.ts`, and the
+  corrected voice-runtime comment in `server/src/index.ts`;
+- shared web presentation and chat/voice propagation:
+  `web/src/approvals/presentation.ts`, `ApprovalCard.tsx`, their focused tests,
+  `web/src/chat/MessageList.tsx`, `useChatStream.ts`,
+  `web/src/voice/VoiceScreen.tsx`, `useRealtimeVoice.ts`, and the new focused
+  voice approval test;
+- Mission Control policy evidence and regression tests in
+  `web/src/mission-control/MissionControlScreen.tsx` and its test;
+- stale authoritative documentation in `docs/ARCHITECTURE.md` and architecture
+  sections 04, 06 and 09.
+
+Verification evidence:
+
+- focused server: 4 files / 48 tests passed (`policy/runtime`, observability
+  adapter, task receipt, Explorer store);
+- focused web after the final denied-terminal assertion: 4 files / 27 tests
+  passed (shared presentation, chat approval card, voice approval card,
+  Mission Control);
+- complete server Vitest: 204 files / 1,593 tests passed. An earlier run hit
+  the known interactive Chrome setup hook timeout; that file then passed 4/4
+  in isolation and a clean complete rerun passed all 1,593 tests;
+- complete web Vitest: 100 files / 497 tests passed. Existing intentional
+  jsdom canvas/WebGL fallback and GSAP diagnostics remained non-failing;
+- standalone web TypeScript, server production build, canonical web production
+  build and managed web fallback build passed;
+- canonical production verification preserved 4/4 initial eager artifacts at
+  839,138/900,000 bytes, 17 installed-offline JavaScript artifacts at
+  2,369,428 bytes, largest artifact 349,227/500,000 bytes, and all required
+  lazy artifacts in the 24-entry PWA precache;
+- `git diff --check`, the staged diff check, and committed-HEAD isolated boot
+  smoke passed; boot smoke returned `{\"ok\":true,\"log\":\"healthy\"}`.
+
+A live consequential approval was intentionally not manufactured for a browser
+smoke. Deterministic real-component tests exercise both policy tiers, native
+keyboard buttons, polite live regions, explicit approve/deny requests,
+absolute-deadline remount behavior, deadline-to-terminal transition, SSE-style
+resolved state and Mission Control evidence. The only functional compatibility
+limitation is that approval events retained from before this change cannot
+acquire evidence that was never recorded, so they render the explicit neutral
+state.
+
+No successor watcher was scheduled: this measured mismatch is closed and the
+current evidence did not establish another non-duplicative bounded approval
+presentation defect. Only the pre-existing unrelated
+`.claude/settings.local.json`, `.codex/agents/`, and persona research file
+remain outside the commits. Forge, forge-remodel-work and every other
+repository remained outside scope and were neither inspected nor modified.
+
+NEEDS: nobody
+
+---
+
 ### 2026-09-04 - codex - COMPLETE: supported ES2022 build target
 
 Commit `c533d63aee97da25f3a1821eebf4fd3845ebd232`
@@ -5433,6 +5512,31 @@ Forge, forge-remodel-work and every other repository remained outside scope
 and were neither inspected nor modified.
 
 NEEDS: nobody
+
+---
+
+### 2026-09-08 - codex - CLAIM: risk-aware approval countdown and terminal copy
+
+Watcher `D2sVXQN8WPG1` assigns one bounded correction to the existing AVA
+approval presentation/evidence seam. Repository inspection confirms the
+server is authoritative and already resolves an undecided `medium` action as
+approved while an undecided `high` action expires and is not executed. The
+chat approval card nevertheless hardcodes a fresh 15-second “Auto-approving”
+countdown for every action, including destructive work and remounts.
+
+I am claiming only the approval event/card and normalized Mission Control
+evidence contract needed to carry the authoritative risk tier, timeout
+behavior and absolute deadline into truthful countdown, reload/reconnect and
+terminal presentation. Existing approval policy, timers, approve/deny routes,
+Stop behavior, observability store and broader Mission Control design will not
+be changed or bypassed. Focused server/web tests, full relevant suites, both
+web production builds, bundle verification and a committed-HEAD boot smoke
+will gate one scoped AVA-only commit. The completed lazy-loading and bundle
+budgets remain untouched. Pre-existing settings, Codex-agent and research
+files remain outside the change. Forge and every other repository remain
+outside scope and will not be inspected or modified.
+
+NEEDS: codex
 
 ---
 
@@ -6898,5 +7002,37 @@ Only the pre-existing unrelated `.claude/settings.local.json`, `.codex/agents/`
 and persona-research files remain outside the product commit. Forge,
 forge-remodel-work and every other repository remained outside scope and were
 neither inspected nor modified.
+
+NEEDS: nobody
+
+---
+
+### 2026-09-08 - codex - PHYSICAL-TAIL CLAIM: risk-aware approval copy
+
+The complete bounded claim appears above under `CLAIM: risk-aware approval
+countdown and terminal copy`; a generic append anchor placed it earlier in the
+append-only thread and no existing text was edited or removed. This physical
+tail marker confirms Codex owns only the current approval event/card and
+Mission Control evidence correction described there. All unrelated changes
+remain preserved and every other repository remains outside scope.
+
+NEEDS: codex
+
+---
+
+### 2026-09-08 - codex - PHYSICAL-TAIL COMPLETE: risk-aware approval copy
+
+The full immutable completion record appears above under `COMPLETE: risk-aware
+approval countdown and terminal copy`; a generic append anchor placed that
+record earlier in the existing append-only thread, so no prior text was edited
+or removed. This physical-tail marker closes the claim. Product commit is
+`5a42b772b03b3b86f3e702a74c50d136a58bc468`; focused tests, complete server
+(204 files / 1,593 tests) and web (100 files / 497 tests) suites, TypeScript,
+server/canonical/managed builds, bundle verification, diff checks and the
+committed-HEAD isolated healthy boot smoke all passed. Legacy retained events
+without historical risk evidence remain explicitly neutral. Unrelated local
+changes were preserved; Forge and every other repository remained outside
+scope and were neither inspected nor modified. No successor was scheduled
+because current evidence showed no further bounded non-duplicative mismatch.
 
 NEEDS: nobody

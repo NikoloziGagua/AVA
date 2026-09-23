@@ -7108,3 +7108,34 @@ Verification:
 Changed product files: `scripts/start-activepieces-runtime.ps1`, `scripts/activepieces-runtime-policy.psm1`, `scripts/activepieces-runtime-policy.test.ps1`, `package.json`, and `docs/features/activepieces-automations.md`. No web source changed, so the complete web suite/build was not repeated. Pre-existing unrelated settings, Codex-agent, and persona-research changes remain untouched. Per Niko's instruction, no GitHub/backup work was performed.
 
 NEEDS: niko (ask AVA “Run AVA's system health report” or “Create AVA's operations brief for the last 24 hours”; both should now use the available genuine Activepieces executor)
+
+### 2026-09-23 - codex - CLAIM: route-correct shell and responsive navigation polish
+
+Niko reports a major frontend regression: Home's identity/conversation chrome appears to follow him into unrelated destinations, the current sidebar is visually unsuccessful, and navigation feels slow rather than fluid. The current board has no conflicting active frontend claimant; this remains within the existing Codex-owned chat/input/navigation surface.
+
+I am claiming one bounded AVA web repair: establish a single route-owned screen at a time so Home-only presentation cannot remain mounted or visible after navigation; redesign the existing persistent navigation around quieter, clearer destination and conversation hierarchy without creating a second router or history store; and remove measured transition/layout work that makes ordinary navigation sluggish. Existing session return, recent-chat authority, voice/chat handoff, lazy loading, offline precache, responsive behavior, keyboard access and reduced-motion contracts remain authoritative. I will verify the result through focused navigation/sidebar tests, full relevant suites, production builds and a committed-HEAD smoke before completion. Unrelated settings, Codex-agent and research files remain untouched.
+
+NEEDS: codex
+
+### 2026-09-23 - codex - COMPLETE: route-owned shell and responsive navigation polish
+
+Committed the bounded AVA web repair as $sha (ix(web): make navigation route-owned and responsive). The root cause was architectural rather than a single misplaced z-index: App rendered outgoing and incoming full-screen destinations concurrently for every transition, so Home's orb, wordmark, composer and WebGL surface remained alive underneath the next route during the overlap. At the same time, expanding the 304 px sidebar animated the app stage's left edge, forcing the entire active workspace to relayout every frame.
+
+The App shell now mounts exactly one route owner at a time and applies only a 200 ms compositor-only entry (opacity plus 4 px translation, no full-screen scale). Home is synchronously unmounted before another destination is presented. The sidebar is a compact rail by default under a versioned preference, no longer repeats an AVA logo as permanent chrome, uses a quieter Navigation/conversation/tools hierarchy, expands to a 284 px contained drawer without shifting or relaying out the app stage, removes backdrop blur from its scrim, and keeps exact current-chat, recent-chat, keyboard, Escape, narrow-width and reduced-motion behavior. Hidden navigation is inert and does not load private recents.
+
+Verification evidence:
+
+- focused App/sidebar tests: 2 files / 21 tests passed, including exact Home unmount, one active data-view, compact default, hidden inert navigation, chat return and reload persistence;
+- complete web Vitest: 100 files / 499 tests passed;
+- complete server Vitest: 204 files / 1,594 tests passed;
+- standalone web TypeScript passed; server production build passed;
+- canonical web production build passed: 2,668 modules, 24 PWA entries / 2,501.34 KiB, 4 eager JavaScript assets / 838,630 bytes under the existing 900,000-byte budget, every artifact under 500,000 bytes and precached offline, with no unsupported-target or large-chunk warning;
+- managed-browser fallback build passed with its intentional single 2.3 MB artifact;
+- git diff --check and staged checks passed;
+- a real installed-Chrome smoke at 1440x900 navigated Home to Chats and observed exactly data-view=list with no Home route, Home surface or Home composer retained and zero console/page errors. A 390x844 run expanded the drawer to 284 px, exposed a working outside-click close surface, stayed within the viewport and produced zero console/page errors.
+
+Changed product files: web/src/App.tsx, web/src/lib/deckMotion.ts, web/src/components/ava/AppSidebar.tsx, web/src/theme.css, and their focused tests. The existing lazy-route, voice/chat session, Strategy Room, visual navigation, PWA/offline, managed fallback and security boundaries were preserved. The drawer intentionally overlays the stage when explicitly expanded instead of reflowing heavyweight workspace content; its compact rail remains visible for direct navigation.
+
+Pre-existing unrelated .claude/settings.local.json, .codex/agents/ and persona-research changes remain untouched.
+
+NEEDS: niko (reload AVA and try moving Home -> Notes/Explore/Chats, then expand/collapse the new compact navigation rail)

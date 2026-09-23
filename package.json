@@ -20,6 +20,7 @@
     "board:status": "node scripts/coord-board.mjs status",
     "board:append": "node scripts/coord-board.mjs append",
     "test:board-append": "node --test scripts/coord-board.test.mjs",
+    "test:activepieces-launcher": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./scripts/activepieces-runtime-policy.test.ps1",
     "test:explorer-contract": "npm -w server run build && node node_modules/typescript/bin/tsc -b web/tsconfig.json --pretty false && node scripts/validate-explorer-contract.mjs && node scripts/explorer-reality-check.mjs --emit",
     "test": "npm -w server run test && npm -w web run test",
     "test:e2e": "vitest run --root . --config vitest.config.ts"

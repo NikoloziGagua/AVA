@@ -107,6 +107,14 @@ when `ACTIVEPIECES_ENABLED=true`. A standalone restart is available with:
 powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-activepieces-runtime.ps1
 ```
 
+The launcher monitors the real child process as well as the readiness endpoint.
+It fails immediately with bounded stdout and stderr evidence when the process
+exits. Windows App Control can transiently reject Bun/esbuild child creation
+with `EPERM`, `EACCES`, or Bun's `unknown error`; only those known launch
+failures are retried, up to three attempts. Source identity, configuration,
+compiler, port, and ordinary runtime failures are never converted into success
+or retried as though they were transient.
+
 The provisioner owns these AVA settings:
 
 ```text

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import { Trash2, Plus, Star, ArrowUpRight } from "lucide-react";
-import { api, fetchSessions, type SessionRow } from "../api.js";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Trash2, Plus, Star, ArrowUpRight, ChevronDown } from "lucide-react";
+import { api, fetchSessionPage, lastHumanActivity, type SessionRow, type SessionScope } from "../api.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { igniteBorder, douseBorder } from "../components/ava/BorderGlow.js";
@@ -15,37 +15,60 @@ import { press } from "../lib/deckMotion.js";
  * invisible. Three wide cards fill the deck row exactly.
  */
 const MAX_PINNED_CARDS = 3;
+const PAGE_SIZE = 30;
 
 export interface ChatListScreenProps {
   // Kept for API parity with App.tsx; the persistent nav now handles "back",
   // so no in-panel back button is rendered.
   onClose: () => void;
-  onOpenChat: (sessionId: string | null) => void;
+  /** `audit` opens an automated run for reference without making it the current chat. */
+  onOpenChat: (sessionId: string | null, options?: { audit?: boolean }) => void;
 }
+
+/** Nika's conversations, older unclassified history, and AVA's own automated runs. */
+type Section = "human" | "legacy" | "automation";
 
 interface PendingDelete {
   session: SessionRow;
+  section: Section;
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
+interface Page {
+  rows: SessionRow[];
+  cursor: string | null;
+  loading: boolean;
+  error: string | null;
+  loaded: boolean;
+}
+
+const EMPTY_PAGE: Page = { rows: [], cursor: null, loading: false, error: null, loaded: false };
 const UNDO_WINDOW_MS = 5000;
 
-/** "Mon · 14:32" style last-active label used by both the strip and the table. */
-function lastActive(s: SessionRow): string {
-  const d = new Date(s.updated_at);
+/** "Mon · 14:32" style label. */
+function formatWhen(value: number): string {
+  const d = new Date(value);
   return `${d.toLocaleDateString()} · ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+function withoutDuplicates(existing: SessionRow[], incoming: SessionRow[]): SessionRow[] {
+  const seen = new Set(existing.map((row) => row.id));
+  return [...existing, ...incoming.filter((row) => !seen.has(row.id))];
+}
+
 export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  // Fetch failure is its own state (MemoryScreen's err pattern) — swallowing it
-  // into the empty list lied with "NO CHATS YET" when the server was down.
-  const [err, setErr] = useState<string | null>(null);
+  const [pages, setPages] = useState<Record<Section, Page>>({
+    human: { ...EMPTY_PAGE, loading: true },
+    legacy: EMPTY_PAGE,
+    automation: EMPTY_PAGE,
+  });
+  const [openHistory, setOpenHistory] = useState<Record<"legacy" | "automation", boolean>>({
+    legacy: false,
+    automation: false,
+  });
   // A QUEUE of pending deletes, each with its OWN 5s timer — deleting a second
-  // chat no longer silently flushes the first's undo window (the old single-slot
-  // state committed the prior delete immediately). The toast reflects the latest;
-  // undo is LIFO.
+  // chat no longer silently flushes the first's undo window. The toast reflects
+  // the latest; undo is LIFO.
   const [pendingDeletes, setPendingDeletes] = useState<PendingDelete[]>([]);
   const reduced = useReducedMotion();
 
@@ -58,29 +81,53 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
   useEffect(() => () => {
     for (const p of pendingRef.current) {
       clearTimeout(p.timeoutId);
-      commitDelete(p.session);
+      commitDelete(p);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Flip snapshot taken in a list-mutating handler; consumed by the layout-effect
-  // below after React commits the new DOM (per deckMotion §3a pattern). Covers BOTH
-  // the delete/undo reorder AND a pin/unpin move between the strip and the table.
+  // below after React commits the new DOM (per deckMotion §3a pattern).
   const flipState = useRef<Flip.FlipState | null>(null);
   const listScope = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    fetchSessions()
-      .then((s) => setSessions(s))
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoading(false));
+  const setPage = useCallback((section: Section, update: (page: Page) => Page) => {
+    setPages((prev) => ({ ...prev, [section]: update(prev[section]) }));
   }, []);
 
+  const loadPage = useCallback(async (section: Section, cursor: string | null) => {
+    setPage(section, (page) => ({ ...page, loading: true, error: null }));
+    try {
+      const result = await fetchSessionPage({ scope: section as SessionScope, limit: PAGE_SIZE, cursor });
+      setPage(section, (page) => ({
+        rows: cursor ? withoutDuplicates(page.rows, result.sessions) : result.sessions,
+        cursor: result.nextCursor,
+        loading: false,
+        error: null,
+        loaded: true,
+      }));
+    } catch (error) {
+      setPage(section, (page) => ({ ...page, loading: false, error: String(error), loaded: true }));
+    }
+  }, [setPage]);
+
+  useEffect(() => { void loadPage("human", null); }, [loadPage]);
+
+  const toggleHistory = (section: "legacy" | "automation") => {
+    const next = !openHistory[section];
+    setOpenHistory((prev) => ({ ...prev, [section]: next }));
+    if (next && !pages[section].loaded && !pages[section].loading) void loadPage(section, null);
+  };
+
+  const human = pages.human;
+  // A pinned older conversation is listed with Nika's own; don't show it twice.
+  const humanIds = new Set(human.rows.map((row) => row.id));
+  const legacyRows = pages.legacy.rows.filter((row) => !humanIds.has(row.id));
+
   // The "Important chats" rail shows at most MAX_PINNED_CARDS pinned chats; any
-  // pinned beyond that OVERFLOW into the table (with a lit star) so a 4th+ pin is
-  // never invisible. The table therefore lists overflow-pinned first, then unpinned.
-  const pinned = sessions.filter((s) => s.pinned);
-  const unpinned = sessions.filter((s) => !s.pinned);
+  // pinned beyond that OVERFLOW into the table (with a lit star).
+  const pinned = human.rows.filter((s) => s.pinned);
+  const unpinned = human.rows.filter((s) => !s.pinned);
   const stripPinned = pinned.slice(0, MAX_PINNED_CARDS);
   const tableRows = [...pinned.slice(MAX_PINNED_CARDS), ...unpinned];
 
@@ -88,8 +135,6 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
   // undo / pin / unpin), and pulse the loading skeletons. All reduced-motion gated.
   useGSAP(
     () => {
-      // List reorder/delete/pin: replay the captured layout via Flip. We snapshot
-      // BOTH the table rows and the strip cards so a row can fly from one to the other.
       if (flipState.current) {
         if (!reduced) {
           Flip.from(flipState.current, {
@@ -103,8 +148,7 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
         return;
       }
       if (reduced) return;
-      // Loading: gentle opacity yoyo on the skeleton slabs.
-      if (loading) {
+      if (human.loading && !human.loaded) {
         gsap.to(".chat-skel", {
           opacity: 0.35,
           duration: 0.7,
@@ -115,7 +159,6 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
         });
         return;
       }
-      // Initial reveal — cascade the individual rows in beneath the section.
       gsap.from(".chat-row", {
         y: 12,
         opacity: 0,
@@ -125,7 +168,7 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
         clearProps: "transform,opacity",
       });
     },
-    { dependencies: [sessions, loading, reduced], scope: listScope },
+    { dependencies: [human.rows, human.loading, reduced], scope: listScope },
   );
 
   // Snapshot every element that can move in a reorder: the table rows AND the pinned
@@ -134,50 +177,64 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
     flipState.current = reduced ? null : Flip.getState(".chat-row, .pin-card");
   }
 
-  function commitDelete(s: SessionRow) {
-    api.deleteSession(s.id).catch(() => {
-      setSessions((prev) => (prev.some((x) => x.id === s.id) ? prev : [s, ...prev]));
+  function commitDelete(p: { session: SessionRow; section: Section }) {
+    api.deleteSession(p.session.id).catch(() => {
+      setPage(p.section, (page) => (
+        page.rows.some((row) => row.id === p.session.id)
+          ? page
+          : { ...page, rows: [p.session, ...page.rows] }
+      ));
     });
   }
 
-  function handleDelete(s: SessionRow) {
+  function handleDelete(session: SessionRow, section: Section) {
     snapshotForFlip();
-    setSessions((prev) => prev.filter((x) => x.id !== s.id));
+    setPage(section, (page) => ({ ...page, rows: page.rows.filter((row) => row.id !== session.id) }));
     // Each delete gets its own independent timer; prior pending deletes keep
     // their full undo window (no silent flush).
     const timeoutId = setTimeout(() => {
-      commitDelete(s);
-      setPendingDeletes((prev) => prev.filter((p) => p.session.id !== s.id));
+      commitDelete({ session, section });
+      setPendingDeletes((prev) => prev.filter((p) => p.session.id !== session.id));
     }, UNDO_WINDOW_MS);
-    setPendingDeletes((prev) => [...prev, { session: s, timeoutId }]);
+    setPendingDeletes((prev) => [...prev, { session, section, timeoutId }]);
   }
 
-  // Undo the most recent pending delete (LIFO — matches the toast, which shows
-  // the latest).
+  // Undo the most recent pending delete (LIFO — matches the toast, which shows the latest).
   function handleUndo() {
     const last = pendingDeletes[pendingDeletes.length - 1];
     if (!last) return;
     snapshotForFlip();
     clearTimeout(last.timeoutId);
-    setSessions((prev) => [last.session, ...prev]);
+    setPage(last.section, (page) => ({ ...page, rows: [last.session, ...page.rows] }));
     setPendingDeletes((prev) => prev.filter((p) => p !== last));
   }
 
   // Commit a specific pending delete now (the toast's dismiss/X).
   function commitNow(p: PendingDelete) {
     clearTimeout(p.timeoutId);
-    commitDelete(p.session);
+    commitDelete(p);
     setPendingDeletes((prev) => prev.filter((x) => x !== p));
   }
 
-  // Optimistic pin/unpin: flip s.pinned locally (which moves the row between the table
-  // and the strip), wrap the move in a Flip reorder, then persist. On rejection, revert.
-  function handleTogglePin(s: SessionRow) {
-    const next = s.pinned ? 0 : 1;
+  // Optimistic pin/unpin, then persist; revert on rejection. Pinning an older
+  // conversation is an explicit choice, so it joins Nika's own list.
+  function handleTogglePin(session: SessionRow, section: Section) {
+    const next = session.pinned ? 0 : 1;
     snapshotForFlip();
-    setSessions((prev) => prev.map((x) => (x.id === s.id ? { ...x, pinned: next } : x)));
-    api.setSessionPinned(s.id, next === 1).catch(() => {
-      setSessions((prev) => prev.map((x) => (x.id === s.id ? { ...x, pinned: s.pinned } : x)));
+    const updated = { ...session, pinned: next };
+    if (section === "legacy") {
+      setPage("legacy", (page) => ({ ...page, rows: page.rows.filter((row) => row.id !== session.id) }));
+      setPage("human", (page) => ({ ...page, rows: [updated, ...page.rows] }));
+    } else {
+      setPage(section, (page) => ({ ...page, rows: page.rows.map((row) => (row.id === session.id ? updated : row)) }));
+    }
+    api.setSessionPinned(session.id, next === 1).catch(() => {
+      if (section === "legacy") {
+        setPage("human", (page) => ({ ...page, rows: page.rows.filter((row) => row.id !== session.id) }));
+        setPage("legacy", (page) => ({ ...page, rows: [session, ...page.rows] }));
+      } else {
+        setPage(section, (page) => ({ ...page, rows: page.rows.map((row) => (row.id === session.id ? session : row)) }));
+      }
     });
   }
 
@@ -195,12 +252,122 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
     </button>
   );
 
+  const renderTable = (rows: SessionRow[], section: Section) => (
+    <table className="chat-table">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>{section === "human" ? "Last used" : "Last changed"}</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((s) => (
+          <tr
+            key={s.id}
+            className="chat-row"
+            onClick={() => onOpenChat(s.id, section === "automation" ? { audit: true } : undefined)}
+          >
+            <td>
+              <div className="truncate text-sm text-white/90">{s.title ?? "Untitled"}</div>
+            </td>
+            <td>
+              <div className="hud text-[10px] tracking-[0.16em] text-white/40">
+                {formatWhen(section === "human" ? lastHumanActivity(s) : s.updated_at)}
+              </div>
+            </td>
+            <td>
+              <div className="chat-actions">
+                {section !== "automation" && (
+                  <button
+                    aria-label={s.pinned ? "unpin" : "pin"}
+                    data-on={s.pinned ? "true" : "false"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleTogglePin(s, section);
+                    }}
+                    className="chat-act chat-act-star"
+                  >
+                    <Star size={14} fill={s.pinned ? "currentColor" : "none"} strokeWidth={1.5} />
+                  </button>
+                )}
+                <button
+                  aria-label="delete"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(s, section);
+                  }}
+                  className="chat-act chat-act-del"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const renderMore = (section: Section) => {
+    const page = pages[section];
+    if (!page.cursor) return null;
+    return (
+      <div className="mt-3 flex justify-center">
+        <button
+          type="button"
+          className="btn-deck btn-ghost"
+          disabled={page.loading}
+          onClick={() => void loadPage(section, page.cursor)}
+        >
+          {page.loading ? "Loading…" : "Show more"}
+        </button>
+      </div>
+    );
+  };
+
+  const renderHistory = (section: "legacy" | "automation", title: string, description: string) => {
+    const page = pages[section];
+    const rows = section === "legacy" ? legacyRows : page.rows;
+    const open = openHistory[section];
+    const regionId = `chat-history-${section}`;
+    return (
+      <PanelSection
+        title={title}
+        right={(
+          <button
+            type="button"
+            className="btn-deck btn-ghost"
+            aria-label={`${open ? "Hide" : "Show"} ${title.toLowerCase()}`}
+            aria-expanded={open}
+            aria-controls={regionId}
+            onClick={() => toggleHistory(section)}
+          >
+            <span>{open ? "Hide" : "Show"}</span>
+            <ChevronDown size={14} style={{ transform: open ? "rotate(180deg)" : undefined }} />
+          </button>
+        )}
+      >
+        <p className="text-xs leading-5 text-white/55">{description}</p>
+        {open && (
+          <div id={regionId} className="mt-3">
+            {page.loading && !page.loaded && <p className="text-xs text-white/55">Loading…</p>}
+            {page.error && <div className="py-4 text-center text-sm text-red-400">error: {page.error}</div>}
+            {page.loaded && !page.error && rows.length === 0 && (
+              <p className="text-xs text-white/55">Nothing here.</p>
+            )}
+            {rows.length > 0 && renderTable(rows, section)}
+            {renderMore(section)}
+          </div>
+        )}
+      </PanelSection>
+    );
+  };
+
   return (
     <PanelShell title="Chats">
       <div ref={listScope}>
-        {/* IMPORTANT CHATS — only when something is pinned. A rail of up to three
-            wide starred cards (the old skew-stack smeared into an unreadable pile;
-            this reads instantly and ignites per-card on hover). */}
+        {/* IMPORTANT CHATS — only when something is pinned. */}
         {pinned.length > 0 && (
           <PanelSection title="Important chats" right={<span className="chip chip-ac">{pinned.length}</span>}>
             <ContainerScroll>
@@ -230,7 +397,7 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
                         title="Unpin"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleTogglePin(s);
+                          handleTogglePin(s, "human");
                         }}
                         className="pin-star -mr-1 -mt-1 rounded-md p-1 text-[var(--ac)] transition-colors hover:text-white"
                       >
@@ -241,7 +408,7 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
                       {s.title ?? "Untitled"}
                     </div>
                     <div className="mt-3 flex items-center justify-between">
-                      <span className="hud text-[10px] tracking-[0.16em] text-white/40">{lastActive(s)}</span>
+                      <span className="hud text-[10px] tracking-[0.16em] text-white/40">{formatWhen(lastHumanActivity(s))}</span>
                       <span className="pin-open flex items-center gap-1 hud text-[9px] tracking-[0.2em] text-white/35">
                         OPEN <ArrowUpRight size={11} />
                       </span>
@@ -253,9 +420,9 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
           </PanelSection>
         )}
 
-        {/* ALL CHATS — the deck table. */}
-        <PanelSection title="All chats" right={newChatBtn}>
-          {loading && (
+        {/* YOUR CONVERSATIONS — only chats Nika actually took part in. */}
+        <PanelSection title="Your conversations" right={newChatBtn}>
+          {human.loading && !human.loaded && (
             <div className="grid grid-cols-1 gap-3">
               {[0, 1, 2].map((i) => (
                 <div key={i} className="chat-skel lg-slab h-[52px] rounded-xl opacity-70" />
@@ -263,11 +430,11 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
             </div>
           )}
 
-          {!loading && err && (
-            <div className="py-10 text-center text-sm text-red-400">error: {err}</div>
+          {human.loaded && human.error && (
+            <div className="py-10 text-center text-sm text-red-400">error: {human.error}</div>
           )}
 
-          {!loading && !err && sessions.length === 0 && (
+          {human.loaded && !human.error && human.rows.length === 0 && (
             <div className="flex flex-col items-center gap-5 py-14 text-center">
               <div className="hud text-[12px] tracking-[0.22em] text-white/45">NO CHATS YET</div>
               <button
@@ -284,67 +451,26 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
             </div>
           )}
 
-          {!loading && tableRows.length === 0 && pinned.length > 0 && (
+          {human.loaded && tableRows.length === 0 && pinned.length > 0 && (
             <div className="hud py-8 text-center text-[11px] tracking-[0.2em] text-white/35">
               ALL CHATS ARE PINNED
             </div>
           )}
 
-          {!loading && tableRows.length > 0 && (
-            <table className="chat-table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Last active</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tableRows.map((s) => (
-                  <tr
-                    key={s.id}
-                    className="chat-row"
-                    onClick={() => onOpenChat(s.id)}
-                  >
-                    <td>
-                      <div className="truncate text-sm text-white/90">{s.title ?? "Untitled"}</div>
-                    </td>
-                    <td>
-                      <div className="hud text-[10px] tracking-[0.16em] text-white/40">
-                        {lastActive(s)}
-                      </div>
-                    </td>
-                    <td>
-                      <div className="chat-actions">
-                        <button
-                          aria-label={s.pinned ? "unpin" : "pin"}
-                          data-on={s.pinned ? "true" : "false"}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleTogglePin(s);
-                          }}
-                          className="chat-act chat-act-star"
-                        >
-                          <Star size={14} fill={s.pinned ? "currentColor" : "none"} strokeWidth={1.5} />
-                        </button>
-                        <button
-                          aria-label="delete"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(s);
-                          }}
-                          className="chat-act chat-act-del"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {tableRows.length > 0 && renderTable(tableRows, "human")}
+          {renderMore("human")}
         </PanelSection>
+
+        {renderHistory(
+          "legacy",
+          "Older history",
+          "Conversations from before AVA separated your chats from automated runs. Open one to continue it.",
+        )}
+        {renderHistory(
+          "automation",
+          "Automated runs",
+          "Watches and other work AVA did on its own. Shown for reference; they never become your current chat.",
+        )}
       </div>
 
       {pendingDeletes.length > 0 && (() => {

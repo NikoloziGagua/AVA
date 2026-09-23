@@ -8,8 +8,17 @@
 // audio chunks and Ava's captions were silently dropped even when the session
 // connected. Handling both names makes playback resilient to the rename.
 
+/** The proxy's authoritative conversation binding for one voice connection. */
+export type VoiceSessionBinding = {
+  origin?: "human" | "automation" | "unknown";
+  resolution?: "created" | "resumed_exact" | "continued";
+  bindingRequestId?: string;
+};
+
 export type RealtimeAction =
-  | { kind: "session"; sessionId: string; mode?: "hybrid" | "transcribe" }
+  | { kind: "session"; sessionId: string; mode?: "hybrid" | "transcribe"; binding?: VoiceSessionBinding }
+  // The exact conversation asked for cannot be used. Never retried automatically.
+  | { kind: "session_error"; code: string; message: string }
   | { kind: "speech_started" }
   | { kind: "speech_stopped" }
   | { kind: "user_transcript"; text: string }
@@ -29,6 +38,25 @@ export type RealtimeAction =
   | { kind: "error"; message: string }
   | { kind: "ignore" };
 
+const ORIGINS = new Set(["human", "automation", "unknown"]);
+const RESOLUTIONS = new Set(["created", "resumed_exact", "continued"]);
+
+/** Accept only a binding that describes the same session the frame names. */
+function parseVoiceBinding(raw: unknown, sessionId: string): VoiceSessionBinding | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const value = raw as Record<string, unknown>;
+  if (value.sessionId !== undefined && value.sessionId !== sessionId) return undefined;
+  const binding: VoiceSessionBinding = {};
+  if (typeof value.origin === "string" && ORIGINS.has(value.origin)) {
+    binding.origin = value.origin as VoiceSessionBinding["origin"];
+  }
+  if (typeof value.resolution === "string" && RESOLUTIONS.has(value.resolution)) {
+    binding.resolution = value.resolution as VoiceSessionBinding["resolution"];
+  }
+  if (typeof value.bindingRequestId === "string") binding.bindingRequestId = value.bindingRequestId;
+  return binding;
+}
+
 export function classifyRealtimeEvent(evt: { type?: string;[k: string]: unknown }): RealtimeAction {
   const t = evt.type;
   if (!t) return { kind: "ignore" };
@@ -37,7 +65,16 @@ export function classifyRealtimeEvent(evt: { type?: string;[k: string]: unknown 
     case "ava.session": {
       const sid = evt.sessionId as string | undefined;
       const mode = evt.mode === "hybrid" || evt.mode === "transcribe" ? evt.mode : undefined;
-      return sid ? { kind: "session", sessionId: sid, mode } : { kind: "ignore" };
+      if (!sid) return { kind: "ignore" };
+      const binding = parseVoiceBinding(evt.binding, sid);
+      return binding ? { kind: "session", sessionId: sid, mode, binding } : { kind: "session", sessionId: sid, mode };
+    }
+    case "ava.session_error": {
+      const code = typeof evt.code === "string" ? evt.code : "session_error";
+      const message = typeof evt.message === "string" && evt.message
+        ? evt.message
+        : "This conversation is unavailable.";
+      return { kind: "session_error", code, message };
     }
     case "ava.action": {
       const task = (evt.task as string | undefined) ?? "";

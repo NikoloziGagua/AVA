@@ -19,12 +19,18 @@ import { shouldStartHold, shouldFinishHold } from "./pushToTalk.js";
 import { splitForSpeech } from "./speech-chunks.js";
 import { humanizeTool } from "../chat/humanize.js";
 import {
+  isSessionUnavailable,
+  mintBindingRequestId,
+  SESSION_UNAVAILABLE_MESSAGE,
+} from "../chat/conversation-binding.js";
+import {
   api,
   approveApproval,
   denyApproval,
   fetchSession,
   fetchVoiceEngine,
   setVoiceEngine as apiSetVoiceEngine,
+  type ConversationIntent,
   type VoiceEngine,
 } from "../api.js";
 import {
@@ -34,6 +40,8 @@ import {
 
 // OpenAI Realtime API uses 24kHz PCM16 mono in both directions.
 const SAMPLE_RATE = 24000;
+// Application close code the proxy uses when the exact conversation is unavailable.
+const SESSION_UNAVAILABLE_CLOSE = 4404;
 
 // Hands-free safety net: if Ava's "response.done" handshake is ever missed, the
 // fast (genDone-gated) reopen never fires and the mic stays shut forever. This
@@ -252,14 +260,25 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 
 export function useRealtimeVoice({
   initialSessionId,
-  startFresh = false,
+  intent,
+  onSessionBound,
 }: {
   initialSessionId: string | null;
-  /** Force the first connection to create a session when entered from blank New chat. */
-  startFresh?: boolean;
+  /**
+   * How the first connection chooses its conversation. "new" creates one,
+   * "resume" binds exactly `initialSessionId`, "continue" asks the server for
+   * the latest conversation with genuine human activity. Defaults to resume
+   * when an id is given, otherwise continue.
+   */
+  intent?: ConversationIntent;
+  /** Called with each current, authoritative binding so the app's chat pointer follows voice. */
+  onSessionBound?: (sessionId: string) => void;
 }) {
   const [state, setState] = useState<RealtimeState>("idle");
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
+  // The exact conversation voice was asked to use no longer exists (or is not a
+  // conversation). Voice stops and the screen offers explicit choices.
+  const [unavailable, setUnavailable] = useState(false);
   const [caption, setCaption] = useState<RealtimeCaption | null>(null);
   // Transcript scrollback (committed You/Ava turns) + ONE live interim line that
   // updates in place while capturing / while Ava streams. Replaces the single
@@ -300,11 +319,19 @@ export function useRealtimeVoice({
   const prevVoiceEngineRef = useRef<VoiceEngine>(voiceEngine); // last engine we connected with (reconnect on change)
   const capturingRef = useRef(false);
   const sessionIdRef = useRef<string | null>(initialSessionId);
-  // A blank New chat and the in-voice "+new" action both force a fresh server
-  // session (?new=1) instead of resuming the most-recent conversation. The flag
-  // is consumed only when the proxy hands back that new canonical session id,
-  // so a connection attempt that fails before acknowledgement can retry safely.
-  const forceNewRef = useRef(startFresh && initialSessionId === null);
+  // A blank New chat and the in-voice "+new" action both ask for a new
+  // conversation. The flag and its one-time binding key are consumed only when
+  // the proxy acknowledges that new conversation, so a connection that drops
+  // before the acknowledgement reconnects with the SAME key and the server
+  // returns the same conversation instead of creating a second one.
+  const forceNewRef = useRef(intent === "new" && initialSessionId === null);
+  const pendingBindingKeyRef = useRef<string | null>(null);
+  // Every connection attempt gets an epoch. Frames and close events from an
+  // older socket (a reconnect, "+new", or a stop that raced a late frame) are
+  // ignored, so a stale acknowledgement can never replace the current selection.
+  const connectionEpochRef = useRef(0);
+  const onSessionBoundRef = useRef(onSessionBound);
+  useEffect(() => { onSessionBoundRef.current = onSessionBound; }, [onSessionBound]);
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
   const esRef = useRef<EventSource | null>(null);
   const ttsRef = useRef<HTMLAudioElement | null>(null);
@@ -598,16 +625,30 @@ export function useRealtimeVoice({
       let sid: string;
       try {
         // voice:true → minimal reasoning on the server for a faster spoken reply
-        // (full tool stack is unchanged).
-        const r = await api.sendMessage(sessionIdRef.current, text, { voice: true, inputSource });
-        sid = r.sessionId;
+        // (full tool stack is unchanged). The turn goes to exactly the
+        // conversation voice is bound to; with no binding yet the server
+        // continues the latest human conversation, never an automated one.
+        const current = sessionIdRef.current;
+        const r = await api.sendMessage(current, text, {
+          voice: true,
+          inputSource,
+          conversationIntent: current ? "resume" : "continue",
+        });
+        sid = r.binding?.sessionId ?? r.sessionId;
       } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : "send failed");
+        if (isSessionUnavailable(err)) {
+          setUnavailable(true);
+          setErrorMsg(SESSION_UNAVAILABLE_MESSAGE);
+        } else {
+          setErrorMsg(err instanceof Error ? err.message : "send failed");
+        }
         setInterim(null);
         setState("listening");
         return false;
       }
+      sessionIdRef.current = sid;
       setSessionId(sid);
+      onSessionBoundRef.current?.(sid);
       // Only surface/commit the owner turn after the authoritative API accepted
       // it. A rejected request remains in the dialog draft instead of becoming a
       // ghost transcript row that never existed in persisted conversation.
@@ -784,10 +825,8 @@ export function useRealtimeVoice({
     const eff = realtimeActionToHybridEffect(action);
     switch (eff.kind) {
       case "session":
-        // Got the (possibly newly-created) session id from the proxy — the
-        // force-new request is now satisfied, so future reconnects resume it.
-        forceNewRef.current = false;
-        setSessionId(eff.sessionId);
+        // Bindings are adopted only in handleServerEvent, which checks the
+        // connection epoch and the one-time new-conversation key first.
         return;
       case "caption_user":
         // A fresh, gate-accepted user turn. Reset per-turn accumulators and go
@@ -1014,14 +1053,30 @@ export function useRealtimeVoice({
     if (action.kind === "session") {
       if (action.mode) hybridRef.current = action.mode === "hybrid";
       if (action.sessionId) {
+        // A new-conversation acknowledgement must answer OUR pending key. The
+        // server echoes it; a different key belongs to an abandoned request.
+        const pendingKey = pendingBindingKeyRef.current;
+        const echoedKey = action.binding?.bindingRequestId;
+        if (forceNewRef.current && pendingKey && echoedKey && echoedKey !== pendingKey) return;
         // This is the authoritative acknowledgement for both a resumed and a
-        // newly-created conversation. Consume the one-shot ?new=1 intent here
-        // (the common early-return path), and update the ref synchronously so a
-        // reconnect racing React's state effect cannot create a second session.
+        // newly-created conversation. Consume the one-shot new intent here, and
+        // update the ref synchronously so a reconnect racing React's state
+        // effect cannot create a second session.
         forceNewRef.current = false;
+        pendingBindingKeyRef.current = null;
         sessionIdRef.current = action.sessionId;
         setSessionId(action.sessionId);
+        setUnavailable(false);
+        onSessionBoundRef.current?.(action.sessionId);
       }
+      return;
+    }
+    if (action.kind === "session_error") {
+      // The exact conversation is gone or not usable. Stop here: no provider
+      // connection, no reconnect, and never a substituted conversation.
+      intentionalStopRef.current = true;
+      setUnavailable(true);
+      setErrorMsg(action.message);
       return;
     }
     // Ava-specific control frames, handled the same in hybrid + transcribe:
@@ -1095,9 +1150,11 @@ export function useRealtimeVoice({
   const start = useCallback(async () => {
     if (wsRef.current || startingRef.current) return; // dedupe StrictMode double-invoke
     startingRef.current = true;
+    const epoch = ++connectionEpochRef.current;
     intentionalStopRef.current = false;
     setCapturing(false); // a fresh connection starts with no PTT turn in flight
     setErrorMsg(null);
+    setUnavailable(false);
     setState("connecting");
 
     try {
@@ -1109,25 +1166,41 @@ export function useRealtimeVoice({
           autoGainControl: true,
         },
       });
+      if (epoch !== connectionEpochRef.current) {
+        // Stopped (or superseded) while the permission prompt was open.
+        for (const track of stream.getTracks()) track.stop();
+        startingRef.current = false;
+        return;
+      }
       streamRef.current = stream;
 
       // 2. WebSocket
       const token = getToken() ?? "";
-      // "+new" forces a fresh session: drop any current id and tell the proxy not
-      // to resume (?new=1). Otherwise a null id lets the proxy RESUME the most
-      // recent conversation (voice<->chat shared memory).
+      // Explicit conversation intent (contract i1-conversation-binding):
+      //   new      → create one conversation, idempotent by a one-time key that
+      //              is reused through reconnects until the proxy acknowledges;
+      //   resume   → exactly this conversation, or a typed "unavailable" error;
+      //   continue → the latest conversation with genuine human activity.
+      // `new=1` stays alongside `intent=new` for servers that predate intents.
       const forceNew = forceNewRef.current;
+      if (forceNew && !pendingBindingKeyRef.current) pendingBindingKeyRef.current = mintBindingRequestId();
       const sid = forceNew ? null : sessionIdRef.current;
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${proto}//${location.host}/api/voice/realtime?t=${encodeURIComponent(token)}`
-        + (sid ? `&sessionId=${encodeURIComponent(sid)}` : "")
-        + (forceNew ? "&new=1" : "")
+        + (forceNew
+          ? `&intent=new&new=1&bindingRequestId=${encodeURIComponent(pendingBindingKeyRef.current!)}`
+          : sid
+            ? `&intent=resume&sessionId=${encodeURIComponent(sid)}`
+            : "&intent=continue")
         // Tell the proxy to disable automatic VAD/turn-detection in push-to-talk.
         + `&inputMode=${encodeURIComponent(inputModeRef.current)}`;
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
+      // From here the live socket itself guards against a second start().
+      startingRef.current = false;
 
       ws.addEventListener("open", async () => {
+        if (epoch !== connectionEpochRef.current) return;
         try {
           // 3. Capture pipeline
           const captureCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
@@ -1136,6 +1209,13 @@ export function useRealtimeVoice({
           // the first ~200ms of audio from being dropped.
           if (captureCtx.state === "suspended") await captureCtx.resume();
           await captureCtx.audioWorklet.addModule(ensureWorkletURL());
+          // The socket can close (e.g. the conversation is unavailable) while the
+          // audio pipeline is still starting. Never go "listening" on a dead socket.
+          if (epoch !== connectionEpochRef.current || wsRef.current !== ws) {
+            try { captureCtx.close(); } catch { /* */ }
+            if (captureCtxRef.current === captureCtx) captureCtxRef.current = null;
+            return;
+          }
 
           const source = captureCtx.createMediaStreamSource(stream);
           sourceNodeRef.current = source;
@@ -1196,6 +1276,7 @@ export function useRealtimeVoice({
       });
 
       ws.addEventListener("message", (ev) => {
+        if (epoch !== connectionEpochRef.current) return;
         const data = ev.data;
         if (typeof data !== "string") return;
         try {
@@ -1205,15 +1286,26 @@ export function useRealtimeVoice({
       });
 
       ws.addEventListener("error", (ev) => {
+        if (epoch !== connectionEpochRef.current) return;
         // eslint-disable-next-line no-console
         console.error("[ava] WS error event", ev);
         setErrorMsg("connection error");
       });
 
       ws.addEventListener("close", (ev) => {
+        // A superseded socket closing late must not tear down its replacement.
+        if (epoch !== connectionEpochRef.current) return;
         // eslint-disable-next-line no-console
         console.warn(`[ava] WS closed: code=${ev.code} reason="${ev.reason || "(none)"}" wasClean=${ev.wasClean}`);
         startingRef.current = false;
+        if (ev.code === SESSION_UNAVAILABLE_CLOSE) {
+          // Terminal: the exact conversation is unavailable. Never reconnect into it.
+          setUnavailable(true);
+          setErrorMsg((current) => current ?? SESSION_UNAVAILABLE_MESSAGE);
+          cleanup();
+          setState("idle");
+          return;
+        }
         const authFail = ev.code === 1008 || ev.code === 4401;
         const transient = !authFail && (ev.code === 1006 || ev.code === 1011 || !ev.wasClean);
         if (!intentionalStopRef.current && transient && reconnectRef.current < 2) {
@@ -1235,6 +1327,9 @@ export function useRealtimeVoice({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setErrorMsg(msg.includes("Permission") ? "microphone permission denied" : msg);
+      // Without this a denied microphone left the start guard set forever, so
+      // voice could not be retried until the screen was remounted.
+      startingRef.current = false;
       cleanup();
       setState("idle");
     }
@@ -1290,6 +1385,8 @@ export function useRealtimeVoice({
 
   const stop = useCallback(() => {
     intentionalStopRef.current = true;
+    connectionEpochRef.current += 1; // late frames from this socket are now stale
+    startingRef.current = false;
     reconnectRef.current = 0;
     setCapturing(false);
     cleanup();
@@ -1305,6 +1402,7 @@ export function useRealtimeVoice({
   // realtime model cannot keep an old context alive or speak over a new session.
   useEffect(() => () => {
     intentionalStopRef.current = true;
+    connectionEpochRef.current += 1;
     cleanup();
   }, [cleanup]);
 
@@ -1313,6 +1411,9 @@ export function useRealtimeVoice({
   // it reuses the proven reconnect path rather than inventing a new one.
   const newConversation = useCallback(() => {
     forceNewRef.current = true;
+    pendingBindingKeyRef.current = null; // an explicit New always mints a fresh key
+    setUnavailable(false);
+    setErrorMsg(null);
     setSessionId(null);
     sessionIdRef.current = null;
     seededSessionRef.current = null; // a fresh conversation has no history to seed
@@ -1514,8 +1615,6 @@ export function useRealtimeVoice({
     return () => { live = false; };
   }, [sessionId]);
 
-  useEffect(() => () => { intentionalStopRef.current = true; cleanup(); }, [cleanup]);
-
   // Navigation sometimes follows the session hello before React has committed
   // the corresponding state render. The ref is updated in that event handler,
   // so callers can always return to the canonical chat rather than stale null.
@@ -1525,6 +1624,7 @@ export function useRealtimeVoice({
     state,
     sessionId,
     getSessionId,
+    unavailable,
     caption,
     // Transcript display: committed scrollback + one live interim line + orb meter.
     turns,

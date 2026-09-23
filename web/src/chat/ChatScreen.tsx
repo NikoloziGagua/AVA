@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { MessagesSquare } from "lucide-react";
-import { api, fetchSession, ApiError } from "../api.js";
+import { api, fetchSession, ApiError, type SessionOrigin } from "../api.js";
+import { isSessionUnavailable, mintBindingRequestId } from "./conversation-binding.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
@@ -25,8 +26,16 @@ export interface ChatScreenProps {
   onOpenList?: () => void;
   /** Continue this exact canonical conversation using speech input. */
   onEnterVoice?: (sessionId: string | null) => void;
-  /** Reports the canonical server session once a fresh draft becomes durable. */
+  /**
+   * Reports the conversation Nika is now in: after loading one she can talk in,
+   * and after each accepted message. Never reported for automated runs.
+   */
   onSessionChange?: (sessionId: string) => void;
+  /** The exact conversation asked for is gone; the app stops remembering it. */
+  onSessionUnavailable?: (sessionId: string) => void;
+  /** Show this conversation for reference only (an automated run opened from Watches). */
+  audit?: boolean;
+  onNewChat?: () => void;
   onOpenStrategy?: (sessionId: string) => void;
   onOpenVisual?: (visualId: string) => void;
 }
@@ -59,9 +68,21 @@ export function ChatScreen({
   initialText,
   onEnterVoice,
   onSessionChange,
+  onSessionUnavailable,
+  audit = false,
+  onNewChat,
+  onOpenList,
   onOpenStrategy,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // Creation provenance of the loaded conversation. Automated runs are shown
+  // read-only; the server would refuse a human turn into them anyway.
+  const [origin, setOrigin] = useState<SessionOrigin | undefined>(undefined);
+  // The exact conversation asked for is gone. Nothing is switched silently.
+  const [unavailable, setUnavailable] = useState(false);
+  // One-time key for this screen's "new conversation", reused if the first
+  // send is retried so a lost response can't create a second conversation.
+  const newConversationKeyRef = useRef<string | null>(null);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [runEpoch, setRunEpoch] = useState(0);
   // The server's run id is also the diagnostic id carried by the receipt. Pass
@@ -76,7 +97,8 @@ export function ChatScreen({
   // Bumped by the error panel's Retry to re-run the reopen fetch.
   const [reloadNonce, setReloadNonce] = useState(0);
   const { events } = useChatStream(sessionId, runEpoch, taskId);
-  const [seed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
+  // Bumping the version puts text back into the composer (a rejected send's draft).
+  const [seed, setSeed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
   // Synchronous optimistic-send flag: flips true the same frame send() fires,
   // BEFORE the awaited POST resolves — `busy` lags by the full round-trip, so
   // this is what makes the thinking indicator instant.
@@ -129,7 +151,12 @@ export function ChatScreen({
         seededLastAssistantRef.current = latestAssistantAfterLastUser(data.messages);
         setHistory(loaded);
         setSessionId(requestedSessionId);
-        onSessionChange?.(requestedSessionId);
+        setOrigin(data.session.origin);
+        setUnavailable(false);
+        // Explicitly opening a conversation selects it, older unclassified ones
+        // included. Automated runs, and anything opened for reference, never
+        // become the conversation Chat and Voice continue.
+        if (!audit && data.session.origin !== "automation") onSessionChange?.(requestedSessionId);
         setRunEpoch(0);
         setTaskId(null);
         setVisualsByEpoch({});
@@ -137,13 +164,18 @@ export function ChatScreen({
       })
       .catch((e) => {
         if (cancelled) return;
+        if (isSessionUnavailable(e)) {
+          setUnavailable(true);
+          onSessionUnavailable?.(requestedSessionId);
+          return;
+        }
         // 401 is already centralized in api.ts (clearToken + ava:unauthorized →
         // App routes to pairing); here we just surface a panel so the screen is
         // never a silent dead blank.
         setLoadError(e);
       });
     return () => { cancelled = true; };
-  }, [onSessionChange, requestedSessionId, reloadNonce]);
+  }, [audit, onSessionChange, onSessionUnavailable, requestedSessionId, reloadNonce]);
 
   // Promote a completed run's final into history exactly once.
   // Bug fix: previously the lastFinal lived in `events` only; on the next
@@ -267,7 +299,9 @@ export function ChatScreen({
   const currentRunSeen = events.some((e) => e.runEpoch === runEpoch);
   const streamBusy = currentRunSeen && !currentRunFinished;
   const busy = pending || streamBusy;
-  const isEmpty = history.length === 0 && events.length === 0 && requestedSessionId === null;
+  const isEmpty = history.length === 0 && events.length === 0 && requestedSessionId === null && !unavailable;
+  // Automated runs are evidence to read, not a conversation to continue.
+  const readOnly = audit || origin === "automation";
 
   const headerState: "idle" | "thinking" | "responding" =
     busy
@@ -340,21 +374,43 @@ export function ChatScreen({
 
   async function send(text: string, explicitVisualContext?: VisualMessageContext) {
     const visualContext = explicitVisualContext ?? attachedVisualContext ?? undefined;
+    const optimisticId = `u-${Date.now()}`;
     setHistory((prev) => [...prev, {
       role: "user",
       text,
-      id: `u-${Date.now()}`,
+      id: optimisticId,
       ...(visualContext ? { visualContext } : {}),
     }]);
     setPending(true); // optimistic — same frame as send, before the awaited POST
+    // While a reopened conversation is still loading, the requested id is
+    // already canonical; never let a quick send turn it into a new conversation.
+    const current = sessionId ?? requestedSessionId;
+    if (!current && !newConversationKeyRef.current) newConversationKeyRef.current = mintBindingRequestId();
     try {
-      const r = await api.sendMessage(sessionId, text, { visualContext });
-      setSessionId(r.sessionId);
-      onSessionChange?.(r.sessionId);
+      const r = await api.sendMessage(current, text, {
+        visualContext,
+        conversationIntent: current ? "resume" : "new",
+        ...(current ? {} : { bindingRequestId: newConversationKeyRef.current! }),
+      });
+      const bound = r.binding?.sessionId ?? r.sessionId;
+      newConversationKeyRef.current = null;
+      setSessionId(bound);
+      if (r.binding?.origin) setOrigin(r.binding.origin);
+      onSessionChange?.(bound);
       setTaskId(r.taskId ?? null);
       setRunEpoch((n) => n + 1);
       if (visualContext && attachedVisualContext === visualContext) setAttachedVisualContext(null);
     } catch (e) {
+      if (isSessionUnavailable(e)) {
+        // The conversation is gone: give the words back instead of losing them,
+        // and let Nika choose where they go.
+        setPending(false);
+        setHistory((prev) => prev.filter((message) => message.id !== optimisticId));
+        setSeed((prev) => ({ text, version: prev.version + 1 }));
+        setUnavailable(true);
+        if (current) onSessionUnavailable?.(current);
+        return;
+      }
       // A failed POST (401 / offline / 5xx / 409) must NOT strand the chat: drop
       // the optimistic thinking flag (no events will ever arrive to clear it) and
       // append a visible assistant error bubble. It becomes the last assistant
@@ -464,7 +520,27 @@ export function ChatScreen({
                 lg: widen to a comfortable laptop reading column (860px) — the
                 phone-width 760px read as a narrow strip on desktop. */}
             <div className="relative mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col lg:max-w-[860px]">
-              {loadError ? (
+              {unavailable ? (
+                <div role="alert" className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+                  <div className="text-sm font-medium text-white/85">This conversation is unavailable.</div>
+                  <div className="max-w-sm text-xs leading-relaxed text-white/60">
+                    It may have been deleted. Your message is still in the box below; start a new
+                    conversation or pick one of yours.
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {onNewChat && (
+                      <button type="button" onClick={onNewChat} className="btn-deck btn-primary">
+                        Start a new conversation
+                      </button>
+                    )}
+                    {onOpenList && (
+                      <button type="button" onClick={onOpenList} className="btn-deck btn-ghost">
+                        Your conversations
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : loadError ? (
                 <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
                   <div className="max-w-sm text-sm leading-relaxed text-white/70">
                     {loadError instanceof ApiError && loadError.status === 401
@@ -537,16 +613,30 @@ export function ChatScreen({
               <button type="button" onClick={() => setAttachedVisualContext(null)} className="text-white/45 hover:text-white" aria-label="Remove attached visual context">Remove</button>
             </div>
           )}
-          <Composer
-            onSend={(text) => { void send(text); }}
-            onKill={kill}
-            // Reopening a persisted chat hydrates its local state asynchronously.
-            // During that short window the requested ID is already canonical;
-            // never turn it into null and accidentally invoke fresh-voice policy.
-            onMicTap={() => onEnterVoice?.(sessionId ?? requestedSessionId)}
-            busy={busy}
-            seed={seed}
-          />
+          {readOnly ? (
+            <div
+              role="note"
+              className="mx-auto mb-4 flex w-[calc(100%-2rem)] max-w-[760px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs leading-5 text-white/65 lg:max-w-[860px]"
+            >
+              <span>This is an automated run AVA did on its own, shown for reference. It never becomes your current chat.</span>
+              {onNewChat && (
+                <button type="button" onClick={onNewChat} className="btn-deck btn-ghost">
+                  Start a new conversation
+                </button>
+              )}
+            </div>
+          ) : (
+            <Composer
+              onSend={(text) => { void send(text); }}
+              onKill={kill}
+              // Reopening a persisted chat hydrates its local state asynchronously.
+              // During that short window the requested ID is already canonical;
+              // never turn it into null and accidentally invoke fresh-voice policy.
+              onMicTap={() => onEnterVoice?.(sessionId ?? requestedSessionId)}
+              busy={busy}
+              seed={seed}
+            />
+          )}
         </div>
       </div>
     </div>

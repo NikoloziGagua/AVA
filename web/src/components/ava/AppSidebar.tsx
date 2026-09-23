@@ -7,7 +7,7 @@ import {
   PanelLeftOpen,
   Plus,
 } from "lucide-react";
-import { fetchSessions, type SessionRow } from "../../api.js";
+import { fetchSessionPage, lastHumanActivity, type SessionRow } from "../../api.js";
 
 export interface AppSidebarItem {
   name: string;
@@ -28,7 +28,6 @@ export interface AppSidebarProps {
   onOpenCurrentChat: () => void;
   onOpenChat: (sessionId: string) => void;
   onOpenAllChats: () => void;
-  onCurrentChatUnavailable?: () => void;
 }
 
 const RECENT_LIMIT = 8;
@@ -42,15 +41,11 @@ function formatRecentTime(value: number): string {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
+/** The server already orders human conversations; only lift the current one to the top. */
 function orderedRecent(sessions: SessionRow[], current: string | null): SessionRow[] {
-  const live = sessions.filter((session) => session.status !== "deleted");
-  return live
-    .sort((a, b) => {
-      if (a.id === current) return -1;
-      if (b.id === current) return 1;
-      return b.updated_at - a.updated_at;
-    })
-    .slice(0, RECENT_LIMIT);
+  const index = current ? sessions.findIndex((session) => session.id === current) : -1;
+  if (index <= 0) return sessions;
+  return [sessions[index]!, ...sessions.slice(0, index), ...sessions.slice(index + 1)];
 }
 
 export function AppSidebar({
@@ -64,12 +59,14 @@ export function AppSidebar({
   onOpenCurrentChat,
   onOpenChat,
   onOpenAllChats,
-  onCurrentChatUnavailable,
 }: AppSidebarProps) {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
 
+  // Only Nika's own conversations, bounded. The remembered chat is never cleared
+  // because it is missing from this page: an exact lookup decides availability
+  // when it is actually opened.
   useEffect(() => {
     if (!expanded || !visible) return;
     let cancelled = false;
@@ -77,12 +74,8 @@ export function AppSidebar({
     setLoadError(false);
     void (async () => {
       try {
-        const result = await fetchSessions();
-        if (cancelled) return;
-        setSessions(result);
-        if (activeChatSessionId && !result.some((session) => session.id === activeChatSessionId)) {
-          onCurrentChatUnavailable?.();
-        }
+        const page = await fetchSessionPage({ scope: "human", limit: RECENT_LIMIT });
+        if (!cancelled) setSessions(page.sessions);
       } catch {
         if (!cancelled) setLoadError(true);
       } finally {
@@ -90,7 +83,7 @@ export function AppSidebar({
       }
     })();
     return () => { cancelled = true; };
-  }, [activeChatSessionId, expanded, onCurrentChatUnavailable, visible]);
+  }, [activeChatSessionId, expanded, visible]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -223,7 +216,7 @@ export function AppSidebar({
                   onClick={() => onOpenChat(session.id)}
                 >
                   <span className="ava-sidebar-chat-title">{session.title || "Untitled chat"}</span>
-                  <span className="ava-sidebar-chat-time">{formatRecentTime(session.updated_at)}</span>
+                  <span className="ava-sidebar-chat-time">{formatRecentTime(lastHumanActivity(session))}</span>
                 </button>
               ))}
               <button type="button" className="ava-sidebar-all" onClick={onOpenAllChats}>

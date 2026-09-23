@@ -7,7 +7,7 @@ import {
   fetchExplorerLive,
   fetchExplorerTask,
   fetchMissionExport,
-  fetchSessions,
+  fetchSessionPage,
   fetchWatchCommunicationEvidence,
   saveMissionExport,
   transcribeAudio,
@@ -44,7 +44,7 @@ describe("api 401 recovery", () => {
     const seen = vi.fn();
     window.addEventListener("ava:unauthorized", seen);
     try {
-      await expect(fetchSessions()).rejects.toBeInstanceOf(ApiError);
+      await expect(fetchSessionPage({ scope: "human" })).rejects.toBeInstanceOf(ApiError);
       // Token cleared so the shell can return to pairing.
       expect(getToken()).toBeNull();
       // Cross-agent contract: App.tsx listens for exactly this event.

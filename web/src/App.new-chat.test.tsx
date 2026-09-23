@@ -36,9 +36,10 @@ vi.mock("./chat/ChatScreen.js", async () => {
   state.chatLoads += 1;
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatScreen: ({ sessionId, initialText, onOpenStrategy, onOpenVisual, onEnterVoice, onSessionChange }: {
+    ChatScreen: ({ sessionId, initialText, audit, onOpenStrategy, onOpenVisual, onEnterVoice, onSessionChange }: {
       sessionId?: string | null;
       initialText?: string;
+      audit?: boolean;
       onOpenStrategy?: (sessionId: string) => void;
       onOpenVisual?: (visualId: string) => void;
       onEnterVoice?: (sessionId: string | null) => void;
@@ -47,7 +48,7 @@ vi.mock("./chat/ChatScreen.js", async () => {
       const [draftRevision, setDraftRevision] = React.useState(0);
       return (
         <div data-testid="mock-chat">
-          session-{sessionId ?? "new"}-draft-{draftRevision}
+          session-{sessionId ?? "new"}-draft-{draftRevision}-audit-{String(!!audit)}
           <span>initial-{initialText ?? "none"}</span>
           <button onClick={() => setDraftRevision((value) => value + 1)}>mock change draft</button>
           <button onClick={() => onSessionChange?.("internal-chat-17")}>mock establish session</button>
@@ -74,8 +75,19 @@ vi.mock("./orbit/OrbitScreen.js", () => ({
 }));
 vi.mock("./orbit/ChatListScreen.js", () => ({ ChatListScreen: () => null }));
 vi.mock("./voice/VoiceScreen.js", () => ({
-  VoiceScreen: ({ initialSessionId, startFresh }: { initialSessionId: string | null; startFresh?: boolean }) => (
-    <div>voice-session-{initialSessionId ?? "none"}-fresh-{String(!!startFresh)}</div>
+  VoiceScreen: ({ initialSessionId, intent, onSessionBound, onSessionUnavailable, onExit }: {
+    initialSessionId: string | null;
+    intent?: string;
+    onSessionBound?: (sessionId: string) => void;
+    onSessionUnavailable?: () => void;
+    onExit?: (sessionId: string | null) => void;
+  }) => (
+    <div>
+      voice-session-{initialSessionId ?? "none"}-intent-{intent ?? "default"}
+      <button onClick={() => onSessionBound?.("voice-bound-5")}>mock voice bound</button>
+      <button onClick={() => onSessionUnavailable?.()}>mock voice unavailable</button>
+      <button onClick={() => onExit?.("voice-bound-5")}>mock voice exit</button>
+    </div>
   ),
 }));
 vi.mock("./explorer/ExplorerScreen.js", () => ({ ExplorerScreen: () => <div>explorer-workspace</div> }));
@@ -100,9 +112,14 @@ vi.mock("./visuals/VisualsScreen.js", () => {
   };
 });
 vi.mock("./watches/WatchesScreen.js", () => ({
-  WatchesScreen: ({ focusWatchId, navigationRequested }: { focusWatchId?: string | null; navigationRequested?: boolean }) => (
+  WatchesScreen: ({ focusWatchId, navigationRequested, onOpenChat }: {
+    focusWatchId?: string | null;
+    navigationRequested?: boolean;
+    onOpenChat?: (sessionId: string) => void;
+  }) => (
     <div>
       watch-management-screen
+      <button onClick={() => onOpenChat?.("watch-run-9")}>mock open watch run</button>
       <span>focus-{focusWatchId ?? "none"}</span>
       <span>origin-{String(!!navigationRequested)}</span>
     </div>
@@ -206,7 +223,7 @@ describe("App New-chat navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
-    expect(await screen.findByText("voice-session-internal-chat-17-fresh-false")).toBeTruthy();
+    expect(await screen.findByText(/voice-session-internal-chat-17-intent-resume/)).toBeTruthy();
   });
 
   it("marks voice entry from a blank New chat as a fresh conversation", async () => {
@@ -214,14 +231,51 @@ describe("App New-chat navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock enter blank voice" }));
-    expect(await screen.findByText("voice-session-none-fresh-true")).toBeTruthy();
+    expect(await screen.findByText(/voice-session-none-intent-new/)).toBeTruthy();
   });
 
-  it("keeps Home-orb voice entry on resume-latest behavior", async () => {
+  it("lets Home voice continue Nika's latest conversation when none is remembered", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
-    expect(await screen.findByText("voice-session-none-fresh-false")).toBeTruthy();
+    expect(await screen.findByText(/voice-session-none-intent-continue/)).toBeTruthy();
+  });
+
+  it("sends Home voice back to the exact remembered conversation", async () => {
+    window.localStorage.setItem("ava:last-chat-session", "remembered-8");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
+    expect(await screen.findByText(/voice-session-remembered-8-intent-resume/)).toBeTruthy();
+  });
+
+  it("moves the current chat to the conversation voice actually bound", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "mock voice bound" }));
+    expect(window.localStorage.getItem("ava:last-chat-session")).toBe("voice-bound-5");
+    fireEvent.click(screen.getByRole("button", { name: "mock voice exit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Return to current chat" }));
+    expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-voice-bound-5");
+  });
+
+  it("forgets the remembered chat only when voice finds that exact one unavailable", async () => {
+    window.localStorage.setItem("ava:last-chat-session", "gone-2");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "mock voice unavailable" }));
+    expect(window.localStorage.getItem("ava:last-chat-session")).toBeNull();
+  });
+
+  it("opens a watch run for reference without making it the current chat", async () => {
+    window.localStorage.setItem("ava:last-chat-session", "mine-1");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Watches" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock open watch run" }));
+    expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-watch-run-9-draft-0-audit-true");
+    expect(window.localStorage.getItem("ava:last-chat-session")).toBe("mine-1");
   });
 
   it("opens the first-class Watches workspace from primary navigation", () => {

@@ -170,6 +170,7 @@ describe("ChatScreen Strategy Room handoff", () => {
         selectedElementIds: ["route"],
         action: "attach",
       },
+      conversationIntent: "resume",
     }));
   });
 

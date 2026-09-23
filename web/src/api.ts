@@ -166,6 +166,23 @@ export async function transcribeAudio(audio: Blob, signal?: AbortSignal): Promis
   return body.text.trim();
 }
 
+/**
+ * Conversation binding (agentroom contract `i1-conversation-binding`). The server
+ * resolves every chat and voice request to exactly one conversation: `new`
+ * creates one, `resume` validates an exact id and never substitutes another, and
+ * `continue` selects the latest conversation with genuine human activity.
+ */
+export type ConversationIntent = "new" | "resume" | "continue";
+export type SessionOrigin = "human" | "automation" | "unknown";
+export type SessionBinding = {
+  version: 1;
+  sessionId: string;
+  origin: SessionOrigin;
+  resolution: "created" | "resumed_exact" | "continued";
+  bindingRequestId?: string;
+};
+export type SessionScope = "human" | "automation" | "legacy" | "all";
+
 export const api = {
   pair: (code: string, label: string) =>
     request<{ token: string; deviceId: string }>("/api/auth/pair", {
@@ -176,8 +193,10 @@ export const api = {
     voice?: boolean;
     visualContext?: VisualMessageContext;
     inputSource?: "voice_exact_text";
+    conversationIntent?: ConversationIntent;
+    bindingRequestId?: string;
   }) =>
-    request<{ sessionId: string; taskId?: string }>("/api/chat", {
+    request<{ sessionId: string; taskId?: string; binding?: SessionBinding }>("/api/chat", {
       method: "POST",
       body: JSON.stringify({
         sessionId,
@@ -185,6 +204,8 @@ export const api = {
         voice: opts?.voice,
         visualContext: opts?.visualContext,
         inputSource: opts?.inputSource,
+        conversationIntent: opts?.conversationIntent,
+        bindingRequestId: opts?.bindingRequestId,
       }),
     }),
   kill: (sessionId: string) =>
@@ -208,11 +229,28 @@ export type SessionRow = {
   status: string;
   /** 1 when the chat is pinned to the "Important chats" strip, else 0. */
   pinned: number;
+  /** Creation provenance. Rows created before origin tracking are "unknown". */
+  origin?: SessionOrigin;
+  /** The last accepted human turn; maintenance and automation never move it. */
+  last_human_activity_at?: number | null;
 };
 
-export async function fetchSessions(): Promise<SessionRow[]> {
-  const j = await request<{ sessions: SessionRow[] }>("/api/sessions");
-  return j.sessions;
+/** One bounded page of conversations. `nextCursor` is opaque; pass it back unchanged. */
+export async function fetchSessionPage(input: {
+  scope: SessionScope;
+  limit?: number;
+  cursor?: string | null;
+}): Promise<{ sessions: SessionRow[]; nextCursor: string | null }> {
+  const params = new URLSearchParams({ scope: input.scope });
+  if (input.limit !== undefined) params.set("limit", String(input.limit));
+  if (input.cursor) params.set("cursor", input.cursor);
+  const j = await request<{ sessions: SessionRow[]; nextCursor?: string | null }>(`/api/sessions?${params}`);
+  return { sessions: j.sessions, nextCursor: j.nextCursor ?? null };
+}
+
+/** When this conversation was last really used by a person, for display. */
+export function lastHumanActivity(session: SessionRow): number {
+  return session.last_human_activity_at ?? session.created_at;
 }
 
 export async function fetchSession(id: string): Promise<{
@@ -236,7 +274,7 @@ export async function fetchSession(id: string): Promise<{
       visualMessages?: VisualMessage[];
       metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text"; memoryContext?: MemoryContext };
     }>;
-  }>(`/api/sessions/${id}`);
+  }>(`/api/sessions/${encodeURIComponent(id)}`);
 }
 
 export async function fetchVapidPublicKey(): Promise<string> {

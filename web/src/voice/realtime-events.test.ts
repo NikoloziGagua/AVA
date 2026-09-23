@@ -92,4 +92,35 @@ describe("classifyRealtimeEvent", () => {
     expect(classifyRealtimeEvent({ type: "something.else" })).toEqual({ kind: "ignore" });
     expect(classifyRealtimeEvent({})).toEqual({ kind: "ignore" });
   });
+
+  it("carries the authoritative binding with the session hello", () => {
+    expect(classifyRealtimeEvent({
+      type: "ava.session",
+      sessionId: "s1",
+      mode: "hybrid",
+      binding: { version: 1, sessionId: "s1", origin: "human", resolution: "created", bindingRequestId: "k1" },
+    })).toEqual({
+      kind: "session",
+      sessionId: "s1",
+      mode: "hybrid",
+      binding: { origin: "human", resolution: "created", bindingRequestId: "k1" },
+    });
+  });
+
+  it("drops a binding that names a different session than its frame", () => {
+    expect(classifyRealtimeEvent({
+      type: "ava.session",
+      sessionId: "s1",
+      binding: { sessionId: "other", bindingRequestId: "k1" },
+    })).toEqual({ kind: "session", sessionId: "s1", mode: undefined });
+  });
+
+  it("classifies an unavailable exact conversation as a typed session error", () => {
+    expect(classifyRealtimeEvent({
+      type: "ava.session_error",
+      code: "session_unavailable",
+      message: "This conversation is unavailable.",
+      retryable: false,
+    })).toEqual({ kind: "session_error", code: "session_unavailable", message: "This conversation is unavailable." });
+  });
 });

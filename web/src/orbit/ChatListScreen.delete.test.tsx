@@ -5,11 +5,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, act } from "@testing-library/react";
 import type { SessionRow } from "../api.js";
 
-const fetchSessions = vi.fn();
+const fetchSessionPage = vi.fn();
 const setSessionPinned = vi.fn();
 const deleteSession = vi.fn();
 vi.mock("../api.js", () => ({
-  fetchSessions: () => fetchSessions(),
+  fetchSessionPage: (input: unknown) => fetchSessionPage(input),
+  lastHumanActivity: (s: { last_human_activity_at?: number | null; created_at: number }) => s.last_human_activity_at ?? s.created_at,
   api: {
     setSessionPinned: (...a: unknown[]) => setSessionPinned(...a),
     deleteSession: (...a: unknown[]) => deleteSession(...a),
@@ -32,10 +33,10 @@ beforeEach(() => {
   // Reduced motion so snapshotForFlip skips Flip.getState/Flip.from in jsdom.
   localStorage.setItem("ava-motion", "reduced");
   vi.useFakeTimers();
-  fetchSessions.mockReset().mockResolvedValue([
+  fetchSessionPage.mockReset().mockResolvedValue({ sessions: [
     row({ id: "a", title: "Alpha chat" }),
     row({ id: "b", title: "Beta chat" }),
-  ]);
+  ], nextCursor: null });
   setSessionPinned.mockReset().mockResolvedValue(undefined);
   deleteSession.mockReset().mockResolvedValue(undefined);
 });

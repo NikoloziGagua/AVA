@@ -242,12 +242,14 @@ async function bootPtt() {
 
 describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
   it("forces a fresh canonical session when voice starts from a blank New chat", async () => {
-    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: null, startFresh: true }));
+    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: null, intent: "new" }));
     await act(async () => { hook.result.current.start(); });
     await flush();
 
     const first = FakeWebSocket.last!;
+    expect(first.url).toContain("intent=new");
     expect(first.url).toContain("new=1");
+    expect(first.url).toMatch(/bindingRequestId=[0-9a-f]{32}/);
     expect(first.url).not.toContain("sessionId=");
 
     // The proxy acknowledgement consumes the one-shot fresh flag. Any later
@@ -269,17 +271,118 @@ describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
 
     const resumed = FakeWebSocket.last!;
     expect(resumed).not.toBe(first);
-    expect(resumed.url).toContain("sessionId=fresh-session");
+    expect(resumed.url).toContain("intent=resume&sessionId=fresh-session");
     expect(resumed.url).not.toContain("new=1");
+    expect(resumed.url).not.toContain("bindingRequestId=");
   });
 
-  it("keeps null Home-orb voice entry on the existing resume-latest policy", async () => {
+  it("asks the server to continue Nika's latest human conversation when none is remembered", async () => {
     const hook = renderHook(() => useRealtimeVoice({ initialSessionId: null }));
     await act(async () => { hook.result.current.start(); });
     await flush();
 
+    expect(FakeWebSocket.last!.url).toContain("intent=continue");
     expect(FakeWebSocket.last!.url).not.toContain("new=1");
     expect(FakeWebSocket.last!.url).not.toContain("sessionId=");
+  });
+
+  it("reuses the same new-conversation key when the socket drops before the acknowledgement", async () => {
+    vi.useFakeTimers();
+    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: null, intent: "new" }));
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+    const first = FakeWebSocket.last!;
+    const key = /bindingRequestId=([0-9a-f]{32})/.exec(first.url)![1];
+
+    // Abnormal close before any ava.session: the hook reconnects on its own.
+    await act(async () => { first.fireClose({ code: 1006, wasClean: false }); });
+    await act(async () => { vi.advanceTimersByTime(900); });
+    await flush();
+    const retry = FakeWebSocket.last!;
+    expect(retry).not.toBe(first);
+    expect(retry.url).toContain(`bindingRequestId=${key}`);
+    expect(retry.url).toContain("intent=new");
+  });
+
+  it("mints a fresh key for an explicit New after the previous one was acknowledged", async () => {
+    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: null, intent: "new" }));
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+    const first = FakeWebSocket.last!;
+    const key = /bindingRequestId=([0-9a-f]{32})/.exec(first.url)![1]!;
+    await act(async () => {
+      first.fireOpen();
+      first.fireMessage({ type: "ava.session", sessionId: "s-new", mode: "hybrid", binding: { bindingRequestId: key } });
+    });
+
+    vi.useFakeTimers();
+    await act(async () => { hook.result.current.newConversation(); });
+    await act(async () => { vi.advanceTimersByTime(200); });
+    await flush();
+    const second = FakeWebSocket.last!;
+    expect(second).not.toBe(first);
+    expect(second.url).toContain("intent=new");
+    expect(second.url).not.toContain(`bindingRequestId=${key}`);
+  });
+
+  it("ignores an acknowledgement for an abandoned new-conversation key", async () => {
+    const bound = vi.fn();
+    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: null, intent: "new", onSessionBound: bound }));
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+    const ws = FakeWebSocket.last!;
+    await act(async () => {
+      ws.fireOpen();
+      ws.fireMessage({ type: "ava.session", sessionId: "someone-elses", binding: { bindingRequestId: "abandoned" } });
+    });
+    expect(hook.result.current.getSessionId()).toBeNull();
+    expect(bound).not.toHaveBeenCalled();
+
+    const key = /bindingRequestId=([0-9a-f]{32})/.exec(ws.url)![1];
+    await act(async () => {
+      ws.fireMessage({ type: "ava.session", sessionId: "mine", binding: { bindingRequestId: key } });
+    });
+    expect(hook.result.current.getSessionId()).toBe("mine");
+    expect(bound).toHaveBeenCalledWith("mine");
+  });
+
+  it("drops frames from a superseded socket so a late ack cannot replace the selection", async () => {
+    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: "current" }));
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+    const old = FakeWebSocket.last!;
+    await act(async () => { hook.result.current.stop(); });
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+    const fresh = FakeWebSocket.last!;
+    expect(fresh).not.toBe(old);
+
+    await act(async () => {
+      old.fireMessage({ type: "ava.session", sessionId: "stale-thread" });
+      // A late close from the old socket must not tear down the new one.
+      old.fireClose({ code: 1000 });
+    });
+    expect(hook.result.current.getSessionId()).toBe("current");
+    expect(hook.result.current.state).toBe("connecting");
+  });
+
+  it("stops without reconnecting when the exact conversation is unavailable", async () => {
+    vi.useFakeTimers();
+    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: "gone" }));
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+    const ws = FakeWebSocket.last!;
+    expect(ws.url).toContain("intent=resume&sessionId=gone");
+    await act(async () => {
+      ws.fireOpen();
+      ws.fireMessage({ type: "ava.session_error", code: "session_unavailable", message: "This conversation is unavailable.", retryable: false });
+      ws.fireClose({ code: 4404, wasClean: true });
+    });
+    await act(async () => { vi.advanceTimersByTime(2000); });
+    expect(hook.result.current.unavailable).toBe(true);
+    expect(hook.result.current.errorMsg).toBe("This conversation is unavailable.");
+    expect(FakeWebSocket.last).toBe(ws);
+    expect(hook.result.current.state).toBe("idle");
   });
 
   it("connects, latches hybrid, and lands in listening", async () => {
@@ -298,6 +401,7 @@ describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
     expect(sendSpy).toHaveBeenCalledWith("s0", exact, {
       voice: true,
       inputSource: "voice_exact_text",
+      conversationIntent: "resume",
     });
     expect(hook.result.current.getSessionId()).toBe("srv-session");
     expect(hook.result.current.turns.at(-1)).toMatchObject({

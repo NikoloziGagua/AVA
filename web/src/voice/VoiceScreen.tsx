@@ -9,6 +9,7 @@ import { gsap, useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { useRealtimeVoice, type RealtimeState } from "./useRealtimeVoice.js";
 import { VoiceExactTextDialog } from "./VoiceExactTextDialog.js";
+import type { ConversationIntent } from "../api.js";
 import { Mic, Keyboard, MicOff, Square, X, MessageSquarePlus, PanelsTopLeft, Type } from "lucide-react";
 import {
   approvalRiskLabel,
@@ -19,8 +20,17 @@ import {
 
 export interface VoiceScreenProps {
   initialSessionId: string | null;
-  /** A blank chat is an explicit new conversation, not a request to resume latest. */
-  startFresh?: boolean;
+  /**
+   * How voice picks its conversation: "resume" the exact remembered one,
+   * "new" for a blank chat, or "continue" Nika's latest conversation.
+   * Defaults to resume with an id, otherwise continue.
+   */
+  intent?: ConversationIntent;
+  /** Each authoritative binding, so the app's current chat follows voice at once. */
+  onSessionBound?: (sessionId: string) => void;
+  /** The requested conversation is gone; the app should stop remembering it. */
+  onSessionUnavailable?: () => void;
+  onOpenConversations?: () => void;
   onExit: (sessionId: string | null) => void;
   onSwitchToKeyboard: (sessionId: string | null) => void;
 }
@@ -35,8 +45,26 @@ export function shouldShowVoiceStop(state: RealtimeState, actionPending: boolean
   return actionPending || state === "thinking" || state === "responding";
 }
 
-export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSwitchToKeyboard }: VoiceScreenProps) {
-  const v = useRealtimeVoice({ initialSessionId, startFresh });
+export function VoiceScreen({
+  initialSessionId,
+  intent,
+  onSessionBound,
+  onSessionUnavailable,
+  onOpenConversations,
+  onExit,
+  onSwitchToKeyboard,
+}: VoiceScreenProps) {
+  const v = useRealtimeVoice({ initialSessionId, intent, onSessionBound });
+  const unavailableReportedRef = useRef(false);
+  useEffect(() => {
+    if (!v.unavailable) {
+      unavailableReportedRef.current = false;
+      return;
+    }
+    if (unavailableReportedRef.current) return;
+    unavailableReportedRef.current = true;
+    onSessionUnavailable?.();
+  }, [onSessionUnavailable, v.unavailable]);
   const [secs, setSecs] = useState(0);
   const [exactTextOpen, setExactTextOpen] = useState(false);
   const mutedBeforeExactText = useRef(false);
@@ -181,12 +209,44 @@ export function VoiceScreen({ initialSessionId, startFresh = false, onExit, onSw
         <X size={14} />
       </button>
 
-      {v.errorMsg && (
+      {v.errorMsg && !v.unavailable && (
         <div className="absolute left-1/2 top-16 z-40 w-72 -translate-x-1/2">
           {/* Dismiss only clears the error — exiting voice is the X button's job. */}
           <Alert variant="destructive" close onClose={v.clearError}>
             <AlertDescription>{v.errorMsg}</AlertDescription>
           </Alert>
+        </div>
+      )}
+
+      {/* The exact conversation is gone. Voice never switches on its own; Nika chooses. */}
+      {v.unavailable && (
+        <div
+          role="alert"
+          className="glass absolute left-1/2 top-20 z-40 w-[min(360px,calc(100%-2rem))] -translate-x-1/2 rounded-2xl p-5 text-center"
+        >
+          <div className="text-sm font-medium text-white/90">This conversation is unavailable.</div>
+          <div className="mt-1 text-xs leading-5 text-white/60">
+            It may have been deleted. Start a new conversation or pick one of yours.
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => v.newConversation()}
+              className="rounded-full px-4 py-2 text-xs font-medium active:scale-95"
+              style={{ background: "var(--ac)", color: "#04222a" }}
+            >
+              Start a new conversation
+            </button>
+            {onOpenConversations && (
+              <button
+                type="button"
+                onClick={() => { v.stop(); onOpenConversations(); }}
+                className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs text-white/85 active:scale-95"
+              >
+                Your conversations
+              </button>
+            )}
+          </div>
         </div>
       )}
 

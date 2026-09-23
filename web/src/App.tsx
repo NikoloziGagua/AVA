@@ -17,6 +17,7 @@ import { AppSidebar, type AppSidebarItem } from "./components/ava/AppSidebar.js"
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
 import { useReducedMotion } from "./lib/useReducedMotion.js";
 import { getToken } from "./auth/tokens.js";
+import type { ConversationIntent } from "./api.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
 import { RulesScreen } from "./rules/RulesScreen.js";
 import { NotesScreen } from "./notes/NotesScreen.js";
@@ -51,8 +52,9 @@ const VisualsScreen = lazy(async () => ({
 type View =
   | { name: "splash" }
   | { name: "orbit" }
-  | { name: "chat"; sessionId: string | null; initialText?: string }
-  | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
+  // `audit` shows an automated run for reference without making it the current chat.
+  | { name: "chat"; sessionId: string | null; initialText?: string; audit?: boolean }
+  | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null; intent: ConversationIntent }
   | { name: "memory" }
   | { name: "notes" }
   | { name: "watches"; focusWatchId?: string | null; navigationOrigin?: "mission-control" }
@@ -194,24 +196,32 @@ export function App() {
   const [sidebarExpanded, setSidebarExpanded] = useState(readSidebarPreference);
   const reduced = useReducedMotion();
 
+  // The ONE remembered conversation shared by Chat, Voice and the sidebar. It
+  // moves only on an explicit selection or an authoritative binding (a chat
+  // load of a conversation Nika can talk in, a sent message, a voice ack),
+  // never because a list page happens not to include it.
+  const lastChatRef = useRef(lastChatSessionId);
   const rememberChat = useCallback((sessionId: string) => {
+    lastChatRef.current = sessionId;
     setLastChatSessionId(sessionId);
     try { window.localStorage.setItem(LAST_CHAT_STORAGE_KEY, sessionId); } catch { /* non-critical */ }
   }, []);
 
-  const openChat = useCallback((sessionId: string | null) => {
-    if (sessionId) rememberChat(sessionId);
-    setView({ name: "chat", sessionId });
-  }, [rememberChat]);
+  /** Forget the remembered chat only when the conversation that turned out unavailable IS it. */
+  const forgetUnavailableChat = useCallback((sessionId: string | null) => {
+    if (!sessionId || lastChatRef.current !== sessionId) return;
+    lastChatRef.current = null;
+    setLastChatSessionId(null);
+    try { window.localStorage.removeItem(LAST_CHAT_STORAGE_KEY); } catch { /* non-critical */ }
+  }, []);
+
+  const openChat = useCallback((sessionId: string | null, options?: { audit?: boolean }) => {
+    setView({ name: "chat", sessionId, ...(options?.audit ? { audit: true } : {}) });
+  }, []);
 
   const setSidebarOpen = useCallback((expanded: boolean) => {
     setSidebarExpanded(expanded);
     try { window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(expanded)); } catch { /* non-critical */ }
-  }, []);
-
-  const forgetUnavailableChat = useCallback(() => {
-    setLastChatSessionId(null);
-    try { window.localStorage.removeItem(LAST_CHAT_STORAGE_KEY); } catch { /* non-critical */ }
   }, []);
 
   const openNewChat = (initialText?: string) => {
@@ -323,7 +333,6 @@ export function App() {
         onOpenCurrentChat={() => lastChatSessionId ? openChat(lastChatSessionId) : setView({ name: "list" })}
         onOpenChat={(sessionId) => openChat(sessionId)}
         onOpenAllChats={() => setView({ name: "list" })}
-        onCurrentChatUnavailable={forgetUnavailableChat}
       />
       <div
         className="ava-app-stage"
@@ -354,7 +363,14 @@ export function App() {
           >
             <OrbitScreen
               onCommand={(text) => openNewChat(text)}
-              onEnterVoice={() => setView({ name: "voice", from: "orbit", sessionId: null })}
+              // Home voice goes back to the remembered conversation exactly; with
+              // none remembered the server continues Nika's latest human chat.
+              onEnterVoice={() => setView({
+                name: "voice",
+                from: "orbit",
+                sessionId: lastChatSessionId,
+                intent: lastChatSessionId ? "resume" : "continue",
+              })}
               onExplore={() => setView({ name: "capabilities" })}
             />
           </motion.div>
@@ -371,12 +387,21 @@ export function App() {
             <ChatScreen
               sessionId={view.sessionId}
               initialText={view.initialText}
+              audit={view.audit === true}
               onSessionChange={rememberChat}
+              onSessionUnavailable={forgetUnavailableChat}
+              onNewChat={() => openNewChat()}
               onOpenSessions={() => setView({ name: "orbit" })}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenMemory={() => setView({ name: "memory" })}
               onOpenList={() => setView({ name: "list" })}
-              onEnterVoice={(sessionId) => setView({ name: "voice", from: "chat", sessionId })}
+              // A blank chat is an explicit new conversation, never "resume latest".
+              onEnterVoice={(sessionId) => setView({
+                name: "voice",
+                from: "chat",
+                sessionId,
+                intent: sessionId ? "resume" : "new",
+              })}
               onOpenStrategy={(sessionId) => setView({ name: "strategy", sourceSessionId: sessionId })}
               onOpenVisual={(visualId) => setView({ name: "visuals", visualId })}
             />
@@ -393,12 +418,10 @@ export function App() {
           >
             <VoiceScreen
               initialSessionId={view.sessionId}
-              // A null id has two different meanings. From Home it means
-              // "resume my latest conversation"; from a blank New chat it means
-              // "this is deliberately a new conversation". Preserve that
-              // distinction so voice cannot jump from a fresh chat into the
-              // most recently used voice thread.
-              startFresh={view.from === "chat" && view.sessionId === null}
+              intent={view.intent}
+              onSessionBound={rememberChat}
+              onSessionUnavailable={() => forgetUnavailableChat(view.sessionId)}
+              onOpenConversations={() => setView({ name: "list" })}
               onExit={(sid) => {
                 if (view.from === "chat") openChat(sid);
                 else setView({ name: "orbit" });
@@ -489,7 +512,7 @@ export function App() {
             transition={enterT}
           >
             <WatchesScreen
-              onOpenChat={(sessionId) => setView({ name: "chat", sessionId })}
+              onOpenChat={(sessionId) => openChat(sessionId, { audit: true })}
               focusWatchId={view.focusWatchId}
               navigationRequested={view.navigationOrigin === "mission-control"}
               onBackToMissionControl={() => window.history.back()}
@@ -539,7 +562,7 @@ export function App() {
           >
             <ChatListScreen
               onClose={() => setView({ name: "orbit" })}
-              onOpenChat={(sid) => openChat(sid)}
+              onOpenChat={(sid, options) => (sid ? openChat(sid, options) : openNewChat())}
             />
           </motion.div>
         )}

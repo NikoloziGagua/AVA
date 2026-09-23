@@ -3,8 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Home, Radar } from "lucide-react";
 
-const fetchSessions = vi.fn();
-vi.mock("../../api.js", () => ({ fetchSessions: () => fetchSessions() }));
+const fetchSessionPage = vi.fn();
+vi.mock("../../api.js", () => ({
+  fetchSessionPage: (input: unknown) => fetchSessionPage(input),
+  lastHumanActivity: (session: { last_human_activity_at?: number | null; created_at: number }) =>
+    session.last_human_activity_at ?? session.created_at,
+}));
 
 import { AppSidebar, type AppSidebarProps } from "./AppSidebar.js";
 
@@ -29,13 +33,12 @@ function props(overrides: Partial<AppSidebarProps> = {}): AppSidebarProps {
     onOpenCurrentChat: vi.fn(),
     onOpenChat: vi.fn(),
     onOpenAllChats: vi.fn(),
-    onCurrentChatUnavailable: vi.fn(),
     ...overrides,
   };
 }
 
 describe("AppSidebar", () => {
-  beforeEach(() => { fetchSessions.mockReset().mockResolvedValue(sessions); });
+  beforeEach(() => { fetchSessionPage.mockReset().mockResolvedValue({ sessions, nextCursor: null }); });
   afterEach(cleanup);
 
   it("keeps the current conversation first and opens it directly", async () => {
@@ -78,15 +81,23 @@ describe("AppSidebar", () => {
     expect(input.onExpandedChange).toHaveBeenCalledWith(false);
   });
 
-  it("clears a stale current-chat shortcut when the server no longer lists it", async () => {
-    fetchSessions.mockResolvedValue([sessions[0]]);
+  it("asks only for Nika's own bounded conversations", async () => {
+    render(<AppSidebar {...props()} />);
+    await waitFor(() => expect(fetchSessionPage).toHaveBeenCalledWith({ scope: "human", limit: 8 }));
+  });
+
+  it("keeps the remembered chat when it is absent from the bounded page", async () => {
+    fetchSessionPage.mockResolvedValue({ sessions: [sessions[0]], nextCursor: "more" });
     const input = props();
     render(<AppSidebar {...input} />);
-    await waitFor(() => expect(input.onCurrentChatUnavailable).toHaveBeenCalledOnce());
+    await screen.findByText("Older work");
+    // Absence from a page is not proof the conversation is gone; exact lookup
+    // decides when it is opened. The shortcut stays.
+    expect(screen.getByRole("button", { name: "Return to current chat" })).toBeTruthy();
   });
 
   it("degrades a history failure to an honest all-chats route", async () => {
-    fetchSessions.mockRejectedValue(new Error("offline"));
+    fetchSessionPage.mockRejectedValue(new Error("offline"));
     const input = props();
     render(<AppSidebar {...input} />);
     const fallback = await screen.findByRole("button", { name: /Chats unavailable/i });

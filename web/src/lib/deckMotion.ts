@@ -19,13 +19,13 @@ export const D = { fast: 0.2, press: 0.12, screen: 0.3, section: 0.5, materializ
 
 /**
  * ── App-wide SCREEN transition tokens (motion/react) ─────────────────────────
- * One coherent system for every page-to-page swap. Out is faster than in so the
- * outgoing layer clears before the incoming settles; every screen enters and
- * exits identically. The literal CSS curves also live in theme.css
+ * One coherent system for page entry and the shared-orb handoff. Route owners
+ * unmount synchronously, so the next screen never composites over a retained
+ * Home/workspace tree. The literal CSS curves also live in theme.css
  * (--ease-enter / --ease-exit / --dur-enter / --dur-exit / --dur-orb).
  */
 export const SCREEN = {
-  enter: 0.34, // --dur-enter
+  enter: 0.2, // --dur-enter
   exit: 0.22, // --dur-exit (out faster than in)
   orb: 0.44, // --dur-orb — the shared-orb Flip
   /** Panel content cascade waits this long so container wash-in and the stagger
@@ -33,9 +33,9 @@ export const SCREEN = {
   contentDelay: 0.12,
   easeEnter: [0.22, 1, 0.36, 1] as [number, number, number, number],
   easeExit: [0.4, 0, 0.2, 1] as [number, number, number, number],
-  /** Identical entry/exit states for EVERY screen. */
-  from: { opacity: 0, y: 8, scale: 0.99 },
-  to: { opacity: 1, y: 0, scale: 1 },
+  /** Small compositor-only entry; no full-screen scale/raster animation. */
+  from: { opacity: 0, y: 4 },
+  to: { opacity: 1, y: 0 },
   exitTo: { opacity: 0, scale: 1.01 },
 } as const;
 

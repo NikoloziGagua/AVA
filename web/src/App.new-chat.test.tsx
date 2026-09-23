@@ -78,7 +78,7 @@ vi.mock("./voice/VoiceScreen.js", () => ({
     <div>voice-session-{initialSessionId ?? "none"}-fresh-{String(!!startFresh)}</div>
   ),
 }));
-vi.mock("./explorer/ExplorerScreen.js", () => ({ ExplorerScreen: () => null }));
+vi.mock("./explorer/ExplorerScreen.js", () => ({ ExplorerScreen: () => <div>explorer-workspace</div> }));
 vi.mock("./mission-control/MissionControlScreen.js", () => ({ MissionControlScreen: () => null }));
 vi.mock("./strategy/StrategyRoomScreen.js", () => ({
   StrategyRoomScreen: ({ sourceSessionId, onOpenChat }: {
@@ -127,6 +127,7 @@ describe("App New-chat navigation", () => {
     expect(screen.getByText("Splash")).toBeTruthy();
     expect(state.chatLoads).toBe(0);
     expect(state.visualLoads).toBe(0);
+    expect(document.querySelector(".ava-sidebar")?.getAttribute("data-expanded")).toBeNull();
   });
 
   it("exposes accessible loading and reload recovery states", async () => {
@@ -169,6 +170,17 @@ describe("App New-chat navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "mock home command" }));
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("initial-open exact project");
+  });
+
+  it("unmounts the Home surface before another workspace is presented", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    expect(screen.getByRole("button", { name: "mock home command" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Explore AVA" }));
+    expect(await screen.findByText("explorer-workspace")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "mock home command" })).toBeNull();
+    expect(document.querySelectorAll("[data-view]")).toHaveLength(1);
+    expect(document.querySelector('[data-view="capabilities"]')).toBeTruthy();
   });
 
   it("carries the internal chat session into the Room and back", async () => {

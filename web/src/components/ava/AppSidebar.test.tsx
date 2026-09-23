@@ -41,6 +41,8 @@ describe("AppSidebar", () => {
   it("keeps the current conversation first and opens it directly", async () => {
     const input = props();
     render(<AppSidebar {...input} />);
+    expect(screen.getByText("Navigation")).toBeTruthy();
+    expect(screen.queryByText(/^AVA$/)).toBeNull();
     expect(screen.getByRole("button", { name: "Return to current chat" }).getAttribute("aria-current")).toBe("page");
     fireEvent.click(screen.getByRole("button", { name: "Return to current chat" }));
     expect(input.onOpenCurrentChat).toHaveBeenCalledOnce();
@@ -59,6 +61,13 @@ describe("AppSidebar", () => {
     expect(input.onExpandedChange).toHaveBeenCalledWith(true);
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(input.onNewChat).toHaveBeenCalledOnce();
+  });
+
+  it("removes hidden navigation from interaction without unmounting its state", () => {
+    const input = props({ visible: false, expanded: true });
+    render(<AppSidebar {...input} />);
+    expect(screen.getByRole("complementary", { hidden: true }).hasAttribute("inert")).toBe(true);
+    expect(screen.queryByRole("region", { name: "Recent chats" })).toBeNull();
   });
 
   it("closes an expanded narrow-screen overlay with Escape", () => {

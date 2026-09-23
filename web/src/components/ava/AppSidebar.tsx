@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import {
-  ChevronLeft,
   ChevronRight,
   History,
   MessageSquareText,
@@ -147,6 +146,7 @@ export function AppSidebar({
         className="ava-sidebar"
         data-visible={visible || undefined}
         data-expanded={expanded || undefined}
+        inert={!visible}
       >
         <div className="ava-sidebar-head">
           <button
@@ -156,12 +156,13 @@ export function AppSidebar({
             aria-expanded={expanded}
             onClick={() => onExpandedChange(!expanded)}
           >
-            <span className="ava-sidebar-mark" aria-hidden>AVA</span>
-            <span className="ava-sidebar-brand-copy">
-              <strong>AVA</strong>
-              <small>Personal intelligence</small>
+            <span className="ava-sidebar-toggle" aria-hidden>
+              {expanded ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
             </span>
-            {expanded ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={18} />}
+            <span className="ava-sidebar-brand-copy">
+              <strong>Navigation</strong>
+              <small>Move without losing your place</small>
+            </span>
           </button>
         </div>
 
@@ -187,7 +188,7 @@ export function AppSidebar({
             title={expanded ? undefined : activeChatSessionId ? "Return to current chat" : "Chats"}
           >
             <MessageSquareText size={18} />
-            <span className="ava-sidebar-label">{activeChatSessionId ? "Current chat" : "Chats"}</span>
+            <span className="ava-sidebar-label">{activeChatSessionId ? "Continue chat" : "Chats"}</span>
             {activeChatSessionId && <ChevronRight size={14} className="ava-sidebar-trailing" />}
           </button>
 
@@ -195,10 +196,10 @@ export function AppSidebar({
             {grouped.main.map(renderDestination)}
           </div>
 
-          {expanded && (
+          {expanded && visible && (
             <section className="ava-sidebar-recents" aria-labelledby="recent-chats-heading">
               <div className="ava-sidebar-section-title">
-                <span id="recent-chats-heading">Recent chats</span>
+                <span id="recent-chats-heading">Conversations</span>
                 <button type="button" onClick={onOpenAllChats} aria-label="View all chats">
                   <History size={14} />
                 </button>
@@ -233,7 +234,7 @@ export function AppSidebar({
           )}
 
           <div className="ava-sidebar-workspaces">
-            {expanded && <p className="ava-sidebar-eyebrow">Workspaces</p>}
+            {expanded && <p className="ava-sidebar-eyebrow">Tools</p>}
             {grouped.work.map(renderDestination)}
           </div>
           <div className="ava-sidebar-system">
@@ -241,15 +242,6 @@ export function AppSidebar({
           </div>
         </nav>
 
-        <button
-          type="button"
-          className="ava-sidebar-collapse"
-          onClick={() => onExpandedChange(!expanded)}
-          aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
-        >
-          {expanded ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-          <span className="ava-sidebar-label">Collapse</span>
-        </button>
       </aside>
     </>
   );

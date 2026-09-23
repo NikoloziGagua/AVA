@@ -10,7 +10,7 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { Home, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen, Presentation, AlarmClock } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
 import { AppSidebar, type AppSidebarItem } from "./components/ava/AppSidebar.js";
@@ -69,7 +69,9 @@ type View =
 // orb view would Flip from a stale snapshot.
 const VIEWS_WITH_ORB = ["splash", "orbit", "voice"];
 const LAST_CHAT_STORAGE_KEY = "ava:last-chat-session";
-const SIDEBAR_STORAGE_KEY = "ava:sidebar-expanded";
+// v2 resets the previous always-expanded desktop drawer. The compact rail is
+// the calm default; people can opt back into the labelled panel explicitly.
+const SIDEBAR_STORAGE_KEY = "ava:sidebar-expanded-v2";
 const WATCHER_LINK_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 function readInitialView(): View {
@@ -96,7 +98,7 @@ function readSidebarPreference(): boolean {
     const stored = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
     if (stored !== null) return stored === "true";
   } catch { /* storage can be unavailable in hardened browsers */ }
-  return window.innerWidth >= 1024;
+  return false;
 }
 
 export function DeferredScreenFallback() {
@@ -294,11 +296,12 @@ export function App() {
   const activeNav = navForView(view);
   const showNav = activeNav !== undefined;
 
-  // Shared enter/exit timings — every screen uses the same tokens. Out is faster
-  // than in so the outgoing layer clears before the incoming settles.
-  const enterT = { duration: reduced ? 0.14 : SCREEN.enter, ease: SCREEN.easeEnter };
-  const exitT = { duration: reduced ? 0.1 : SCREEN.exit, ease: SCREEN.easeExit };
-  const exitTo = { ...SCREEN.exitTo, transition: exitT };
+  // Shared entry timing — the previous screen is already unmounted.
+  // A destination owns the stage exclusively. React removes the previous
+  // destination in the same commit and only the incoming surface eases in.
+  // That prevents Home chrome from lingering beneath another workspace and
+  // avoids compositing two full application surfaces during navigation.
+  const enterT = { duration: reduced ? 0.1 : SCREEN.enter, ease: SCREEN.easeEnter };
   const deckTransition = transitioning || undefined;
 
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
@@ -325,23 +328,17 @@ export function App() {
       <div
         className="ava-app-stage"
         data-sidebar-visible={showNav || undefined}
-        data-sidebar-expanded={(showNav && sidebarExpanded) || undefined}
       >
-      {/* No mode="wait": the home/voice screens have infinite CSS animations
-          (nebula drift, orb morph) that never "finish", so mode="wait" would
-          wait forever for exit-complete and never mount the next view. Default
-          concurrent mode cross-dissolves — and every screen now enters/exits with
-          the SAME tokens so the swap reads as one coherent motion, not a pile of
-          mismatched pops and fades. */}
+      {/* Exactly one route surface is mounted at a time. Entry motion is small
+          and compositor-only; destination changes never retain the old Home
+          scene or run two heavyweight workspaces concurrently. */}
       <DeferredScreenBoundary resetKey={view.name}>
       <Suspense fallback={<DeferredScreenFallback />}>
-      <AnimatePresence>
         {view.name === "splash" && (
           <motion.div
             key="splash"
             data-view="splash"
             className="absolute inset-0"
-            exit={exitTo}
           >
             <Splash onDone={() => setView({ name: "orbit" })} />
           </motion.div>
@@ -353,7 +350,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <OrbitScreen
@@ -370,7 +366,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <ChatScreen
@@ -394,7 +389,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <VoiceScreen
@@ -421,7 +415,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <MemoryScreen
@@ -438,7 +431,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <RulesScreen onClose={() => setView({ name: "orbit" })} />
@@ -452,7 +444,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <SelfScreen onClose={() => setView({ name: "orbit" })} />
@@ -466,7 +457,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <NotesScreen onStartTask={(text) => openNewChat(text)} onOpenChat={(sessionId) => openChat(sessionId)} />
@@ -480,7 +470,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <StrategyRoomScreen
@@ -497,7 +486,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <WatchesScreen
@@ -516,7 +504,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <VisualsScreen
@@ -533,7 +520,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <ExplorerScreen
@@ -549,7 +535,6 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <ChatListScreen
@@ -558,7 +543,6 @@ export function App() {
             />
           </motion.div>
         )}
-      </AnimatePresence>
       </Suspense>
       </DeferredScreenBoundary>
 

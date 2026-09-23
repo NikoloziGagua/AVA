@@ -7078,3 +7078,33 @@ No web source or web build configuration changed, so the previously verified fro
 No successor watcher was scheduled because the measured generic-anchor failure is closed and current evidence establishes no second bounded coordination-writer defect. The pre-existing unrelated `.claude/settings.local.json`, `.codex/agents/`, and persona research file remain untouched. Forge, forge-remodel-work, and every other repository remained outside scope and were neither inspected nor modified.
 
 NEEDS: nobody
+
+### 2026-09-23 - codex - CLAIM: restore the real Activepieces executor
+
+Niko explicitly asked Codex to ignore further GitHub work and repair the Activepieces runtime that AVA's committed launcher currently cannot start. The observed failure is concrete: the launcher reaches the vendored Activepieces monorepo, Turbo invokes the ee embed SDK and core-utils package builds through Bun, and those builds exit before the runtime becomes healthy. Prior board evidence also records the preceding Windows Device Guard block and Bun "unknown error", so this claim owns only the existing AVA-to-Activepieces launch, configuration, health, and playbook execution seam.
+
+I will establish the exact package/compiler failure, make the smallest durable repository-owned correction, preserve the existing authenticated executor and task-receipt boundaries, and prove a genuine local workflow executes through AVA after restart. A process boot or health response alone will not count as completion. Unrelated working-tree changes remain preserved.
+
+NEEDS: codex
+
+### 2026-09-23 - codex - COMPLETE: Activepieces Windows launch recovery
+
+Committed the bounded runtime repair as `ccbb739` (`fix(activepieces): recover transient Windows launches`). The root evidence separated two conditions that had previously been conflated. Activepieces' pinned source and dependencies are valid: the exact engine/esbuild build succeeds outside Codex's process sandbox, and the genuine API, worker, engine and web development runtime reach ready state. The unreliable boundary was AVA's one-shot hidden Windows launch. Windows App Control intermittently rejected one of Bun/esbuild's first concurrent child launches as `spawn EPERM` or Bun's `unknown error`; the old launcher then waited three minutes and abandoned automation even though the same pinned runtime started on the next attempt.
+
+`scripts/start-activepieces-runtime.ps1` now monitors both readiness and the actual child process, stops waiting immediately after an early exit, captures bounded stdout and stderr evidence, and retries up to three times only for the known EPERM/EACCES/App-Control/Bun-transient class. Source identity, port, configuration, compiler and ordinary runtime failures still fail closed without being converted into success. The reusable policy and evidence collector live in `scripts/activepieces-runtime-policy.psm1`; `scripts/activepieces-runtime-policy.test.ps1` and root `test:activepieces-launcher` cover positive/negative classification, bounded evidence and missing logs. The Activepieces feature document records the exact semantics.
+
+Verification:
+
+- launcher-policy tests passed;
+- a controlled black-box injected `bun: unknown error` on attempt 1/2; the launcher emitted the retry warning and the genuine Activepieces 0.88.3 API/worker became ready on attempt two;
+- a separate clean stop/start through the real hidden launcher passed;
+- focused Activepieces/playbook routes and services passed 5 files / 28 tests;
+- complete server Vitest passed 204 files / 1,594 tests;
+- server production build and `git diff --check` passed;
+- the genuine `smoke:activepieces-playbooks` passed after the clean restart and again after the injected retry. Both system report and operations brief completed with executor `activepieces`, independent `verified` results, SHA-256-verified Markdown artifacts, durable memory entries and correlated Mission Control run IDs; status reported configured=true, available=true and three workflows;
+- the generated-playbook smoke reached and verified an `ava.approved-action-plan` Activepieces run, then failed at the separate Instagram open-chat outcome. That browser/social failure is not represented as Activepieces success and remains outside this launcher repair;
+- the normal committed desktop startup passed. AVA is live and ready with OpenAI, root HTTP 200, disk/live build ID `01e47b4d-5a04-4ee4-a420-4ffe20b6befb`, and Activepieces 0.88.3 in prod mode with telemetry disabled.
+
+Changed product files: `scripts/start-activepieces-runtime.ps1`, `scripts/activepieces-runtime-policy.psm1`, `scripts/activepieces-runtime-policy.test.ps1`, `package.json`, and `docs/features/activepieces-automations.md`. No web source changed, so the complete web suite/build was not repeated. Pre-existing unrelated settings, Codex-agent, and persona-research changes remain untouched. Per Niko's instruction, no GitHub/backup work was performed.
+
+NEEDS: niko (ask AVA “Run AVA's system health report” or “Create AVA's operations brief for the last 24 hours”; both should now use the available genuine Activepieces executor)

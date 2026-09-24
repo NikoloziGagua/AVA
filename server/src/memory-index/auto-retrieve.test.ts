@@ -155,6 +155,22 @@ describe("automatic source-verified memory retrieval", () => {
     expect(decision.notice).toContain("Semantic search was unavailable");
   });
 
+  it("still finds a keyword match for a voice turn when the embedding is too slow", async () => {
+    const embedder = new TopicEmbedder();
+    const f = fixture(embedder);
+    await capture(f);
+    const fast = embedder.embed.bind(embedder);
+    embedder.embed = (text: string) => new Promise((resolve) => { setTimeout(() => resolve(fast(text)), 200); });
+    const decision = await retrieveAutomaticMemory(f.service, {
+      query: "what was the aurora plan again",
+      channel: "openai_voice",
+      currentSessionId: "voice-session",
+      semanticBudgetMs: 10,
+    });
+    expect(decision).toMatchObject({ status: "used", semanticAvailable: false, mode: "lexical" });
+    expect(decision.notice).toContain("too slow");
+  });
+
   it("never crosses a project privacy scope", async () => {
     const f = fixture();
     await capture(f, {

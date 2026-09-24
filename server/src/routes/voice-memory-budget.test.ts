@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   VOICE_MEMORY_BUDGET_MS,
   VOICE_RECALL_BUDGET_MS,
-  voiceMemoryBudgetMs,
+  voiceMemoryBudget,
   withinBudget,
 } from "./voice-memory-budget.js";
 
@@ -10,10 +10,18 @@ afterEach(() => { vi.useRealTimers(); });
 
 describe("voice memory budget", () => {
   it("waits longer only when Sir explicitly asks AVA to recall something", () => {
-    expect(voiceMemoryBudgetMs("what's the weather like")).toBe(VOICE_MEMORY_BUDGET_MS);
-    expect(voiceMemoryBudgetMs("remind me in two minutes to hang my clothes")).toBe(VOICE_MEMORY_BUDGET_MS);
-    expect(voiceMemoryBudgetMs("do you remember what we decided about the thesis")).toBe(VOICE_RECALL_BUDGET_MS);
+    expect(voiceMemoryBudget("what's the weather like").totalMs).toBe(VOICE_MEMORY_BUDGET_MS);
+    expect(voiceMemoryBudget("remind me in two minutes to hang my clothes").totalMs).toBe(VOICE_MEMORY_BUDGET_MS);
+    expect(voiceMemoryBudget("do you remember what we decided about the thesis").totalMs).toBe(VOICE_RECALL_BUDGET_MS);
     expect(VOICE_MEMORY_BUDGET_MS).toBeLessThan(VOICE_RECALL_BUDGET_MS);
+  });
+
+  it("leaves time for the keyword fallback after the semantic budget runs out", () => {
+    for (const query of ["what's on today", "do you remember the thesis plan"]) {
+      const budget = voiceMemoryBudget(query);
+      // The keyword-only pass measured ~75 ms on the live index.
+      expect(budget.totalMs - budget.semanticMs).toBeGreaterThanOrEqual(150);
+    }
   });
 
   it("returns the memory when it arrives within the budget", async () => {

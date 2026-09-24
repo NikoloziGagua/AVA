@@ -324,6 +324,27 @@ describe("semantic memory index", () => {
     expect(found.results).toHaveLength(1);
   });
 
+  it("matches by keywords alone when the embedding misses a voice turn's budget", async () => {
+    const source = conversation();
+    const embedder = new FakeEmbedder();
+    const service = new MemoryIndexService(source.db, embedder);
+    await capture(service, source);
+    const slow = embedder.embed.bind(embedder);
+    embedder.embed = (text: string) => new Promise((resolve) => { setTimeout(() => resolve(slow(text)), 200); });
+
+    const started = performance.now();
+    const found = await service.search("SQLite canonical", { semanticBudgetMs: 20 });
+    expect(performance.now() - started).toBeLessThan(150);
+    expect(found.semanticAvailable).toBe(false);
+    expect(found.mode).toBe("lexical");
+    expect(found.notice).toContain("too slow");
+    expect(found.results).toHaveLength(1);
+
+    // Without a budget the same search still waits for the full semantic match.
+    const patient = await service.search("SQLite canonical");
+    expect(patient.semanticAvailable).toBe(true);
+  });
+
   it("is idempotent for the same verified range and scope", async () => {
     const source = conversation();
     const service = new MemoryIndexService(source.db, new FakeEmbedder());

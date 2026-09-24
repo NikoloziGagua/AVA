@@ -116,6 +116,17 @@ function retainBest<T>(best: T[], value: T, limit: number, compare: (left: T, ri
   if (best.length > limit) best.pop();
 }
 
+/** `work`'s value, or null once `ms` has passed. A failure still rejects; a late one is ignored. */
+function nullAfter<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), Math.max(0, ms));
+    work.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error: unknown) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 const STOP_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "do", "for", "from",
   "how", "i", "in", "is", "it", "me", "my", "of", "on", "or", "our",
@@ -815,7 +826,14 @@ export class MemoryIndexService {
 
   async search(
     query: string,
-    options: { project?: string | null; limit?: number; latestOnly?: boolean; includeHistory?: boolean } = {},
+    options: {
+      project?: string | null;
+      limit?: number;
+      latestOnly?: boolean;
+      includeHistory?: boolean;
+      /** Give up on the embedding after this long and match by keywords only (voice turns). */
+      semanticBudgetMs?: number;
+    } = {},
   ): Promise<MemorySearchResponse> {
     const cleanQuery = cleanInline(query, 1_000);
     if (!cleanQuery) throw new Error("memory search query is required");
@@ -823,8 +841,13 @@ export class MemoryIndexService {
     let queryEmbedding: MemoryEmbedding | null = null;
     let notice: string | null = null;
     if (this.embedder) {
-      try { queryEmbedding = await this.embedder.embed(cleanQuery); }
-      catch { notice = "Semantic search was unavailable, so AVA used exact and keyword matching only."; }
+      try {
+        const embedding = this.embedder.embed(cleanQuery);
+        queryEmbedding = options.semanticBudgetMs === undefined
+          ? await embedding
+          : await nullAfter(embedding, options.semanticBudgetMs);
+        if (!queryEmbedding) notice = "Semantic search was too slow for this turn, so AVA used exact and keyword matching only.";
+      } catch { notice = "Semantic search was unavailable, so AVA used exact and keyword matching only."; }
     } else {
       notice = "No embedding provider is configured; AVA used exact and keyword matching only.";
     }

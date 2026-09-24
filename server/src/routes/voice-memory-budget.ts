@@ -7,13 +7,24 @@ import { isExplicitMemoryRecall } from "../memory-index/auto-retrieve.js";
  * usable memory, so waiting in full delayed replies for nothing. Other voice
  * stacks (mem0, Zep, Pipecat guidance) likewise keep retrieval off the critical
  * path or cap it.
+ *
+ * The semantic part (the OpenAI embedding) gets a shorter budget; past it the
+ * lookup continues by keywords only. On 13 real voice queries that fallback
+ * took ~75 ms and picked the same memories 12 times out of 13, while the full
+ * lookup fit inside 350 ms only 4 times.
  */
-export const VOICE_MEMORY_BUDGET_MS = 350;
+export const VOICE_MEMORY_BUDGET_MS = 400;
+export const VOICE_SEMANTIC_BUDGET_MS = 250;
 /** When Sir explicitly asks AVA to remember something, accuracy is worth a longer wait. */
 export const VOICE_RECALL_BUDGET_MS = 1_500;
+export const VOICE_RECALL_SEMANTIC_BUDGET_MS = 1_200;
 
-export function voiceMemoryBudgetMs(query: string): number {
-  return isExplicitMemoryRecall(query) ? VOICE_RECALL_BUDGET_MS : VOICE_MEMORY_BUDGET_MS;
+export type VoiceMemoryBudget = { totalMs: number; semanticMs: number };
+
+export function voiceMemoryBudget(query: string): VoiceMemoryBudget {
+  return isExplicitMemoryRecall(query)
+    ? { totalMs: VOICE_RECALL_BUDGET_MS, semanticMs: VOICE_RECALL_SEMANTIC_BUDGET_MS }
+    : { totalMs: VOICE_MEMORY_BUDGET_MS, semanticMs: VOICE_SEMANTIC_BUDGET_MS };
 }
 
 export type BudgetOutcome<T> =

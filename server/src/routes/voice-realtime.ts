@@ -39,7 +39,7 @@ import {
   retrieveAutomaticMemory,
 } from "../memory-index/auto-retrieve.js";
 import { detectProject, loadProjectIndex } from "../memory/project-index.js";
-import { voiceMemoryBudgetMs, withinBudget } from "./voice-memory-budget.js";
+import { voiceMemoryBudget, withinBudget } from "./voice-memory-budget.js";
 import {
   resolveVoiceProvider,
   describeVoiceProvider,
@@ -1993,16 +1993,19 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               try { return detectProject(acceptedText, loadProjectIndex(deps.memoryDir))?.slug ?? null; }
               catch { return null; }
             })();
+            // Memory may not hold the reply hostage. A slow embedding degrades
+            // the lookup to keywords only; past the total budget AVA answers
+            // without memory. A late result is recorded, never injected into a
+            // turn that is already being answered (or into a newer one).
+            const budget = voiceMemoryBudget(acceptedText);
+            const budgetMs = budget.totalMs;
             const lookup = retrieveAutomaticMemory(deps.memoryIndex, {
               query: acceptedText,
               channel: "openai_voice",
               currentSessionId: sessionId,
               project: memoryProject,
+              semanticBudgetMs: budget.semanticMs,
             });
-            // Memory may not hold the reply hostage: past its budget AVA answers
-            // without it. A late result is recorded, never injected into a turn
-            // that is already being answered (or into a newer one).
-            const budgetMs = voiceMemoryBudgetMs(acceptedText);
             const outcome = await withinBudget(lookup, budgetMs);
             if (epoch !== memoryRetrievalEpoch || !memoryRetrievalPending) return;
             memoryRetrievalPending = false;

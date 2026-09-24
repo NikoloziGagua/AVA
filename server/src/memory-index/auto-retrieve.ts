@@ -44,6 +44,8 @@ export type AutomaticMemoryInput = {
   channel: AutomaticMemoryChannel;
   currentSessionId?: string | null;
   project?: string | null;
+  /** Voice: stop waiting for the embedding after this long and match by keywords only. */
+  semanticBudgetMs?: number;
 };
 
 /**
@@ -162,6 +164,7 @@ export async function retrieveAutomaticMemory(
       project: input.project ?? null,
       limit: 12,
       latestOnly: true,
+      ...(input.semanticBudgetMs === undefined ? {} : { semanticBudgetMs: input.semanticBudgetMs }),
     });
     const explicitRecall = EXPLICIT_RECALL.test(query);
     const eligible = response.results.filter((result) =>

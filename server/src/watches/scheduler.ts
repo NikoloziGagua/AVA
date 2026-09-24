@@ -1,4 +1,5 @@
 import type { Db } from "../state/db.js";
+import { tickReminders, type ReminderDeps } from "./reminders.js";
 import {
   dueWatches,
   getChildWatch,
@@ -47,6 +48,10 @@ export type SchedulerDeps = {
   tickMs?: number;
   /** Cap on a single check's wall clock. */
   checkTimeoutMs?: number;
+  /** Agent watches may be unavailable while direct reminders continue to work. */
+  agentChecksEnabled?: boolean;
+  deliverReminder?: ReminderDeps["deliverReminder"];
+  reminderTickMs?: number;
 };
 
 export function buildCheckPrompt(w: Watch): string {
@@ -423,6 +428,7 @@ export async function tickOnce(deps: SchedulerDeps): Promise<void> {
   const due = dueWatches(deps.db);
   const run = deps.runCheck ?? runCheckViaHttp;
   for (const w of due) {
+    if (w.kind === "reminder" && w.run_at !== null) continue; // dedicated durable path
     try {
       if (w.kind === "codex") {
         await runCodexWatch(w, deps);
@@ -465,11 +471,21 @@ export async function tickOnce(deps: SchedulerDeps): Promise<void> {
 export function startWatchScheduler(deps: SchedulerDeps): () => void {
   let running = false;
   const timer = setInterval(async () => {
+    if (deps.agentChecksEnabled === false) return;
     if (running) return; // a slow check must not stack ticks
     running = true;
     try { await tickOnce(deps); } finally { running = false; }
   }, deps.tickMs ?? 60_000);
   timer.unref?.();
+  let remindersRunning = false;
+  const reminderTimer = setInterval(async () => {
+    if (remindersRunning) return;
+    remindersRunning = true;
+    try { await tickReminders(deps); }
+    catch { deps.log.warn({}, "reminder scheduler pass failed"); }
+    finally { remindersRunning = false; }
+  }, deps.reminderTickMs ?? 1_000);
+  reminderTimer.unref?.();
   deps.log.info({}, "watch scheduler started");
-  return () => clearInterval(timer);
+  return () => { clearInterval(timer); clearInterval(reminderTimer); };
 }

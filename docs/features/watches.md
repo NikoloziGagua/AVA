@@ -5,7 +5,9 @@
 A **watch** is a durable instruction that Ava handles on a schedule. An ordinary
 watch is re-checked by AVA with her full toolset, so it can use Instagram,
 WhatsApp, Chrome, web research, files, Claude tools, or any other available AVA
-capability. A reminder is pushed directly. A targeted-agent watch uses a delivery
+capability. A one-off reminder is pushed directly with a durable receipt that
+distinguishes service acceptance from an unconfirmed phone display; see
+[One-off reminders](reminders.md). A targeted-agent watch uses a delivery
 adapter that pins a concrete session and records delivery/completion evidence.
 
 For standing monitoring, AVA re-checks a condition and
@@ -28,7 +30,7 @@ bothers Sir when something actually happens.
 
 ## How Sir interacts with it
 
-Entirely through natural language, in a normal task. When Sir says *"notify me
+Through natural language or the existing workspace. When Sir says *"notify me
 if/when …"* in a typed chat (or via a voice action, which runs the same action
 agent), Ava calls **`watch_create`** with a self-contained check prompt and an
 interval, and confirms it created the watch. From then on it is hands-off:
@@ -41,13 +43,23 @@ interval, and confirms it created the watch. From then on it is hands-off:
   each watch, its interval, and its latest status.
 - **Sir can cancel one** — *"stop watching the GPU price"* → `watch_delete`.
 
-The primary navigation includes a dedicated **Watches** workspace. It shows
+**System → Watches** opens the dedicated **Watches** workspace. It shows
 active, paused and attention-needed counts; lets Sir create an ordinary AVA
 check or reminder on an interval, at one future time, or at a daily time; and
 provides search, filtering, refresh, pause/resume, deletion and a direct link to
 the watch's chat history after its first run. The compact **Standing watches**
 section remains in Memory as an at-a-glance read surface over the same API and
 SQLite records. It is not a second scheduler.
+
+For one-off reminders, **Schedule** is the simpler daily-use surface. Both its
+form and Watches' one-time Reminder form require an exact time and named time
+zone, handle daylight-saving ambiguity explicitly, and use the same durable
+receipt. These reminders are not marked “delivered” merely because a timer ran.
+This I4 frontend is still in progress separately from the backend increment;
+the paragraph describes the paired UI pending integrated acceptance, not an
+already released Schedule form.
+Legacy interval/daily reminders retain their old path and are excluded from the
+new one-off receipt list; their historical status is not proof of phone display.
 
 The screen deliberately has no **Run now** button: the authoritative watch API
 does not currently expose that action, and treating a local UI transition as a
@@ -116,7 +128,11 @@ Two halves: **tools** (Ava registers/lists/deletes watches during a turn) and a
 - **check** — AVA runs the prompt through `/api/chat` with the complete toolset.
   This is the general path for scheduled Instagram, browser, web, Claude, file,
   and other AVA work.
-- **reminder** — the prompt is the notification; no model call is made.
+- **reminder** — the prompt is the notification; no model call is made. An
+  absolute one-off (`run_at` present) uses the independent one-second reminder
+  loop, a durable SQLite occurrence and bounded transport/recovery. Recurring
+  reminders remain on the legacy timer. See [the receipt and retry
+  contract](reminders.md).
 - **codex** — the adapter pins the exact repository TUI thread and submits one
   sanitized instruction through Codex's supported
   `codex queue --thread <exact-id> --message <text>` command. Codex's own queue
@@ -194,6 +210,8 @@ audit. It is the same trick the voice pipeline uses for `do_on_computer`.
 | Concern | File | Notes |
 |---|---|---|
 | Table | `server/src/state/schema.sql` (`watches`) | Schedule/result fields plus pinned target, delivery marker, process, completion, and cycle ancestry evidence. |
+| One-off receipt | `server/src/state/reminders.ts:31`, `server/src/state/schema.sql:791` | Transactional occurrence per watch/due time; revision/lease checks, bounded retries and truthful service-acceptance state. |
+| One-off timing/transport | `server/src/watches/reminder-schedule.ts:41`, `server/src/watches/reminders.ts:21`, `server/src/push/deliver.ts:127` | Named-zone intake, independent sending loop, awaited bounded transport results. |
 | State module | `server/src/state/watches.ts` | `createWatch`, `dueWatches` (`:49`), `recordWatchRun` (`:54`), `setWatchEnabled`, `deleteWatch`. |
 | Scheduler | `server/src/watches/scheduler.ts` | `startWatchScheduler` (`:130`, 60s tick), `tickOnce` (`:106`), `runCheckViaHttp` (`:50`), marker helpers (`:30`, `:40`). |
 | Tools (Ava) | `server/src/tools/watches-mcp.ts` | `watch_create` / `watch_list` / `watch_delete` — action mode only. |
@@ -203,7 +221,7 @@ audit. It is the same trick the voice pipeline uses for `do_on_computer`.
 | In-thread handoff | `server/src/watches/codex-handoff.ts`, `scripts/codex-watch-stop-hook.mjs`, `.codex/hooks.json` | Sanitized atomic inbox, same-writer Stop-hook delivery, completion receipt, and bounded successor wait. |
 | Boot singleton | `server/src/process/server-lock.ts` | Atomic process ownership claim in AVA's data root, acquired before shared boot state can change. |
 | UI | `web/src/watches/WatchesScreen.tsx`, `web/src/memory/WatchesSection.tsx` | First-class create/manage workspace plus compact Memory read surface, both over the same authenticated routes. |
-| Boot wiring | `server/src/index.ts` | Scheduler and internal credentials start **only after this process owns the port** and only when an LLM provider exists. |
+| Boot wiring | `server/src/index.ts:915` | Starts only after this process owns the port. The direct one-off reminder timer runs without an LLM; agent checks and the legacy timer remain provider-gated. |
 
 ### Frugality guidance (baked into the tool)
 
@@ -218,8 +236,11 @@ HTTP route caps it at 24 h.
 
 - **The server must be running.** The scheduler is an in-process `setInterval`
   (`unref`'d so it never keeps the process alive). If the PC is asleep or the Ava
-  server is down, **no checks happen** and none are back-filled — the next check is
-  simply the next tick after the server is up. This is not a cloud cron.
+  server is down, **no checks happen**. On restart, ordinary monitoring resumes
+  at the next eligible tick rather than replaying every missed check. Direct
+  one-off reminders may still run within 15 minutes of their original due time;
+  older occurrences expire, and uncertain prior sends are not replayed. This is
+  not a cloud cron.
 - **The project Stop hook must be trusted for the older-client busy fallback.** Codex hashes unmanaged
   hooks and will not run a new or changed definition until that exact hash is
   trusted. Run `npm run codex:trust-watch` after installing or changing
@@ -250,9 +271,18 @@ HTTP route caps it at 24 h.
   error, notifies Sir, and retries only after the watch interval. It never
   redispatches the completed task. Once planning recovers, the unique parent-child
   constraint still permits exactly one successor.
-- **Disabled without an LLM provider.** If no provider is configured at boot, the
-  scheduler logs `watch scheduler disabled — no LLM provider` and never starts
-  (`index.ts`). Checks are agent runs; no brain, no checks.
+- **Agent checks need an LLM provider; direct reminders do not.** Without a
+  provider, boot logs `agent watch checks disabled — direct reminder scheduler remains active`
+  (`server/src/index.ts:927`). The independent one-off timer still records
+  scheduling, setup blockers and transport results. Legacy interval/daily
+  reminders remain on the provider-gated timer in this increment.
+- **One-off acceptance is not phone receipt.** A 2xx push-service result means
+  accepted for a subscription, not displayed on a phone. Missing setup records
+  zero attempts; a timeout, network uncertainty or restart after sending starts
+  stops automatic retries. The receipt, retry bounds and pause/delete limits are
+  documented in [One-off reminders](reminders.md). Legacy recurring reminders
+  still write the old `reminder delivered` prose without this evidence; it must
+  not be treated as a verified receipt.
 - **A missing marker = no notification.** If the check run ends without a valid
   `WATCH: …` line, the status is `unclear` and Sir is **not** pinged even if the
   condition was actually met. The verdict is only as reliable as the model's
@@ -337,6 +367,10 @@ any watch is deletable, so a given row won't necessarily still be present later.
   process means zero extra infrastructure and it shares the DB/browser directly;
   the accepted trade-off is that watches only run while Ava is running (documented
   above), which fits the "one PC, always-on when in use" model.
+- **Direct one-offs have a separate timer, not a separate authority.** They use
+  the same watches API and SQLite database, but do not wait behind an LLM/browser
+  check. A revision-guarded occurrence records transport evidence; no provider
+  acceptance is promoted to proof that Sir saw a notification.
 - **Conversation and form share one contract.** Ava can still translate
   *"notify me if …"* into a self-contained check prompt in the same turn. The
   dedicated Watches form is the visible alternative when Sir wants explicit

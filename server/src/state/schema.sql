@@ -766,6 +766,7 @@ CREATE TABLE IF NOT EXISTS watches (
   last_status TEXT,                   -- check/reminder outcomes or targeted-delivery lifecycle state
   last_result TEXT,                   -- one-line latest status/reason
   run_at INTEGER,                     -- one-shot: fire once at/after this epoch-ms
+  time_zone TEXT,                     -- named zone recorded at one-off intake; legacy unknown
   daily_at TEXT,                      -- recurring: fire once per day at HH:MM local
   kind TEXT NOT NULL DEFAULT 'check', -- check = agent run | reminder = direct push | codex = pinned Codex task
   target_thread_id TEXT,
@@ -784,3 +785,29 @@ CREATE TABLE IF NOT EXISTS watches (
   successor_attempted_at INTEGER,
   successor_session_id TEXT
 );
+
+-- One authoritative receipt per direct reminder occurrence. No push payload,
+-- subscription credentials or duplicated prompt is stored here.
+CREATE TABLE IF NOT EXISTS reminder_occurrences (
+  id TEXT PRIMARY KEY,
+  watch_id TEXT NOT NULL REFERENCES watches(id) ON DELETE CASCADE,
+  due_at INTEGER NOT NULL,
+  time_zone TEXT,
+  expires_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  phase TEXT NOT NULL CHECK (phase IN ('scheduled','claimed','sending','retry_scheduled','accepted','failed','expired','acceptance_unknown','cancelled')),
+  lease_token TEXT,
+  lease_until INTEGER,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at INTEGER,
+  next_attempt_at INTEGER,
+  accepted_at INTEGER,
+  total INTEGER NOT NULL DEFAULT 0,
+  accepted INTEGER NOT NULL DEFAULT 0,
+  rejected_transient INTEGER NOT NULL DEFAULT 0,
+  rejected_permanent INTEGER NOT NULL DEFAULT 0,
+  unknown INTEGER NOT NULL DEFAULT 0,
+  reason_code TEXT,
+  UNIQUE(watch_id, due_at)
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminder_occurrences(phase, next_attempt_at);

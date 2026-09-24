@@ -1,5 +1,6 @@
 import { nanoid } from "nanoid";
 import type { Db } from "./db.js";
+import { ensureReminderOccurrence } from "./reminders.js";
 
 // Long-term monitoring: a watch is a standing instruction ("notify me if the
 // RTX 5090 drops below $1800") that the scheduler re-checks on an interval.
@@ -19,6 +20,7 @@ export type Watch = {
   last_result: string | null;
   /** One-shot: fire once at/after this epoch-ms (reminders, "at 6pm today"). */
   run_at: number | null;
+  time_zone: string | null;
   /** Recurring daily: fire once per day at "HH:MM" local (morning briefing). */
   daily_at: string | null;
   /** "check" runs a full agent turn; "reminder" is a direct push at due time
@@ -47,6 +49,7 @@ export function createWatch(db: Db, o: {
   intervalMinutes?: number;
   once?: boolean;
   runAt?: number;
+  timeZone?: string;
   dailyAt?: string;            // "HH:MM" 24h local
   kind?: "check" | "reminder" | "codex";
   target?: { threadId: string; sessionFile: string; cwd: string };
@@ -60,18 +63,22 @@ export function createWatch(db: Db, o: {
   // Interval is only meaningful in interval mode, but the column is NOT NULL —
   // store a day as an inert placeholder for run_at/daily_at watches.
   const interval = o.runAt || o.dailyAt ? 24 * 60 : Math.max(1, Math.round(o.intervalMinutes ?? 60));
-  db.prepare(
-    `INSERT INTO watches (
-      id, prompt, interval_minutes, once, enabled, created_at, run_at, daily_at, kind,
-      target_thread_id, target_session_file, target_cwd, continue_cycle, parent_watch_id
-    ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id, o.prompt, interval, o.once === false ? 0 : 1, Date.now(),
-    o.runAt ?? null, o.dailyAt ?? null, o.kind === "reminder" ? "reminder" : o.kind === "codex" ? "codex" : "check",
-    o.target?.threadId ?? null, o.target?.sessionFile ?? null, o.target?.cwd ?? null,
-    o.continueCycle ? 1 : 0, o.parentWatchId ?? null,
-  );
-  return getWatch(db, id)!;
+  return db.transaction(() => {
+    db.prepare(
+      `INSERT INTO watches (
+        id, prompt, interval_minutes, once, enabled, created_at, run_at, time_zone, daily_at, kind,
+        target_thread_id, target_session_file, target_cwd, continue_cycle, parent_watch_id
+      ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      id, o.prompt, interval, o.once === false ? 0 : 1, Date.now(),
+      o.runAt ?? null, o.timeZone ?? null, o.dailyAt ?? null, o.kind === "reminder" ? "reminder" : o.kind === "codex" ? "codex" : "check",
+      o.target?.threadId ?? null, o.target?.sessionFile ?? null, o.target?.cwd ?? null,
+      o.continueCycle ? 1 : 0, o.parentWatchId ?? null,
+    );
+    const watch = getWatch(db, id)!;
+    ensureReminderOccurrence(db, watch);
+    return watch;
+  }).immediate();
 }
 
 export function getWatch(db: Db, id: string): Watch | null {

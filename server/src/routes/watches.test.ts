@@ -9,6 +9,7 @@ import { createWatch, deleteWatch, getWatch } from "../state/watches.js";
 import { CommunicationObservabilityRecorder, resolveWatcherCommunicationEvidence } from "../observability/communications.js";
 import { ObservabilityService } from "../observability/store.js";
 import { watchesRoutes, type WatchesRouteOptions } from "./watches.js";
+import { requireToken } from "../auth/middleware.js";
 
 const dirs: string[] = [];
 
@@ -31,6 +32,52 @@ function setup(options?: WatchesRouteOptions) {
 }
 
 describe("watch management routes", () => {
+  it("requires authenticated access for reminder intake and receipts", async () => {
+    const { db } = setup();
+    const app = express(); app.use(express.json()); app.use("/api/watches", watchesRoutes(db, requireToken(db)));
+    await request(app).get("/api/watches").expect(401);
+    await request(app).post("/api/watches").send({ kind: "reminder", prompt: "fixture", run_at: Date.now() + 1000, time_zone: "UTC" }).expect(401);
+    expect(db.prepare("SELECT count(*) n FROM watches").get()).toEqual({ n: 0 });
+    db.close();
+  });
+  it("validates explicit one-off instants/zones/conflicts with bounded codes and no writes", async () => {
+    const { db, app } = setup();
+    const good = { prompt: "fixture", kind: "reminder", run_at: Date.now() + 60_000, time_zone: "UTC" };
+    const cases = [
+      [{ time_zone: undefined }, "invalid_time_zone"],
+      [{ time_zone: "private-invalid-zone" }, "invalid_time_zone"],
+      [{ run_at: Date.now() - 1 }, "run_at_not_future"],
+      [{ run_at: Date.now() + 367 * 86_400_000 }, "run_at_too_far"],
+      [{ run_at: Date.now() + 100.5 }, "invalid_run_at"],
+      [{ once: false }, "conflicting_schedule"],
+      [{ interval_minutes: 5 }, "conflicting_schedule"],
+      [{ daily_at: "08:00" }, "conflicting_schedule"],
+    ] as const;
+    for (const [changes, reasonCode] of cases) {
+      await request(app).post("/api/watches").send({ ...good, ...changes }).expect(400, { error: "bad_request", reasonCode });
+    }
+    await request(app).post("/api/watches").send({ ...good, run_at: "tomorrow" }).expect(400);
+    expect(db.prepare("SELECT count(*) n FROM watches").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT count(*) n FROM reminder_occurrences").get()).toEqual({ n: 0 });
+    db.close();
+  });
+  it("keeps one exact durable receipt through list/pause/resume and removes it on deletion", async () => {
+    const { db, app } = setup();
+    const body = { kind: "reminder", prompt: "fixture", run_at: Date.now() + 60_000, time_zone: "UTC", once: true };
+    const created = await request(app).post("/api/watches").send(body).expect(200);
+    const { id, reminder_status } = created.body.watch;
+    expect(reminder_status).toMatchObject({ state: "scheduled", timeZone: "UTC", phoneReceipt: "unconfirmed" });
+    expect(JSON.stringify(reminder_status)).not.toMatch(/lease|prompt/);
+    await request(app).post(`/api/watches/${id}/enabled`).send({ enabled: false }).expect(200);
+    const paused = await request(app).get("/api/watches").expect(200);
+    expect(paused.body.watches[0].reminder_status).toMatchObject({ occurrenceId: reminder_status.occurrenceId, state: "paused", reasonCode: "paused" });
+    await request(app).post(`/api/watches/${id}/enabled`).send({ enabled: true }).expect(200);
+    const resumed = await request(app).get("/api/watches").expect(200);
+    expect(resumed.body.watches[0].reminder_status).toEqual(reminder_status);
+    await request(app).delete(`/api/watches/${id}`).expect(200);
+    expect(db.prepare("SELECT count(*) n FROM reminder_occurrences").get()).toEqual({ n: 0 });
+    db.close();
+  });
   it("creates, lists, pauses, resumes, and deletes the same durable watch", async () => {
     const { app, db, auth } = setup();
     const created = await request(app).post("/api/watches").send({
@@ -69,9 +116,11 @@ describe("watch management routes", () => {
     const oneTime = await request(app).post("/api/watches").send({
       prompt: "Stretch",
       run_at: at,
+      time_zone: "Europe/London",
       kind: "reminder",
     }).expect(200);
-    expect(oneTime.body.watch).toMatchObject({ run_at: at, kind: "reminder", once: 1 });
+    expect(oneTime.body.watch).toMatchObject({ run_at: at, time_zone: "Europe/London", kind: "reminder", once: 1,
+      reminder_status: { state: "scheduled", dueAt: at, attempts: 0, phoneReceipt: "unconfirmed" } });
 
     const daily = await request(app).post("/api/watches").send({
       prompt: "Morning brief",

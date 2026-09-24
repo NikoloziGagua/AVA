@@ -73,6 +73,7 @@ export function openDb(path: string): Db {
   // Watches v2: one-shot reminders (run_at), daily schedules (daily_at), and
   // the reminder kind (direct push at the due time — no agent run needed).
   tryAddColumn(db, "watches", "run_at", "INTEGER");
+  tryAddColumn(db, "watches", "time_zone", "TEXT");
   tryAddColumn(db, "watches", "daily_at", "TEXT");
   tryAddColumn(db, "watches", "kind", "TEXT NOT NULL DEFAULT 'check'");
   // Watches v3: a watcher can pin one concrete Codex TUI thread, verify that

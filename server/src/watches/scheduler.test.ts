@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { openInMemoryDb } from "../state/db.js";
 import { createWatch, listWatches, dueWatches, recordWatchRun, getWatch, getChildWatch } from "../state/watches.js";
-import { parseWatchMarker, buildCheckPrompt, tickOnce, type SchedulerDeps } from "./scheduler.js";
+import { parseWatchMarker, buildCheckPrompt, tickOnce, startWatchScheduler, type SchedulerDeps } from "./scheduler.js";
+import { tickReminders } from "./reminders.js";
+import { getReminderStatus } from "../state/reminders.js";
 import { ObservabilityService } from "../observability/store.js";
 import { communicationRunId } from "../observability/communications.js";
 
@@ -103,6 +105,11 @@ describe("reminders and schedules (watches v2)", () => {
     vi.useFakeTimers({ now: at + 1000 });
     try {
       await tickOnce(deps(db, { notify }));
+      expect(notify).not.toHaveBeenCalled(); // no legacy fire-and-forget direct send
+      await tickReminders({ db, subscriptionCount: () => 1, deliverReminder: async (request) => {
+        notify(request.summary);
+        return { subscriptions: { total: 1, accepted: 1, rejectedTransient: 0, rejectedPermanent: 0, unknown: 0 }, reasonCode: null };
+      } });
     } finally { vi.useRealTimers(); }
     expect(notify).toHaveBeenCalledOnce();
     expect(notify.mock.calls[0]![0]).toContain("Call Mom");

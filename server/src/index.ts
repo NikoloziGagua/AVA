@@ -912,20 +912,19 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
   // Long-term monitoring: re-checks standing watches through this server's own
   // /api/chat (full toolset + audit trail in each watch's session). Started
   // only once the port is live, since checks call back over HTTP.
-  if (provider) {
-    startWatchScheduler({
-      db,
-      baseUrl: `http://127.0.0.1:${cfg.port}`,
-      token: () => watchInternalToken,
-      notify: (text) => notifyDone?.(text),
-      log,
-      dispatchCodex: codexDispatcher.dispatch,
-      inspectCodex: codexDispatcher.inspect,
-      observability,
-    });
-  } else {
-    log.warn({}, "watch scheduler disabled — no LLM provider");
-  }
+  startWatchScheduler({
+    db,
+    baseUrl: `http://127.0.0.1:${cfg.port}`,
+    token: () => watchInternalToken,
+    notify: (text) => notifyDone?.(text),
+    agentChecksEnabled: !!provider,
+    deliverReminder: deliverer?.deliverReminderPush,
+    log,
+    dispatchCodex: codexDispatcher.dispatch,
+    inspectCodex: codexDispatcher.inspect,
+    observability,
+  });
+  if (!provider) log.warn({}, "agent watch checks disabled — direct reminder scheduler remains active");
 });
 // Without this handler a bind failure (EADDRINUSE from a half-dead prior
 // process — the documented self-dev restart collision) crash-looped with a raw

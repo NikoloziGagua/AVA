@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { Db } from "../state/db.js";
 import { createWatch, listWatches, deleteWatch, getWatch, setWatchEnabled } from "../state/watches.js";
 import type { WatcherCommunicationEvidence } from "../observability/communications.js";
+import { getReminderStatus } from "../state/reminders.js";
+import { ReminderScheduleError, validateReminderSchedule } from "../watches/reminder-schedule.js";
 
 const WatchId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 
@@ -11,6 +13,7 @@ const CreateBody = z.object({
   interval_minutes: z.number().min(1).max(24 * 60).optional(),
   once: z.boolean().optional(),
   run_at: z.number().optional(),                                  // epoch ms one-shot
+  time_zone: z.string().max(100).optional(),
   daily_at: z.string().regex(/^([01]?\d|2[0-3]):[0-5]\d$/).optional(),
   kind: z.enum(["check", "reminder"]).optional(),
 }).refine((b) => b.interval_minutes || b.run_at || b.daily_at, { message: "need a schedule" });
@@ -42,7 +45,7 @@ export function watchesRoutes(db: Db, auth: RequestHandler, options: WatchesRout
   const r = Router();
   r.get("/", auth, (_req, res) => {
     const watches = listWatches(db).map((watch) => {
-      if (watch.kind !== "codex") return watch;
+      if (watch.kind !== "codex") return { ...watch, reminder_status: getReminderStatus(db, watch) };
       return {
         ...watch,
         communication_evidence: communicationEvidenceForWatch(
@@ -71,12 +74,21 @@ export function watchesRoutes(db: Db, auth: RequestHandler, options: WatchesRout
   r.post("/", auth, (req, res) => {
     const p = CreateBody.safeParse(req.body);
     if (!p.success) { res.status(400).json({ error: "bad_request" }); return; }
-    res.json({
-      watch: createWatch(db, {
-        prompt: p.data.prompt, intervalMinutes: p.data.interval_minutes, once: p.data.once,
-        runAt: p.data.run_at, dailyAt: p.data.daily_at, kind: p.data.kind,
-      }),
+    let timeZone: string | undefined;
+    if (p.data.kind === "reminder" && p.data.run_at !== undefined) {
+      try {
+        timeZone = validateReminderSchedule({ runAt: p.data.run_at, timeZone: p.data.time_zone,
+          intervalMinutes: p.data.interval_minutes, dailyAt: p.data.daily_at, once: p.data.once }).timeZone;
+      } catch (error) {
+        res.status(400).json({ error: "bad_request", ...(error instanceof ReminderScheduleError ? { reasonCode: error.code } : {}) });
+        return;
+      }
+    }
+    const watch = createWatch(db, {
+      prompt: p.data.prompt, intervalMinutes: p.data.interval_minutes, once: p.data.once,
+      runAt: p.data.run_at, timeZone, dailyAt: p.data.daily_at, kind: p.data.kind,
     });
+    res.json({ watch: { ...watch, reminder_status: getReminderStatus(db, watch) } });
   });
   r.post("/:id/enabled", auth, (req, res) => {
     const p = ToggleBody.safeParse(req.body);

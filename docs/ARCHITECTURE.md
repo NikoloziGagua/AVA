@@ -461,6 +461,7 @@ flowchart LR
 | `discussions` | Background Claude consults: topic, status, result, the originating session. |
 | `strategy_rooms` / `strategy_messages` / `strategy_events` | Strategy Room projection, immutable attributed AVA/Niko/Codex conversation, optional exact chat-snapshot/returned-message lineage, and replayable live-event cursor. Approval and chat return record proposals only; neither executes work. See `features/strategy-room.md`. |
 | `watches` | Standing background monitors (§11): the check prompt, interval, `once`/`enabled`, the chat session holding every check, and the last run's status/result. |
+| `reminder_occurrences` | One-off reminder receipt (§11): unique watch/due-time identity, revision and send lease, fixed expiry, attempts and latest-attempt subscription outcomes. No duplicated prompt or raw transport payload. |
 | `voice_engine_pref` | The voice provider toggle (`openai` · `hume`). |
 | `reasoning_pref` | The Fast↔Thorough level (drives OpenAI reasoning effort + voice VAD snappiness). |
 | `device_state` · `chip_overrides` · `chip_label_cache` | Per-device greeting state, custom quick-action chips, and their cached labels. |
@@ -492,13 +493,14 @@ after the conversation ends. **→ Full write-up: [`features/watches.md`](featur
 **How it works, in one breath:** Ava turns "notify me if/when X" into a watch via
 the `watch_create` tool (`tools/watches-mcp.ts`); the row lives in the `watches`
 table (`state/watches.ts`). A `setInterval` scheduler (`watches/scheduler.ts`,
-60 s tick, started at boot only if an LLM provider exists) finds due watches and
+60 s agent tick enabled only if an LLM provider exists) finds due watches and
 runs each check as a **real agent turn through the server's own `/api/chat`** over
 loopback with an internal bearer token — so a check gets the full tool stack and is
 recorded as an openable chat session you can audit. The check prompt demands a
 strict trailing marker (`WATCH: TRIGGERED — …` / `WATCH: OK — …`); `TRIGGERED`
 fires a web-push and disables a one-shot watch. `GET/POST/DELETE /api/watches`
-(`routes/watches.ts`) is the management API for a future UI.
+(`routes/watches.ts`) is the authenticated management API behind the existing
+Watches workspace and reminder receipts.
 
 ```mermaid
 flowchart LR
@@ -517,14 +519,44 @@ flowchart LR
   classDef data fill:#960,color:#fff
 ```
 
-**Honest flags:** a watch only runs **while Ava is running** (in-process
-`setInterval`, no cloud cron, no back-fill); each check is a **full, paid agent
+**Honest flags for monitoring:** a watch only runs **while Ava is running** (in-process
+`setInterval`, no cloud cron, no replay of every missed check); each check is a **full, paid agent
 run**, so intervals must be frugal (the tool guidance and rubric enforce this only
 by advice, not a spend cap); a check that forgets the marker records `unclear` and
 does **not** notify (a missed alert is preferred over a false one); and there is no
 notification de-dup, so a `once:false` watch can ping on every check while its
 condition holds (which is why one-shot is the default). See the feature doc for the
 complete list and the 2026-07-03 live verification.
+
+**Direct one-off reminders do not use that agent loop.** An exact instant plus
+a named time zone creates a watch and a unique SQLite occurrence in one
+transaction (`server/src/state/watches.ts:66`, `server/src/state/schema.sql:791`).
+An independent one-second timer starts after port ownership, even without an
+LLM provider (`server/src/index.ts:915`, `server/src/watches/scheduler.ts:480`).
+Revision/lease checks protect the sending boundary and stale completions; a
+fixed 15-minute window and at most three transmissions bound recovery.
+
+```mermaid
+flowchart LR
+  request[Exact time and named zone]
+  occurrence[(Watch and reminder occurrence)]
+  timer[Independent reminder timer]
+  transport[Await bounded push result]
+  receipt[Durable receipt]
+  request --> occurrence --> timer --> transport --> receipt
+  receipt --> accepted[Service accepted; phone display unconfirmed]
+  receipt --> known[Known rejection: bounded retry or failure]
+  receipt --> uncertain[Unknown acceptance: no automatic resend]
+```
+
+**The reminder receipt ends at the notification service, not the phone.** Missing
+configuration/subscriptions records zero attempts. Timeout or restart after
+sending starts is uncertain and does not trigger blind resend; an overdue
+unattempted reminder may run only inside its original window. Counts refer to
+subscriptions in the latest attempt, not distinct devices. Legacy recurring
+reminders and historical “delivered” prose do not gain these guarantees.
+See [`features/reminders.md`](features/reminders.md) for the exact phases,
+time-validation, privacy, pause/delete and real-device acceptance boundaries.
 
 ---
 
@@ -543,6 +575,7 @@ complete list and the 2026-07-03 live verification.
 | Self-improvement | `server/src/self/` (incl. `changelog.ts`, `friction.ts`) | [07](architecture/07-self-improvement.md) |
 | Memory / learning | `server/src/memory/`, `playbooks/`, `self/dev-log.ts`, `self/changelog.ts` | [08](architecture/08-memory-learning-identity.md) |
 | Watches (monitoring) | `server/src/watches/`, `state/watches.ts`, `tools/watches-mcp.ts`, `routes/watches.ts` | [`features/watches.md`](features/watches.md) |
+| One-off reminders | `server/src/state/reminders.ts`, `watches/reminders.ts`, `watches/reminder-schedule.ts`, `push/deliver.ts` | [`features/reminders.md`](features/reminders.md) |
 | Process / Stop | `server/src/process/` | [02](architecture/02-agent-loop-and-orchestration.md) |
 | Web frontend | `web/src/` | [09](architecture/09-web-frontend.md) |
 

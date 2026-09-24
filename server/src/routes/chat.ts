@@ -20,6 +20,7 @@ import {
   type MessageVisualReference,
 } from "../state/messages.js";
 import { getVisualExplanation } from "../state/visual-explanations.js";
+import { VOICE_SEMANTIC_BUDGET_MS } from "./voice-memory-budget.js";
 import { researchEntityRecords } from "../visual-explanations/research-model.js";
 import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
@@ -539,6 +540,10 @@ export function chatRoutes(
           channel: "chat",
           currentSessionId: sessionId,
           project: memoryProject,
+          // A voice-delegated action (persist:false) already had its spoken turn's
+          // memory lookup, and Sir is waiting in silence; a slow embedding falls
+          // back to keyword matching instead of delaying the action.
+          ...(parsed.data.persist === false ? { semanticBudgetMs: VOICE_SEMANTIC_BUDGET_MS } : {}),
         });
     const memoryContext = memoryContextFromDecision(memoryRetrieval);
     // This is the same bounded projection persisted with the answer. Raw

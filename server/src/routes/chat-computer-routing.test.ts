@@ -87,6 +87,24 @@ describe("chat computer execution routing", () => {
       .toMatchObject({ status: "skipped" });
   });
 
+  it("bounds the memory lookup for a voice-delegated action but not for typed chat", async () => {
+    const fixture = setup();
+    await request(fixture.app).post("/api/chat").send({
+      text: "Summarize what we decided about the thesis chapter plan",
+      persist: false,
+    }).expect(200);
+    await vi.waitFor(() => expect(fixture.calls).toHaveLength(1));
+    expect(fixture.memorySearch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ semanticBudgetMs: 250 }));
+
+    fixture.memorySearch.mockClear();
+    await request(fixture.app).post("/api/chat").send({
+      text: "Summarize what we decided about the thesis chapter plan",
+    }).expect(200);
+    await vi.waitFor(() => expect(fixture.calls).toHaveLength(2));
+    expect(fixture.memorySearch).toHaveBeenCalledTimes(1);
+    expect((fixture.memorySearch.mock.calls[0] as unknown[])[1]).not.toHaveProperty("semanticBudgetMs");
+  });
+
   it("does not fast-route a compound research request", async () => {
     const fixture = setup();
     await request(fixture.app).post("/api/chat").send({

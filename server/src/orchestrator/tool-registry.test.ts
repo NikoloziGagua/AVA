@@ -66,6 +66,21 @@ describe("buildToolRegistry", () => {
     await expect(malformed.dispatch({ id: "c3", name: "a", args: {} })).resolves.not.toHaveProperty("saved");
   });
 
+  it("passes only authoritative room post receipts and drops them on failure", async () => {
+    const roomPost = { schemaVersion: 1 as const, messageId: 42, roomName: "klevar", correlationId: "run_1", postedAt: 100 };
+    const ok = buildToolRegistry({
+      tools: [defOf("room_post", vi.fn().mockResolvedValue({ text: "posted", ok: true, roomPost }))],
+      ctx: { runId: "run_1" },
+    });
+    await expect(ok.dispatch({ id: "c1", name: "room_post", args: {} })).resolves.toMatchObject({ roomPost });
+
+    const failed = buildToolRegistry({
+      tools: [defOf("room_post", vi.fn().mockResolvedValue({ text: "failed", ok: false, roomPost }))],
+      ctx: { runId: "run_1" },
+    });
+    await expect(failed.dispatch({ id: "c2", name: "room_post", args: {} })).resolves.not.toHaveProperty("roomPost");
+  });
+
   it("preserves only valid structured verification evidence", async () => {
     const verification = {
       state: "verified" as const,

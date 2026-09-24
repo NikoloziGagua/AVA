@@ -21,6 +21,7 @@ import {
   recoverFrame,
   speechDismissedFrame,
   mergeSavedItems,
+  mergeRoomPosts,
   transcriptPendingFrame,
   acceptedTranscriptFrame,
   loadRealtimeVadConfig,
@@ -668,6 +669,15 @@ describe("voice barge-in + PTT recovery control frames", () => {
     expect(mergeSavedItems({ schemaVersion: 1, items: [note] }, undefined)).toEqual({ schemaVersion: 1, items: [note] });
   });
 
+  it("mergeRoomPosts keeps authoritative voice-action receipts bounded and deduped", () => {
+    const first = { schemaVersion: 1 as const, messageId: 10, roomName: "klevar", correlationId: "run_1", postedAt: 100 };
+    const second = { schemaVersion: 1 as const, messageId: 11, roomName: "klevar", correlationId: "run_2", postedAt: 200 };
+    expect(mergeRoomPosts(null, { schemaVersion: 1, items: [first] })).toEqual({ schemaVersion: 1, items: [first] });
+    expect(mergeRoomPosts({ schemaVersion: 1, items: [first] }, { schemaVersion: 1, items: [first, second] }))
+      .toEqual({ schemaVersion: 1, items: [first, second] });
+    expect(mergeRoomPosts(null, null)).toBeNull();
+  });
+
   it("recoverFrame carries the drop reason so the client re-arms listening", () => {
     expect(JSON.parse(recoverFrame("empty"))).toEqual({ type: "ava.recover", reason: "empty" });
   });
@@ -955,7 +965,18 @@ describe("voice conversation binding ingress", () => {
 
   it.each([false, true])("stamps only accepted stored user turns and keeps delegated results in the canonical session (Hume=%s)", async (hume) => {
     const foreign = createSession(db, { origin: "human" });
-    const runAction = vi.fn(async (_sessionId: string | null) => ({ text: "Action finished.", sessionId: foreign.id }));
+    const roomPost = {
+      schemaVersion: 1 as const,
+      messageId: 47,
+      roomName: "klevar",
+      correlationId: "voice-room-post-1",
+      postedAt: 25_000,
+    };
+    const runAction = vi.fn(async (_sessionId: string | null) => ({
+      text: "Action finished.",
+      sessionId: foreign.id,
+      roomPosts: { schemaVersion: 1 as const, items: [roomPost] },
+    }));
     const { client, upstream } = await connect("new=1&mode=transcribe", { hume, runAction });
     await open(upstream);
     const canonical = hello(client).sessionId as string;
@@ -989,6 +1010,13 @@ describe("voice conversation binding ingress", () => {
       ? { type: "tool_call", tool_call_id: "tool-1", name: "do_on_computer", parameters: '{"task":"open downloads"}' }
       : { type: "response.output_item.done", item: { type: "function_call", call_id: "tool-1", name: "do_on_computer", arguments: '{"task":"open downloads"}' } });
     await settle();
+    // OpenAI speaks the delegated result in a subsequent response, while Hume
+    // stores the delegated result itself. Both must persist the same bounded
+    // room-post receipt in the canonical shared conversation.
+    if (!hume) {
+      assistant();
+      await settle();
+    }
     expect(runAction).toHaveBeenCalledTimes(1);
     expect(runAction.mock.calls[0]?.[0]).toBe(canonical);
     expect(frames(client).filter((frame) => frame.type === "ava.session").every((frame) => frame.sessionId === canonical && frame.binding.sessionId === canonical)).toBe(true);
@@ -996,6 +1024,10 @@ describe("voice conversation binding ingress", () => {
     expect(activity(foreign.id)).toBeNull();
     expect(listMessages(db, foreign.id)).toEqual([]);
     expect(listMessages(db, canonical).filter((message) => message.role === "user")).toHaveLength(1);
+    expect(listMessages(db, canonical).some((message) => (
+      message.role === "assistant"
+      && message.metadata?.roomPosts?.items.some((item) => item.correlationId === roomPost.correlationId)
+    ))).toBe(true);
     expect(sessionCount()).toBe(2);
   });
 });

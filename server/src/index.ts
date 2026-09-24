@@ -27,6 +27,7 @@ import { rulesRoutes } from "./routes/rules.js";
 import { approvalsRoutes } from "./routes/approvals.js";
 import { voiceRoutes } from "./routes/voice.js";
 import { voiceEngineRoutes } from "./routes/voice-engine.js";
+import { agentroomRoutes } from "./routes/agentroom.js";
 import { chipsRoutes } from "./routes/chips.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
@@ -111,7 +112,13 @@ import { recordMistake } from "./self/friction.js";
 import { createIntent, getIntent, listIntents, failStaleIntents } from "./self/intents.js";
 import { createDiscussion, getDiscussion, listDiscussions, failStaleDiscussions } from "./state/discussions.js";
 import { runDiscussion } from "./self/discuss.js";
-import { appendMessage, sanitizeMessageSavedItems, type MessageSavedItems } from "./state/messages.js";
+import {
+  appendMessage,
+  sanitizeMessageRoomPosts,
+  sanitizeMessageSavedItems,
+  type MessageRoomPosts,
+  type MessageSavedItems,
+} from "./state/messages.js";
 import { selfRoutes } from "./routes/self.js";
 import { StrategyRoomStore } from "./strategy/store.js";
 import { StrategyRoomCoordinator } from "./strategy/coordinator.js";
@@ -120,6 +127,8 @@ import { loadUfoExperimentConfig, UfoExperimentService } from "./ufo/experiment.
 import { ufoExperimentRoutes } from "./routes/ufo-experiment.js";
 import { getSelfWorkerSelection } from "./self/worker-selection.js";
 import { buildClaudeSelfWorker, buildCodexSelfWorker, buildSelfWorkerRegistry } from "./self/workers.js";
+import { AgentroomClient } from "./agentroom/client.js";
+import { AgentroomService } from "./agentroom/service.js";
 
 function loadRuntimeBuildId(): string {
   try {
@@ -141,6 +150,10 @@ const cfg = loadConfig();
 const serverLock = acquireServerLock(join(cfg.dataDir, "ava-server.lock"));
 const log = await buildLogger({ level: cfg.logLevel, dir: cfg.logsDir });
 const db = openDb(cfg.dbPath);
+const agentroomService = new AgentroomService(db, new AgentroomClient({
+  hubUrl: cfg.agentroomAvaHubUrl,
+  token: cfg.agentroomAvaToken,
+}));
 let voiceInternalToken = "";
 let watchInternalToken = "";
 const codexDispatcher = buildCodexDispatcher({
@@ -688,6 +701,7 @@ const agentDeps: AgentDeps = {
   memoryIndex,
   memoryAutoCapture,
   dataDir: cfg.dataDir,
+  agentroom: agentroomService,
   getChrome,
   pushDeliver,
   notifyDone,
@@ -841,6 +855,7 @@ app.use("/api", voiceRoutes({
 }));
 // Get/set how Ava's voice is produced (openai | hume).
 app.use("/api/voice/engine", voiceEngineRoutes(db, requireToken(db)));
+app.use("/api/agentroom", agentroomRoutes(requireToken(db), agentroomService));
 // API misses must stay JSON. Without this, a stale/mismatched frontend receives
 // Express's HTML 404 and can only report an opaque JSON parse error.
 app.use("/api", apiNotFound());
@@ -959,7 +974,7 @@ async function runVoiceAction(
   onStep?: (tool: string, args: unknown) => void,
   signal?: AbortSignal,
   observabilityContext?: ObservabilityParentContext,
-): Promise<{ text: string; sessionId: string | null; savedItems?: MessageSavedItems | null }> {
+): Promise<{ text: string; sessionId: string | null; savedItems?: MessageSavedItems | null; roomPosts?: MessageRoomPosts | null }> {
   if (!voiceInternalToken) throw new Error("voice loopback authentication is not ready");
   const base = `http://127.0.0.1:${cfg.port}`;
   const auth = { authorization: `Bearer ${voiceInternalToken}` };
@@ -1024,6 +1039,8 @@ async function runVoiceAction(
     let terminal: "completed" | "failed" | "cancelled" | null = null;
     // Cumulative: each saved_items event replaces the previous one.
     let savedItems: MessageSavedItems | null = null;
+    // Cumulative: each room_posts event replaces the previous one.
+    let roomPosts: MessageRoomPosts | null = null;
     while (!stop) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -1041,6 +1058,7 @@ async function runVoiceAction(
           }
           else if (curEvent === "tool_call") { try { const p = JSON.parse(data) as { tool: string; args?: unknown }; onStep?.(p.tool, p.args); } catch { /* */ } }
           else if (curEvent === "saved_items") { try { savedItems = sanitizeMessageSavedItems(JSON.parse(data)) ?? savedItems; } catch { /* */ } }
+          else if (curEvent === "room_posts") { try { roomPosts = sanitizeMessageRoomPosts(JSON.parse(data)) ?? roomPosts; } catch { /* */ } }
           else if (curEvent === "error") {
             try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ }
             terminal = "failed";
@@ -1064,12 +1082,13 @@ async function runVoiceAction(
         text: finalText || "That didn't work, Sir — the action stream failed without an error message.",
         sessionId: sid,
         savedItems,
+        roomPosts,
       };
     }
     if (terminal !== "completed" || !finalText.trim()) {
       throw new Error("action ended without a final, verifiable result");
     }
-    return { text: finalText, sessionId: sid, savedItems };
+    return { text: finalText, sessionId: sid, savedItems, roomPosts };
   } catch (e) {
     if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) {
       throw cancelled();

@@ -15,6 +15,8 @@ const ENV_KEYS = [
   "CHROME_CDP_URL",
   "AVA_REPO_ROOT",
   "SELF_WORKER_TIMEOUT_MINUTES",
+  "AGENTROOM_AVA_HUB_URL",
+  "AGENTROOM_AVA_TOKEN",
 ] as const;
 const originalEnv = Object.fromEntries(
   ENV_KEYS.map((key) => [key, process.env[key]]),
@@ -67,6 +69,15 @@ describe("loadConfig path stability", () => {
   it("uses a bounded one-hour Self worker budget by default", () => {
     clearPathEnv();
     expect(loadConfig().selfWorkerTimeoutMs).toBe(60 * 60_000);
+  });
+
+  it("loads bounded agentroom credentials without enabling the feature", () => {
+    clearPathEnv();
+    process.env.AGENTROOM_AVA_HUB_URL = "https://room.example/";
+    process.env.AGENTROOM_AVA_TOKEN = " ava-token ";
+    const cfg = loadConfig();
+    expect(cfg.agentroomAvaHubUrl).toBe("https://room.example");
+    expect(cfg.agentroomAvaToken).toBe("ava-token");
   });
 });
 

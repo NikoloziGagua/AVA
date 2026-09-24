@@ -7,6 +7,7 @@ import {
   listMessages,
   listMessagesAfterId,
   sanitizeMessageSavedItems,
+  sanitizeMessageRoomPosts,
 } from "./messages.js";
 
 describe("messages repo", () => {
@@ -161,6 +162,21 @@ describe("messages repo", () => {
     }), stored.id);
     expect(listMessages(db, sessionId)[0]!.metadata).toEqual({});
   });
+
+  it("round-trips only bounded sanitized room post receipts", () => {
+    const roomPosts = {
+      schemaVersion: 1 as const,
+      items: [{ schemaVersion: 1 as const, messageId: 47, roomName: "klevar", correlationId: "run:abc_123", postedAt: 1234 }],
+    };
+    const stored = appendMessage(db, { sessionId, role: "assistant", content: "Posted.", metadata: { roomPosts } });
+    expect(stored.metadata?.roomPosts).toEqual(roomPosts);
+    expect(listMessages(db, sessionId)[0]?.metadata?.roomPosts).toEqual(roomPosts);
+
+    db.prepare("UPDATE messages SET metadata = ? WHERE id = ?").run(JSON.stringify({
+      roomPosts: { schemaVersion: 1, items: [{ schemaVersion: 1, messageId: 48, roomName: "token=secret-value", correlationId: "../bad", postedAt: 1235 }] },
+    }), stored.id);
+    expect(listMessages(db, sessionId)[0]?.metadata).toEqual({});
+  });
 });
 
 describe("sanitizeMessageSavedItems", () => {
@@ -187,5 +203,26 @@ describe("sanitizeMessageSavedItems", () => {
     expect(sanitizeMessageSavedItems({ schemaVersion: 1, items: [] })).toBeNull();
     expect(sanitizeMessageSavedItems({ schemaVersion: 1, items: [{ kind: "note", id: "n", title: "   " }] })).toBeNull();
     expect(sanitizeMessageSavedItems({ schemaVersion: 1, items: [{ kind: "note", id: "", title: "t" }] })).toBeNull();
+  });
+});
+
+describe("sanitizeMessageRoomPosts", () => {
+  it("dedupes, caps at three and scrubs room labels", () => {
+    const items = Array.from({ length: 5 }, (_, i) => ({
+      schemaVersion: 1, messageId: i + 1,
+      roomName: i === 0 ? "dev token=unsafe-value" : "dev",
+      correlationId: `run_${i}`,
+      postedAt: i + 100,
+    }));
+    items.splice(1, 0, items[0]!);
+    const receipt = sanitizeMessageRoomPosts({ schemaVersion: 1, items });
+    expect(receipt?.items).toHaveLength(3);
+    expect(receipt?.items[0]?.roomName).not.toContain("unsafe-value");
+  });
+
+  it("rejects malformed or empty receipts", () => {
+    expect(sanitizeMessageRoomPosts(null)).toBeNull();
+    expect(sanitizeMessageRoomPosts({ schemaVersion: 1, items: [] })).toBeNull();
+    expect(sanitizeMessageRoomPosts({ schemaVersion: 1, items: [{ schemaVersion: 1, messageId: 0, roomName: "x", correlationId: "run", postedAt: 1 }] })).toBeNull();
   });
 });

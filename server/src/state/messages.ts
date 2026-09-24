@@ -69,6 +69,19 @@ export type MessageSavedItems = {
   items: MessageSavedItem[];
 };
 
+export type MessageRoomPostReceipt = {
+  schemaVersion: 1;
+  messageId: number;
+  roomName: string;
+  correlationId: string;
+  postedAt: number;
+};
+
+export type MessageRoomPosts = {
+  schemaVersion: 1;
+  items: MessageRoomPostReceipt[];
+};
+
 export type MessageMetadata = {
   visualMessages?: MessageVisualReference[];
   visualContext?: MessageVisualContext;
@@ -82,6 +95,8 @@ export type MessageMetadata = {
   memoryContext?: MessageMemoryContext;
   /** What AVA saved while producing this reply. */
   savedItems?: MessageSavedItems;
+  /** Authoritative agentroom message receipts produced during this reply. */
+  roomPosts?: MessageRoomPosts;
 };
 
 type MessageRow = Omit<Message, "metadata"> & { metadata: string };
@@ -155,6 +170,7 @@ export function sanitizeMessageMemoryContext(value: unknown): MessageMemoryConte
 const SAVED_KINDS = new Set<MessageSavedItemKind>(["note", "idea", "reminder", "watch", "memory"]);
 const SAVED_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/;
 export const MAX_SAVED_ITEMS = 6;
+export const MAX_ROOM_POSTS = 3;
 
 /** Validates one saved item; null when it cannot be shown truthfully. */
 export function sanitizeMessageSavedItem(value: unknown): MessageSavedItem | null {
@@ -180,6 +196,38 @@ export function sanitizeMessageSavedItems(value: unknown): MessageSavedItems | n
     seen.add(`${item.kind}:${item.id}`);
     items.push(item);
     if (items.length >= MAX_SAVED_ITEMS) break;
+  }
+  return items.length ? { schemaVersion: 1, items } : null;
+}
+
+/** Validate one successful agentroom post without retaining its message body. */
+export function sanitizeMessageRoomPostReceipt(value: unknown): MessageRoomPostReceipt | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  const messageId = Number(item.messageId);
+  const postedAt = Number(item.postedAt);
+  const roomName = cleanMemoryText(item.roomName, 80);
+  const correlationId = typeof item.correlationId === "string" && /^[A-Za-z0-9:_-]{1,160}$/.test(item.correlationId)
+    ? item.correlationId
+    : "";
+  if (item.schemaVersion !== 1 || !Number.isSafeInteger(messageId) || messageId <= 0 ||
+      !Number.isSafeInteger(postedAt) || postedAt <= 0 || !roomName || !correlationId) return null;
+  return { schemaVersion: 1, messageId, roomName, correlationId, postedAt };
+}
+
+/** Re-scrub room receipts on both persistence and reload. */
+export function sanitizeMessageRoomPosts(value: unknown): MessageRoomPosts | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.schemaVersion !== 1 || !Array.isArray(candidate.items)) return null;
+  const items: MessageRoomPostReceipt[] = [];
+  const seen = new Set<number>();
+  for (const raw of candidate.items) {
+    const receipt = sanitizeMessageRoomPostReceipt(raw);
+    if (!receipt || seen.has(receipt.messageId)) continue;
+    seen.add(receipt.messageId);
+    items.push(receipt);
+    if (items.length >= MAX_ROOM_POSTS) break;
   }
   return items.length ? { schemaVersion: 1, items } : null;
 }
@@ -222,6 +270,8 @@ function parseMetadata(raw: string): MessageMetadata {
     if (memoryContext) metadata.memoryContext = memoryContext;
     const savedItems = sanitizeMessageSavedItems(value.savedItems);
     if (savedItems) metadata.savedItems = savedItems;
+    const roomPosts = sanitizeMessageRoomPosts(value.roomPosts);
+    if (roomPosts) metadata.roomPosts = roomPosts;
     return metadata;
   } catch { return {}; }
 }
@@ -247,6 +297,11 @@ export function appendMessage(
     const savedItems = sanitizeMessageSavedItems(metadata.savedItems);
     if (savedItems) metadata.savedItems = savedItems;
     else delete metadata.savedItems;
+  }
+  if (metadata.roomPosts) {
+    const roomPosts = sanitizeMessageRoomPosts(metadata.roomPosts);
+    if (roomPosts) metadata.roomPosts = roomPosts;
+    else delete metadata.roomPosts;
   }
   const info = db
     .prepare(

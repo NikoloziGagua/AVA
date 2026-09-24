@@ -4,7 +4,7 @@ import type { LLMProvider, Message, ProviderUsage, ToolCall, ToolResult } from "
 import type { ReasoningEffort } from "./reasoning.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import type { ToolVerificationEvidence } from "./verification-evidence.js";
-import type { MessageSavedItem } from "../state/messages.js";
+import type { MessageRoomPostReceipt, MessageSavedItem } from "../state/messages.js";
 import type { Chrome } from "../tools/chrome.js";
 import type { PidfileRegistry } from "../process/pidfile.js";
 import {
@@ -38,6 +38,7 @@ export type AgentEvent =
       result: string;
       verification?: ToolVerificationEvidence;
       saved?: MessageSavedItem;
+      roomPost?: MessageRoomPostReceipt;
     } }
   | { kind: "final"; payload: { text: string } }
   | { kind: "error"; payload: { message: string } }
@@ -244,6 +245,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
           result: result.output,
           ...(result.verification ? { verification: result.verification } : {}),
           ...(result.saved && !result.is_error ? { saved: result.saved } : {}),
+          ...(result.roomPost && !result.is_error ? { roomPost: result.roomPost } : {}),
         },
       });
       messages.push({ role: "tool", content: result });

@@ -1,5 +1,5 @@
 import type { ToolVerificationEvidence } from "../verification-evidence.js";
-import type { MessageSavedItem } from "../../state/messages.js";
+import type { MessageRoomPostReceipt, MessageSavedItem } from "../../state/messages.js";
 
 export type ToolDefinition = {
   name: string;
@@ -27,6 +27,8 @@ export type ToolResult = {
   verification?: ToolVerificationEvidence;
   /** AVA-local: what this call durably saved (shown as a Saved card). Never sent to the model. */
   saved?: MessageSavedItem;
+  /** AVA-local authoritative agentroom post evidence. Never sent to the model. */
+  roomPost?: MessageRoomPostReceipt;
 };
 
 export type Message =

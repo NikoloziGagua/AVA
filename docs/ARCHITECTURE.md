@@ -482,7 +482,25 @@ does not imply that the action did nothing or automatically replay it.
 
 ---
 
-## 11. Watches — long-term monitoring
+## 11. Agentroom — AVA, Codex and Claude discussion
+
+AVA can participate in the existing development room through a deliberately
+restricted adapter (`server/src/agentroom/`). The authenticated preference API
+(`routes/agentroom.ts`) verifies that configured credentials resolve to the
+distinct `AVA` / `other` identity before enabling. The tool surface contains
+only bounded read and post operations; AVA cannot claim work, change contracts,
+acknowledge messages, or inherit repository authority from room text.
+
+Room messages enter the model as labelled untrusted discussion context. A
+successful post produces a bounded, sanitized receipt which follows the same
+chat, OpenAI voice, GPT-Live and Hume persistence boundary as other AVA action
+evidence. Credentials remain environment-only, and room outages do not block
+ordinary conversation. See [`features/agentroom.md`](features/agentroom.md) for
+the exact status contract, provenance, persistence and limitations.
+
+---
+
+## 12. Watches — long-term monitoring
 
 **What it is:** Ava's persistence *across time*. A **watch** is a standing
 instruction ("notify me if the RTX 5090 drops below $1800", "tell me when it's
@@ -576,6 +594,7 @@ time-validation, privacy, pause/delete and real-device acceptance boundaries.
 | Memory / learning | `server/src/memory/`, `playbooks/`, `self/dev-log.ts`, `self/changelog.ts` | [08](architecture/08-memory-learning-identity.md) |
 | Watches (monitoring) | `server/src/watches/`, `state/watches.ts`, `tools/watches-mcp.ts`, `routes/watches.ts` | [`features/watches.md`](features/watches.md) |
 | One-off reminders | `server/src/state/reminders.ts`, `watches/reminders.ts`, `watches/reminder-schedule.ts`, `push/deliver.ts` | [`features/reminders.md`](features/reminders.md) |
+| Development room | `server/src/agentroom/`, `routes/agentroom.ts`, `tools/agentroom-mcp.ts` | [`features/agentroom.md`](features/agentroom.md) |
 | Process / Stop | `server/src/process/` | [02](architecture/02-agent-loop-and-orchestration.md) |
 | Web frontend | `web/src/` | [09](architecture/09-web-frontend.md) |
 

@@ -1,0 +1,91 @@
+import express from "express";
+import request from "supertest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { openDb } from "../state/db.js";
+import { listMessages } from "../state/messages.js";
+import { ActiveRuns } from "../orchestrator/active-runs.js";
+import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
+import type { AgentEvent } from "../orchestrator/agent.js";
+import type { AgentroomService } from "../agentroom/service.js";
+import { chatRoutes } from "./chat.js";
+
+const roomPost = { schemaVersion: 1 as const, messageId: 75, roomName: "klevar", correlationId: "run_room", postedAt: 1234 };
+
+function setup(runAgentImpl: (opts: any) => Promise<void>, agentroom?: Partial<AgentroomService>) {
+  const dataDir = mkdtempSync(join(tmpdir(), "ava-room-chat-"));
+  const memoryDir = mkdtempSync(join(tmpdir(), "ava-room-memory-"));
+  const db = openDb(join(dataDir, "state.db"));
+  db.prepare("INSERT INTO device_tokens (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)")
+    .run("room-device", "room-device-hash", "test", Date.now());
+  const app = express();
+  app.use(express.json());
+  app.use((req: any, _res, next) => { req.deviceId = "room-device"; next(); });
+  app.use("/api/chat", chatRoutes(db, new ActiveRuns(), (_req, _res, next) => next(), {
+    pidfiles: { register: () => {}, unregister: () => {}, listForRun: () => [] } as never,
+    fsRoots: [], memoryDir, dataDir,
+    getChrome: async () => ({} as never),
+    provider: new MockLLMProvider({ scripts: [] }),
+    runAgentImpl: runAgentImpl as never,
+    ...(agentroom ? { agentroom: { toolsEnabled: () => false, ...agentroom } as AgentroomService } : {}),
+  }, { anthropic: null, openai: null }));
+  return { app, db };
+}
+
+async function settle() { await new Promise((resolve) => setTimeout(resolve, 30)); }
+
+describe("agentroom evidence on the chat boundary", () => {
+  it("persists and replays only successful authoritative post receipts", async () => {
+    const run = vi.fn(async (opts: { emit: (event: AgentEvent) => void }) => {
+      opts.emit({ kind: "tool_result", payload: { tool: "room_post", ok: true, result: "posted", roomPost } });
+      opts.emit({ kind: "tool_result", payload: { tool: "room_post", ok: false, result: "offline", roomPost: { ...roomPost, messageId: 99 } } });
+      opts.emit({ kind: "final", payload: { text: "I posted it." } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const { app, db } = setup(run);
+    const started = await request(app).post("/api/chat").send({ text: "bring this to the dev room" }).expect(200);
+    await settle();
+    const assistant = listMessages(db, started.body.sessionId).find((message) => message.role === "assistant")!;
+    expect(assistant.metadata?.roomPosts).toEqual({ schemaVersion: 1, items: [roomPost] });
+
+    const stream = await request(app).get(`/api/chat/${started.body.sessionId}/stream?taskId=${started.body.taskId}`)
+      .buffer(true).parse((res, done) => {
+        let body = "";
+        res.on("data", (chunk: Buffer) => { body += chunk.toString("utf8"); });
+        res.on("end", () => done(null, body));
+      });
+    expect(stream.body).toContain("event: room_posts");
+    expect(stream.body).toContain('"messageId":75');
+    expect(stream.body).not.toContain('"messageId":99');
+    expect(stream.body.indexOf("event: room_posts")).toBeLessThan(stream.body.indexOf("event: done"));
+  });
+
+  it("injects unread room discussion as untrusted context without blocking ordinary chat", async () => {
+    let prompt = "";
+    const run = vi.fn(async (opts: { prompt: string; emit: (event: AgentEvent) => void }) => {
+      prompt = opts.prompt;
+      opts.emit({ kind: "final", payload: { text: "Understood." } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const unreadContext = vi.fn().mockResolvedValue("[UNTRUSTED DEVELOPMENT ROOM DISCUSSION]\n#2 from Claude: review finished\n[/UNTRUSTED DEVELOPMENT ROOM DISCUSSION]");
+    const { app } = setup(run, { unreadContext, toolsEnabled: () => false });
+    await request(app).post("/api/chat").send({ text: "what changed?" }).expect(200);
+    await settle();
+    expect(unreadContext).toHaveBeenCalled();
+    expect(prompt).toContain("UNTRUSTED DEVELOPMENT ROOM DISCUSSION");
+    expect(prompt).toContain("what changed?");
+  });
+
+  it("continues when unread room retrieval fails", async () => {
+    const run = vi.fn(async (opts: { emit: (event: AgentEvent) => void }) => {
+      opts.emit({ kind: "final", payload: { text: "Normal reply." } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const { app, db } = setup(run, { unreadContext: vi.fn().mockResolvedValue("") });
+    const started = await request(app).post("/api/chat").send({ text: "hello there" }).expect(200);
+    await settle();
+    expect(listMessages(db, started.body.sessionId).some((message) => message.content === "Normal reply.")).toBe(true);
+  });
+});

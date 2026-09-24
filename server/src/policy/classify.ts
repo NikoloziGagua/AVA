@@ -21,6 +21,7 @@ const READ_ONLY_TOOLS = new Set([
   "ufo_experiment_status",
   "ufo_experiment_observe",
   "automation_status",
+  "room_read",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -90,6 +91,7 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   // Background read-only repo consult (spawns a local `claude -p` with no write
   // permissions). Instant — queueing a consult is not a risky act.
   if (tool === "discuss_with_claude") return { tier: "low", reason: "read-only background consult" };
+  if (tool === "room_post") return { tier: "low", reason: "Niko-authorized discussion through AVA's bounded room identity" };
   if (tool === "strategy_room_open") return { tier: "low", reason: "bounded read-only Strategy Room discussion" };
   if (tool === "visual_explanation_create" || tool === "research_visual_create") {
     return { tier: "low", reason: "validated local visual revision" };

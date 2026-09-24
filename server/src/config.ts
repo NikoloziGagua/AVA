@@ -53,6 +53,9 @@ export type Config = {
   activepiecesApprovedActionPlanWebhookUrl: string | null;
   activepiecesWebhookToken: string | null;
   activepiecesTimeoutMs: number;
+  /** Discussion-only AVA identity in the development agentroom. */
+  agentroomAvaHubUrl: string | null;
+  agentroomAvaToken: string | null;
 };
 
 const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
@@ -158,5 +161,7 @@ export function loadConfig(): Config {
     activepiecesWebhookToken: process.env.ACTIVEPIECES_WEBHOOK_TOKEN?.trim() || null,
     activepiecesTimeoutMs: Math.max(5_000, Math.min(30_000,
       Math.round(Number(process.env.ACTIVEPIECES_TIMEOUT_SECONDS ?? 20) * 1_000) || 20_000)),
+    agentroomAvaHubUrl: process.env.AGENTROOM_AVA_HUB_URL?.trim().replace(/\/$/, "") || null,
+    agentroomAvaToken: process.env.AGENTROOM_AVA_TOKEN?.trim() || null,
   };
 }

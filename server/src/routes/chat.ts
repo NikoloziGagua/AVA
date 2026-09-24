@@ -12,10 +12,13 @@ import {
   listMessages,
   listMessagesAfterId,
   MAX_SAVED_ITEMS,
+  MAX_ROOM_POSTS,
   type Message,
   type MessageMemoryContext,
   type MessageSavedItem,
   type MessageSavedItems,
+  type MessageRoomPostReceipt,
+  type MessageRoomPosts,
   type MessageVisualContext,
   type MessageVisualReference,
 } from "../state/messages.js";
@@ -65,6 +68,8 @@ import { buildShopifyTools } from "../tools/shopify-mcp.js";
 import { buildPlacesTools } from "../tools/places-mcp.js";
 import { buildUfoExperimentTools } from "../tools/ufo-experiment-mcp.js";
 import { buildAutomationTools } from "../tools/automations-mcp.js";
+import { buildAgentroomTools } from "../tools/agentroom-mcp.js";
+import type { AgentroomService } from "../agentroom/service.js";
 import type { AutomationPlaybookService } from "../automations/playbooks.js";
 import type { GeneratedPlaybookService } from "../automations/generated-playbooks.js";
 import type { UfoExperimentService } from "../ufo/experiment.js";
@@ -238,6 +243,8 @@ export type AgentDeps = {
   ufoExperiment?: UfoExperimentService;
   automationService?: AutomationPlaybookService;
   generatedPlaybooks?: GeneratedPlaybookService;
+  /** Discussion-only development-room membership. */
+  agentroom?: AgentroomService;
 };
 
 export type Metered = { anthropic: Anthropic | null; openai: OpenAI | null };
@@ -261,6 +268,7 @@ export function chatRoutes(
   const recentFinals = new Map<string, { taskId: string; text: string; expiresAt: number }>();
   const recentMemoryContexts = new Map<string, { taskId: string; context: MessageMemoryContext; expiresAt: number }>();
   const recentSavedItems = new Map<string, { taskId: string; saved: MessageSavedItems; expiresAt: number }>();
+  const recentRoomPosts = new Map<string, { taskId: string; roomPosts: MessageRoomPosts; expiresAt: number }>();
   const RECEIPT_REPLAY_TTL_MS = 5 * 60_000;
   const pruneRecentReceipts = (now = Date.now()) => {
     for (const [sid, value] of recentReceipts) {
@@ -274,6 +282,9 @@ export function chatRoutes(
     }
     for (const [sid, value] of recentSavedItems) {
       if (value.expiresAt <= now) recentSavedItems.delete(sid);
+    }
+    for (const [sid, value] of recentRoomPosts) {
+      if (value.expiresAt <= now) recentRoomPosts.delete(sid);
     }
   };
 
@@ -423,6 +434,7 @@ export function chatRoutes(
     recentReceipts.delete(sessionId);
     recentMemoryContexts.delete(sessionId);
     recentSavedItems.delete(sessionId);
+    recentRoomPosts.delete(sessionId);
 
     const full = getSessionFull(db, sessionId);
     const recent = full?.summary_through_message_id
@@ -523,6 +535,7 @@ export function chatRoutes(
       try { return detectProject(latestUserText, loadProjectIndex(agentDeps.memoryDir))?.slug ?? null; }
       catch { return null; }
     })();
+    const roomContextPromise = agentDeps.agentroom?.unreadContext(abort.signal) ?? Promise.resolve("");
     const memoryRetrieval: AutomaticMemoryDecision = computerExecutionPlan
       ? {
           channel: "chat",
@@ -564,9 +577,11 @@ export function chatRoutes(
         `Use automation_run_playbook with playbookId ${generatedPlaybook.playbookId}. ` +
         `Do not substitute the ordinary app tool unless the approved playbook reports unavailable.\n[/APPROVED ACTIVEPIECES PLAYBOOK]\n\n`
       : "";
+    const roomContext = await roomContextPromise;
     const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix + generatedPlaybookPrefix
       + (resolvedVisualContext ? `${resolvedVisualContext.prompt}\n\n` : "")
       + (memoryRetrieval.prompt ? `${memoryRetrieval.prompt}\n\n` : "")
+      + (roomContext ? `${roomContext}\n\n` : "")
       + latestUserText;
     const reasoningEffort = agentDeps.provider!.name === "openai"
       ? (parsed.data.voice ? "none" : mapReasoning(getReasoningLevel(db), mode))
@@ -667,6 +682,10 @@ export function chatRoutes(
       const runSavedItems = new Map<string, MessageSavedItem>();
       const savedReceipt = (): MessageSavedItems | null => runSavedItems.size
         ? { schemaVersion: 1, items: [...runSavedItems.values()] }
+        : null;
+      const runRoomPosts = new Map<number, MessageRoomPostReceipt>();
+      const roomPostsReceipt = (): MessageRoomPosts | null => runRoomPosts.size
+        ? { schemaVersion: 1, items: [...runRoomPosts.values()] }
         : null;
       const toolStartedAt = new Map<string, number[]>();
       let terminalReceiptPublished = false;
@@ -838,6 +857,13 @@ export function chatRoutes(
             recentSavedItems.set(sid, { taskId: runId, saved, expiresAt: Date.now() + RECEIPT_REPLAY_TTL_MS });
           }
         }
+        if (e.kind === "tool_result" && e.payload.ok && e.payload.roomPost &&
+            !runRoomPosts.has(e.payload.roomPost.messageId) && runRoomPosts.size < MAX_ROOM_POSTS) {
+          runRoomPosts.set(e.payload.roomPost.messageId, e.payload.roomPost);
+          const roomPosts = roomPostsReceipt()!;
+          buffer.append({ kind: "room_posts", payload: roomPosts });
+          recentRoomPosts.set(sid, { taskId: runId, roomPosts, expiresAt: Date.now() + RECEIPT_REPLAY_TTL_MS });
+        }
         // Approval is a live lifecycle boundary, not a terminal outcome. Emit a
         // replaceable snapshot after the approval event so the card and receipt
         // describe the same current state. A later snapshot supersedes it.
@@ -851,6 +877,7 @@ export function chatRoutes(
           if (e.kind === "final") {
             const visualMessages = [...runVisualReferences.values()];
             const savedItems = savedReceipt();
+            const roomPosts = roomPostsReceipt();
             const storedAssistant = appendMessage(db, {
               sessionId: sid,
               role: "assistant",
@@ -859,6 +886,7 @@ export function chatRoutes(
                 memoryContext,
                 ...(visualMessages.length ? { visualMessages } : {}),
                 ...(savedItems ? { savedItems } : {}),
+                ...(roomPosts ? { roomPosts } : {}),
               },
             });
             persistedAssistantMessageId = storedAssistant.id;
@@ -876,6 +904,7 @@ export function chatRoutes(
                   : {}),
                 // Something may have been saved before the run failed; still show it.
                 ...(savedReceipt() ? { savedItems: savedReceipt()! } : {}),
+                ...(roomPostsReceipt() ? { roomPosts: roomPostsReceipt()! } : {}),
               },
             });
           }
@@ -928,6 +957,9 @@ export function chatRoutes(
           : [];
         const automationTools = agentDeps.automationService
           ? buildAutomationTools(agentDeps.automationService, agentDeps.generatedPlaybooks)
+          : [];
+        const agentroomTools = agentDeps.agentroom
+          ? buildAgentroomTools({ service: agentDeps.agentroom, sessionId: sid })
           : [];
         // Discuss-with-Claude is available in BOTH modes (Sir may ask by voice):
         // it queues a background, read-only consult bound to THIS session (sid),
@@ -987,6 +1019,7 @@ export function chatRoutes(
             ...visualExplanationTools,
             ...ufoExperimentTools,
             ...automationTools,
+            ...agentroomTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
             // Standing background checks ("notify me if/when …") — the
             // scheduler re-runs them; Ava just registers/lists/deletes here.
@@ -1015,6 +1048,7 @@ export function chatRoutes(
             ...visualExplanationTools,
             ...ufoExperimentTools.filter((tool) => tool.tool.name === "ufo_experiment_status"),
             ...automationTools,
+            ...agentroomTools,
             ...buildUpdateLogTools({ dataDir: agentDeps.dataDir }),
           ];
         }
@@ -1198,6 +1232,10 @@ export function chatRoutes(
       const rememberedSaved = recentSavedItems.get(sessionId);
       if (rememberedSaved && (!requestedTaskId || requestedTaskId === rememberedSaved.taskId)) {
         sink.write({ id: ++id, kind: "saved_items", payload: rememberedSaved.saved, bytes: 0, ts: Date.now() });
+      }
+      const rememberedRoomPosts = recentRoomPosts.get(sessionId);
+      if (rememberedRoomPosts && (!requestedTaskId || requestedTaskId === rememberedRoomPosts.taskId)) {
+        sink.write({ id: ++id, kind: "room_posts", payload: rememberedRoomPosts.roomPosts, bytes: 0, ts: Date.now() });
       }
       if (replayFinal) {
         sink.write({ id: ++id, kind: "final", payload: { text: replayFinal }, bytes: 0, ts: Date.now() });

@@ -142,6 +142,10 @@ describe("classifyRisk", () => {
     expect(classifyRisk("research_visual_create", { title: "Evidence map" }).tier).toBe("low");
     expect(classifyRisk("visual_explanation_list", {}).tier).toBe("read-only");
   });
+  it("routes AVA's bounded room read/post without an unknown-tool approval stall", () => {
+    expect(classifyRisk("room_read", { limit: 10 }).tier).toBe("read-only");
+    expect(classifyRisk("room_post", { body: "Bring this to the room" }).tier).toBe("low");
+  });
   it("keeps UFO status/observation read-only and fixture action explicitly high-risk", () => {
     expect(classifyRisk("ufo_experiment_status", {}).tier).toBe("read-only");
     expect(classifyRisk("ufo_experiment_observe", { fixtureId: "counter-v1" }).tier).toBe("read-only");

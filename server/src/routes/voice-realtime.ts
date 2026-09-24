@@ -13,6 +13,7 @@ import {
   type Message,
   type MessageMemoryContext,
   type MessageMetadata,
+  type MessageRoomPosts,
   type MessageSavedItems,
 } from "../state/messages.js";
 import { readDevLog, type DevLogEntry } from "../self/dev-log.js";
@@ -25,7 +26,7 @@ import {
 } from "../voice/transcript-gate.js";
 import { getReasoningLevel, type ReasoningLevel } from "../state/reasoning-pref.js";
 import { getVoiceEngine, isVoiceEngine } from "../state/voice-engine-pref.js";
-import { LIVE_VOICE_GUIDANCE, startLiveSession } from "./voice-live.js";
+import { LIVE_VOICE_GUIDANCE, mergeRoomPosts, startLiveSession } from "./voice-live.js";
 import { formatSpeechText } from "../voice/speechText.js";
 import { DEFAULT_REALTIME_SPEECH_RATE } from "../voice/voiceConfig.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
@@ -759,7 +760,7 @@ export function recoverFrame(reason: string): string {
  * exactly where it paused instead of waiting out its fallback timer.
  */
 /** Combine what several delegated actions saved before the reply that reports them. */
-export { mergeSavedItems } from "./voice-live.js";
+export { mergeRoomPosts, mergeSavedItems } from "./voice-live.js";
 import { mergeSavedItems } from "./voice-live.js";
 
 /** GPT-Live could not start; the browser retries this visit on the standard engine. */
@@ -914,7 +915,7 @@ export interface RealtimeProxyDeps {
     onStep?: (tool: string, args: unknown) => void,
     signal?: AbortSignal,
     observability?: ObservabilityParentContext,
-  ) => Promise<{ text: string; sessionId: string | null; savedItems?: MessageSavedItems | null }>;
+  ) => Promise<{ text: string; sessionId: string | null; savedItems?: MessageSavedItems | null; roomPosts?: MessageRoomPosts | null }>;
   /** Shared AVA-owned event stream. Hume remains explicitly out of v1 coverage. */
   observability?: ObservabilityService;
   /** Shared post-turn durable-memory gate used by chat and both voice providers. */
@@ -1375,6 +1376,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     let pendingMemoryContext: MessageMemoryContext | null = null;
     // What a delegated action saved; shown on the spoken reply that reports it.
     let pendingSavedItems: MessageSavedItems | null = null;
+    let pendingRoomPosts: MessageRoomPosts | null = null;
     const flushAssistantTurn = (eligibleForMemory = false): string => {
       const text = assistantTurnBuf.trim();
       assistantTurnBuf = "";
@@ -1385,9 +1387,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         pendingMemoryContext = null;
         const savedItems = pendingSavedItems;
         pendingSavedItems = null;
+        const roomPosts = pendingRoomPosts;
+        pendingRoomPosts = null;
         const metadata: MessageMetadata = {
           ...(memoryContext ? { memoryContext } : {}),
           ...(savedItems ? { savedItems } : {}),
+          ...(roomPosts ? { roomPosts } : {}),
         };
         const stored = appendMessage(deps.db, {
           sessionId,
@@ -1805,6 +1810,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               }
               try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
               pendingSavedItems = mergeSavedItems(pendingSavedItems, r.savedItems);
+              pendingRoomPosts = mergeRoomPosts(pendingRoomPosts, r.roomPosts);
               // Feed the result back to the SAME realtime model and ask it to
               // speak. Its output transcript is the single persisted assistant
               // turn, so stored history matches exactly what Sir heard.
@@ -2439,11 +2445,15 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
               if (sessionId) {
                 const savedItems = mergeSavedItems(null, r.savedItems);
+                const roomPosts = mergeRoomPosts(null, r.roomPosts);
                 appendMessage(deps.db, {
                   sessionId,
                   role: "assistant",
                   content: r.text || "Done.",
-                  ...(savedItems ? { metadata: { savedItems } } : {}),
+                  ...((savedItems || roomPosts) ? { metadata: {
+                    ...(savedItems ? { savedItems } : {}),
+                    ...(roomPosts ? { roomPosts } : {}),
+                  } } : {}),
                 });
                 touchSession(deps.db, sessionId);
               }

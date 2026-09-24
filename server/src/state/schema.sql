@@ -479,6 +479,16 @@ CREATE TABLE IF NOT EXISTS voice_engine_pref (
   updated_at INTEGER NOT NULL
 );
 
+-- AVA's discussion-only agentroom membership is a user-governed global
+-- capability. Credentials remain in the environment; SQLite stores only the
+-- off/on preference and its optimistic-concurrency version.
+CREATE TABLE IF NOT EXISTS agentroom_pref (
+  scope_id   TEXT PRIMARY KEY,
+  enabled    INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+  version    INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chip_label_cache (
   device_id    TEXT NOT NULL,
   prompt_hash  TEXT NOT NULL,

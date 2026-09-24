@@ -13,9 +13,11 @@ import type { Db } from "../state/db.js";
 import {
   appendMessage,
   listMessages,
+  sanitizeMessageRoomPosts,
   sanitizeMessageSavedItems,
   type MessageMemoryContext,
   type MessageMetadata,
+  type MessageRoomPosts,
   type MessageSavedItems,
 } from "../state/messages.js";
 import { markHumanActivity, touchSession } from "../state/sessions.js";
@@ -194,6 +196,15 @@ export function mergeSavedItems(
   return sanitizeMessageSavedItems({ schemaVersion: 1, items: [...(pending?.items ?? []), ...next.items] });
 }
 
+/** Combine authoritative room-post receipts from several delegated actions. */
+export function mergeRoomPosts(
+  pending: MessageRoomPosts | null,
+  next: MessageRoomPosts | null | undefined,
+): MessageRoomPosts | null {
+  if (!next) return pending;
+  return sanitizeMessageRoomPosts({ schemaVersion: 1, items: [...(pending?.items ?? []), ...next.items] });
+}
+
 type Log = {
   info: (...a: unknown[]) => void;
   warn: (...a: unknown[]) => void;
@@ -206,7 +217,7 @@ export type LiveRunAction = (
   onStep?: (tool: string, args: unknown) => void,
   signal?: AbortSignal,
   observability?: ObservabilityParentContext,
-) => Promise<{ text: string; sessionId: string | null; savedItems?: MessageSavedItems | null }>;
+) => Promise<{ text: string; sessionId: string | null; savedItems?: MessageSavedItems | null; roomPosts?: MessageRoomPosts | null }>;
 
 export type LiveSessionContext = {
   client: WebSocket;
@@ -274,6 +285,7 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
   let lastUserMessageId: number | null = null;
   let pendingMemoryContext: MessageMemoryContext | null = null;
   let pendingSavedItems: MessageSavedItems | null = null;
+  let pendingRoomPosts: MessageRoomPosts | null = null;
   let usageSeconds = 0;
   let started = false;
   let closed = false;
@@ -321,9 +333,11 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
       const metadata: MessageMetadata = {
         ...(pendingMemoryContext ? { memoryContext: pendingMemoryContext } : {}),
         ...(pendingSavedItems ? { savedItems: pendingSavedItems } : {}),
+        ...(pendingRoomPosts ? { roomPosts: pendingRoomPosts } : {}),
       };
       pendingMemoryContext = null;
       pendingSavedItems = null;
+      pendingRoomPosts = null;
       const stored = appendMessage(db, {
         sessionId,
         role: "assistant",
@@ -369,6 +383,7 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
         }, controller.signal);
         if (controller.signal.aborted || closed) return;
         pendingSavedItems = mergeSavedItems(pendingSavedItems, result.savedItems);
+        pendingRoomPosts = mergeRoomPosts(pendingRoomPosts, result.roomPosts);
         const text = result.text?.trim() || "The action finished without a verifiable result.";
         sendClient(JSON.stringify({ type: "ava.result", text }));
         sendUpstream({ type: "session.commentary.append", event_id: `res_${nanoid(8)}`, delegation_id: delegationId, content: clipForLive(text) });

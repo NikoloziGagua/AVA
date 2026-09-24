@@ -7353,3 +7353,20 @@ Scope and paths:
 Not included: chat, voice or sessions; a new router or store; phone setup or any claim that a phone received something; dead-component cleanup (deferred per Codex). The UI stays in the existing deck design system and is flagged for Niko's morning review.
 
 NEEDS: claude (build I4 web); codex (I4 backend task #14)
+
+## 2026-09-24 03:39 UTC - Codex STATUS: I4 backend tested; joint acceptance blocked on peer response
+
+This is a waiting/review handoff, NOT a COMPLETE entry or release approval. The accepted reminder contract advanced to i4-one-off-reminders v2 during implementation. Backend product commit ac0718927ca99df51c4e227ea98ca4924869a68c plus test-context correction 252fc170651f8335d1d0a6a33223b8865b0d0cad are committed locally; current HEAD is 252fc17. Claude's I4 frontend remains uncommitted and has not received integrated dual acceptance.
+
+Builder evidence at exact detached 252fc17:
+- Focused reminder state/runner/push/schedule/tool/route/scheduler suites: 7 files / 184 tests PASS (.verify/i4-focused.log).
+- npm.cmd --prefix server test -- --maxWorkers=3 --minWorkers=1: full server 209 files / 1830 PASS (.verify/i4-252fc17-server-full.log).
+- Full committed baseline web: 105 files / 580 PASS (.verify/i4-252fc17-web-full.log). This is NOT a claim that the uncommitted I4 UI has passed independent review.
+- Server build/typecheck, canonical web build and managed build PASS (.verify/i4-committed-server-build.log, .verify/i4-252fc17-{web,managed}-build.log). Canonical: 4 eager artifacts / 853905 bytes, 18 offline JS / 2392154 bytes, largest 349227 bytes; all precached. Existing fixture CRLF warnings and managed esbuild informational stderr are not new failures.
+- node scripts/validate-explorer-contract.mjs and node scripts/explorer-reality-check.mjs (read-only, no emit): PASS, 35 capabilities / 78 tools / 29 routes / 123 refs / zero broken refs.
+- node .verify/i4-runtime-smoke.mjs: 10/10 PASS at build ID 47211c09-1b06-4dec-97ca-ed67d5bcd9ad (.verify/i4-252fc17-runtime-smoke.log). Actual isolated committed server/authenticated HTTP, durable creation/restart, no-provider scheduler, synthetic push acceptance, ambiguous-send recovery without resend, receipt readback and fixture cleanup. No real notification, model credentials or live user-data mutation.
+- Scoped git diff --check PASS. Independent browser harness .verify/i4-browser-review.mjs is authored and syntax-checked but NOT executed against the unfinished UI; it requires an explicitly approved integrated SHA.
+
+Peer review findings sent in room #385/#386/#388/#390: strict receipt/count/date/identity validation; malformed successful create responses must remain uncertain; refresh sequencing and visible stale state; deletion acknowledgement independent of refresh success; honest uncertain-create refresh copy; continuously mounted Today refresh; distinguish saved daylight-saving overlap offsets and latest-attempt counts. Awaiting Claude's acknowledgement/corrections and independent backend review. Last incoming peer message was #379 at 02:40 UTC; no reply by this entry. Room task 14 is honestly marked blocked on this handoff. Codex continues direct include-read room polling roughly every 20 seconds rather than depending on hooks. No takeover of Claude's files, production restart, deployment, push or new scope. Existing unrelated config/hook/instruction/gitignore/submodule changes are preserved; no other repository was inspected or modified.
+
+NEEDS: claude (acknowledge review findings, independently test backend 252fc17, fix and commit I4 UI); codex (continue direct polling, independently test the exact integrated commit and record dual acceptance before COMPLETE).

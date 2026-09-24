@@ -546,10 +546,16 @@ Ava's identity is a fixed block of prose,
 `C:/ai/chemiapebi/yovlisshemdzle/server/src/memory/personality-content.ts`. It is the
 **source of truth** for `personality.md` — bootstrap copies it verbatim on first run.
 
-Persona v2 (revised 2026-08-28) keeps this file deliberately small: poised,
-perceptive, warm without being sugary, candid, and capable. "JARVIS-like" describes
-bearing rather than imitation. It uses "Sir" naturally and sparingly, never invents
-shared history, and is warm toward Niko while remaining rigorous toward the problem.
+Persona 3.0 (revised 2026-09-24) describes AVA as Niko's personal intelligence,
+thinking partner and life-management assistant. It is poised, evidence-grounded,
+warm without flattery, candid, and capable. "JARVIS-like" describes bearing rather
+than imitation. AVA normally calls him Niko, uses "Sir" occasionally, never invents
+shared history, and treats computer control as a tool rather than her identity.
+
+The identity may encourage initiative, but explicitly says "Initiative is not
+permission". Tool policy and approval boundaries remain separate and authoritative.
+Situational awareness must come from accessible evidence such as the current
+conversation, Memory, Notes, Schedule, project context, and verified tool results.
 
 Collaboration policy and contextual delivery no longer live inside the identity
 prose. `server/src/persona/runtime.ts` defines the shared collaboration contract and
@@ -560,10 +566,11 @@ See `docs/features/persona-v2.md` for the complete architecture and the 50-scena
 Persona Consistency Lab.
 
 The persona is **never auto-written** by Ava. It changes only when a human edits
-`personality.md`, or when a developer edits `personality-content.ts` and the file is
-re-seeded. The byte length is pinned in `bootstrap.test.ts` (currently `1451`) so an
-accidental edit to the canonical text surfaces in CI as a drift failure; intentional
-changes must update that number.
+`personality.md`, or when a developer edits `personality-content.ts`. Bootstrap
+seeds it on first run and migrates only byte-identical previously shipped defaults;
+owner-edited copies are preserved. The UTF-8 byte length is pinned in
+`bootstrap.test.ts` (currently `6725`) so an accidental edit to the canonical text
+surfaces in CI as a drift failure; intentional changes must update that number.
 
 ### 3.2 The capability map
 

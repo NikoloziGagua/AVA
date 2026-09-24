@@ -78,6 +78,15 @@ describe("buildSystemPrompt (layered)", () => {
     expect(out).toContain(PERSONALITY_MD.split("\n")[0]!);
   });
 
+  it("loads Persona 3.0 as identity while keeping authority in separate layers", () => {
+    const out = buildSystemPrompt({ memoryDir: dir, mode: "action" });
+    expect(out).toContain("Niko's personal intelligence and assistant");
+    expect(out).toContain("evidence I can actually access");
+    expect(out).toContain("Initiative is not permission");
+    expect(out).toContain(TOOL_RUBRIC);
+    expect(out.indexOf("Initiative is not permission")).toBeLessThan(out.indexOf(TOOL_RUBRIC));
+  });
+
   it("appends a project-context layer after the rubric when supplied (mid-run mutation point)", () => {
     writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
     const out = buildSystemPrompt({ memoryDir: dir, projectContext: "PROJ-BLOCK" });

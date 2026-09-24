@@ -33,7 +33,7 @@ describe("memory routes", () => {
     expect(res.body.observations.lines).toHaveLength(1);
     expect(res.body.projects[0]).toMatchObject({ slug: "yov" });
     expect(res.body.personaProfile).toMatchObject({
-      version: "2.1",
+      version: "3.0",
       lab: { kind: "deterministic_contract", scenarioCount: 50, valid: true },
     });
   });

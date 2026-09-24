@@ -7370,3 +7370,37 @@ Builder evidence at exact detached 252fc17:
 Peer review findings sent in room #385/#386/#388/#390: strict receipt/count/date/identity validation; malformed successful create responses must remain uncertain; refresh sequencing and visible stale state; deletion acknowledgement independent of refresh success; honest uncertain-create refresh copy; continuously mounted Today refresh; distinguish saved daylight-saving overlap offsets and latest-attempt counts. Awaiting Claude's acknowledgement/corrections and independent backend review. Last incoming peer message was #379 at 02:40 UTC; no reply by this entry. Room task 14 is honestly marked blocked on this handoff. Codex continues direct include-read room polling roughly every 20 seconds rather than depending on hooks. No takeover of Claude's files, production restart, deployment, push or new scope. Existing unrelated config/hook/instruction/gitignore/submodule changes are preserved; no other repository was inspected or modified.
 
 NEEDS: claude (acknowledge review findings, independently test backend 252fc17, fix and commit I4 UI); codex (continue direct polling, independently test the exact integrated commit and record dual acceptance before COMPLETE).
+
+### 2026-09-24 - claude - HANDOFF: I4 web committed, awaiting Codex's independent gate (task #15)
+
+Status: **not complete**. I4 closes only after Codex independently tests the integrated SHA.
+
+- **Backend 252fc17 (Codex):** I accepted it independently on my own clean checkout.
+  - Server tsc and build pass; full server suite 209 files / 1,830 tests (.verify/claude-i4-252fc17-server-tests.log).
+  - Code review found no blockers:
+    - every phase change is compare-and-set;
+    - an expired sending lease becomes acceptance-unknown and is never resent;
+    - the legacy agent scheduler skips direct reminders;
+    - foreign keys are on, so deleting a watch cascades to its occurrence (verified at runtime).
+- **Web 69376d4 (Claude):** fixes Codex's review findings #385/#386/#387/#388/#390, contract v2.
+  - Strict receipt parsing, matched to the watch and due time.
+  - Create reports success only when the answer proves this exact reminder was stored. Otherwise it is "unconfirmed", the draft is kept and nothing is resent.
+  - Schedule and Today refresh with a newest-answer guard and a stale marker.
+  - Due times show their offset.
+  - A long status chip no longer overflows at 390 px.
+- **Evidence at exact 69376d4, clean worktree:**
+  - tsc; full web 108 files / 661 tests; server, managed and canonical builds. Eager JS 874,451 of 900,000 bytes.
+  - Integrated browser run against the real 252fc17 server with no provider and no push keys, `.verify/claude-i4-browser-check.mjs`: 31/31 in three consecutive runs (.verify/i4-69376d4-browser-{1,2,3}.log).
+  - I3a navigation regression: 46/46.
+- **Docs:** d5afa73 (docs only).
+- **Nothing released:** no push, no live runtime rebuild or restart, no real notification sent.
+
+For Niko this morning:
+1. Phone notifications have not been tested on a phone. Setup likely means AVA over Tailscale HTTPS, added to the home screen, then notifications enabled in Settings & rules.
+2. Please review the new Today, Ideas and Schedule screens. They were built overnight without a design review.
+3. The first-run setup line still says phone notifications are "Not available yet". A setup flow exists but is unverified on a phone.
+4. Follow-ups, deferred and proposed:
+   - lazy-load non-default routes (eager JS is close to its budget);
+   - remove about ten unused components.
+
+NEEDS: codex (independent integrated gate on 69376d4, then joint I4 COMPLETE)

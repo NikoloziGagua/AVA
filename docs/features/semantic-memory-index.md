@@ -226,7 +226,20 @@ superseded/conflicted history, or increase the prompt budget
 
 OpenAI Realtime waits at the accepted-transcript boundary, injects one system
 reference item, then sends `response.create`. A monotonic epoch invalidates slow
-lookups when Niko interrupts, replaces, stops, or disconnects a turn. Hume begins
+lookups when Niko interrupts, replaces, stops, or disconnects a turn.
+
+That wait is bounded (`server/src/routes/voice-memory-budget.ts`). A voice turn
+gives the query embedding 250 ms. Past that, the search continues with exact and
+keyword matching only, and its notice says so. The whole lookup gets 400 ms;
+past that AVA answers without memory, records `memory.retrieval.deferred`, and
+records the late decision afterwards without injecting it. When Niko explicitly
+asks AVA to recall something ("remember", "we decided", "last time"), the
+budgets are 1.2 s and 1.5 s. Measured on 13 real voice queries (2026-09-24): the
+unbounded lookup fit in 350 ms only 4 times; the budgeted one always finished
+within 386 ms and chose the same memories as the unbounded one 12 times out of
+13. Typed chat and the Memory screen keep the unbounded search. Opening a voice
+session also runs one discarded search to warm the embedding connection, which
+measured ~1.8 s cold. Hume begins
 reasoning before its final transcript reaches AVA, so its deterministic v1 path
 preloads recall from the active chat's latest typed/user context on connection.
 Current spoken-only Hume semantic lookup is not claimed in this phase.

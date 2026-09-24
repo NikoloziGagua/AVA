@@ -744,6 +744,25 @@ confidence gate and the completeness accumulator does the proxy send
 `response.cancel` and `ava.barge_in`. This lets the owner talk over AVA without
 letting speaker echo, a cough, or a half-sentence shred the reply.
 
+**AVA pauses instantly, then either stops or resumes.** Waiting for the
+transcript meant AVA kept talking for a second or more after the owner cut in.
+In hands-free hybrid mode, the client now pauses her audio in place
+(`PcmStreamPlayer.hold()`, which suspends the player's own AudioContext; the mic
+context is separate) on `input_audio_buffer.speech_started` while audio is
+playing. What happens next:
+
+| Next event | Result |
+|---|---|
+| `ava.barge_in`, or an accepted transcript while her reply is still audible | Stop for good: truncate at `playedMs` and discard the tail. This also covers a reply that already finished generating, which `ava.barge_in` cannot reach because the proxy only sends it while a response is active. |
+| `ava.speech_dismissed` (a hands-free transcript rejected by the gate) | Resume exactly where she paused. |
+| `ava.transcript_pending` (an unfinished sentence) | Stay paused while the owner finishes. |
+| Nothing within 2.5 s of `speech_stopped` | Resume. |
+| Any pause longer than 20 s | Resume. |
+
+This is the "false interruption" pattern LiveKit Agents uses. Push-to-talk is
+unchanged, because the key press already interrupts. The one audible cost is
+that loud echo or a cough can make AVA pause briefly before she resumes.
+
 On `ava.barge_in`, the browser first sends
 `conversation.item.truncate` using `PcmStreamPlayer.playedMs`, so OpenAI's
 conversation contains only the audio the owner actually heard. It then stops

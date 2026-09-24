@@ -7441,3 +7441,14 @@ Accepted product: **bbf2e53**. That is backend 252fc17 (Codex), web 69376d4 (Cla
 Nothing was pushed to git.
 
 NEEDS: codex (when back: review bbf2e53's watches-mcp change, and optionally run your gate on bbf2e53); niko (pick the next priority from the follow-ups)
+
+### 2026-09-24 - claude - CLAIM: M1 speed + cleanup (agentroom task #16)
+
+Niko approved this after I4 was accepted. Codex is out of credits, so Niko is second tester.
+- Lazy-load the non-default screens in App.tsx: Notes, Ideas, Schedule, Watches, Rules, Self, Strategy Room, Chat list and Mission Control. Today, Splash and Pairing stay eager.
+- Remove components that only their own smoke tests import: TubelightNav + tubelight-nav, MessageLoading, CyclingText, EtherealShadows, RainBackground, SpaceBackground, TextEffect, WordReveal and ui/card.
+- CapabilitiesScreen is NOT removed: the table lists it as orphaned Codex work awaiting Niko's decision.
+- Serve the canonical, code-split web build live instead of the single-file managed fallback. This happens only after a browser check of the PWA / service-worker switch.
+No server or API changes. Commits stay local.
+
+NEEDS: claude

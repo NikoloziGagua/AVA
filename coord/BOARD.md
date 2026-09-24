@@ -7487,3 +7487,36 @@ Gates:
 Nothing pushed.
 
 NEEDS: niko (voice test: hands-free cut-in, cough while AVA talks, a "do you remember…" question); claude (next: I3b saved cards in chat, hide never-used empty chats, Memory screen timing)
+
+### 2026-09-24 - claude - DONE: I3b Saved cards, hidden empty chats, and the root cause of slow loading
+
+All live (build f0ec93a1…, health ok). Local commits only; nothing pushed. Codex is out of credits, so Niko is the tester and proposals #20/#21 await Codex review.
+
+**I3b Saved cards in chat: 1cf15a2 (contract proposal #20 `i3b-saved-cards`, agentroom task #17).**
+- When AVA saves a note, idea, reminder, watch or memory during a reply, the reply shows a Saved card naming each item. Tapping opens the exact note, Schedule, the focused watch, or Memory.
+- Saving tools return `{kind,id,title}` only after a successful write. It is AVA-local evidence like `verification`: sanitized by the registry, dropped from failed calls, never sent to the model.
+- The chat route streams a cumulative `saved_items` event (replayed for fast turns) and stores `messages.metadata.savedItems`.
+- Voice actions return their items via the loopback, and the realtime proxy attaches them to the stored spoken reply.
+- Minimal design in the existing capsule style, flagged for Niko's review.
+- Real-agent sandbox e2e 17/17: note+idea turn, reminder turn, no-save turn, cards and navigation at 1440/390, keyboard, zero errors.
+- Doc: docs/features/saved-cards.md.
+
+**Hide never-used conversations: 24b6a43 (proposal #21 = `i1-conversation-binding` v4).**
+- `scope=human` now requires human activity or a pin. New, or voice opened with nothing said, no longer clutters recents, Today or Your conversations.
+- Such rows are never deleted: exact lookup, the remembered pointer, continue and scope=all still reach them.
+- Live data had 2 human-origin rows, both used, so nothing visible disappeared.
+
+**Memory screen slowness was AVA, not Niko's internet: 727a0c3.**
+- Measured on live: every authenticated request took ~2.4 s, locally and over Tailscale alike (Tailscale added ~10 ms).
+- Cause: `validateToken` ran synchronous bcryptjs compares (~105 ms each) over all 22 live tokens, blocking the event loop (and the voice audio relay) meanwhile. Niko's newest iPhone token sits near the end of the scan.
+- Fix: an indexed SHA-256 `token_lookup`. Legacy tokens upgrade on first use, and a per-DB negative cache stops repeated slow scans for bad tokens.
+- Migration rehearsed on a live-DB backup; HEAD built and tested in an isolated worktree before deploy.
+- After: API 13–71 ms (was ~2,450 ms). The Memory screen opens in 0.4–0.9 s (was ~10 s), with the 3D map drawn by ~1.5 s, no overflow at 390 px and zero errors.
+
+**Voice actions: 4855e42.** Voice-delegated actions (persist:false) give their memory lookup's embedding the 250 ms voice budget (keyword fallback). Typed chat keeps the full lookup.
+
+Gates: server 1868 tests, web 669; tsc on both; canonical build eager JS 674,791 of 900,000 bytes.
+
+Housekeeping for Niko: 12 test device tokens from July (labels like chrome-*-e2e, visible-chrome-*) are still active and unused. Revoking them in Settings is optional now, but recommended.
+
+NEEDS: niko (test on return: voice cut-in and cough, a "do you remember…" question, "save a note / an idea / remind me" by chat and voice to see Saved cards, Memory screen speed on the phone); codex (review proposals #20 and #21 and commits 1cf15a2, 24b6a43, 727a0c3, 4855e42, ed094ac, fec882b when credits return)

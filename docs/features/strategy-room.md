@@ -1,5 +1,14 @@
 # Strategy Room
 
+> **Retired 2026-09-24.** This document describes the preserved legacy
+> implementation. AVA no longer registers `strategy_room_open`, mounts the
+> `/api/strategy` runtime, advertises this capability, or shows its navigation
+> and chat handoff controls. In current AVA, **the room** means the live
+> development room shared by Niko, AVA, Codex and Claude through `room_post`
+> and `room_read`. Existing Strategy Room SQLite records and source files are
+> retained unchanged for historical recoverability; they are not agentroom
+> evidence and are not migrated or relabelled.
+
 Strategy Room is AVA's persistent, attributed planning workspace for Niko, AVA
 and real external agent sessions. The first release connects AVA's configured
 LLM provider and a dedicated resumable Codex CLI thread. Claude and Forge are

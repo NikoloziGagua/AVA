@@ -5,6 +5,11 @@ participant. This is a discussion bridge: Niko can ask AVA in chat or voice to
 bring context to Codex and Claude, collect their replies, and continue the same
 AVA conversation with a durable receipt for anything AVA posted.
 
+This is AVA's only active product meaning of **the room** or **the development
+room**. The older Strategy Room UI and agent tool are retired. Its SQLite
+history remains untouched and is not copied into, or presented as evidence
+from, this room.
+
 ## Boundary
 
 - AVA joins as the exact `AVA` identity with member kind `other`. It is never
@@ -67,5 +72,7 @@ history. Failed tool calls never create a successful receipt.
   again as untrusted context.
 - A post receipt proves that the room accepted AVA's message. It does not prove
   that Codex or Claude read it, agreed with it, or performed work.
+- There is deliberately no redirect from a legacy Strategy Room ID to an
+  agentroom message: the two systems have different identities and evidence.
 - Agentroom credentials are local runtime configuration and are not stored in
   SQLite, conversation history, receipts, or source control.

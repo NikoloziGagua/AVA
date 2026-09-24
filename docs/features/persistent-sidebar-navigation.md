@@ -32,7 +32,7 @@ shell does not create a second management surface.
 
 Primary: **New chat**, then **Today**, **Talk**, **Schedule**, **Notes** and
 **Ideas**. A collapsed **System** group at the bottom holds Activity (Mission
-Control in its own window), Explore AVA, Watches, Memory, Strategy Room, Visual
+Control in its own window), Explore AVA, Watches, Memory, Visual
 explanations, Settings & rules and Self development. It opens by itself when
 one of those is active. See
 [Life-assistant navigation](life-assistant-navigation.md).

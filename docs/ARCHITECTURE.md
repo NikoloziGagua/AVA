@@ -433,7 +433,7 @@ flowchart LR
 
 **Highlights:**
 - **Chat** (`chat/ChatScreen.tsx`): the Composer sends a message; `useChatStream` consumes the SSE stream via `EventSource`; the **Activity panel** renders live tool steps; the final answer arrives as one `final` event and is revealed word-by-word (the streaming *look* is a visual effect — Ava's answer is not token-streamed; the *tool steps* are what stream live).
-- **Today and navigation** (`today/`, `ideas/`, `schedule/`, `components/ava/AppSidebar.tsx`): Today shows Sir's three latest conversations, recent ideas and notes (each opening that exact note) and an honest schedule card. The rail leads with Today, Talk, Schedule, Notes and Ideas; AVA's own tools (Activity, Explore, Watches, Memory, Strategy Room, Visuals, Rules, Self) sit under System. The intro plays once per tab. See [`features/life-assistant-navigation.md`](features/life-assistant-navigation.md).
+- **Today and navigation** (`today/`, `ideas/`, `schedule/`, `components/ava/AppSidebar.tsx`): Today shows Sir's three latest conversations, recent ideas and notes (each opening that exact note) and an honest schedule card. The rail leads with Today, Talk, Schedule, Notes and Ideas; AVA's own tools (Activity, Explore, Watches, Memory, Visuals, Rules, Self) sit under System. The intro plays once per tab. See [`features/life-assistant-navigation.md`](features/life-assistant-navigation.md).
 - **Voice** (`voice/VoiceScreen.tsx` + `useRealtimeVoice.ts`): the WS client, mic capture (AudioWorklet), playback, barge-in, the OpenAI/Hume toggle, and the "+new conversation" control.
 - **Conversation selection** (`App.tsx:195`): one remembered chat shared by typing, voice and the sidebar. Authoritative bindings update it; stale callbacks and an absent list-page row do not. Human recents are paginated separately from older unclassified chats and read-only automated history. Unavailable exact conversations offer explicit recovery instead of changing the selection silently.
 - **Settings screens:** Rules (permission rules), Memory, Self (self-improvement status), Approvals, Pairing.
@@ -459,7 +459,7 @@ flowchart LR
 | `approvals` | Pending/decided tool-approval requests with their veto status. |
 | `self_improvements` | Self-improvement records (the code type is called `Intent`): goal, status, commit, last-known-good, verify log. |
 | `discussions` | Background Claude consults: topic, status, result, the originating session. |
-| `strategy_rooms` / `strategy_messages` / `strategy_events` | Strategy Room projection, immutable attributed AVA/Niko/Codex conversation, optional exact chat-snapshot/returned-message lineage, and replayable live-event cursor. Approval and chat return record proposals only; neither executes work. See `features/strategy-room.md`. |
+| `strategy_rooms` / `strategy_messages` / `strategy_events` | Retained legacy Strategy Room history. The former product surface and runtime route are retired; tables remain untouched for historical recoverability and are never relabelled as development-room evidence. See `features/strategy-room.md`. |
 | `watches` | Standing background monitors (§11): the check prompt, interval, `once`/`enabled`, the chat session holding every check, and the last run's status/result. |
 | `reminder_occurrences` | One-off reminder receipt (§11): unique watch/due-time identity, revision and send lease, fixed expiry, attempts and latest-attempt subscription outcomes. No duplicated prompt or raw transport payload. |
 | `voice_engine_pref` | The voice provider toggle (`openai` · `hume`). |

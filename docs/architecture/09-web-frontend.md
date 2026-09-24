@@ -92,7 +92,9 @@ stateDiagram-v2
       The sidebar reaches every view from anywhere:
       Today, Talk (remembered chat or list), Schedule,
       Notes, Ideas; System: Activity, Explore, Watches,
-      Memory, Strategy Room, Visuals, Rules, Self.
+      Memory, Visuals, Rules, Self. The development room is reached from AVA
+      chat/voice and configured in Rules; the retired Strategy Room is not a
+      navigation destination.
       Panels' close actions return to Today.
     end note
 ```

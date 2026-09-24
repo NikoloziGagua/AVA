@@ -60,9 +60,7 @@ import { buildPathAllowlist } from "../security/path-allowlist.js";
 import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
 import { buildNotesTools } from "../tools/notes-mcp.js";
-import { buildStrategyRoomTools } from "../tools/strategy-room-mcp.js";
 import { buildVisualExplanationTools } from "../tools/visual-explanations-mcp.js";
-import type { StrategyChatHandoffResult } from "../strategy/coordinator.js";
 import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
 import { buildShopifyTools } from "../tools/shopify-mcp.js";
 import { buildPlacesTools } from "../tools/places-mcp.js";
@@ -226,8 +224,6 @@ export type AgentDeps = {
   queueDiscussion?: (topic: string, sessionId: string | null, parentRunId?: string | null) => string;
   listDiscussions?: () => Discussion[];
   getDiscussion?: (id: string) => Discussion | null;
-  /** Move the authoritative current chat snapshot into AVA's Strategy Room. */
-  openStrategyRoomFromSession?: (sessionId: string) => StrategyChatHandoffResult;
   logsDir?: string;
   /** Shopify Admin API creds — when present, the shopify_* product tools are offered. */
   shopify?: { store: string; token: string } | null;
@@ -939,12 +935,6 @@ export function chatRoutes(
           source: parsed.data.voice ? "ava_voice" : "ava_chat",
           queueSelfImprove: agentDeps.queueSelfImprove,
         });
-        const strategyRoomTools = agentDeps.openStrategyRoomFromSession
-          ? buildStrategyRoomTools({
-              sessionId: sid,
-              openFromSession: agentDeps.openStrategyRoomFromSession,
-            })
-          : [];
         const visualExplanationTools = buildVisualExplanationTools({
           db,
           sessionId: sid,
@@ -1015,7 +1005,6 @@ export function chatRoutes(
             ...discussTools,
             ...memoryTools,
             ...notesTools,
-            ...strategyRoomTools,
             ...visualExplanationTools,
             ...ufoExperimentTools,
             ...automationTools,
@@ -1044,7 +1033,6 @@ export function chatRoutes(
             ...discussTools,
             ...memoryTools,
             ...notesTools,
-            ...strategyRoomTools,
             ...visualExplanationTools,
             ...ufoExperimentTools.filter((tool) => tool.tool.name === "ufo_experiment_status"),
             ...automationTools,

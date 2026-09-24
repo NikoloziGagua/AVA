@@ -18,7 +18,8 @@ The sidebar is organised around everyday life instead of AVA's own machinery:
 
 Every earlier destination still exists under a collapsed **System** group:
 Activity (Mission Control, in its own window), Explore AVA, Watches, Memory,
-Strategy Room, Visual explanations, Settings & rules and Self development.
+Visual explanations, Settings & rules and Self development. The development
+room is part of AVA's chat/voice flow rather than a second conversation page.
 
 ## Why it exists
 

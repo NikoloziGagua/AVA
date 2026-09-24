@@ -41,7 +41,6 @@ import {
 } from "./routes/capabilities.js";
 import { explorerRoutes } from "./routes/explorer.js";
 import { missionControlRoutes } from "./routes/mission-control.js";
-import { strategyRoutes } from "./routes/strategy.js";
 import { apiNotFound } from "./routes/api-fallback.js";
 import { markStaleExplorerTasksInterrupted } from "./explorer/store.js";
 import { ObservabilityService } from "./observability/store.js";
@@ -120,9 +119,6 @@ import {
   type MessageSavedItems,
 } from "./state/messages.js";
 import { selfRoutes } from "./routes/self.js";
-import { StrategyRoomStore } from "./strategy/store.js";
-import { StrategyRoomCoordinator } from "./strategy/coordinator.js";
-import { buildCodexConsultant } from "./strategy/codex-consultant.js";
 import { loadUfoExperimentConfig, UfoExperimentService } from "./ufo/experiment.js";
 import { ufoExperimentRoutes } from "./routes/ufo-experiment.js";
 import { getSelfWorkerSelection } from "./self/worker-selection.js";
@@ -164,11 +160,6 @@ const codexDispatcher = buildCodexDispatcher({
 const observability = new ObservabilityService(db);
 const communicationObservability = new CommunicationObservabilityRecorder(observability);
 const ufoExperiment = new UfoExperimentService(db, loadUfoExperimentConfig(process.env, cfg.dataDir), observability);
-const strategyStore = new StrategyRoomStore(db);
-const interruptedStrategyRooms = strategyStore.failInterruptedRooms();
-if (interruptedStrategyRooms > 0) {
-  log.info({ interruptedStrategyRooms }, "strategy: paused rooms orphaned by restart");
-}
 const orphanedMissionRuns = db.transaction(() => {
   const interrupted = snapshotInterruptedConversationTasks(db);
   recordInterruptedConversationTasks(db, interrupted);
@@ -452,14 +443,6 @@ const provider = buildProvider({
   anthropicApiKey: cfg.anthropicApiKey,
   log,
 });
-const strategyCoordinator = new StrategyRoomCoordinator({
-  store: strategyStore,
-  provider,
-  codex: buildCodexConsultant({ pidfiles }),
-  repoRoot: cfg.repoRoot,
-  log,
-});
-
 // ─── Self-improvement wiring ─────────────────────────────────────────────
 // claude_code for self-edits runs in a git worktree under the OS temp dir, so
 // its path allowlist must permit tmpdir (NOT the normal fsRoots). The worktree
@@ -719,7 +702,6 @@ const agentDeps: AgentDeps = {
   queueDiscussion,
   listDiscussions: () => listDiscussions(db),
   getDiscussion: (id: string) => getDiscussion(db, id),
-  openStrategyRoomFromSession: (sessionId: string) => strategyCoordinator.createFromSession(sessionId),
   // Lets Ava report the live state of each self-improvement task (queued →
   // reflecting → implementing → verifying → swapped/failed/rolled_back).
   listSelfImprovements: () =>
@@ -827,7 +809,6 @@ app.use("/api/mission-control", missionControlRoutes(requireToken(db), observabi
   resolveWatcher: (id) => getWatch(db, id),
 }));
 app.use("/api/ufo-experiment", ufoExperimentRoutes(requireToken(db), ufoExperiment));
-app.use("/api/strategy", strategyRoutes(requireToken(db), strategyCoordinator));
 app.use("/api/playbooks", playbooksRoutes(requireToken(db), { memoryDir: cfg.memoryDir }));
 app.use("/api/watches", watchesRoutes(db, requireToken(db), {
   resolveCommunicationEvidence: (id) => resolveWatcherCommunicationEvidence(observability, id),
@@ -878,7 +859,6 @@ async function shutdown(reason: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   log.info({ reason }, "shutting down");
-  strategyCoordinator.shutdown();
   // Stop accepting new connections first so the port frees promptly for the
   // next process (tsx watch / self-dev restart) instead of racing EADDRINUSE.
   try { httpServer.close(); } catch { /* may not be listening yet */ }

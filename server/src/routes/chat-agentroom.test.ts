@@ -9,6 +9,8 @@ import { listMessages } from "../state/messages.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
 import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
+import { CAPABILITIES_MD } from "../orchestrator/capabilities-content.js";
+import { capabilityIdsForTool } from "../explorer/registry.js";
 import type { AgentroomService } from "../agentroom/service.js";
 import { chatRoutes } from "./chat.js";
 
@@ -41,6 +43,30 @@ function setup(
 async function settle() { await new Promise((resolve) => setTimeout(resolve, 30)); }
 
 describe("agentroom evidence on the chat boundary", () => {
+  it("offers the development-room tools without registering the retired Strategy Room tool", async () => {
+    let toolNames: string[] = [];
+    const run = vi.fn(async (opts: { deps: { tools: Array<{ tool: { name: string } }> }; emit: (event: AgentEvent) => void }) => {
+      toolNames = opts.deps.tools.map((tool) => tool.tool.name);
+      opts.emit({ kind: "final", payload: { text: "The development room is ready." } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const { app } = setup(run, {
+      toolsEnabled: () => true,
+      unreadContext: vi.fn().mockResolvedValue(""),
+      post: vi.fn().mockResolvedValue(roomPost),
+      read: vi.fn().mockResolvedValue([]),
+    });
+
+    await request(app).post("/api/chat").send({ text: "take this to the room" }).expect(200);
+    await settle();
+
+    expect(toolNames).toEqual(expect.arrayContaining(["room_read", "room_post"]));
+    expect(toolNames).not.toContain("strategy_room_open");
+    expect(CAPABILITIES_MD).toContain('"The room" means the live development room');
+    expect(CAPABILITIES_MD).not.toContain("strategy_room_open");
+    expect(capabilityIdsForTool("strategy_room_open")).toEqual([]);
+  });
+
   it("carries a real tool result receipt through runAgent into SSE and message metadata", async () => {
     const provider = new MockLLMProvider({ scripts: [
       [

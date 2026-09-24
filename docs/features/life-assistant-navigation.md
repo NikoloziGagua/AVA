@@ -25,8 +25,10 @@ Strategy Room, Visual explanations, Settings & rules and Self development.
 AVA is meant to be a personal assistant and life manager for uni, projects,
 ideas and reminders. The previous home screen and navigation led with AVA's
 developer tools. Sir had to go looking for his own conversations and notes, and
-every reload replayed a 1.7-second intro. Today puts his own material first, and
-reloads now reach it in about 75 ms instead of about 2.4 s.
+every reload replayed a 1.7-second intro. Today puts his own material first. In
+the local fixture harness (headless Chrome on the dev PC), a reload now shows
+Today's command bar in about 75 ms instead of about 2.4 s. That is
+time-to-interactive-screen, not the time for data or a reply to arrive.
 
 ## How Sir interacts with it
 
@@ -37,7 +39,8 @@ reloads now reach it in about 75 ms instead of about 2.4 s.
    - *Recent ideas* and *Recent notes* show up to three live notes each.
      Archived notes are excluded. Tapping one opens **that exact note** in Notes.
    - *Schedule* is one plain sentence. It has no controls, times or statuses,
-     because AVA cannot deliver reminders yet.
+     because dependable one-off reminder delivery is not implemented or verified
+     yet. The older watch/push path exists but is not presented as a schedule.
    - The capture box starts a new chat seeded with what Sir typed. The orb
      ("Talk to AVA") opens voice on the current conversation, or continues the
      latest one.

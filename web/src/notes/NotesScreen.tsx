@@ -6,9 +6,10 @@ import {
   CheckCircle2,
   Clock3,
   FileText,
-  FolderKanban,
+  GraduationCap,
   GripVertical,
   Inbox,
+  KanbanSquare,
   Lightbulb,
   Link2,
   ListChecks,
@@ -30,24 +31,43 @@ import { PanelShell } from "../components/ava/PanelShell.js";
 import { Button } from "../components/ui/button.js";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog.js";
 import {
+  GENERAL_FOLDER_ID,
   NOTE_KINDS,
   NOTE_SECTIONS,
   NOTE_STAGES,
   createNote,
-  createNoteProject,
+  createNoteFolder,
   deleteNote,
+  deleteNoteFolder,
   fetchNotes,
+  fetchNotesTree,
   promoteNote,
   updateNote,
+  updateNoteFolder,
   type Note,
+  type NoteDocumentType,
+  type NoteFolder,
   type NoteKind,
   type NoteLink,
-  type NoteProject,
   type NoteSection,
   type NoteStage,
   type NotesSnapshot,
+  type NotesTree,
 } from "./api.js";
+import { FolderDialog, FolderTree } from "./FolderTree.js";
+import { NotePager } from "./NotePager.js";
 import { ProjectBrief } from "./ProjectBrief.js";
+import {
+  STUDY_TEMPLATE,
+  buildFolderTree,
+  flattenFolderTree,
+  folderLabel,
+  folderPages,
+  legacyFolders,
+  matchesQuery,
+  noteFolderId,
+  type FolderNode,
+} from "./folders.js";
 
 const STAGE = {
   ideas: { label: "Ideas", icon: Lightbulb, color: "#f6c76c", hint: "Captured and ready to shape" },
@@ -63,18 +83,27 @@ const SECTION = {
   documentation: { label: "Documentation", icon: BookOpen, description: "Stable context worth preserving", color: "#77e5a1" },
 } as const;
 
-type EditorTarget = { note: Note | null; projectId: string | null; section: NoteSection };
+/** Browser-local only: whether Sir has dismissed the one-time folders notice. */
+const MIGRATION_NOTICE_KEY = "ava:notes-folders-notice-v1";
+
+type View = "pages" | "board";
+type EditorTarget = { note: Note | null; folderId: string; section: NoteSection; documentType: NoteDocumentType };
+type FolderDialogState = { mode: "create"; parent: NoteFolder | null } | { mode: "rename"; folder: NoteFolder };
+type EditorDraft = {
+  title: string;
+  content: string;
+  kind: NoteKind;
+  status: NoteStage;
+  folderId: string;
+  documentType: NoteDocumentType;
+  section: NoteSection;
+  tags: string[];
+  links: NoteLink[];
+  pinned: boolean;
+};
 
 function shortDate(at: number): string {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(at);
-}
-
-function selectedProject(snapshot: NotesSnapshot, selected: string): NoteProject | null {
-  return selected === "general" ? null : snapshot.projects.find((project) => project.id === selected) ?? null;
-}
-
-function noteMatchesSpace(note: Note, selected: string): boolean {
-  return selected === "general" ? note.projectId === null : note.projectId === selected;
 }
 
 function defaultKind(section: NoteSection): NoteKind {
@@ -84,9 +113,13 @@ function defaultKind(section: NoteSection): NoteKind {
   return "idea";
 }
 
+function noticeDismissed(): boolean {
+  try { return window.localStorage.getItem(MIGRATION_NOTICE_KEY) === "1"; } catch { return false; }
+}
+
 function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-xl border border-red-300/25 bg-red-400/[0.08] px-4 py-3 text-xs text-red-100">
+    <div role="alert" className="flex items-start justify-between gap-4 rounded-xl border border-red-300/25 bg-red-400/[0.08] px-4 py-3 text-xs text-red-100">
       <span className="leading-5">{message}</span>
       <button type="button" onClick={onDismiss} className="hud text-[9px] tracking-[0.14em] text-red-100/60 hover:text-red-100">DISMISS</button>
     </div>
@@ -100,18 +133,22 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   initialNoteId?: string | null;
 }) {
   const [snapshot, setSnapshot] = useState<NotesSnapshot | null>(null);
+  const [tree, setTree] = useState<NotesTree | null>(null);
   // One-shot per navigation: consumed by the first successful snapshot, so the
   // periodic refresh can never re-open or re-select it.
   const pendingHandoff = useRef<string | null>(initialNoteId);
-  const [selected, setSelected] = useState("general");
+  const [selected, setSelected] = useState(GENERAL_FOLDER_ID);
+  const [pageId, setPageId] = useState<string | null>(null);
+  const [view, setView] = useState<View>("pages");
   const [query, setQuery] = useState("");
   const [capture, setCapture] = useState("");
   const [captureSection, setCaptureSection] = useState<NoteSection>("capture");
   const [editor, setEditor] = useState<EditorTarget | null>(null);
-  const [projectDialog, setProjectDialog] = useState(false);
+  const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [migrationSeen, setMigrationSeen] = useState(noticeDismissed);
   const [projectMemory, setProjectMemory] = useState<MemoryIndexSearchResponse | null>(null);
   const [projectMemoryLoading, setProjectMemoryLoading] = useState(false);
   const [projectMemoryError, setProjectMemoryError] = useState<string | null>(null);
@@ -119,20 +156,22 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
 
   const load = async (quiet = false) => {
     try {
-      const next = await fetchNotes();
+      const [next, nextTree] = await Promise.all([fetchNotes(), fetchNotesTree()]);
       setSnapshot(next);
-      if (selected !== "general" && !next.projects.some((project) => project.id === selected)) setSelected("general");
+      setTree(nextTree);
+      setSelected((current) => nextTree.folders.some((folder) => folder.id === current) ? current : GENERAL_FOLDER_ID);
       if (!quiet) setError(null);
       const handoff = pendingHandoff.current;
       if (handoff) {
         pendingHandoff.current = null;
         const target = next.notes.find((note) => note.id === handoff && note.status !== "archived");
         if (target) {
-          setSelected(target.projectId ?? "general");
-          setEditor({ note: target, projectId: target.projectId, section: target.section });
+          setSelected(noteFolderId(target));
+          setPageId(target.id);
+          setView("pages");
         } else {
           // Same wording whether it was deleted, archived or never existed.
-          setSelected("general");
+          setSelected(GENERAL_FOLDER_ID);
           setNotice("That note is no longer available.");
         }
       }
@@ -149,7 +188,12 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
   }, []);
 
-  const project = snapshot ? selectedProject(snapshot, selected) : null;
+  const folderTree = useMemo<FolderNode[]>(() => buildFolderTree(tree?.folders ?? []), [tree]);
+  const flatFolders = useMemo(() => flattenFolderTree(folderTree), [folderTree]);
+  const folder = tree?.folders.find((entry) => entry.id === selected) ?? null;
+  const folderName = folder?.name ?? "General";
+  // Pre-folder project spaces kept their ids as folders, so the Board's brief still finds them.
+  const project = snapshot?.projects.find((entry) => entry.id === selected) ?? null;
 
   const loadProjectMemory = async (projectName: string) => {
     const request = ++projectMemoryRequest.current;
@@ -169,8 +213,9 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     }
   };
 
+  const briefProject = view === "board" ? project : null;
   useEffect(() => {
-    if (!project) {
+    if (!briefProject) {
       projectMemoryRequest.current += 1;
       setProjectMemory(null);
       setProjectMemoryError(null);
@@ -178,17 +223,27 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
       return;
     }
     setProjectMemory(null);
-    void loadProjectMemory(project.name);
-  }, [project?.id, project?.name]);
-  const projectNotes = useMemo(() => {
-    if (!snapshot) return [];
-    return snapshot.notes.filter((note) => note.status !== "archived" && noteMatchesSpace(note, selected));
-  }, [snapshot, selected]);
-  const spaceNotes = useMemo(() => {
-    const needle = query.trim().toLocaleLowerCase();
-    return projectNotes.filter((note) => !needle || [note.title, note.content, note.kind, ...note.tags]
-        .join(" ").toLocaleLowerCase().includes(needle));
-  }, [projectNotes, query]);
+    void loadProjectMemory(briefProject.name);
+  }, [briefProject?.id, briefProject?.name]);
+
+  const pages = useMemo(() => snapshot ? folderPages(snapshot.notes, selected) : [], [snapshot, selected]);
+  const searchResults = useMemo(() => {
+    if (!snapshot || !query.trim()) return [];
+    return snapshot.notes.filter((note) => note.status !== "archived" && matchesQuery(note, query));
+  }, [snapshot, query]);
+  const boardNotes = useMemo(() => pages.filter((note) => matchesQuery(note, query)), [pages, query]);
+
+  const selectFolder = (id: string) => {
+    setSelected(id);
+    setPageId(null);
+  };
+
+  const openPage = (note: Note) => {
+    setSelected(noteFolderId(note));
+    setPageId(note.id);
+    setView("pages");
+    setQuery("");
+  };
 
   const perform = async (key: string, action: () => Promise<void>) => {
     setBusy(key);
@@ -196,7 +251,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     try { await action(); await load(true); }
     catch (cause) {
       setError(cause instanceof ApiError && cause.code === "stale_version"
-        ? "That note changed in another window or through AVA. The latest version is shown; repeat your change if it is still needed."
+        ? "That changed in another window or through AVA. The latest version is shown; repeat your change if it is still needed."
         : cause instanceof Error ? cause.message : "The Notes action failed.");
       await load(true);
     } finally { setBusy(null); }
@@ -206,15 +261,16 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     const content = capture.trim();
     if (!content || !snapshot) return;
     await perform("capture", async () => {
-      await createNote({
+      const created = await createNote({
         content,
-        projectId: project?.id ?? null,
+        folderId: selected,
         section: captureSection,
         kind: defaultKind(captureSection),
         pinned: captureSection === "priorities",
       });
       setCapture("");
-      setNotice(`Captured in ${project?.name ?? "General"} / ${SECTION[captureSection].label}.`);
+      setPageId(created.id);
+      setNotice(`Captured as a new page in ${folderName}.`);
     });
   };
 
@@ -232,6 +288,27 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     });
   };
 
+  const movePage = async (note: Note, folderId: string) => {
+    const destination = tree?.folders.find((entry) => entry.id === folderId);
+    const at = pages.findIndex((page) => page.id === note.id);
+    const neighbour = pages[at + 1] ?? pages[at - 1] ?? null;
+    await perform("page", async () => {
+      await updateNote(note.id, note.version, { folderId });
+      setPageId(neighbour?.id ?? null);
+      setNotice(`Moved “${note.title}” to ${destination ? folderLabel(destination) : "another folder"}. It is the last page there.`);
+    });
+  };
+
+  const newPage = (documentType: NoteDocumentType = "general") =>
+    setEditor({ note: null, folderId: selected, section: "capture", documentType });
+
+  const legacy = tree ? legacyFolders(tree.folders, tree.migration.legacyRootFolderIds) : [];
+  const showMigration = !!tree && !migrationSeen && tree.migration.legacyProjectCount > 0;
+  const dismissMigration = () => {
+    setMigrationSeen(true);
+    try { window.localStorage.setItem(MIGRATION_NOTICE_KEY, "1"); } catch { /* per-browser convenience only */ }
+  };
+
   if (!snapshot && !error) {
     return (
       <PanelShell title="Notes">
@@ -240,21 +317,22 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     );
   }
 
-  if (!snapshot) {
-    return <PanelShell title="Notes"><div className="mx-auto max-w-xl"><ErrorBanner message={error!} onDismiss={() => void load()} /></div></PanelShell>;
+  if (!snapshot || !tree) {
+    return <PanelShell title="Notes"><div className="mx-auto max-w-xl"><ErrorBanner message={error ?? "Notes could not be loaded."} onDismiss={() => void load()} /></div></PanelShell>;
   }
 
-  const pinned = spaceNotes.filter((note) => note.pinned);
+  const pinned = boardNotes.filter((note) => note.pinned);
+  const crumbs = folder ? folderLabel(folder) : "General";
 
   return (
     <PanelShell title="Notes" grid>
       <section className="lg:col-span-12" data-panel-section>
-        <BorderGlow className="overflow-hidden px-5 py-5 sm:px-6">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-end">
+        <BorderGlow className="overflow-hidden px-5 py-4 sm:px-6">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
             <div className="min-w-0 flex-1">
               <div className="mb-2 flex items-center gap-2">
                 <NotebookPen size={15} className="text-[var(--ac)]" />
-                <span className="hud text-[10px] tracking-[0.18em] text-white/55">QUICK CAPTURE · {project?.name ?? "GENERAL"}</span>
+                <span className="hud text-[10px] tracking-[0.18em] text-white/55">QUICK CAPTURE · {folderName.toUpperCase()}</span>
               </div>
               <textarea
                 value={capture}
@@ -263,7 +341,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void quickCapture(); }
                 }}
                 placeholder="Drop the thought here. AVA can organise it with you later…"
-                className="min-h-20 w-full resize-none rounded-xl border border-white/10 bg-black/45 px-4 py-3 text-sm leading-6 text-white outline-none transition focus:border-[var(--ac)]/45 focus:ring-2 focus:ring-[var(--ac)]/10"
+                className="min-h-16 w-full resize-none rounded-xl border border-white/10 bg-black/45 px-4 py-3 text-sm leading-6 text-white outline-none transition focus:border-[var(--ac)]/45 focus:ring-2 focus:ring-[var(--ac)]/10"
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -272,8 +350,8 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                 const Icon = meta.icon;
                 const active = captureSection === section;
                 return (
-                  <button key={section} type="button" onClick={() => setCaptureSection(section)}
-                    className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-[11px] transition ${active ? "border-white/25 bg-white/10 text-white" : "border-white/[0.07] bg-black/25 text-white/45 hover:text-white/75"}`}>
+                  <button key={section} type="button" aria-pressed={active} onClick={() => setCaptureSection(section)}
+                    className={`hidden h-9 sm:flex items-center gap-2 rounded-lg border px-3 text-[11px] transition ${active ? "border-white/25 bg-white/10 text-white" : "border-white/[0.07] bg-black/25 text-white/45 hover:text-white/75"}`}>
                     <Icon size={13} style={{ color: active ? meta.color : undefined }} />{meta.label}
                   </button>
                 );
@@ -283,169 +361,250 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
               </Button>
             </div>
           </div>
-          <div className="mt-3 flex items-center justify-between gap-3 text-[10px] text-white/30">
-            <span>Tip: tell AVA “put this in Notes under AVA Voice decisions.”</span>
+          <div className="mt-2 hidden items-center justify-between gap-3 text-[10px] text-white/30 sm:flex">
+            <span>Tip: tell AVA “add this to my Agile Development study notes.”</span>
             <span className="hidden sm:block">Ctrl + Enter to capture</span>
           </div>
         </BorderGlow>
       </section>
 
+      {showMigration && (
+        <section aria-label="Notes now use folders" className="lg:col-span-12" data-panel-section>
+          <div className="rounded-xl border border-[var(--ac)]/20 bg-[var(--ac)]/[0.05] px-4 py-3 text-xs leading-5 text-white/70">
+            <p className="font-medium text-white">Notes now live in folders, one page at a time.</p>
+            <p className="mt-1">
+              All {tree.snapshot.totalDocuments} of your notes are here unchanged, in the order they were written.
+              Your old project spaces became folders. Nothing was merged or renamed.
+            </p>
+            {legacy.length > 0 && (
+              <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Folders made from project spaces">
+                {legacy.map((entry) => (
+                  <li key={entry.id} className="rounded-md border border-white/10 bg-black/30 px-2 py-0.5 text-[11px] text-white/60">{folderLabel(entry)} · {entry.documentCount}</li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-2 text-white/50">If two folders belong together, move the pages yourself or ask AVA to combine them. She will show you first.</p>
+            <button type="button" onClick={dismissMigration} className="hud mt-2 text-[9px] tracking-[0.14em] text-[var(--ac)]/80 hover:text-[var(--ac)]">GOT IT</button>
+          </div>
+        </section>
+      )}
+
       {(error || notice) && (
         <div className="lg:col-span-12" data-panel-section>
           {error ? <ErrorBanner message={error} onDismiss={() => setError(null)} /> : (
-            <div className="rounded-xl border border-[var(--ac)]/20 bg-[var(--ac)]/[0.06] px-4 py-3 text-xs text-[#bdf8ff]">{notice}</div>
+            <div role="status" className="flex items-start justify-between gap-4 rounded-xl border border-[var(--ac)]/20 bg-[var(--ac)]/[0.06] px-4 py-3 text-xs text-[#bdf8ff]">
+              <span>{notice}</span>
+              <button type="button" onClick={() => setNotice(null)} className="hud text-[9px] tracking-[0.14em] text-[#bdf8ff]/60 hover:text-[#bdf8ff]">DISMISS</button>
+            </div>
           )}
         </div>
       )}
 
       <aside className="lg:col-span-3" data-panel-section>
-        <BorderGlow className="px-4 py-4 sm:px-5 sm:py-5">
-          <header className="mb-4 flex items-center justify-between border-b border-white/[0.07] pb-3">
-            <span className="hud text-[10px] tracking-[0.18em] text-white/55">NOTE SPACES</span>
-            <button type="button" aria-label="Create project space" onClick={() => setProjectDialog(true)} className="rounded-md border border-white/10 p-1.5 text-white/55 transition hover:border-[var(--ac)]/30 hover:text-[var(--ac)]"><Plus size={14} /></button>
-          </header>
-          <div className="space-y-1.5">
-            <SpaceButton active={selected === "general"} icon={Inbox} name="General" count={snapshot.notes.filter((note) => note.projectId === null && note.status !== "archived").length} onClick={() => setSelected("general")} />
-            {snapshot.projects.map((entry) => (
-              <SpaceButton key={entry.id} active={selected === entry.id} icon={FolderKanban} name={entry.name} count={entry.noteCount} onClick={() => setSelected(entry.id)} />
-            ))}
-          </div>
-          <button type="button" onClick={() => setProjectDialog(true)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-white/10 px-3 py-2.5 text-[11px] text-white/40 transition hover:border-[var(--ac)]/30 hover:text-[var(--ac)]">
-            <Plus size={13} />New project space
-          </button>
+        <BorderGlow className="px-3 py-3 sm:px-4 sm:py-4">
+          <FolderTree
+            tree={folderTree}
+            selectedId={selected}
+            busy={busy === "folder"}
+            onSelect={selectFolder}
+            onNewFolder={() => setFolderDialog({ mode: "create", parent: folder })}
+            onRename={(target) => setFolderDialog({ mode: "rename", folder: target })}
+            onDelete={(target) => {
+              if (!window.confirm(`Delete the empty folder “${target.name}”?`)) return;
+              void perform("folder", async () => {
+                await deleteNoteFolder(target.id, target.version);
+                selectFolder(target.parentId ?? GENERAL_FOLDER_ID);
+                setNotice(`Deleted the empty folder “${target.name}”.`);
+              });
+            }}
+          />
         </BorderGlow>
       </aside>
 
       <main className="min-w-0 lg:col-span-9" data-panel-section>
-        <div className="mb-5 flex flex-col gap-4 rounded-2xl border border-white/[0.07] bg-black/30 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-white/[0.07] bg-black/30 px-4 py-3 sm:px-5 md:flex-row md:items-center md:justify-between">
           <div className="min-w-0">
+            <p className="truncate text-[10px] text-white/35">{crumbs}</p>
             <div className="flex items-center gap-2">
-              {project ? <FolderKanban size={17} className="text-[var(--ac)]" /> : <Inbox size={17} className="text-[var(--ac)]" />}
-              <h2 className="truncate text-lg font-semibold text-white">{project?.name ?? "General Notes"}</h2>
-              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/40">{spaceNotes.length}</span>
+              <h2 className="truncate text-lg font-semibold text-white">{folderName}</h2>
+              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/40">{pages.length} {pages.length === 1 ? "page" : "pages"}</span>
             </div>
-            <p className="mt-1 text-xs text-white/40">{project?.description || (project ? "A structured workspace for this project." : "Loose capture, personal ideas and anything not tied to one project.")}</p>
+            {folder?.description && <p className="mt-0.5 text-xs text-white/40">{folder.description}</p>}
           </div>
-          <div className="flex items-center gap-2">
-            <label className="relative min-w-0 flex-1 sm:w-52">
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="relative min-w-0 basis-full sm:w-52 sm:basis-auto sm:flex-none">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search this space" className="h-9 w-full rounded-lg border border-white/10 bg-black/40 pl-9 pr-3 text-xs text-white outline-none focus:border-[var(--ac)]/35" />
+              <input
+                aria-label={view === "pages" ? "Search all pages" : "Search this folder"}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={view === "pages" ? "Search all pages" : "Search this folder"}
+                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 pl-9 pr-3 text-xs text-white outline-none focus:border-[var(--ac)]/35"
+              />
             </label>
+            <div role="group" aria-label="View" className="flex rounded-lg border border-white/10 p-0.5">
+              <button type="button" aria-pressed={view === "pages"} onClick={() => setView("pages")} className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11px] ${view === "pages" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/75"}`}><BookOpen size={13} />Pages</button>
+              <button type="button" aria-pressed={view === "board"} onClick={() => setView("board")} className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11px] ${view === "board" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/75"}`}><KanbanSquare size={13} />Board</button>
+            </div>
             <button type="button" aria-label="Refresh notes" onClick={() => void load()} className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 text-white/40 transition hover:text-white"><RefreshCw size={14} /></button>
-            <Button size="sm" onClick={() => setEditor({ note: null, projectId: project?.id ?? null, section: "capture" })} className="h-9"><Plus size={14} />Rich note</Button>
+            <Button size="sm" onClick={() => newPage()} className="h-9"><Plus size={14} />New page</Button>
+            <Button size="sm" variant="outline" onClick={() => newPage("study")} className="h-9"><GraduationCap size={14} />Study page</Button>
           </div>
         </div>
 
-        {project && (
-          <>
-          <ProjectBrief
-            project={project}
-            notes={projectNotes}
-            memory={projectMemory}
-            memoryLoading={projectMemoryLoading}
-            memoryError={projectMemoryError}
-            onRetryMemory={() => void loadProjectMemory(project.name)}
-            onOpenNote={(note) => setEditor({ note, projectId: note.projectId, section: note.section })}
-            onOpenChat={onOpenChat}
+        {view === "pages" && query.trim() ? (
+          <section aria-label="Search results" className="rounded-2xl border border-white/[0.07] bg-black/25 px-3 py-3">
+            <p className="mb-2 px-2 text-[10px] text-white/40">{searchResults.length} {searchResults.length === 1 ? "page matches" : "pages match"} “{query.trim()}”</p>
+            <ul className="space-y-0.5">
+              {searchResults.map((note) => (
+                <li key={note.id}>
+                  <button type="button" onClick={() => openPage(note)} className="flex w-full flex-col rounded-lg px-3 py-2 text-left transition hover:bg-white/[0.04]">
+                    <span className="text-sm text-white/85">{note.title}</span>
+                    <span className="text-[10px] text-white/35">{note.folderPath?.map((crumb) => crumb.name).join(" / ") || "General"}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : view === "pages" ? (
+          <NotePager
+            pages={pages}
+            currentId={pageId}
+            folderName={folderName}
+            folders={flatFolders}
+            busy={busy === "page"}
+            onSelect={setPageId}
+            onEdit={(note) => setEditor({ note, folderId: noteFolderId(note), section: note.section, documentType: note.documentType ?? "general" })}
+            onMove={(note, folderId) => void movePage(note, folderId)}
+            onAsk={(note) => onStartTask(`Open my Notes page “${note.title}” (in ${note.folderPath?.map((crumb) => crumb.name).join(" / ") || "General"}) and help me work through it.`)}
+            onNewPage={() => newPage()}
           />
-          <div className="mb-5 grid grid-cols-2 gap-2 xl:grid-cols-4">
-            {NOTE_SECTIONS.map((section) => {
-              const meta = SECTION[section];
-              const Icon = meta.icon;
-              const count = spaceNotes.filter((note) => note.section === section).length;
-              return (
-                <button key={section} type="button" onClick={() => setEditor({ note: null, projectId: project.id, section })}
-                  className="group rounded-xl border border-white/[0.07] bg-white/[0.025] px-4 py-3 text-left transition hover:-translate-y-0.5 hover:border-white/15 hover:bg-white/[0.045]">
-                  <span className="mb-3 flex items-center justify-between"><Icon size={15} style={{ color: meta.color }} /><span className="hud text-[10px] text-white/35">{count}</span></span>
-                  <span className="block text-xs font-semibold text-white/80 group-hover:text-white">{meta.label}</span>
-                  <span className="mt-1 block text-[10px] leading-4 text-white/35">{meta.description}</span>
-                </button>
-              );
-            })}
-          </div>
+        ) : (
+          <>
+            {project && (
+              <ProjectBrief
+                project={project}
+                notes={pages}
+                memory={projectMemory}
+                memoryLoading={projectMemoryLoading}
+                memoryError={projectMemoryError}
+                onRetryMemory={() => void loadProjectMemory(project.name)}
+                onOpenNote={openPage}
+                onOpenChat={onOpenChat}
+              />
+            )}
+
+            {pinned.length > 0 && (
+              <div className="mb-5 rounded-xl border border-[#f6c76c]/20 bg-[#f6c76c]/[0.04] px-4 py-3">
+                <div className="mb-2 flex items-center gap-2 hud text-[9px] tracking-[0.16em] text-[#f6c76c]/80"><Pin size={12} />PINNED PRIORITIES</div>
+                <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                  {pinned.map((note) => (
+                    <button key={note.id} type="button" onClick={() => openPage(note)}
+                      className="min-w-52 max-w-72 rounded-lg border border-white/[0.07] bg-black/30 px-3 py-2 text-left text-xs text-white/70 hover:border-[#f6c76c]/25 hover:text-white">
+                      <span className="line-clamp-1 font-medium">{note.title}</span>
+                      <span className="mt-1 block line-clamp-1 text-[10px] text-white/30">{note.content}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="no-scrollbar overflow-x-auto pb-4">
+              <div className="grid min-w-[980px] grid-cols-4 gap-3 lg:min-w-0">
+                {NOTE_STAGES.map((stage) => {
+                  const meta = STAGE[stage];
+                  const Icon = meta.icon;
+                  const notes = boardNotes.filter((note) => note.status === stage);
+                  return (
+                    <section key={stage} className="min-h-[360px] rounded-2xl border border-white/[0.07] bg-white/[0.018] p-3"
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={(event) => {
+                        event.preventDefault();
+                        const note = snapshot.notes.find((entry) => entry.id === event.dataTransfer.getData("text/note-id"));
+                        if (note) void moveNote(note, stage);
+                      }}>
+                      <header className="mb-3 rounded-xl border border-white/[0.06] bg-black/35 px-3 py-3">
+                        <div className="flex items-center justify-between">
+                          <span className="flex items-center gap-2 text-xs font-semibold text-white/80"><Icon size={14} style={{ color: meta.color }} />{meta.label}</span>
+                          <span className="hud rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/35">{notes.length}</span>
+                        </div>
+                        <p className="mt-1.5 text-[9px] text-white/30">{meta.hint}</p>
+                      </header>
+                      <div className="space-y-2.5">
+                        {notes.map((note) => (
+                          <NoteCard key={note.id} note={note} busy={busy === note.id}
+                            onOpen={() => setEditor({ note, folderId: noteFolderId(note), section: note.section, documentType: note.documentType ?? "general" })}
+                            onMove={(direction) => {
+                              const at = NOTE_STAGES.indexOf(note.status as typeof NOTE_STAGES[number]);
+                              const next = NOTE_STAGES[at + direction];
+                              if (next) void moveNote(note, next);
+                            }}
+                            onPin={() => void togglePin(note)} />
+                        ))}
+                        {notes.length === 0 && (
+                          <button type="button" onClick={() => newPage()}
+                            className="flex min-h-24 w-full flex-col items-center justify-center rounded-xl border border-dashed border-white/[0.08] text-[10px] text-white/25 transition hover:border-[var(--ac)]/20 hover:text-white/45">
+                            <Plus size={15} className="mb-2" />Add to {meta.label}
+                          </button>
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </div>
           </>
         )}
-
-        {pinned.length > 0 && (
-          <div className="mb-5 rounded-xl border border-[#f6c76c]/20 bg-[#f6c76c]/[0.04] px-4 py-3">
-            <div className="mb-2 flex items-center gap-2 hud text-[9px] tracking-[0.16em] text-[#f6c76c]/80"><Pin size={12} />PINNED PRIORITIES</div>
-            <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-              {pinned.map((note) => (
-                <button key={note.id} type="button" onClick={() => setEditor({ note, projectId: note.projectId, section: note.section })}
-                  className="min-w-52 max-w-72 rounded-lg border border-white/[0.07] bg-black/30 px-3 py-2 text-left text-xs text-white/70 hover:border-[#f6c76c]/25 hover:text-white">
-                  <span className="line-clamp-1 font-medium">{note.title}</span>
-                  <span className="mt-1 block line-clamp-1 text-[10px] text-white/30">{note.content}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="no-scrollbar overflow-x-auto pb-4">
-          <div className="grid min-w-[980px] grid-cols-4 gap-3 lg:min-w-0">
-            {NOTE_STAGES.map((stage) => {
-              const meta = STAGE[stage];
-              const Icon = meta.icon;
-              const notes = spaceNotes.filter((note) => note.status === stage);
-              return (
-                <section key={stage} className="min-h-[360px] rounded-2xl border border-white/[0.07] bg-white/[0.018] p-3"
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const note = snapshot.notes.find((entry) => entry.id === event.dataTransfer.getData("text/note-id"));
-                    if (note) void moveNote(note, stage);
-                  }}>
-                  <header className="mb-3 rounded-xl border border-white/[0.06] bg-black/35 px-3 py-3">
-                    <div className="flex items-center justify-between">
-                      <span className="flex items-center gap-2 text-xs font-semibold text-white/80"><Icon size={14} style={{ color: meta.color }} />{meta.label}</span>
-                      <span className="hud rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/35">{notes.length}</span>
-                    </div>
-                    <p className="mt-1.5 text-[9px] text-white/30">{meta.hint}</p>
-                  </header>
-                  <div className="space-y-2.5">
-                    {notes.map((note) => (
-                      <NoteCard key={note.id} note={note} busy={busy === note.id} onOpen={() => setEditor({ note, projectId: note.projectId, section: note.section })}
-                        onMove={(direction) => {
-                          const at = NOTE_STAGES.indexOf(note.status as typeof NOTE_STAGES[number]);
-                          const next = NOTE_STAGES[at + direction];
-                          if (next) void moveNote(note, next);
-                        }}
-                        onPin={() => void togglePin(note)} />
-                    ))}
-                    {notes.length === 0 && (
-                      <button type="button" onClick={() => setEditor({ note: null, projectId: project?.id ?? null, section: "capture" })}
-                        className="flex min-h-24 w-full flex-col items-center justify-center rounded-xl border border-dashed border-white/[0.08] text-[10px] text-white/25 transition hover:border-[var(--ac)]/20 hover:text-white/45">
-                        <Plus size={15} className="mb-2" />Add to {meta.label}
-                      </button>
-                    )}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
-        </div>
       </main>
 
-      <ProjectDialog open={projectDialog} onOpenChange={setProjectDialog} onCreate={async (name, description) => {
-        await perform("project", async () => {
-          const created = await createNoteProject({ name, description });
-          setSelected(created.id);
-          setProjectDialog(false);
-          setNotice(`${created.name} is ready with capture, priorities, decisions and documentation.`);
-        });
-      }} busy={busy === "project"} />
+      <FolderDialog
+        open={!!folderDialog}
+        mode={folderDialog?.mode ?? "create"}
+        parentName={folderDialog?.mode === "create" ? folderDialog.parent?.name ?? null : null}
+        initialName={folderDialog?.mode === "rename" ? folderDialog.folder.name : ""}
+        busy={busy === "folder"}
+        onOpenChange={(open) => { if (!open) setFolderDialog(null); }}
+        onSubmit={async (name, topLevel) => {
+          const state = folderDialog;
+          if (!state) return;
+          await perform("folder", async () => {
+            if (state.mode === "create") {
+              const created = await createNoteFolder({ parentId: topLevel ? null : state.parent?.id ?? null, name });
+              selectFolder(created.id);
+              setNotice(`Created the folder “${created.name}”.`);
+            } else {
+              const renamed = await updateNoteFolder(state.folder.id, state.folder.version, { name });
+              setNotice(`Renamed the folder to “${renamed.name}”.`);
+            }
+            setFolderDialog(null);
+          });
+        }}
+      />
 
-      <NoteEditor open={!!editor} target={editor} projects={snapshot.projects} busy={busy === "editor"} onOpenChange={(open) => { if (!open) setEditor(null); }}
+      <NoteEditor open={!!editor} target={editor} folders={flatFolders} busy={busy === "editor"} onOpenChange={(open) => { if (!open) setEditor(null); }}
         onSave={async (draft) => {
+          const current = editor?.note ?? null;
           await perform("editor", async () => {
-            if (editor?.note) await updateNote(editor.note.id, editor.note.version, draft);
-            else await createNote(draft);
+            if (current) {
+              const { folderId, documentType, ...rest } = draft;
+              await updateNote(current.id, current.version, {
+                ...rest,
+                ...(folderId !== noteFolderId(current) ? { folderId } : {}),
+                ...(documentType !== (current.documentType ?? "general") ? { documentType } : {}),
+              });
+              if (folderId !== noteFolderId(current)) { setSelected(folderId); setPageId(current.id); }
+            } else {
+              const created = await createNote(draft);
+              setSelected(noteFolderId(created));
+              setPageId(created.id);
+              setView("pages");
+            }
             setEditor(null);
-            setNotice(editor?.note ? "Note updated with a new change-history entry." : "Rich note captured.");
+            setNotice(current ? "Page updated with a new change-history entry." : "New page added at the end of the folder.");
           });
         }}
         onDelete={editor?.note ? async () => {
-          if (!window.confirm("Delete this note permanently?")) return;
+          if (!window.confirm("Delete this page permanently?")) return;
           await perform("editor", async () => { await deleteNote(editor.note!.id, editor.note!.version); setEditor(null); });
         } : undefined}
         onPromote={editor?.note ? async (target) => {
@@ -457,22 +616,6 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
           });
         } : undefined} />
     </PanelShell>
-  );
-}
-
-function SpaceButton({ active, icon: Icon, name, count, onClick }: {
-  active: boolean;
-  icon: typeof Inbox;
-  name: string;
-  count: number;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" onClick={onClick} className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${active ? "border-[var(--ac)]/25 bg-[var(--ac)]/[0.08] text-white" : "border-transparent text-white/45 hover:border-white/[0.07] hover:bg-white/[0.025] hover:text-white/75"}`}>
-      <Icon size={14} className={active ? "text-[var(--ac)]" : ""} />
-      <span className="min-w-0 flex-1 truncate text-xs font-medium">{name}</span>
-      <span className="hud text-[9px] text-white/30">{count}</span>
-    </button>
   );
 }
 
@@ -514,29 +657,6 @@ function NoteCard({ note, busy, onOpen, onMove, onPin }: {
   );
 }
 
-function ProjectDialog({ open, onOpenChange, onCreate, busy }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onCreate: (name: string, description: string) => Promise<void>;
-  busy: boolean;
-}) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border-white/10 bg-[#050708]/95">
-        <div>
-          <DialogTitle className="mb-2 flex items-center gap-2 text-sm font-semibold"><FolderKanban size={16} className="text-[var(--ac)]" />New project note space</DialogTitle>
-          <DialogDescription className="text-xs leading-5 text-white/40">It starts with the same lightweight structure: capture, priorities, decisions and documentation.</DialogDescription>
-        </div>
-        <label className="space-y-1.5 text-xs text-white/50"><span>Name</span><input autoFocus value={name} onChange={(event) => setName(event.target.value)} className="h-10 w-full rounded-lg border border-white/10 bg-black/50 px-3 text-sm text-white outline-none focus:border-[var(--ac)]/35" placeholder="e.g. AVA Voice" /></label>
-        <label className="space-y-1.5 text-xs text-white/50"><span>Purpose</span><textarea value={description} onChange={(event) => setDescription(event.target.value)} className="min-h-20 w-full resize-none rounded-lg border border-white/10 bg-black/50 px-3 py-2 text-sm text-white outline-none focus:border-[var(--ac)]/35" placeholder="What belongs here?" /></label>
-        <div className="flex justify-end gap-2"><Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button><Button disabled={!name.trim() || busy} onClick={() => void onCreate(name, description)}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <Plus size={14} />}Create space</Button></div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function linksFromText(text: string): NoteLink[] {
   return text.split(/\r?\n/).flatMap((line) => {
     const clean = line.trim();
@@ -548,13 +668,13 @@ function linksFromText(text: string): NoteLink[] {
   });
 }
 
-function NoteEditor({ open, target, projects, busy, onOpenChange, onSave, onDelete, onPromote }: {
+function NoteEditor({ open, target, folders, busy, onOpenChange, onSave, onDelete, onPromote }: {
   open: boolean;
   target: EditorTarget | null;
-  projects: NoteProject[];
+  folders: FolderNode[];
   busy: boolean;
   onOpenChange: (open: boolean) => void;
-  onSave: (draft: { title: string; content: string; kind: NoteKind; status: NoteStage; projectId: string | null; section: NoteSection; tags: string[]; links: NoteLink[]; pinned: boolean }) => Promise<void>;
+  onSave: (draft: EditorDraft) => Promise<void>;
   onDelete?: () => Promise<void>;
   onPromote?: (target: "task" | "self_improvement") => Promise<void>;
 }) {
@@ -563,7 +683,8 @@ function NoteEditor({ open, target, projects, busy, onOpenChange, onSave, onDele
   const [content, setContent] = useState("");
   const [kind, setKind] = useState<NoteKind>("idea");
   const [status, setStatus] = useState<NoteStage>("ideas");
-  const [projectId, setProjectId] = useState<string | null>(null);
+  const [folderId, setFolderId] = useState(GENERAL_FOLDER_ID);
+  const [documentType, setDocumentType] = useState<NoteDocumentType>("general");
   const [section, setSection] = useState<NoteSection>("capture");
   const [tags, setTags] = useState("");
   const [linkText, setLinkText] = useState("");
@@ -571,33 +692,43 @@ function NoteEditor({ open, target, projects, busy, onOpenChange, onSave, onDele
 
   useEffect(() => {
     if (!target) return;
+    const type = note?.documentType ?? target.documentType;
     setTitle(note?.title ?? "");
-    setContent(note?.content ?? "");
+    setContent(note?.content ?? (type === "study" ? STUDY_TEMPLATE : ""));
     setKind(note?.kind ?? defaultKind(target.section));
     setStatus(note?.status ?? "ideas");
-    setProjectId(note?.projectId ?? target.projectId);
+    setFolderId(note ? noteFolderId(note) : target.folderId);
+    setDocumentType(type);
     setSection(note?.section ?? target.section);
     setTags(note?.tags.join(", ") ?? "");
     setLinkText(note?.links.map((link) => `${link.label} | ${link.url}`).join("\n") ?? "");
     setPinned(note?.pinned ?? target.section === "priorities");
-  }, [target?.note?.id, target?.note?.version, target?.projectId, target?.section]);
+  }, [target?.note?.id, target?.note?.version, target?.folderId, target?.section, target?.documentType]);
+
+  const changeType = (next: NoteDocumentType) => {
+    setDocumentType(next);
+    // Only a blank page gets the study headings; existing writing is never replaced.
+    if (next === "study" && !content.trim()) setContent(STUDY_TEMPLATE);
+    if (next === "general" && content === STUDY_TEMPLATE) setContent("");
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[88vh] max-w-3xl overflow-y-auto border-white/10 bg-[#050708]/95 p-0">
         <div className="sticky top-0 z-10 border-b border-white/[0.07] bg-[#050708]/95 px-6 py-5 backdrop-blur-xl">
-          <div className="flex items-center gap-2"><FileText size={16} className="text-[var(--ac)]" /><DialogTitle className="text-sm font-semibold">{note ? "Edit note" : "New rich note"}</DialogTitle>{note && <span className="hud text-[8px] text-white/25">V{note.version}</span>}</div>
+          <div className="flex items-center gap-2"><FileText size={16} className="text-[var(--ac)]" /><DialogTitle className="text-sm font-semibold">{note ? "Edit page" : documentType === "study" ? "New study page" : "New page"}</DialogTitle>{note && <span className="hud text-[8px] text-white/25">V{note.version}</span>}</div>
           <DialogDescription className="mt-1 text-[10px] text-white/35">Context, references and every meaningful change stay together.</DialogDescription>
         </div>
         <div className="grid gap-5 px-6 py-5 md:grid-cols-2">
-          <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Title</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} className="h-10 w-full rounded-lg border border-white/10 bg-black/45 px-3 text-sm text-white outline-none focus:border-[var(--ac)]/35" placeholder="A clear, useful title" /></label>
-          <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Context</span><textarea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-40 w-full resize-y rounded-lg border border-white/10 bg-black/45 px-3 py-3 text-sm leading-6 text-white outline-none focus:border-[var(--ac)]/35" placeholder="The details, requirements, rationale or documentation…" /></label>
-          <FieldSelect label="Space" value={projectId ?? "general"} onChange={(value) => setProjectId(value === "general" ? null : value)} options={[{ value: "general", label: "General" }, ...projects.map((project) => ({ value: project.id, label: project.name }))]} />
+          <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Title</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} className="h-10 w-full rounded-lg border border-white/10 bg-black/45 px-3 text-sm text-white outline-none focus:border-[var(--ac)]/35" placeholder={documentType === "study" ? "e.g. Lecture 4: Scrum roles" : "A clear, useful title"} /></label>
+          <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Page</span><textarea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-56 w-full resize-y rounded-lg border border-white/10 bg-black/45 px-3 py-3 text-sm leading-6 text-white outline-none focus:border-[var(--ac)]/35" placeholder="Write the page. Markdown headings and lists work." /></label>
+          <FieldSelect label="Folder" value={folderId} onChange={setFolderId} options={folders.map(({ folder, depth }) => ({ value: folder.id, label: `${"  ".repeat(depth)}${folder.name}` }))} />
+          <FieldSelect label="Page type" value={documentType} onChange={(value) => changeType(value as NoteDocumentType)} options={[{ value: "general", label: "General page" }, { value: "study", label: "Study notes" }]} />
           <FieldSelect label="Template section" value={section} onChange={(value) => setSection(value as NoteSection)} options={NOTE_SECTIONS.map((value) => ({ value, label: SECTION[value].label }))} />
           <FieldSelect label="Kind" value={kind} onChange={(value) => setKind(value as NoteKind)} options={NOTE_KINDS.map((value) => ({ value, label: value.replace("_", " ") }))} />
-          <FieldSelect label="Kanban stage" value={status} onChange={(value) => setStatus(value as NoteStage)} options={NOTE_STAGES.map((value) => ({ value, label: STAGE[value].label }))} />
+          <FieldSelect label="Board stage" value={status} onChange={(value) => setStatus(value as NoteStage)} options={NOTE_STAGES.map((value) => ({ value, label: STAGE[value].label }))} />
           <label className="space-y-1.5 text-xs text-white/45"><span>Tags</span><input value={tags} onChange={(event) => setTags(event.target.value)} className="h-10 w-full rounded-lg border border-white/10 bg-black/45 px-3 text-sm text-white outline-none focus:border-[var(--ac)]/35" placeholder="voice, reliability, UX" /></label>
-          <label className="flex items-end">
+          <label className="flex items-end md:col-span-2">
             <button
               type="button"
               onClick={() => {
@@ -632,7 +763,7 @@ function NoteEditor({ open, target, projects, busy, onOpenChange, onSave, onDele
           <div className="flex items-center justify-end gap-2">
             {onDelete && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void onDelete()} className="text-red-300/60 hover:text-red-200"><Trash2 size={13} />Delete</Button>}
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button size="sm" disabled={!content.trim() || busy} onClick={() => void onSave({ title, content, kind, status, projectId, section, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean), links: linksFromText(linkText), pinned })}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}Save note</Button>
+            <Button size="sm" disabled={!content.trim() || busy} onClick={() => void onSave({ title, content, kind, status, folderId, documentType, section, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean), links: linksFromText(linkText), pinned })}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}Save page</Button>
           </div>
         </footer>
       </DialogContent>

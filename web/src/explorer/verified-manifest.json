@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1790278141204,
+  "generatedAt": 1790288195349,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -379,6 +379,18 @@
       "capability": "memory.structured-notes",
       "path": "web/src/notes/NotesScreen.tsx",
       "symbol": "NotesScreen",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.structured-notes",
+      "path": "web/src/notes/NotePager.tsx",
+      "symbol": "NotePager",
+      "kind": "implementation"
+    },
+    {
+      "capability": "memory.structured-notes",
+      "path": "web/src/notes/FolderTree.tsx",
+      "symbol": "FolderTree",
       "kind": "implementation"
     },
     {
@@ -1091,6 +1103,10 @@
     },
     {
       "name": "notes_update",
+      "file": "server/src/tools/notes-mcp.ts"
+    },
+    {
+      "name": "notes_folders",
       "file": "server/src/tools/notes-mcp.ts"
     },
     {

@@ -36,6 +36,9 @@ describe("humanizeTool", () => {
     expect(humanizeTool("claude_code")).toBe("Writing code");
     expect(humanizeTool("memory_remember")).toBe("Saving to memory");
     expect(humanizeTool("notes_capture", { project: "AVA Voice" })).toBe("Saving to AVA Voice Notes");
+    expect(humanizeTool("notes_capture", { folder_path: "University/Agile Development" })).toBe("Saving to Agile Development Notes");
+    expect(humanizeTool("notes_folders", { action: "create" })).toBe("Creating a Notes folder");
+    expect(humanizeTool("notes_folders", { action: "list" })).toBe("Checking Notes folders");
     expect(humanizeTool("notes_promote", { target: "task" })).toBe("Turning a note into a task");
     expect(humanizeTool("self_improve")).toBe("Queuing a self-improvement");
   });

@@ -53,9 +53,20 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "memory_remember": return "Saving to memory";
     case "memory_forget": return "Updating memory";
     case "memory_read": return "Recalling from memory";
-    case "notes_capture": return a.project ? `Saving to ${truncate(s(a.project), 24)} Notes` : "Saving to Notes";
+    case "notes_capture": {
+      const folder = s(a.folder_path).split("/").map((part) => part.trim()).filter(Boolean).pop() || s(a.project);
+      return folder ? `Saving to ${truncate(folder, 24)} Notes` : "Saving to Notes";
+    }
     case "notes_search": return "Searching Notes";
     case "notes_update": return "Organising Notes";
+    case "notes_folders": {
+      const action = s(a.action);
+      if (action === "create") return "Creating a Notes folder";
+      if (action === "rename") return "Renaming a Notes folder";
+      if (action === "move") return "Moving a Notes folder";
+      if (action === "delete") return "Removing an empty Notes folder";
+      return "Checking Notes folders";
+    }
     case "notes_promote": return a.target === "self_improvement" ? "Requesting an improvement from Notes" : "Turning a note into a task";
     case "read_logs": return "Checking her own logs";
     case "shopify_list_products": return "Listing store products";

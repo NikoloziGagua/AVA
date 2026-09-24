@@ -8,7 +8,12 @@ export const NOTE_KINDS = [
 export const NOTE_STAGES = ["ideas", "doing", "review", "done"] as const;
 export const NOTE_SECTIONS = ["capture", "priorities", "decisions", "documentation"] as const;
 
+export const NOTE_DOCUMENT_TYPES = ["general", "study"] as const;
+/** The built-in root folder every unfiled page lives in (notes-hierarchy v3). */
+export const GENERAL_FOLDER_ID = "notes_general";
+
 export type NoteKind = typeof NOTE_KINDS[number];
+export type NoteDocumentType = typeof NOTE_DOCUMENT_TYPES[number];
 export type NoteStage = typeof NOTE_STAGES[number] | "archived";
 export type NoteSection = typeof NOTE_SECTIONS[number];
 export type NoteLink = { label: string; url: string };
@@ -24,6 +29,29 @@ export type NoteProject = {
   updatedAt: number;
 };
 
+export type NoteFolderCrumb = { id: string; name: string };
+
+export type NoteFolder = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  description: string;
+  position: number;
+  builtIn: boolean;
+  version: number;
+  documentCount: number;
+  breadcrumb: NoteFolderCrumb[];
+  path: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type NotesTree = {
+  folders: NoteFolder[];
+  snapshot: { fetchedAt: number; version: string; complete: boolean; totalDocuments: number };
+  migration: { legacyProjectCount: number; legacyRootFolderIds: string[] };
+};
+
 export type Note = {
   id: string;
   title: string;
@@ -32,6 +60,11 @@ export type Note = {
   status: NoteStage;
   collection: string | null;
   projectId: string | null;
+  /** Hierarchy fields from notes-hierarchy v3; optional so older payloads still render in General. */
+  folderId?: string;
+  folderPath?: NoteFolderCrumb[];
+  documentType?: NoteDocumentType;
+  documentPosition?: number;
   section: NoteSection;
   tags: string[];
   links: NoteLink[];
@@ -46,6 +79,15 @@ export type Note = {
 };
 
 export type NotesSnapshot = { projects: NoteProject[]; notes: Note[] };
+
+/** Plain words for the typed hierarchy errors (notes-hierarchy v3). */
+const ERROR_TEXT: Record<string, string> = {
+  name_conflict: "That name is already used here.",
+  folder_not_empty: "Only an empty folder can be deleted. Move its pages and folders out first.",
+  invalid_move: "A folder cannot move inside itself.",
+  depth_exceeded: "Folders can only be nested six levels deep.",
+  not_found: "That folder no longer exists.",
+};
 
 async function notesRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
@@ -67,7 +109,9 @@ async function notesRequest<T>(path: string, init: RequestInit = {}): Promise<T>
     }
     throw new ApiError(
       response.status,
-      body.message ?? (body.error === "stale_version" ? "This note changed elsewhere. The latest version has been reloaded." : body.error) ?? `Notes returned HTTP ${response.status}.`,
+      (typeof body.error === "string" ? ERROR_TEXT[body.error] : undefined) ?? body.message ??
+        (body.error === "stale_version" ? "This note changed elsewhere. The latest version has been reloaded." : body.error) ??
+        `Notes returned HTTP ${response.status}.`,
       body.error ?? `http_${response.status}`,
       null,
       path,
@@ -78,6 +122,34 @@ async function notesRequest<T>(path: string, init: RequestInit = {}): Promise<T>
 
 export function fetchNotes(): Promise<NotesSnapshot> {
   return notesRequest("/api/notes");
+}
+
+export function fetchNotesTree(): Promise<NotesTree> {
+  return notesRequest("/api/notes/tree");
+}
+
+export async function createNoteFolder(input: { parentId: string | null; name: string; description?: string }): Promise<NoteFolder> {
+  const result = await notesRequest<{ folder: NoteFolder }>("/api/notes/folders", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return result.folder;
+}
+
+export async function updateNoteFolder(id: string, expectedVersion: number, patch: Partial<{
+  name: string;
+  description: string;
+  parentId: string | null;
+}>): Promise<NoteFolder> {
+  const result = await notesRequest<{ folder: NoteFolder }>(`/api/notes/folders/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ expectedVersion, ...patch }),
+  });
+  return result.folder;
+}
+
+export async function deleteNoteFolder(id: string, expectedVersion: number): Promise<void> {
+  await notesRequest(`/api/notes/folders/${encodeURIComponent(id)}?expectedVersion=${expectedVersion}`, { method: "DELETE" });
 }
 
 export async function createNoteProject(input: { name: string; description?: string }): Promise<NoteProject> {
@@ -94,6 +166,8 @@ export async function createNote(input: {
   kind?: NoteKind;
   status?: NoteStage;
   projectId?: string | null;
+  folderId?: string;
+  documentType?: NoteDocumentType;
   section?: NoteSection;
   tags?: string[];
   links?: NoteLink[];
@@ -112,6 +186,8 @@ export async function updateNote(id: string, expectedVersion: number, patch: Par
   kind: NoteKind;
   status: NoteStage;
   projectId: string | null;
+  folderId: string;
+  documentType: NoteDocumentType;
   section: NoteSection;
   tags: string[];
   links: NoteLink[];

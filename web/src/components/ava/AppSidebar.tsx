@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import {
+  ChevronDown,
   ChevronRight,
   History,
-  MessageSquareText,
+  Layers,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -14,7 +15,8 @@ export interface AppSidebarItem {
   label: string;
   icon: ComponentType<{ size?: number | string; className?: string }>;
   onSelect: () => void;
-  group: "main" | "work" | "system";
+  /** Everyday destinations are always visible; AVA's own tools live under System. */
+  group: "primary" | "system";
 }
 
 export interface AppSidebarProps {
@@ -25,12 +27,13 @@ export interface AppSidebarProps {
   activeChatSessionId: string | null;
   onExpandedChange: (expanded: boolean) => void;
   onNewChat: () => void;
-  onOpenCurrentChat: () => void;
   onOpenChat: (sessionId: string) => void;
   onOpenAllChats: () => void;
 }
 
 const RECENT_LIMIT = 8;
+/** Below this width the expanded drawer covers the page, so choosing closes it. */
+const NARROW_QUERY = "(max-width: 767px)";
 
 function formatRecentTime(value: number): string {
   const date = new Date(value);
@@ -48,6 +51,11 @@ function orderedRecent(sessions: SessionRow[], current: string | null): SessionR
   return [sessions[index]!, ...sessions.slice(0, index), ...sessions.slice(index + 1)];
 }
 
+function isNarrow(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function"
+    && window.matchMedia(NARROW_QUERY).matches;
+}
+
 export function AppSidebar({
   items,
   activeName,
@@ -56,13 +64,17 @@ export function AppSidebar({
   activeChatSessionId,
   onExpandedChange,
   onNewChat,
-  onOpenCurrentChat,
   onOpenChat,
   onOpenAllChats,
 }: AppSidebarProps) {
   const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const primary = items.filter((item) => item.group === "primary");
+  const system = items.filter((item) => item.group === "system");
+  const systemActive = system.some((item) => item.name === activeName);
+  const [systemOpen, setSystemOpen] = useState(systemActive);
+  useEffect(() => { if (systemActive) setSystemOpen(true); }, [systemActive]);
 
   // Only Nika's own conversations, bounded. The remembered chat is never cleared
   // because it is missing from this page: an exact lookup decides availability
@@ -98,10 +110,11 @@ export function AppSidebar({
     () => orderedRecent(sessions, activeChatSessionId),
     [activeChatSessionId, sessions],
   );
-  const grouped = {
-    main: items.filter((item) => item.group === "main"),
-    work: items.filter((item) => item.group === "work"),
-    system: items.filter((item) => item.group === "system"),
+
+  /** Every choice made from an expanded drawer on a narrow screen closes it. */
+  const choose = (action: () => void) => () => {
+    action();
+    if (expanded && isNarrow()) onExpandedChange(false);
   };
 
   const renderDestination = (item: AppSidebarItem) => {
@@ -114,7 +127,7 @@ export function AppSidebar({
         title={expanded ? undefined : item.label}
         aria-label={item.label}
         aria-current={selected ? "page" : undefined}
-        onClick={item.onSelect}
+        onClick={choose(item.onSelect)}
         className="ava-sidebar-destination"
         data-active={selected || undefined}
       >
@@ -122,6 +135,16 @@ export function AppSidebar({
         <span className="ava-sidebar-label">{item.label}</span>
       </button>
     );
+  };
+
+  const toggleSystem = () => {
+    if (!expanded) {
+      // The compact rail has no room for the list: open the drawer onto it.
+      setSystemOpen(true);
+      onExpandedChange(true);
+      return;
+    }
+    setSystemOpen((open) => !open);
   };
 
   return (
@@ -165,41 +188,28 @@ export function AppSidebar({
             className="ava-sidebar-destination ava-sidebar-new"
             data-active={activeName === "New" || undefined}
             aria-label="New chat"
-            onClick={onNewChat}
+            title={expanded ? undefined : "New chat"}
+            onClick={choose(onNewChat)}
           >
-            <Plus size={18} />
+            <Plus size={18} className="shrink-0" />
             <span className="ava-sidebar-label">New chat</span>
           </button>
 
-          <button
-            type="button"
-            className="ava-sidebar-destination"
-            data-active={activeName === "Chats" || undefined}
-            aria-current={activeName === "Chats" ? "page" : undefined}
-            onClick={onOpenCurrentChat}
-            aria-label={activeChatSessionId ? "Return to current chat" : "Open chats"}
-            title={expanded ? undefined : activeChatSessionId ? "Return to current chat" : "Chats"}
-          >
-            <MessageSquareText size={18} />
-            <span className="ava-sidebar-label">{activeChatSessionId ? "Continue chat" : "Chats"}</span>
-            {activeChatSessionId && <ChevronRight size={14} className="ava-sidebar-trailing" />}
-          </button>
-
           <div className="ava-sidebar-destinations">
-            {grouped.main.map(renderDestination)}
+            {primary.map(renderDestination)}
           </div>
 
           {expanded && visible && (
             <section className="ava-sidebar-recents" aria-labelledby="recent-chats-heading">
               <div className="ava-sidebar-section-title">
                 <span id="recent-chats-heading">Conversations</span>
-                <button type="button" onClick={onOpenAllChats} aria-label="View all chats">
+                <button type="button" onClick={choose(onOpenAllChats)} aria-label="View all chats">
                   <History size={14} />
                 </button>
               </div>
               {loading && <p className="ava-sidebar-muted">Loading conversations…</p>}
               {!loading && loadError && (
-                <button type="button" className="ava-sidebar-muted text-left" onClick={onOpenAllChats}>
+                <button type="button" className="ava-sidebar-muted text-left" onClick={choose(onOpenAllChats)}>
                   Chats unavailable · open history
                 </button>
               )}
@@ -213,28 +223,46 @@ export function AppSidebar({
                   className="ava-sidebar-chat"
                   data-current={session.id === activeChatSessionId || undefined}
                   aria-current={session.id === activeChatSessionId ? "page" : undefined}
-                  onClick={() => onOpenChat(session.id)}
+                  onClick={choose(() => onOpenChat(session.id))}
                 >
                   <span className="ava-sidebar-chat-title">{session.title || "Untitled chat"}</span>
                   <span className="ava-sidebar-chat-time">{formatRecentTime(lastHumanActivity(session))}</span>
                 </button>
               ))}
-              <button type="button" className="ava-sidebar-all" onClick={onOpenAllChats}>
+              <button type="button" className="ava-sidebar-all" onClick={choose(onOpenAllChats)}>
                 <span>All conversations</span>
                 <ChevronRight size={14} />
               </button>
             </section>
           )}
 
-          <div className="ava-sidebar-workspaces">
-            {expanded && <p className="ava-sidebar-eyebrow">Tools</p>}
-            {grouped.work.map(renderDestination)}
-          </div>
           <div className="ava-sidebar-system">
-            {grouped.system.map(renderDestination)}
+            <button
+              type="button"
+              className="ava-sidebar-destination"
+              aria-expanded={expanded ? systemOpen : false}
+              aria-controls="ava-sidebar-system-list"
+              aria-label="System"
+              title={expanded ? undefined : "System"}
+              data-active={(systemActive && !(expanded && systemOpen)) || undefined}
+              onClick={toggleSystem}
+            >
+              <Layers size={18} className="shrink-0" />
+              <span className="ava-sidebar-label">System</span>
+              <ChevronDown
+                size={14}
+                className="ava-sidebar-trailing"
+                style={{ transform: systemOpen ? "rotate(180deg)" : undefined }}
+                aria-hidden
+              />
+            </button>
+            {expanded && systemOpen && (
+              <div id="ava-sidebar-system-list" className="ava-sidebar-destinations" role="group" aria-label="System tools">
+                {system.map(renderDestination)}
+              </div>
+            )}
           </div>
         </nav>
-
       </aside>
     </>
   );

@@ -11,18 +11,35 @@ import {
   type ReactNode,
 } from "react";
 import { motion } from "motion/react";
-import { Home, Brain, Settings2, Sparkles, Radar, MessagesSquare, NotebookPen, Presentation, AlarmClock } from "lucide-react";
+import {
+  Activity,
+  AlarmClock,
+  Brain,
+  CalendarClock,
+  Lightbulb,
+  MessageSquareText,
+  MessagesSquare,
+  NotebookPen,
+  Presentation,
+  Radar,
+  Settings2,
+  Sparkles,
+  Sun,
+} from "lucide-react";
 import { Flip } from "./lib/gsap.js";
 import { AppSidebar, type AppSidebarItem } from "./components/ava/AppSidebar.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
 import { useReducedMotion } from "./lib/useReducedMotion.js";
+import { computeReduced } from "./lib/motionPref.js";
 import { getToken } from "./auth/tokens.js";
 import type { ConversationIntent } from "./api.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
 import { RulesScreen } from "./rules/RulesScreen.js";
 import { NotesScreen } from "./notes/NotesScreen.js";
 import { SelfScreen } from "./self/SelfScreen.js";
-import { OrbitScreen } from "./orbit/OrbitScreen.js";
+import { TodayScreen } from "./today/TodayScreen.js";
+import { IdeasScreen } from "./ideas/IdeasScreen.js";
+import { ScheduleScreen } from "./schedule/ScheduleScreen.js";
 import { ChatListScreen } from "./orbit/ChatListScreen.js";
 import { MissionControlScreen } from "./mission-control/MissionControlScreen.js";
 import { StrategyRoomScreen } from "./strategy/StrategyRoomScreen.js";
@@ -51,12 +68,15 @@ const VisualsScreen = lazy(async () => ({
 
 type View =
   | { name: "splash" }
-  | { name: "orbit" }
+  | { name: "today" }
   // `audit` shows an automated run for reference without making it the current chat.
   | { name: "chat"; sessionId: string | null; initialText?: string; audit?: boolean }
-  | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null; intent: ConversationIntent }
+  | { name: "voice"; from: "today" | "chat"; sessionId: string | null; intent: ConversationIntent }
   | { name: "memory" }
-  | { name: "notes" }
+  // `noteId` opens that exact note once; `handoff` makes each navigation distinct.
+  | { name: "notes"; noteId?: string; handoff?: number }
+  | { name: "ideas" }
+  | { name: "schedule" }
   | { name: "watches"; focusWatchId?: string | null; navigationOrigin?: "mission-control" }
   | { name: "rules" }
   | { name: "self" }
@@ -65,22 +85,36 @@ type View =
   | { name: "capabilities" }
   | { name: "list" };
 
-// Only these surfaces own the mercury Orb (with flipId="ava-orb"): splash → home
-// hero → voice hero. ChatScreen renders NO orb, so it must not be listed here —
-// otherwise entering chat would capture the still-exiting orbit orb and the next
-// orb view would Flip from a stale snapshot.
-const VIEWS_WITH_ORB = ["splash", "orbit", "voice"];
+// Only these surfaces own the mercury Orb (with flipId="ava-orb"): splash →
+// Today → voice hero. ChatScreen renders NO orb, so it must not be listed here —
+// otherwise entering chat would capture a still-exiting orb and the next orb
+// view would Flip from a stale snapshot.
+const VIEWS_WITH_ORB = ["splash", "today", "voice"];
 const LAST_CHAT_STORAGE_KEY = "ava:last-chat-session";
 // v2 resets the previous always-expanded desktop drawer. The compact rail is
 // the calm default; people can opt back into the labelled panel explicitly.
 const SIDEBAR_STORAGE_KEY = "ava:sidebar-expanded-v2";
+// The intro plays once per browser tab; reloads go straight to Today.
+const SPLASH_SEEN_KEY = "ava:splash-seen";
 const WATCHER_LINK_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Splash only on a tab's first load, and never under AVA's reduced motion. */
+export function shouldPlaySplash(): boolean {
+  try {
+    if (window.sessionStorage.getItem(SPLASH_SEEN_KEY)) return false;
+  } catch { /* storage blocked: fall through to the motion preference */ }
+  return !computeReduced();
+}
+
+function markSplashSeen(): void {
+  try { window.sessionStorage.setItem(SPLASH_SEEN_KEY, "1"); } catch { /* non-critical */ }
+}
 
 function readInitialView(): View {
   if (typeof window === "undefined") return { name: "splash" };
   const params = new URLSearchParams(window.location.search);
   if (params.get("view") !== "watches" || params.get("from") !== "mission-control") {
-    return { name: "splash" };
+    return shouldPlaySplash() ? { name: "splash" } : { name: "today" };
   }
   const requested = params.get("watch");
   return {
@@ -168,21 +202,28 @@ export class DeferredScreenBoundary extends Component<
 /** Which sidebar destination to mark for a view. Voice/splash return undefined. */
 function navForView(v: View): string | undefined {
   switch (v.name) {
-    case "orbit": return "Home";
-    // Opening an EXISTING chat is "viewing history" → Chats; only a brand-new
-    // (sessionId === null) composition lights "New".
-    case "chat": return v.sessionId === null ? "New" : "Chats";
-    case "memory": return "Memory";
+    case "today": return "Today";
+    // Only a brand-new (sessionId === null) composition lights "New"; every
+    // existing conversation, and the list of them, is Talk.
+    case "chat": return v.sessionId === null ? "New" : "Talk";
+    case "list": return "Talk";
+    case "schedule": return "Schedule";
     case "notes": return "Notes";
+    case "ideas": return "Ideas";
+    case "memory": return "Memory";
     case "watches": return "Watches";
     case "rules": return "Rules";
     case "self": return "Self";
     case "strategy": return "Room";
     case "visuals": return "Visuals";
     case "capabilities": return "Explore";
-    case "list": return "Chats";
     default: return undefined;
   }
+}
+
+/** Mission Control, the same window voice's Activity button opens. */
+function openActivity(): void {
+  window.open("/?mission-control=1", "ava-mission-control", "popup,width=1500,height=920,resizable=yes,scrollbars=no");
 }
 
 export function App() {
@@ -290,16 +331,31 @@ export function App() {
     try { flipStateRef.current = Flip.getState(orb); } catch { flipStateRef.current = null; }
   }, [view.name, reduced]);
 
-  // Persistent product destinations live in the sidebar. Recent conversations
-  // are fetched by that component, while this array remains routing-only.
+  // Talk continues the remembered conversation exactly; with none it shows
+  // Nika's conversations.
+  const openTalk = () => (lastChatSessionId ? openChat(lastChatSessionId) : setView({ name: "list" }));
+  const openNote = (noteId: string) => setView({ name: "notes", noteId, handoff: Date.now() });
+  const enterVoiceFromToday = () => setView({
+    name: "voice",
+    from: "today",
+    sessionId: lastChatSessionId,
+    intent: lastChatSessionId ? "resume" : "continue",
+  });
+
+  // Everyday destinations first; AVA's own tools live under System. Recent
+  // conversations are fetched by the sidebar, this array is routing-only.
   const navItems: AppSidebarItem[] = [
-    { name: "Home", label: "Home", icon: Home, group: "main", onSelect: () => setView({ name: "orbit" }) },
-    { name: "Explore", label: "Explore AVA", icon: Radar, group: "main", onSelect: () => setView({ name: "capabilities" }) },
-    { name: "Notes", label: "Notes", icon: NotebookPen, group: "work", onSelect: () => setView({ name: "notes" }) },
-    { name: "Watches", label: "Watches", icon: AlarmClock, group: "work", onSelect: () => setView({ name: "watches" }) },
-    { name: "Memory", label: "Memory", icon: Brain, group: "work", onSelect: () => setView({ name: "memory" }) },
-    { name: "Room", label: "Strategy Room", icon: MessagesSquare, group: "work", onSelect: () => setView({ name: "strategy" }) },
-    { name: "Visuals", label: "Visual explanations", icon: Presentation, group: "work", onSelect: () => setView({ name: "visuals" }) },
+    { name: "Today", label: "Today", icon: Sun, group: "primary", onSelect: () => setView({ name: "today" }) },
+    { name: "Talk", label: "Talk", icon: MessageSquareText, group: "primary", onSelect: openTalk },
+    { name: "Schedule", label: "Schedule", icon: CalendarClock, group: "primary", onSelect: () => setView({ name: "schedule" }) },
+    { name: "Notes", label: "Notes", icon: NotebookPen, group: "primary", onSelect: () => setView({ name: "notes" }) },
+    { name: "Ideas", label: "Ideas", icon: Lightbulb, group: "primary", onSelect: () => setView({ name: "ideas" }) },
+    { name: "Activity", label: "Activity", icon: Activity, group: "system", onSelect: openActivity },
+    { name: "Explore", label: "Explore AVA", icon: Radar, group: "system", onSelect: () => setView({ name: "capabilities" }) },
+    { name: "Watches", label: "Watches", icon: AlarmClock, group: "system", onSelect: () => setView({ name: "watches" }) },
+    { name: "Memory", label: "Memory", icon: Brain, group: "system", onSelect: () => setView({ name: "memory" }) },
+    { name: "Room", label: "Strategy Room", icon: MessagesSquare, group: "system", onSelect: () => setView({ name: "strategy" }) },
+    { name: "Visuals", label: "Visual explanations", icon: Presentation, group: "system", onSelect: () => setView({ name: "visuals" }) },
     { name: "Rules", label: "Settings & rules", icon: Settings2, group: "system", onSelect: () => setView({ name: "rules" }) },
     { name: "Self", label: "Self development", icon: Sparkles, group: "system", onSelect: () => setView({ name: "self" }) },
   ];
@@ -330,7 +386,6 @@ export function App() {
         activeChatSessionId={lastChatSessionId}
         onExpandedChange={setSidebarOpen}
         onNewChat={() => openNewChat()}
-        onOpenCurrentChat={() => lastChatSessionId ? openChat(lastChatSessionId) : setView({ name: "list" })}
         onOpenChat={(sessionId) => openChat(sessionId)}
         onOpenAllChats={() => setView({ name: "list" })}
       />
@@ -349,30 +404,55 @@ export function App() {
             data-view="splash"
             className="absolute inset-0"
           >
-            <Splash onDone={() => setView({ name: "orbit" })} />
+            <Splash onDone={() => { markSplashSeen(); setView({ name: "today" }); }} />
           </motion.div>
         )}
-        {view.name === "orbit" && (
+        {view.name === "today" && (
           <motion.div
-            key="orbit"
-            data-view="orbit"
+            key="today"
+            data-view="today"
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
             transition={enterT}
           >
-            <OrbitScreen
-              onCommand={(text) => openNewChat(text)}
-              // Home voice goes back to the remembered conversation exactly; with
-              // none remembered the server continues Nika's latest human chat.
-              onEnterVoice={() => setView({
-                name: "voice",
-                from: "orbit",
-                sessionId: lastChatSessionId,
-                intent: lastChatSessionId ? "resume" : "continue",
-              })}
-              onExplore={() => setView({ name: "capabilities" })}
+            <TodayScreen
+              onOpenChat={(sessionId) => openChat(sessionId)}
+              onStartChat={(text) => openNewChat(text)}
+              // Voice goes back to the remembered conversation exactly; with none
+              // remembered the server continues Nika's latest human chat.
+              onEnterVoice={enterVoiceFromToday}
+              onOpenTalk={() => setView({ name: "list" })}
+              onOpenNote={openNote}
+              onOpenIdeas={() => setView({ name: "ideas" })}
+              onOpenNotes={() => setView({ name: "notes" })}
             />
+          </motion.div>
+        )}
+        {view.name === "ideas" && (
+          <motion.div
+            key="ideas"
+            data-view="ideas"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <IdeasScreen onOpenNote={openNote} />
+          </motion.div>
+        )}
+        {view.name === "schedule" && (
+          <motion.div
+            key="schedule"
+            data-view="schedule"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <ScheduleScreen onOpenTalk={openTalk} />
           </motion.div>
         )}
         {view.name === "chat" && (
@@ -391,7 +471,7 @@ export function App() {
               onSessionChange={rememberChat}
               onSessionUnavailable={forgetUnavailableChat}
               onNewChat={() => openNewChat()}
-              onOpenSessions={() => setView({ name: "orbit" })}
+              onOpenSessions={() => setView({ name: "today" })}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenMemory={() => setView({ name: "memory" })}
               onOpenList={() => setView({ name: "list" })}
@@ -424,7 +504,7 @@ export function App() {
               onOpenConversations={() => setView({ name: "list" })}
               onExit={(sid) => {
                 if (view.from === "chat") openChat(sid);
-                else setView({ name: "orbit" });
+                else setView({ name: "today" });
               }}
               onSwitchToKeyboard={(sid) => openChat(sid)}
             />
@@ -441,7 +521,7 @@ export function App() {
             transition={enterT}
           >
             <MemoryScreen
-              onClose={() => setView({ name: "orbit" })}
+              onClose={() => setView({ name: "today" })}
               onOpenChat={(sessionId) => openChat(sessionId)}
             />
           </motion.div>
@@ -456,7 +536,7 @@ export function App() {
             animate={SCREEN.to}
             transition={enterT}
           >
-            <RulesScreen onClose={() => setView({ name: "orbit" })} />
+            <RulesScreen onClose={() => setView({ name: "today" })} />
           </motion.div>
         )}
         {view.name === "self" && (
@@ -469,12 +549,14 @@ export function App() {
             animate={SCREEN.to}
             transition={enterT}
           >
-            <SelfScreen onClose={() => setView({ name: "orbit" })} />
+            <SelfScreen onClose={() => setView({ name: "today" })} />
           </motion.div>
         )}
         {view.name === "notes" && (
           <motion.div
-            key="notes"
+            // A new key per handoff mounts Notes afresh, so each "open this
+            // note" is applied exactly once.
+            key={view.noteId ? `notes-${view.noteId}-${view.handoff ?? 0}` : "notes"}
             data-view="notes"
             data-deck-transition={deckTransition}
             className="absolute inset-0"
@@ -482,7 +564,11 @@ export function App() {
             animate={SCREEN.to}
             transition={enterT}
           >
-            <NotesScreen onStartTask={(text) => openNewChat(text)} onOpenChat={(sessionId) => openChat(sessionId)} />
+            <NotesScreen
+              onStartTask={(text) => openNewChat(text)}
+              onOpenChat={(sessionId) => openChat(sessionId)}
+              initialNoteId={view.noteId ?? null}
+            />
           </motion.div>
         )}
         {view.name === "strategy" && (
@@ -561,7 +647,7 @@ export function App() {
             transition={enterT}
           >
             <ChatListScreen
-              onClose={() => setView({ name: "orbit" })}
+              onClose={() => setView({ name: "today" })}
               onOpenChat={(sid, options) => (sid ? openChat(sid, options) : openNewChat())}
             />
           </motion.div>

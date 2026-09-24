@@ -248,3 +248,45 @@ describe("Notes workspace", () => {
     await waitFor(() => expect(screen.queryByText("Evidence-first Explorer")).toBeNull());
   });
 });
+
+describe("Notes exact-note handoff", () => {
+  it("opens exactly the requested note in its own space", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="note-1" />);
+    expect(await screen.findByText("Edit note")).not.toBeNull();
+    expect(screen.getByDisplayValue("Explain watcher failures")).not.toBeNull();
+    // The note's project space is the one selected behind the editor.
+    expect(screen.getByText("Capability and workflow visibility")).not.toBeNull();
+  });
+
+  it("applies the handoff once and never re-opens it on refresh", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="note-1" />);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("Edit note")).toBeNull());
+    const loadsBefore = vi.mocked(notesApi.fetchNotes).mock.calls.length;
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(vi.mocked(notesApi.fetchNotes).mock.calls.length).toBeGreaterThan(loadsBefore));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByText("Edit note")).toBeNull();
+  });
+
+  it("says a missing note is unavailable without revealing why", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="gone-note" />);
+    expect(await screen.findByText("That note is no longer available.")).not.toBeNull();
+    expect(screen.queryByText("Edit note")).toBeNull();
+  });
+
+  it("treats an archived note exactly like a missing one", async () => {
+    vi.mocked(notesApi.fetchNotes).mockResolvedValue({ ...snapshot, notes: [{ ...note, status: "archived" }] });
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="note-1" />);
+    expect(await screen.findByText("That note is no longer available.")).not.toBeNull();
+    expect(screen.queryByText("Edit note")).toBeNull();
+  });
+
+  it("shows the load error, not a missing-note notice, when Notes cannot load", async () => {
+    vi.mocked(notesApi.fetchNotes).mockRejectedValue(new Error("Notes could not be loaded right now."));
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="note-1" />);
+    expect(await screen.findByText(/Notes could not be loaded right now/)).not.toBeNull();
+    expect(screen.queryByText("That note is no longer available.")).toBeNull();
+  });
+});

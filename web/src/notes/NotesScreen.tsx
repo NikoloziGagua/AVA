@@ -93,8 +93,16 @@ function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () =>
   );
 }
 
-export function NotesScreen({ onStartTask, onOpenChat }: { onStartTask: (prompt: string) => void; onOpenChat?: (sessionId: string) => void }) {
+export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
+  onStartTask: (prompt: string) => void;
+  onOpenChat?: (sessionId: string) => void;
+  /** Open exactly this note once, after the first successful load (from Today or Ideas). */
+  initialNoteId?: string | null;
+}) {
   const [snapshot, setSnapshot] = useState<NotesSnapshot | null>(null);
+  // One-shot per navigation: consumed by the first successful snapshot, so the
+  // periodic refresh can never re-open or re-select it.
+  const pendingHandoff = useRef<string | null>(initialNoteId);
   const [selected, setSelected] = useState("general");
   const [query, setQuery] = useState("");
   const [capture, setCapture] = useState("");
@@ -115,6 +123,19 @@ export function NotesScreen({ onStartTask, onOpenChat }: { onStartTask: (prompt:
       setSnapshot(next);
       if (selected !== "general" && !next.projects.some((project) => project.id === selected)) setSelected("general");
       if (!quiet) setError(null);
+      const handoff = pendingHandoff.current;
+      if (handoff) {
+        pendingHandoff.current = null;
+        const target = next.notes.find((note) => note.id === handoff && note.status !== "archived");
+        if (target) {
+          setSelected(target.projectId ?? "general");
+          setEditor({ note: target, projectId: target.projectId, section: target.section });
+        } else {
+          // Same wording whether it was deleted, archived or never existed.
+          setSelected("general");
+          setNotice("That note is no longer available.");
+        }
+      }
     } catch (cause) {
       if (!quiet) setError(cause instanceof Error ? cause.message : "Notes could not be loaded.");
     }

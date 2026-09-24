@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const state = vi.hoisted(() => ({ chatLoads: 0, visualLoads: 0 }));
 
@@ -34,14 +34,16 @@ vi.mock("motion/react", async () => {
     AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
   };
 });
-vi.mock("./components/ava/TubelightNav.js", () => ({
-  TubelightNav: ({ items }: { items: Array<{ name: string; onSelect: () => void }> }) => (
-    <nav>{items.map((item) => <button key={item.name} onClick={item.onSelect}>{item.name}</button>)}</nav>
-  ),
+// The real sidebar renders; its recent-chats lookup must not reach the network.
+vi.mock("./api.js", async () => ({
+  ...(await vi.importActual<typeof import("./api.js")>("./api.js")),
+  fetchSessionPage: async () => ({ sessions: [], nextCursor: null }),
 }));
 vi.mock("./components/ava/GlassFilter.js", () => ({ GlassFilter: () => null }));
 vi.mock("./auth/PairingScreen.js", () => ({ PairingScreen: () => null }));
-vi.mock("./splash/Splash.js", () => ({ Splash: () => <div>Splash</div> }));
+vi.mock("./splash/Splash.js", () => ({
+  Splash: ({ onDone }: { onDone: () => void }) => <div>Splash<button onClick={onDone}>mock splash done</button></div>,
+}));
 vi.mock("./chat/ChatScreen.js", async () => {
   state.chatLoads += 1;
   const React = await vi.importActual<typeof import("react")>("react");
@@ -75,15 +77,35 @@ vi.mock("./chat/ChatScreen.js", async () => {
 vi.mock("./rules/RulesScreen.js", () => ({ RulesScreen: () => null }));
 vi.mock("./memory/MemoryScreen.js", () => ({ MemoryScreen: () => null }));
 vi.mock("./self/SelfScreen.js", () => ({ SelfScreen: () => null }));
-vi.mock("./orbit/OrbitScreen.js", () => ({
-  OrbitScreen: ({ onEnterVoice, onCommand }: { onEnterVoice?: () => void; onCommand?: (text: string) => void }) => (
-    <div>
-      <button onClick={onEnterVoice}>mock home voice</button>
-      <button onClick={() => onCommand?.("open exact project")}>mock home command</button>
+vi.mock("./today/TodayScreen.js", () => ({
+  TodayScreen: ({ onEnterVoice, onStartChat, onOpenNote, onOpenTalk }: {
+    onEnterVoice?: () => void;
+    onStartChat?: (text: string) => void;
+    onOpenNote?: (noteId: string) => void;
+    onOpenTalk?: () => void;
+  }) => (
+    <div data-testid="mock-today">
+      <button onClick={onEnterVoice}>mock today voice</button>
+      <button onClick={() => onStartChat?.("open exact project")}>mock today command</button>
+      <button onClick={() => onOpenNote?.("note-7")}>mock today note</button>
+      <button onClick={onOpenTalk}>mock today conversations</button>
     </div>
   ),
 }));
-vi.mock("./orbit/ChatListScreen.js", () => ({ ChatListScreen: () => null }));
+vi.mock("./notes/NotesScreen.js", () => ({
+  NotesScreen: ({ initialNoteId }: { initialNoteId?: string | null }) => <div>notes-initial-{initialNoteId ?? "none"}</div>,
+}));
+vi.mock("./ideas/IdeasScreen.js", () => ({
+  IdeasScreen: ({ onOpenNote }: { onOpenNote: (noteId: string) => void }) => (
+    <div>ideas-screen<button onClick={() => onOpenNote("idea-3")}>mock open idea</button></div>
+  ),
+}));
+vi.mock("./schedule/ScheduleScreen.js", () => ({
+  ScheduleScreen: ({ onOpenTalk }: { onOpenTalk: () => void }) => (
+    <div>schedule-screen<button onClick={onOpenTalk}>mock schedule talk</button></div>
+  ),
+}));
+vi.mock("./orbit/ChatListScreen.js", () => ({ ChatListScreen: () => <div>chat-list-screen</div> }));
 vi.mock("./voice/VoiceScreen.js", () => ({
   VoiceScreen: ({ initialSessionId, intent, onSessionBound, onSessionUnavailable, onExit }: {
     initialSessionId: string | null;
@@ -146,19 +168,106 @@ function BrokenWorkspace(): never {
   throw new Error("chunk unavailable");
 }
 
-describe("App New-chat navigation", () => {
+/** Opens the System group; the compact rail expands onto it. */
+function openSystem() {
+  if (!screen.queryByRole("group", { name: "System tools" })) {
+    fireEvent.click(screen.getByRole("button", { name: "System" }));
+  }
+  return screen.getByRole("group", { name: "System tools" });
+}
+
+describe("App navigation", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.sessionStorage.clear();
+    // The intro has already played in this tab; the splash tests clear this.
+    window.sessionStorage.setItem("ava:splash-seen", "1");
     window.history.replaceState(null, "", "/");
   });
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
 
   it("does not load Chat or Visuals for the initial shell", () => {
+    window.sessionStorage.clear();
     render(<App />);
     expect(screen.getByText("Splash")).toBeTruthy();
     expect(state.chatLoads).toBe(0);
     expect(state.visualLoads).toBe(0);
     expect(document.querySelector(".ava-sidebar")?.getAttribute("data-expanded")).toBeNull();
+  });
+
+  it("plays the intro once per tab and then lands on Today", () => {
+    window.sessionStorage.clear();
+    const first = render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "mock splash done" }));
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
+    expect(window.sessionStorage.getItem("ava:splash-seen")).toBe("1");
+    first.unmount();
+    render(<App />);
+    expect(screen.queryByText("Splash")).toBeNull();
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
+  });
+
+  it("skips the intro under AVA's reduced-motion setting", () => {
+    window.sessionStorage.clear();
+    window.localStorage.setItem("ava-motion", "reduced");
+    render(<App />);
+    expect(screen.queryByText("Splash")).toBeNull();
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
+  });
+
+  it("opens on Today and reaches every everyday destination", async () => {
+    render(<App />);
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
+    expect(document.querySelector('[data-view="today"]')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Talk" }));
+    expect(screen.getByText("chat-list-screen")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
+    expect(screen.getByText("schedule-screen")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+    expect(screen.getByText("notes-initial-none")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Ideas" }));
+    expect(screen.getByText("ideas-screen")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-new");
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
+  });
+
+  it("keeps every previous destination under System, plus Activity", async () => {
+    render(<App />);
+    const group = openSystem();
+    const labels = Array.from(group.querySelectorAll("button")).map((button) => button.getAttribute("aria-label"));
+    expect(labels).toEqual([
+      "Activity", "Explore AVA", "Watches", "Memory", "Strategy Room",
+      "Visual explanations", "Settings & rules", "Self development",
+    ]);
+
+    const destinations: Array<[string, string]> = [
+      ["Explore AVA", "capabilities"],
+      ["Watches", "watches"],
+      ["Memory", "memory"],
+      ["Strategy Room", "strategy"],
+      ["Visual explanations", "visuals"],
+      ["Settings & rules", "rules"],
+      ["Self development", "self"],
+    ];
+    for (const [label, view] of destinations) {
+      fireEvent.click(within(openSystem()).getByRole("button", { name: label }));
+      // Explore, Memory and Visuals are lazy routes.
+      await waitFor(() => expect(document.querySelector(`[data-view="${view}"]`), label).toBeTruthy(), LAZY_ROUTE);
+    }
+  });
+
+  it("opens Activity as Mission Control without leaving the current screen", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    render(<App />);
+    fireEvent.click(within(openSystem()).getByRole("button", { name: "Activity" }));
+    expect(open).toHaveBeenCalledWith("/?mission-control=1", "ava-mission-control", expect.any(String));
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
   });
 
   it("exposes accessible loading and reload recovery states", async () => {
@@ -177,7 +286,7 @@ describe("App New-chat navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reload AVA" }));
     expect(reload).toHaveBeenCalledTimes(1);
     view.rerender(
-      <DeferredScreenBoundary resetKey="orbit" reload={reload}>
+      <DeferredScreenBoundary resetKey="today" reload={reload}>
         <div>recovered workspace</div>
       </DeferredScreenBoundary>,
     );
@@ -196,20 +305,27 @@ describe("App New-chat navigation", () => {
     await waitFor(() => expect(screen.getByTestId("mock-chat").textContent).toContain("draft-0"));
   });
 
-  it("preserves initial Home text and the authoritative chat session across routes", async () => {
+  it("carries text typed on Today into a new chat", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    fireEvent.click(screen.getByRole("button", { name: "mock home command" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock today command" }));
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("initial-open exact project");
   });
 
-  it("unmounts the Home surface before another workspace is presented", async () => {
+  it("opens the exact note chosen on Today or in Ideas", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    expect(screen.getByRole("button", { name: "mock home command" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Explore AVA" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock today note" }));
+    expect(screen.getByText("notes-initial-note-7")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Ideas" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock open idea" }));
+    expect(screen.getByText("notes-initial-idea-3")).toBeTruthy();
+  });
+
+  it("unmounts Today before another workspace is presented", async () => {
+    render(<App />);
+    expect(screen.getByRole("button", { name: "mock today command" })).toBeTruthy();
+    fireEvent.click(within(openSystem()).getByRole("button", { name: "Explore AVA" }));
     expect(await screen.findByText("explorer-workspace")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "mock home command" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "mock today command" })).toBeNull();
     expect(document.querySelectorAll("[data-view]")).toHaveLength(1);
     expect(document.querySelector('[data-view="capabilities"]')).toBeTruthy();
   });
@@ -248,37 +364,34 @@ describe("App New-chat navigation", () => {
     expect(await screen.findByText(/voice-session-none-intent-new/, undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
-  it("lets Home voice continue Nika's latest conversation when none is remembered", async () => {
+  it("lets Today voice continue Nika's latest conversation when none is remembered", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
     expect(await screen.findByText(/voice-session-none-intent-continue/, undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
-  it("sends Home voice back to the exact remembered conversation", async () => {
+  it("sends Today voice back to the exact remembered conversation", async () => {
     window.localStorage.setItem("ava:last-chat-session", "remembered-8");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
     expect(await screen.findByText(/voice-session-remembered-8-intent-resume/, undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
   it("moves the current chat to the conversation voice actually bound", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
     fireEvent.click(await screen.findByRole("button", { name: "mock voice bound" }, LAZY_ROUTE));
     expect(window.localStorage.getItem("ava:last-chat-session")).toBe("voice-bound-5");
     fireEvent.click(screen.getByRole("button", { name: "mock voice exit" }));
-    fireEvent.click(screen.getByRole("button", { name: "Return to current chat" }));
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Talk" }));
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-voice-bound-5");
   });
 
   it("forgets the remembered chat only when voice finds that exact one unavailable", async () => {
     window.localStorage.setItem("ava:last-chat-session", "gone-2");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Home" }));
-    fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
     fireEvent.click(await screen.findByRole("button", { name: "mock voice unavailable" }, LAZY_ROUTE));
     expect(window.localStorage.getItem("ava:last-chat-session")).toBeNull();
   });
@@ -286,16 +399,10 @@ describe("App New-chat navigation", () => {
   it("opens a watch run for reference without making it the current chat", async () => {
     window.localStorage.setItem("ava:last-chat-session", "mine-1");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Watches" }));
+    fireEvent.click(within(openSystem()).getByRole("button", { name: "Watches" }));
     fireEvent.click(screen.getByRole("button", { name: "mock open watch run" }));
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-watch-run-9-draft-0-audit-true");
     expect(window.localStorage.getItem("ava:last-chat-session")).toBe("mine-1");
-  });
-
-  it("opens the first-class Watches workspace from primary navigation", () => {
-    render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Watches" }));
-    expect(screen.getByText("watch-management-screen")).toBeTruthy();
   });
 
   it("lands an exact Mission Control deep link in Watches and consumes the URL", () => {
@@ -315,22 +422,30 @@ describe("App New-chat navigation", () => {
     expect(screen.getByText("origin-true")).toBeTruthy();
   });
 
-  it("returns directly to the same chat after visiting another workspace", async () => {
+  it("Talk returns directly to the same chat after visiting another workspace", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock establish session" }));
-    fireEvent.click(screen.getByRole("button", { name: "Explore AVA" }));
-    fireEvent.click(screen.getByRole("button", { name: "Return to current chat" }));
-    expect(screen.getByTestId("mock-chat").textContent).toContain("session-internal-chat-17");
+    fireEvent.click(within(openSystem()).getByRole("button", { name: "Explore AVA" }));
+    fireEvent.click(screen.getByRole("button", { name: "Talk" }));
+    expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-internal-chat-17");
   });
 
-  it("restores the last chat shortcut after an application reload", async () => {
+  it("Talk restores the remembered chat after an application reload", async () => {
     window.localStorage.setItem("ava:last-chat-session", "persisted-chat-42");
     const first = render(<App />);
     first.unmount();
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Return to current chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Talk" }));
+    expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-persisted-chat-42");
+  });
+
+  it("Schedule's only action goes to Talk", async () => {
+    window.localStorage.setItem("ava:last-chat-session", "persisted-chat-42");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock schedule talk" }));
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-persisted-chat-42");
   });
 });

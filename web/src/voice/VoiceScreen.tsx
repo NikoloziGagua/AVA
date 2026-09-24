@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { Orb } from "../components/ava/Orb.js";
 import { MagicRings } from "../components/ava/MagicRings.js";
 import { NebulaBackground } from "../components/ava/NebulaBackground.js";
-import { DottedSurface } from "../components/ava/DottedSurface.js";
 import { Alert, AlertDescription } from "../components/ui/alert.js";
 import { gsap, useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
@@ -43,6 +42,76 @@ export function formatTime(s: number): string {
 
 export function shouldShowVoiceStop(state: RealtimeState, actionPending: boolean): boolean {
   return actionPending || state === "thinking" || state === "responding";
+}
+
+// The WebGL dotted surface is decorative and heavy (Three.js). It loads in its
+// own deferred chunk only when it will actually animate; voice controls, audio
+// and the session never wait on it or fail because of it.
+const DottedSurface = lazy(async () => ({
+  default: (await import("../components/ava/DottedSurface.js")).DottedSurface,
+}));
+
+export function supportsVoiceWebGL(): boolean {
+  if (typeof document === "undefined") return false;
+  try {
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
+    if (!context) return false;
+    context.getExtension("WEBGL_lose_context")?.loseContext();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Static backdrop for reduced motion, no WebGL, loading and load failure. */
+export function StaticVoiceSurface() {
+  return (
+    <div
+      aria-hidden="true"
+      data-voice-surface="static"
+      className="pointer-events-none absolute inset-0 overflow-hidden opacity-55"
+      style={{
+        backgroundImage: "radial-gradient(circle at center, rgba(220,235,245,.28) 0 1px, transparent 1.7px)",
+        backgroundPosition: "center 38%",
+        backgroundSize: "38px 24px",
+        maskImage: "radial-gradient(ellipse 66% 58% at 50% 48%, black 0%, transparent 78%)",
+      }}
+    />
+  );
+}
+
+/** A decorative chunk that fails to load removes only the background. */
+export class VoiceSurfaceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.warn("[ava] voice background unavailable; using static backdrop", error.message, info.componentStack);
+  }
+
+  render() {
+    return this.state.failed ? <StaticVoiceSurface /> : this.props.children;
+  }
+}
+
+function VoiceSurface() {
+  const reduced = useReducedMotion();
+  // Reduced motion never probes WebGL or requests the Three.js graph.
+  const animated = useMemo(() => !reduced && supportsVoiceWebGL(), [reduced]);
+  if (!animated) return <StaticVoiceSurface />;
+  return (
+    <VoiceSurfaceBoundary>
+      <Suspense fallback={<StaticVoiceSurface />}>
+        <div aria-hidden="true" data-voice-surface="webgl" className="pointer-events-none absolute inset-0">
+          <DottedSurface />
+        </div>
+      </Suspense>
+    </VoiceSurfaceBoundary>
+  );
 }
 
 export function VoiceScreen({
@@ -166,7 +235,7 @@ export function VoiceScreen({
 
   return (
     <div className="relative flex h-full w-full flex-col overflow-hidden bg-black">
-      <DottedSurface />
+      <VoiceSurface />
       <NebulaBackground />
       {/* per-state tint, eased */}
       <div

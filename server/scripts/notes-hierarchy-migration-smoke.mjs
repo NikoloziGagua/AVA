@@ -37,14 +37,21 @@ try {
   if (before.count !== after.count || before.hash !== after.hash) {
     throw new Error(`authoritative note bytes changed: ${before.count}/${before.hash} -> ${after.count}/${after.hash}`);
   }
-  const missingFolders = migrated.prepare(`SELECT COUNT(*) n FROM notes n
-    LEFT JOIN note_folders f ON f.id=n.folder_id WHERE f.id IS NULL`).get().n;
-  const generalMisassigned = migrated.prepare(`SELECT COUNT(*) n FROM notes
-    WHERE project_id IS NULL AND folder_id!='notes_general'`).get().n;
-  const projectMisassigned = migrated.prepare(`SELECT COUNT(*) n FROM notes
-    WHERE project_id IS NOT NULL AND folder_id!=project_id`).get().n;
+  const folders = new Map(migrated.prepare("SELECT id,parent_id FROM note_folders").all().map((row) => [row.id, row]));
+  const assignments = migrated.prepare("SELECT id,folder_id,project_id FROM notes").all();
+  let relationshipErrors = 0;
+  for (const note of assignments) {
+    let folder = folders.get(note.folder_id);
+    const seen = new Set();
+    while (folder?.parent_id && !seen.has(folder.id)) {
+      seen.add(folder.id);
+      folder = folders.get(folder.parent_id);
+    }
+    const expectedProject = folder?.id === "notes_general" ? null : folder?.id;
+    if (!folder || note.project_id !== expectedProject) relationshipErrors += 1;
+  }
   const general = migrated.prepare("SELECT id,name,built_in FROM note_folders WHERE id='notes_general'").get();
-  if (missingFolders || generalMisassigned || projectMisassigned ||
+  if (relationshipErrors ||
       !general || general.name !== "General" || general.built_in !== 1) {
     throw new Error("folder migration relationship verification failed");
   }

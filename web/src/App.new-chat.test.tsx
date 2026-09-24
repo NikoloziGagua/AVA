@@ -123,7 +123,7 @@ vi.mock("./voice/VoiceScreen.js", () => ({
   ),
 }));
 vi.mock("./explorer/ExplorerScreen.js", () => ({ ExplorerScreen: () => <div>explorer-workspace</div> }));
-vi.mock("./mission-control/MissionControlScreen.js", () => ({ MissionControlScreen: () => null }));
+vi.mock("./mission-control/MissionControlScreen.js", () => ({ MissionControlScreen: () => <div>mission-control-screen</div> }));
 vi.mock("./strategy/StrategyRoomScreen.js", () => ({
   StrategyRoomScreen: ({ sourceSessionId, onOpenChat }: {
     sourceSessionId?: string | null;
@@ -223,14 +223,15 @@ describe("App navigation", () => {
     expect(screen.getByTestId("mock-today")).toBeTruthy();
     expect(document.querySelector('[data-view="today"]')).toBeTruthy();
 
+    // Every destination but Today now loads on first use.
     fireEvent.click(screen.getByRole("button", { name: "Talk" }));
-    expect(screen.getByText("chat-list-screen")).toBeTruthy();
+    expect(await screen.findByText("chat-list-screen", undefined, LAZY_ROUTE)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
-    expect(screen.getByText("schedule-screen")).toBeTruthy();
+    expect(await screen.findByText("schedule-screen", undefined, LAZY_ROUTE)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Notes" }));
-    expect(screen.getByText("notes-initial-none")).toBeTruthy();
+    expect(await screen.findByText("notes-initial-none", undefined, LAZY_ROUTE)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ideas" }));
-    expect(screen.getByText("ideas-screen")).toBeTruthy();
+    expect(await screen.findByText("ideas-screen", undefined, LAZY_ROUTE)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-new");
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
@@ -311,13 +312,13 @@ describe("App navigation", () => {
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("initial-open exact project");
   });
 
-  it("opens the exact note chosen on Today or in Ideas", () => {
+  it("opens the exact note chosen on Today or in Ideas", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "mock today note" }));
-    expect(screen.getByText("notes-initial-note-7")).toBeTruthy();
+    expect(await screen.findByText("notes-initial-note-7", undefined, LAZY_ROUTE)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ideas" }));
-    fireEvent.click(screen.getByRole("button", { name: "mock open idea" }));
-    expect(screen.getByText("notes-initial-idea-3")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "mock open idea" }, LAZY_ROUTE));
+    expect(await screen.findByText("notes-initial-idea-3", undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
   it("unmounts Today before another workspace is presented", async () => {
@@ -464,6 +465,13 @@ describe("App navigation", () => {
     expect(window.localStorage.getItem("ava:last-chat-session")).toBe("mine-1");
   });
 
+  it("loads the Mission Control window on demand at its own address", async () => {
+    window.history.replaceState(null, "", "/?mission-control=1");
+    render(<App />);
+    expect(await screen.findByText("mission-control-screen", undefined, LAZY_ROUTE)).toBeTruthy();
+    expect(screen.queryByTestId("mock-today")).toBeNull();
+  });
+
   it("lands an exact Mission Control deep link in Watches and consumes the URL", () => {
     window.history.replaceState(null, "", "/?view=watches&watch=watch_Exact-7&from=mission-control");
     render(<App />);
@@ -504,7 +512,7 @@ describe("App navigation", () => {
     window.localStorage.setItem("ava:last-chat-session", "persisted-chat-42");
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
-    fireEvent.click(screen.getByRole("button", { name: "mock schedule talk" }));
+    fireEvent.click(await screen.findByRole("button", { name: "mock schedule talk" }, LAZY_ROUTE));
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-persisted-chat-42");
   });
 });

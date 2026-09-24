@@ -255,7 +255,7 @@ As of commit `b4e6ada` the composer **expands on focus** (`Composer.tsx:51-84`):
   - `tool_result` → **only failures render inline** (`ok:false`); successes are intentionally suppressed in the chat flow because the Activity panel already shows them (`MessageList.tsx:105-110`).
   - `thought` → **not rendered as a bubble**; the latest thought/tool feeds the "thinking…" caption instead.
   - `error` / `killed` / `gap` → small status lines (a `gap` means buffered SSE events were missed and points the owner at Sessions for the full trace).
-- The **live `final`** renders via `WordReveal` (`MessageList.tsx:221-232`) — a one-shot, time-boxed, word-by-word blur-up. This is necessary because Ava's answer arrives as a **single `final` event, not token-streamed**, so the reveal animation *is* the "typing" feel.
+- The **live `final`** renders its complete Markdown tree in one stable pass (`AssistantMarkdown`), revealed by the shared bubble reveal (`chat/bubble-reveal.ts`). The thinking indicator stays up until the reply is ready: reasoning models emit the whole reply in a sub-100 ms burst, so a token-by-token bubble would flash past or render empty.
 - A premium **`ThinkingIndicator`** (commit `b4e6ada`) shows whenever `optimisticThinking && !lastFinal` (`MessageList.tsx:98`, `234`) — a breathing mercury orb (hosting the chat `flipId="ava-orb"`) + a state `.chip` + a cyan/mercury `ShiningText` caption. It appears the **instant** you send (the synchronous `pending` flag), before any live event, and cross-fades out when the `final` streams in. It replaced the old `MessageLoading`-dots indicator that only appeared once live events existed.
 - Auto-scrolls to the bottom on every change in `history.length`, `liveEvents.length`, or `optimisticThinking`.
 
@@ -283,7 +283,7 @@ This is the core client loop, verified against the code. It shows how a keystrok
 6. **Render the live turn.** `ChatScreen` recomputes `liveEvents` (current run, minus an already-promoted final) and passes them to:
    - **`MessageList`** — shows tool-call breadcrumbs, inline failures, approval cards, and the thinking caption.
    - **`ActivityPanel`** — `deriveSteps(liveEvents)` (`activity-steps.ts:14-34`) turns each `tool_call` into a **running** step and completes it on the matching `tool_result` (marking `ok`). `isExecuting` (any step still running) charges the `FlowingLines` background (warms it toward exec-amber + quickens), swaps the thinking orb to `working`, and auto-expands the panel.
-7. **Final answer reveals.** When a `final` event arrives, `MessageList` renders its text with `WordReveal` (word-by-word blur-up) — the stand-in for token streaming, since the answer comes whole.
+7. **Final answer reveals.** When a `final` event arrives, `MessageList` renders the whole Markdown reply at once and the bubble reveal fades it in; the thinking indicator covers the wait.
 8. **Terminal → promote + close.** On `done` / `killed` / `error`, `useChatStream` sets `finished = true` and closes the `EventSource`. The promotion effect (`ChatScreen.tsx:70-91`) moves the run's `final` text into `history` as a settled assistant message (id `a-{epoch}`), and the live copy stops rendering. `busy` flips false → the Stop button reverts to Send.
 9. **Stop (optional).** If the owner hits Stop mid-run, `Composer.onKill` → `ChatScreen.kill()` → `api.kill(sessionId)` (`POST /api/chat/:id/kill`); the server emits `killed`, which terminates the stream the same way.
 
@@ -321,7 +321,7 @@ sequenceDiagram
     end
 
     S-->>H: event: final
-    CS->>ML: WordReveal(final.text)
+    CS->>ML: AssistantMarkdown(final.text)
     S-->>H: event: done
     H->>H: finished=true, close()
     CS->>CS: promote final → history (id a-{epoch}), busy=false
@@ -432,24 +432,22 @@ The **locked aesthetic** (per project memory, `frontend_remodel_aesthetic`): a *
 | Component | Role |
 |---|---|
 | **`Orb.tsx`** + `orb-state.ts` | The canonical avatar/hero. GSAP drives spin/rim-pulse/(listening) ripples; CSS does the morph. `orbMotion(state, amplitude)` maps `idle/listening/thinking/responding/working` → spin/morph/rim numbers (pure, tested). **Perf-critical detail:** only orbs ≥40px animate; the many tiny avatars (chat header, every message, composer ≈14–28px) render as a **static** mercury disc, or a long chat would spin up ~20 infinite GSAP timelines and choke the main thread (`Orb.tsx:30-31`). |
-| **`TubelightNav.tsx`** + `tubelight-nav.ts` | The former glass home nav pill; a cyan "lamp" sprang to the active item via Motion `layoutId`. Nothing renders it since the persistent sidebar; it is on the dead-code cleanup list. |
 | **`DottedSurface.tsx`** | three.js animated dot-grid wave behind voice. Loaded lazily, never under reduced motion or without WebGL; a failing frame or resize stops it and reports through `onError`, and voice falls back to a static backdrop. |
-| **`NebulaBackground` / `PathsBackground` / `RainBackground` / `SpaceBackground` / `EtherealShadows`** | Per-surface decorative backdrops. `PathsBackground` (pairing) animates flowing SVG strokes. (`EtherealShadows` was the chat backdrop until commit `b4e6ada` replaced it with `FlowingLines`; it remains in the codebase but is no longer used by chat.) All freeze under reduced motion and are `aria-hidden`. |
+| **`NebulaBackground` / `PathsBackground`** | Per-surface decorative backdrops. `PathsBackground` (pairing) animates flowing SVG strokes. Chat uses `FlowingLines` (below). All freeze under reduced motion and are `aria-hidden`. The unused `RainBackground`, `SpaceBackground` and `EtherealShadows` were removed in the M1 cleanup. |
 | **`FlowingLines.tsx`** | **(commit `b4e6ada`)** The chat hero background — a slow looping bundle of cyan/mercury lines (one GSAP `strokeDashoffset` draw timeline over 16 paths), a single-layer opacity breathe, tab-hidden pause, and one ScrollTrigger parallax. `charged` warms + quickens. Replaced `EtherealShadows` on chat. See the [Premium Chat feature doc](../features/premium-chat.md). |
 | **`EdgeFade.tsx`** | **(commit `b4e6ada`)** Pure-CSS stacked-blur + gradient edge fade, mounted as a viewport-pinned overlay over the chat scroll column (top + bottom) so messages dissolve into the substrate. No JS/rAF; reduced motion → tint only. |
 | **`NeuralField.tsx`** | **(commit `b4e6ada`)** A subtle fixed/viewport-sized raw-WebGL "neuro" fbm shader (cyan), now Memory's backdrop. One fullscreen triangle, one draw call; reduced-motion static frame; gl-null CSS-haze fallback. |
-| **`WordReveal.tsx`** | Word-by-word blur-up for Ava's final answers (since answers aren't token-streamed). Time-boxed so long replies don't crawl; reduced motion renders plainly. |
-| **`ShiningText` / `TextEffect` / `CyclingText` / `MessageLoading`** | Small text/loading flourishes. `ShiningText` is the cyan/mercury "thinking…" caption (recolored via `.shine-deck`); its shimmer is a **Framer Motion loop**, so the CSS reduced-motion gate can't stop it — commit `b4e6ada` added a `reduced` prop that renders a static lit gradient instead. `MessageLoading` is the three-dot SVG spinner. |
+| **`ShiningText`** | The cyan/mercury "thinking…" caption (recolored via `.shine-deck`). Its shimmer is a **Framer Motion loop**, so the CSS reduced-motion gate can't stop it; commit `b4e6ada` added a `reduced` prop that renders a static lit gradient instead. The unused `TextEffect`, `CyclingText` and `MessageLoading` were removed in the M1 cleanup. |
 | **`SegmentedTabs.tsx`** | The pill toggle (with a spring-animated cursor) used by Rules' Speed and Memory's category filter. |
 | **`BorderGlow.tsx`** | A `.bg-card` whose cyan/mercury border lights toward the cursor. **(commit `4f206ee`)** Also exports two standalone helpers — `igniteBorder(e)`/`douseBorder(e)` — that drive the effect off `e.currentTarget`'s `--edge`/`--angle` CSS vars, so any `.bg-card` (e.g. the `DisplayCards` cards) can share the exact same border by wiring them as `onPointerMove`/`onPointerLeave`. |
 | **`DisplayCards.tsx`** | **(commit `4f206ee`)** The Chats screen's "Important chats" cluster — up to four pinned chats as a skewed depth-cued fan of `.bg-card` glass slabs that GSAP-spreads to a flat readable row on hover (reduced-motion → a flat CSS grid). Each card lights the `igniteBorder` border and carries a lit star to unpin. See [`features/chats-screen-pinning.md`](../features/chats-screen-pinning.md). |
 | **`GlassFilter.tsx`** | A hidden SVG `feTurbulence`/`feDisplacementMap` filter (`#ava-glass`) mounted once at the app root for liquid-glass distortion. |
 
-Most of these have co-located `*.smoke.test.tsx` files (render-without-crashing checks), and the pure helpers (`orb-state`, `tubelight-nav`, `activity-steps`, `humanize`, `message-actions`) have real unit tests.
+Most of these have co-located `*.smoke.test.tsx` files (render-without-crashing checks), and the pure helpers (`orb-state`, `activity-steps`, `humanize`, `message-actions`) have real unit tests.
 
 ### `components/ui/` — the design-language primitives
 
-A small shadcn-style kit — `button`, `card`, `textarea`, `badge`, `dialog` (Radix), `alert` (with variants like `info`/`destructive`, used by the chat-list undo toast and the pairing error). These are the neutral building blocks the Ava-branded components and screens compose on top of.
+A small shadcn-style kit — `button`, `textarea`, `badge`, `dialog` (Radix), `alert` (with variants like `info`/`destructive`, used by the chat-list undo toast and the pairing error). These are the neutral building blocks the Ava-branded components and screens compose on top of.
 
 ---
 

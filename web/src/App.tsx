@@ -34,16 +34,7 @@ import { computeReduced } from "./lib/motionPref.js";
 import { getToken } from "./auth/tokens.js";
 import type { ConversationIntent } from "./api.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
-import { RulesScreen } from "./rules/RulesScreen.js";
-import { NotesScreen } from "./notes/NotesScreen.js";
-import { SelfScreen } from "./self/SelfScreen.js";
 import { TodayScreen } from "./today/TodayScreen.js";
-import { IdeasScreen } from "./ideas/IdeasScreen.js";
-import { ScheduleScreen } from "./schedule/ScheduleScreen.js";
-import { ChatListScreen } from "./orbit/ChatListScreen.js";
-import { MissionControlScreen } from "./mission-control/MissionControlScreen.js";
-import { StrategyRoomScreen } from "./strategy/StrategyRoomScreen.js";
-import { WatchesScreen } from "./watches/WatchesScreen.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 
@@ -64,6 +55,20 @@ const ExplorerScreen = lazy(async () => ({
 }));
 const VisualsScreen = lazy(async () => ({
   default: (await import("./visuals/VisualsScreen.js")).VisualsScreen,
+}));
+// Only the first screens (pairing, the intro, Today) ship eagerly. Every other
+// destination loads when it is first opened; the offline cache keeps each one
+// a local fetch after the first visit.
+const NotesScreen = lazy(async () => ({ default: (await import("./notes/NotesScreen.js")).NotesScreen }));
+const IdeasScreen = lazy(async () => ({ default: (await import("./ideas/IdeasScreen.js")).IdeasScreen }));
+const ScheduleScreen = lazy(async () => ({ default: (await import("./schedule/ScheduleScreen.js")).ScheduleScreen }));
+const ChatListScreen = lazy(async () => ({ default: (await import("./orbit/ChatListScreen.js")).ChatListScreen }));
+const WatchesScreen = lazy(async () => ({ default: (await import("./watches/WatchesScreen.js")).WatchesScreen }));
+const RulesScreen = lazy(async () => ({ default: (await import("./rules/RulesScreen.js")).RulesScreen }));
+const SelfScreen = lazy(async () => ({ default: (await import("./self/SelfScreen.js")).SelfScreen }));
+const StrategyRoomScreen = lazy(async () => ({ default: (await import("./strategy/StrategyRoomScreen.js")).StrategyRoomScreen }));
+const MissionControlScreen = lazy(async () => ({
+  default: (await import("./mission-control/MissionControlScreen.js")).MissionControlScreen,
 }));
 
 type View =
@@ -380,7 +385,13 @@ export function App() {
 
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
   if (new URLSearchParams(window.location.search).get("mission-control") === "1") {
-    return <MissionControlScreen />;
+    return (
+      <DeferredScreenBoundary resetKey="mission-control">
+        <Suspense fallback={<DeferredScreenFallback />}>
+          <MissionControlScreen />
+        </Suspense>
+      </DeferredScreenBoundary>
+    );
   }
 
   return (

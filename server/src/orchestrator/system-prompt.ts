@@ -38,7 +38,31 @@ export type BuildSystemPromptOpts = {
   fsRoots?: string[];
   /** Closed-enum delivery context derived from the literal current user turn. */
   personaContext?: { userText: string; channel: PersonaChannel };
+  /** Sir's IANA time zone for reminders; defaults to this PC's zone. */
+  timeZone?: string;
 };
+
+function pcTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+/**
+ * Static per process, so it keeps the prompt-cache prefix. Without it the
+ * agent guessed "UTC", and when watch_create refused it once fell back to a
+ * shell pop-up and still told Sir the reminder was scheduled.
+ */
+function buildRemindersBlock(timeZone: string): string {
+  return (
+    "# Time and reminders\n" +
+    `Sir's time zone is ${timeZone} (this PC's zone). For his reminders, pass time_zone "${timeZone}" to watch_create unless he names another zone.\n` +
+    "A reminder exists only when watch_create succeeds. If it refuses, tell Sir it was not scheduled and why. " +
+    "Never replace it with a shell timer, a pop-up or any other local workaround, and never call such a workaround a reminder.\n"
+  );
+}
 
 function isoToday(): string {
   return new Date().toISOString().slice(0, 10);
@@ -99,6 +123,7 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
     if (opts.fsRoots && opts.fsRoots.length) {
       layers.push(buildFsRootsBlock(opts.fsRoots));
     }
+    layers.push(buildRemindersBlock(opts.timeZone ?? pcTimeZone()));
   }
   if (preferences.trim()) layers.push(block("Preferences", preferences));
   if (observations.trim()) layers.push(block("Observations", observations));

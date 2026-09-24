@@ -113,6 +113,24 @@ describe("buildSystemPrompt (layered)", () => {
     expect(none).not.toContain("# Filesystem access");
   });
 
+  it("tells the action agent Sir's time zone and that reminders must never be faked", () => {
+    writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
+    const out = buildSystemPrompt({ memoryDir: dir, mode: "action", timeZone: "Europe/London" });
+    expect(out).toContain("# Time and reminders");
+    expect(out).toContain('pass time_zone "Europe/London" to watch_create');
+    expect(out).toContain("Never replace it with a shell timer, a pop-up or any other local workaround");
+    // Static text, placed with the other static layers: the cache prefix holds.
+    expect(buildSystemPrompt({ memoryDir: dir, mode: "action", timeZone: "Europe/London" })).toBe(out);
+    expect(out.indexOf("# Time and reminders")).toBeGreaterThan(out.indexOf(TOOL_RUBRIC));
+  });
+
+  it("defaults to this PC's named zone and leaves conversation mode unchanged", () => {
+    writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
+    const pcZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(buildSystemPrompt({ memoryDir: dir, mode: "action" })).toContain(`Sir's time zone is ${pcZone}`);
+    expect(buildSystemPrompt({ memoryDir: dir, mode: "conversation" })).not.toContain("# Time and reminders");
+  });
+
   it("conversation-mode prompt is byte-stable across runs (cache safety)", () => {
     writeFileSync(join(dir, "personality.md"), "P\n", "utf8");
     const opts = { memoryDir: dir, mode: "conversation" as const };

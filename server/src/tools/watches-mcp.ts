@@ -183,7 +183,11 @@ export function buildWatchTools(o: {
           }
           return { ok: true, text: `${kind === "reminder" ? "reminder" : kind === "codex" ? "Codex watch" : "watch"} created (${w.id}) — ${when}.${pin}` };
         } catch (e) {
-          if (e instanceof ReminderScheduleError) return { ok: false, text: `${e.code}: ${e.message}` };
+          // Say plainly that nothing exists, so the agent reports the failure
+          // instead of improvising a local pop-up and calling it scheduled.
+          if (e instanceof ReminderScheduleError) {
+            return { ok: false, text: `${e.code}: ${e.message} Nothing was scheduled; tell Sir, and don't substitute a pop-up or timer.` };
+          }
           return { ok: false, text: e instanceof Error ? e.message : String(e) };
         }
       },

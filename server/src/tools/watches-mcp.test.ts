@@ -204,6 +204,8 @@ describe("one-off reminder tool schedules", () => {
       run_in_minutes: 2, at: "2026-01-01T00:23:00+00:00", time_zone: "Europe/London",
     }, { runId: "strict-conflict" });
     expect(result).toMatchObject({ ok: false });
+    // The refusal says plainly nothing exists, so the agent can't improvise one.
+    expect(result.text).toContain("Nothing was scheduled; tell Sir, and don't substitute a pop-up or timer.");
     expect(db.prepare("SELECT count(*) AS n FROM watches").get()).toEqual({ n: 0 });
     db.close();
   });

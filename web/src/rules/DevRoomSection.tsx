@@ -66,7 +66,7 @@ export function DevRoomSection() {
           >
             {status.enabled ? "On" : "Off"}
           </button>
-          <div className="mt-2 text-[10px] leading-relaxed text-white/45" data-testid="dev-room-status">
+          <div role="status" aria-live="polite" className="mt-2 text-[10px] leading-relaxed text-white/45" data-testid="dev-room-status">
             {devRoomStatusLine(status)}
           </div>
         </>

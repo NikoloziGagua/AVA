@@ -33,7 +33,7 @@ describe("DevRoomSection", () => {
     const toggle = await screen.findByRole("switch", { name: "AVA in the dev room" });
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     fireEvent.click(toggle);
-    expect(await screen.findByText("Connected as AVA in klevar.")).toBeTruthy();
+    expect((await screen.findByRole("status")).textContent).toBe("Connected as AVA in klevar.");
     expect(api.setAgentroomEnabled).toHaveBeenCalledWith(true, 4);
     expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("true");
   });

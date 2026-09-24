@@ -248,7 +248,7 @@ describe("App navigation", () => {
     const group = openSystem();
     const labels = Array.from(group.querySelectorAll("button")).map((button) => button.getAttribute("aria-label"));
     expect(labels).toEqual([
-      "Activity", "Explore AVA", "Watches", "Memory", "Strategy Room",
+      "Activity", "Explore AVA", "Watches", "Memory",
       "Visual explanations", "Settings & rules", "Self development",
     ]);
 
@@ -256,7 +256,6 @@ describe("App navigation", () => {
       ["Explore AVA", "capabilities"],
       ["Watches", "watches"],
       ["Memory", "memory"],
-      ["Strategy Room", "strategy"],
       ["Visual explanations", "visuals"],
       ["Settings & rules", "rules"],
       ["Self development", "self"],
@@ -336,13 +335,13 @@ describe("App navigation", () => {
     expect(document.querySelector('[data-view="capabilities"]')).toBeTruthy();
   });
 
-  it("carries the internal chat session into the Room and back", async () => {
+  it("has retired the legacy Strategy Room: no destination and no chat handoff", async () => {
     render(<App />);
+    expect(within(openSystem()).queryByRole("button", { name: "Strategy Room" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock take to room" }));
-    expect(screen.getByText("room-source-internal-chat-17")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "mock return to chat" }));
+    expect(screen.queryByText(/room-source-/)).toBeNull();
     expect(screen.getByTestId("mock-chat")).toBeTruthy();
   });
 

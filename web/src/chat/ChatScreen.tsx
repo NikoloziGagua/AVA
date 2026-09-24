@@ -38,7 +38,6 @@ export interface ChatScreenProps {
   /** Show this conversation for reference only (an automated run opened from Watches). */
   audit?: boolean;
   onNewChat?: () => void;
-  onOpenStrategy?: (sessionId: string) => void;
   onOpenVisual?: (visualId: string) => void;
   /** Open something AVA saved during a reply (a Saved card row). */
   onOpenSaved?: (item: SavedItem) => void;
@@ -76,7 +75,6 @@ export function ChatScreen({
   audit = false,
   onNewChat,
   onOpenList,
-  onOpenStrategy,
   onOpenSaved,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -127,7 +125,6 @@ export function ChatScreen({
   // would duplicate the final bubble. Captured once per fetch (the `s-` rows
   // never change), so the dedupe stays stable across later re-renders.
   const seededLastAssistantRef = useRef<string | null>(null);
-  const openedRoomEventRef = useRef<string | null>(null);
   const loadedVisualEventRefs = useRef(new Set<string>());
 
   useEffect(() => {
@@ -258,23 +255,6 @@ export function ChatScreen({
       return next;
     });
   }, [events, visualsByEpoch]);
-
-  // A natural-language "take this to the Room" request calls the same
-  // server-authoritative tool as the manual shortcut. Move only after its
-  // successful tool result is observed, and only once for that event.
-  useEffect(() => {
-    if (!sessionId || !onOpenStrategy) return;
-    const opened = [...events].reverse().find((event) =>
-      event.kind === "tool_result" &&
-      event.payload.tool === "strategy_room_open" &&
-      event.payload.ok,
-    );
-    if (!opened) return;
-    const key = `${opened.runEpoch}-${opened.id}`;
-    if (openedRoomEventRef.current === key) return;
-    openedRoomEventRef.current = key;
-    onOpenStrategy(sessionId);
-  }, [events, onOpenStrategy, sessionId]);
 
   // A successful visual tool result carries the exact server-issued revision.
   // Resolve it into the assistant message rather than navigating away. Repeated
@@ -590,19 +570,6 @@ export function ChatScreen({
                 </div>
               ) : (
                 <>
-                  {sessionId && history.length > 0 && onOpenStrategy && (
-                    <div className="flex justify-end px-4 pb-1 lg:px-6">
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() => onOpenStrategy(sessionId)}
-                        title="Bring this conversation into the Strategy Room with AVA and Codex"
-                        className="btn-deck btn-ghost flex items-center gap-2 disabled:opacity-40"
-                      >
-                        <MessagesSquare size={13} /> Take to Room
-                      </button>
-                    </div>
-                  )}
                   <MessageList
                     history={history}
                     liveEvents={liveEvents}

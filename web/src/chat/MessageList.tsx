@@ -16,7 +16,7 @@ import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
 import { MemoryContextCapsule } from "./MemoryContextCapsule.js";
 import { SavedItemsCard } from "./SavedItemsCard.js";
 import { RoomPostReceipt } from "./RoomPostReceipt.js";
-import type { RoomPosts } from "./room-posts.js";
+import { validRoomPosts, type RoomPosts } from "./room-posts.js";
 import type { SavedItem, SavedItems } from "./saved-items.js";
 import type { MemoryContext } from "./memory-context.js";
 import {
@@ -369,7 +369,9 @@ export function MessageList({
             {liveSavedItems?.kind === "saved_items" && (
               <SavedItemsCard saved={liveSavedItems.payload} onOpen={onOpenSaved} />
             )}
-            {liveRoomPosts?.kind === "room_posts" && <RoomPostReceipt posts={liveRoomPosts.payload} />}
+            {liveRoomPosts?.kind === "room_posts" && validRoomPosts(liveRoomPosts.payload) && (
+              <RoomPostReceipt posts={validRoomPosts(liveRoomPosts.payload)!} />
+            )}
             <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
           </AvaBubble>
         </div>
@@ -387,9 +389,9 @@ export function MessageList({
           <SavedItemsCard saved={liveSavedItems.payload} onOpen={onOpenSaved} />
         </div>
       )}
-      {!lastFinal && runTerminated && liveRoomPosts?.kind === "room_posts" && (
+      {!lastFinal && runTerminated && liveRoomPosts?.kind === "room_posts" && validRoomPosts(liveRoomPosts.payload) && (
         <div className="ml-9 max-w-[92%]" data-testid="terminated-room-posts">
-          <RoomPostReceipt posts={liveRoomPosts.payload} />
+          <RoomPostReceipt posts={validRoomPosts(liveRoomPosts.payload)!} />
         </div>
       )}
 

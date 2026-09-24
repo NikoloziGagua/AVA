@@ -67,7 +67,6 @@ const ChatListScreen = lazy(async () => ({ default: (await import("./orbit/ChatL
 const WatchesScreen = lazy(async () => ({ default: (await import("./watches/WatchesScreen.js")).WatchesScreen }));
 const RulesScreen = lazy(async () => ({ default: (await import("./rules/RulesScreen.js")).RulesScreen }));
 const SelfScreen = lazy(async () => ({ default: (await import("./self/SelfScreen.js")).SelfScreen }));
-const StrategyRoomScreen = lazy(async () => ({ default: (await import("./strategy/StrategyRoomScreen.js")).StrategyRoomScreen }));
 const MissionControlScreen = lazy(async () => ({
   default: (await import("./mission-control/MissionControlScreen.js")).MissionControlScreen,
 }));
@@ -86,7 +85,6 @@ type View =
   | { name: "watches"; focusWatchId?: string | null; navigationOrigin?: "mission-control" }
   | { name: "rules" }
   | { name: "self" }
-  | { name: "strategy"; sourceSessionId?: string }
   | { name: "visuals"; visualId?: string }
   | { name: "capabilities" }
   | { name: "list" };
@@ -220,7 +218,6 @@ function navForView(v: View): string | undefined {
     case "watches": return "Watches";
     case "rules": return "Rules";
     case "self": return "Self";
-    case "strategy": return "Room";
     case "visuals": return "Visuals";
     case "capabilities": return "Explore";
     default: return undefined;
@@ -375,7 +372,6 @@ export function App() {
     { name: "Explore", label: "Explore AVA", icon: Radar, group: "system", onSelect: () => setView({ name: "capabilities" }) },
     { name: "Watches", label: "Watches", icon: AlarmClock, group: "system", onSelect: () => setView({ name: "watches" }) },
     { name: "Memory", label: "Memory", icon: Brain, group: "system", onSelect: () => setView({ name: "memory" }) },
-    { name: "Room", label: "Strategy Room", icon: MessagesSquare, group: "system", onSelect: () => setView({ name: "strategy" }) },
     { name: "Visuals", label: "Visual explanations", icon: Presentation, group: "system", onSelect: () => setView({ name: "visuals" }) },
     { name: "Rules", label: "Settings & rules", icon: Settings2, group: "system", onSelect: () => setView({ name: "rules" }) },
     { name: "Self", label: "Self development", icon: Sparkles, group: "system", onSelect: () => setView({ name: "self" }) },
@@ -509,7 +505,6 @@ export function App() {
                 sessionId,
                 intent: sessionId ? "resume" : "new",
               })}
-              onOpenStrategy={(sessionId) => setView({ name: "strategy", sourceSessionId: sessionId })}
               onOpenVisual={(visualId) => setView({ name: "visuals", visualId })}
               onOpenSaved={openSavedItem}
             />
@@ -604,22 +599,6 @@ export function App() {
               onStartTask={(text) => openNewChat(text)}
               onOpenChat={(sessionId) => openChat(sessionId)}
               initialNoteId={view.noteId ?? null}
-            />
-          </motion.div>
-        )}
-        {view.name === "strategy" && (
-          <motion.div
-            key={view.sourceSessionId ? `strategy-${view.sourceSessionId}` : "strategy"}
-            data-view="strategy"
-            data-deck-transition={deckTransition}
-            className="absolute inset-0"
-            initial={SCREEN.from}
-            animate={SCREEN.to}
-            transition={enterT}
-          >
-            <StrategyRoomScreen
-              sourceSessionId={view.sourceSessionId ?? null}
-              onOpenChat={(sessionId) => openChat(sessionId)}
             />
           </motion.div>
         )}

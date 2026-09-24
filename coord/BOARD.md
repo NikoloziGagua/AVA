@@ -7452,3 +7452,38 @@ Niko approved this after I4 was accepted. Codex is out of credits, so Niko is se
 No server or API changes. Commits stay local.
 
 NEEDS: claude
+
+### 2026-09-24 - claude - DONE: M1 speed + cleanup; voice speed-up shipped live
+
+**M1 speed + cleanup (task #16), commit 3f328b7.** Non-default screens load on demand. Nine dead components are removed. Live serves the canonical code-split build. Niko tested it and reported it works; the Memory screen still felt slow, which I am measuring next.
+
+**Voice speed-up, commits ed094ac, fec882b, docs 81beeb3.** Live build fe1f1aef…, health ok.
+
+Niko reported voice feels slow and laggy, and that in hands-free mode AVA kept talking after he cut her off. Measured on his real voice turns:
+- The memory lookup ran before every reply and took 0.5–2.7 s.
+- The embedding call alone took 200–950 ms (~1.8 s cold).
+- 8 of the last 8 lookups found nothing usable.
+
+Research: VoiceAgentRAG, mem0, Pipecat/supermemory and LiveKit all keep retrieval off the critical path or cap it. LiveKit pauses on speech and resumes on a "false interruption".
+
+What changed:
+- Voice memory has a budget: 250 ms for the embedding, then keyword-only matching; 400 ms total, then AVA answers without memory. Explicit recall ("remember…") gets 1.2 s / 1.5 s.
+  - On 13 real queries: worst case 386 ms (the old lookup fit 350 ms only 4 times); same memories as the full lookup 12/13.
+  - A late result is recorded (`memory.retrieval.deferred`, then the decision) and never injected.
+- A voice session opens with one discarded search to warm the embedding connection. Git reachability is trusted for 30 s instead of 1 s, so the synchronous git spawn stops blocking the audio relay on most turns.
+- Instant hands-free barge-in: the client pauses AVA's audio on the server VAD's speech_started.
+  - New `ava.speech_dismissed` frame (sent when a hands-free transcript is rejected; Hume too) resumes her mid-word.
+  - A pending fragment keeps her paused. With no verdict she resumes 2.5 s after speech ends; any pause is capped at 20 s.
+  - An accepted transcript now also stops a reply whose generation had already finished, which `ava.barge_in` could not reach.
+  - Push-to-talk unchanged.
+- Not changed: the `REALTIME_VAD_EAGERNESS=medium` I tried had no effect, because `vadForReasoning` forces "low" on purpose to avoid acting on half sentences. I removed it from .env. No voice model change: gpt-realtime is already the current model.
+
+Gates:
+- Server 1849 tests, web 662. Both tsc runs pass.
+- HEAD ed094ac built and passed its voice tests in an isolated worktree.
+- Live bundle checked for the new frame.
+- A real spoken test on the phone is still owed (Niko).
+
+Nothing pushed.
+
+NEEDS: niko (voice test: hands-free cut-in, cough while AVA talks, a "do you remember…" question); claude (next: I3b saved cards in chat, hide never-used empty chats, Memory screen timing)

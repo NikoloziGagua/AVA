@@ -75,6 +75,20 @@ describe("ChatListScreen", () => {
     await waitFor(() => expect(setSessionPinned).toHaveBeenCalledWith("r", true));
   });
 
+  it("opens a conversation from a keyboard-focusable title button exactly once", async () => {
+    fetchSessionPage.mockResolvedValue({ sessions: [row({ id: "r", title: "Regular chat" })], nextCursor: null });
+    const onOpenChat = vi.fn();
+    render(<ChatListScreen onClose={() => {}} onOpenChat={onOpenChat} />);
+    const title = await screen.findByRole("button", { name: "Regular chat" });
+    // A native button: reachable with Tab, activated by Enter and Space.
+    expect(title.tagName).toBe("BUTTON");
+    title.focus();
+    expect(document.activeElement).toBe(title);
+    fireEvent.click(title);
+    expect(onOpenChat).toHaveBeenCalledTimes(1);
+    expect(onOpenChat).toHaveBeenCalledWith("r", undefined);
+  });
+
   it("lists only Nika's conversations first, bounded, with a cursor to show more", async () => {
     fetchSessionPage.mockImplementation(async (input: { scope: string; cursor?: string | null }) => (
       input.cursor

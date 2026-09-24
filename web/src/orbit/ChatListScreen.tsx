@@ -262,14 +262,27 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
         </tr>
       </thead>
       <tbody>
-        {rows.map((s) => (
+        {rows.map((s) => {
+          const open = () => onOpenChat(s.id, section === "automation" ? { audit: true } : undefined);
+          return (
+          // The whole row stays a pointer target; the title button is the
+          // keyboard and screen-reader way in (Tab, Enter, Space).
           <tr
             key={s.id}
             className="chat-row"
-            onClick={() => onOpenChat(s.id, section === "automation" ? { audit: true } : undefined)}
+            onClick={open}
           >
             <td>
-              <div className="truncate text-sm text-white/90">{s.title ?? "Untitled"}</div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  open();
+                }}
+                className="block w-full truncate rounded text-left text-sm text-white/90 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ac)]"
+              >
+                {s.title ?? "Untitled"}
+              </button>
             </td>
             <td>
               <div className="hud text-[10px] tracking-[0.16em] text-white/40">
@@ -304,7 +317,8 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
               </div>
             </td>
           </tr>
-        ))}
+          );
+        })}
       </tbody>
     </table>
   );

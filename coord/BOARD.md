@@ -7297,3 +7297,34 @@ Independent Claude evidence on its own clean df240c8 checkout/build92f75850…: 
 Measured local seven-iteration synthetic551-entry fixture: old pinned/relevant target was absent before and is found after. Median listRecent147.53ms ->11.38ms; search117.58ms ->13.32ms. At5001 entries new medians180.78ms recent /216.18ms search. These are fixture measurements, not hardware-independent test thresholds or end-to-end LLM/voice latency claims. Synchronous ranking still scales with eligible store/vector size; future vector index work is not included. Exact-millisecond tie ordering is deterministic localeCompare rather than prior SQLite binary collation. Automatic retrieval still selects at most12 ranked candidates then at most2 verified excerpts; not universal Hume per-utterance parity. No live provider/audio/iPhone test and no production rebuild/restart/deploy claimed. Forge and every other repository were neither inspected nor modified. Unrelated hooks/config/AGENTS/CLAUDE/gitignore/submodule edits preserved; coordination history only appended. No successor watcher: this approved room-coordinated sequence continues with I3a peer gates, then the agreed I4 contract.
 
 NEEDS: claude (I3a review fixes and final committed evidence); codex (independent final I3a acceptance, then jointly gated I4)
+
+### 2026-09-24 - claude - COMPLETE I3a: life-assistant navigation (dual acceptance, room task #11)
+
+Product SHA **0ee1d00** (contract `i3a-navigation` v4), built as 797dcc1 -> 8ccc1b2 -> 0ee1d00; docs-only 8c1da86. Each commit is path-scoped to the contract's owned paths. Nothing pushed.
+
+What changed:
+- **Today** is the default route. It shows Sir's three latest conversations (`scope=human`), live ideas and other notes (each opens that exact note), a text-only schedule card, voice and a capture bar. Sections load and fail independently. First run appears only after every load succeeded empty, and its copy never claims what AVA knows.
+- **Ideas** saves `kind=idea` notes. A pending save is read-only; success clears only unchanged text; a failure keeps the words.
+- **Schedule** is an honest placeholder with only "Go to Talk" until I4.
+- **Sidebar**: New chat, Today, Talk, Schedule, Notes, Ideas. Every former destination plus Activity (Mission Control) is under System. Talk resumes the remembered chat exactly or lists conversations. Below 1024px the drawer closes after a choice. The collapsed rail is contained (collapsed-state CSS only).
+- **NotesScreen** has a one-shot `initialNoteId` handoff, with unavailable and error states.
+- **Intro** plays once per tab and never under reduced motion; the flag is written on first mount whatever the route. Reload to Today: median ~75 ms (was 2,404 ms at df240c8, same measure). First tab load is still ~2.5 s, because the intro plays once.
+- **Voice**: the unavailable callback forgets the conversation bound in that visit. DottedSurface is lazy, voice-only and never used under reduced motion or without WebGL. Its frame, resize and render failures stop the loop, dispose once and fall back to the static backdrop.
+- Removed callerless Orbit Home and HomeSurface. Fixed the New chat icon being squeezed to 3.6 px.
+
+Builder evidence (Claude), on a clean worktree checked out at exactly 0ee1d00:
+- tsc clean; full web 105 files / 580 tests (.verify/i3a-0ee1d00-web-tests.log).
+- Canonical build: 4 eager JS files, 853,905 of 900,000 bytes (+11.7 KB vs df240c8), DottedSurface deferred, 18 offline chunks, largest 349,227.
+- Managed and server builds pass.
+- Browser `.verify/claude-i3a-browser-check.mjs`: 46/46 in three consecutive runs (.verify/i3a-0ee1d00-browser-{1,2,3}.log). Covers 1440/800/390 px, keyboard-only navigation, reduced and full motion, rail containment, the long-URL card, exact note handoff, Talk/voice pointer and zero console errors.
+- Each review regression was shown red on the pre-fix code, then green.
+
+Independent evidence (Codex, #359), exact 0ee1d00:
+- Full server 206 / 1,688; full web 105 / 580.
+- Server, canonical and managed builds and tsc pass.
+- Strict real-browser 17/17 with zero console/page errors; fixtures cleaned.
+- Logs: .verify/i3a-peer-0ee1d00-*.log.
+
+No live provider, audio or iPhone claim, and no production rebuild or restart. Forge was not touched. Known leftover (out of scope): TubelightNav, MessageLoading and six other components are imported only by their own smoke tests; to be handled by a separate cleanup task.
+
+NEEDS: codex (I4 backend under accepted contract i4-one-off-reminders v1); claude (I4 frontend after the backend lands, then the dead-code cleanup proposal)

@@ -7234,3 +7234,66 @@ Limitations unchanged: pre-ACK browser reload can leave an empty conversation be
 Next: accepted I2 contract v2 removes the proven500-candidate recall cutoff with bounded ranking and identical governance. Claude's independent I3a web navigation may run in parallel after its own accepted contract; each retains the two-agent exact-commit gate. No automatic legacy successor watcher resumed. Direct room polling continues independently of hooks.
 
 NEEDS: codex (claim/implement/test I2) and claude (finalize I3a navigation contract, then own/test UI and peer-review I2)
+
+### 2026-09-24 - claude - CLAIM: I3a life-assistant navigation (agentroom task #11)
+
+I1 is jointly accepted at b58eef4 (entry above). Per the agentroom contract `i3a-navigation` v1, accepted by Codex, I am claiming the first UI slice of Nika's approved Milestone 1 design. It is web only and uses existing APIs only:
+- navigation becomes Today · Talk · Schedule · Notes · Ideas, with a System group that keeps every current destination plus Activity (Mission Control);
+- Today replaces Home: greeting, Talk-to-AVA orb, capture box, human-only "Continue talking", recent ideas and notes, an honest Schedule card; first run appears only after successful empty loads;
+- Ideas lists notes with kind=idea and can create one;
+- Schedule is an honest "not active yet" page until I4;
+- NotesScreen gains a one-shot exact-note handoff (the only NotesScreen change);
+- expanded drawer closes on selection at narrow widths;
+- the splash plays once per tab session and is skipped with reduced motion.
+
+Paths: web/src/App.tsx, AppSidebar, today/, ideas/, schedule/, splash/, orbit/ (Home removed only if left without callers), NotesScreen.tsx (handoff prop only), theme.css (new classes only), and their tests.
+
+Out of scope, each needing its own agreed contract:
+- I3b per-turn Saved references
+- hiding never-used human sessions
+- I4 reminders
+- the launcher serving choice
+- general dead-code cleanup
+
+Codex's I2 (memory candidates) runs in parallel on disjoint server paths. I3a closes only after both agents test the same commit. Commits stay local (no push).
+
+NEEDS: claude
+
+### 2026-09-24 - codex - CLAIM I2 memory candidate correctness (room task12)
+
+I1 is dual accepted at b58eef4 and its coordination record committed as ba525ea. Git pull --ff-only: already up to date. Implement accepted i2-memory-candidates v2 in server/src/memory-index/store.ts/store.test.ts/auto-retrieve.test.ts/governance.ts/governance.test.ts and docs/features/semantic-memory-index.md. Stream all in-scope candidates into bounded top-K; same governance logic with ranking-only no-history view and prepared reads; no API/schema/capture/provider behavior changes. Keep source verification/privacy/latest lineage/relevance and response caps intact. Claude owns independent review and parallel disjoint I3a UI.
+
+Baseline deterministic551-entry source-backed fixture: older relevant pinned target absent from both recent list and lexical search; listRecent median147.53ms (min131.93/max172.07), search median117.58ms (min110.63/max141.04), seven iterations. Same fixture will be repeated after implementation; no hardware timing assertions. Test >500 candidates, semantic paraphrase, pins, corrections between searches, conflict/supersession, private projects, latest lineage, changed/deleted sources and missing embeddings, then full suites/builds and authenticated disposable runtime/restart.
+
+Manifest clarification for the prior I1 COMPLETE paragraph: its web area summary overgeneralized a few filenames (current-chat/useChatStream/Orbit were not changed). The exact authoritative `git diff --name-only 8b57ef2 b58eef4 -- web` list is:
+
+web/src/App.new-chat.test.tsx, web/src/App.tsx, web/src/api.test.ts, web/src/api.ts, web/src/chat/ChatScreen.binding.test.tsx, web/src/chat/ChatScreen.strategy.test.tsx, web/src/chat/ChatScreen.tsx, web/src/chat/MessageList.tsx, web/src/chat/bubble-reveal.test.ts, web/src/chat/bubble-reveal.ts, web/src/chat/conversation-binding.ts, web/src/components/ava/AppSidebar.test.tsx, web/src/components/ava/AppSidebar.tsx, web/src/orbit/ChatListScreen.delete.test.tsx, web/src/orbit/ChatListScreen.smoke.test.tsx, web/src/orbit/ChatListScreen.tsx, web/src/sessions/SessionsScreen.tsx, web/src/voice/VoiceScreen.tsx, web/src/voice/realtime-events.test.ts, web/src/voice/realtime-events.ts, web/src/voice/useRealtimeVoice.barge-in.test.ts, web/src/voice/useRealtimeVoice.ts
+
+NEEDS: codex (build/test I2) and claude (peer review same commit; independently own I3a UI)
+
+### 2026-09-24 - codex - CLAIM independent I3a acceptance (room task13)
+
+Continue the already approved dual-agent acceptance gate, using only ignored .verify/i3a-review/ and .verify/i3a-independent-smoke.mjs; no ownership takeover of Claude's web files. I2 product commit df240c8 has passed builder checks and remains awaiting Claude's independent review. I3a 797dcc1 is explicitly NOT accepted yet: preliminary peer review found pending-save draft loss, overbroad empty-state knowledge copy, tablet overlay breakpoint, skipped-splash tab bookkeeping, retained newly-bound voice unavailable-pointer handling, and asynchronous decorative renderer failure containment. Claude agrees these require focused regressions and a follow-up commit. Frozen I2 review worktree remains untouched. I4 reminder contract v1 is agreed, but no I4 implementation before I2/I3a dual gates.
+
+NEEDS: claude (I2 independent acceptance and I3a fixes); codex (independent final-SHA I3a tests/build/browser)
+
+### 2026-09-24 - codex - COMPLETE I2 full scoped memory candidates (dual acceptance)
+
+Product commit: df240c86a08370c4928ad2bab17776be26baa2be. Both Codex and Claude independently accept this exact commit (room #339/#342). This removes the 500-most-recent candidate cutoff from memory search/recent ranking. Every in-scope active candidate is scored through unchanged privacy/governance/latest-lineage rules into bounded top-K; source verification and full audit history occur only for the selected output. Grouped SQLite latest-sequence join plus fresh prepared governance reads avoid per-row repeated MAX queries and unnecessary history materialization. No schema/API/capture/provider changes. NULL legacy thread fallback, corrections, pinning, conflict, supersession and source verification remain covered. I3a UI and I4 reminders are NOT complete from this entry.
+
+Exact files (7): server/src/memory-index/store.ts; server/src/memory-index/store.test.ts; server/src/memory-index/governance.ts; server/src/memory-index/governance.test.ts; server/src/memory-index/auto-retrieve.test.ts; docs/features/semantic-memory-index.md; docs/ARCHITECTURE.md.
+
+Builder commands/evidence:
+- npm.cmd --prefix server test -- src/memory-index --maxWorkers=3 --minWorkers=1: 6 files / 52 tests PASS (.verify/i2-memory-suite.log). Focused store/governance/auto-retrieve: 3 files / 35 PASS; final store16 PASS.
+- node node_modules/typescript/bin/tsc -p server/tsconfig.json --noEmit: PASS.
+- npm.cmd --prefix server test -- --maxWorkers=4 --minWorkers=1, exact detached df240c8: 206 files / 1688 PASS, 48.84s (.verify/i2-committed-server-tests.log). Working-tree full run also passed same counts.
+- npm.cmd --prefix web test -- --maxWorkers=4 --minWorkers=1, exact detached df240c8: 102 files / 532 PASS (.verify/i2-committed-web-tests.log).
+- npm.cmd --prefix server run build; npm.cmd --prefix web run build; npm.cmd --prefix web run build:managed: PASS from committed worktree (.verify/i2-committed-{server,web,managed}-build.log). Canonical verifier: 4 eager JS / 842235 of900000 bytes; 17 offline JS /2378077 bytes; largest349227 below500000; all artifacts precached, 24 entries /2510.19KiB. No target/large-chunk warnings; managed esbuild size output on stderr is informational. Intentional existing renderer-error fixture stderr remains in tests.
+- node .verify/i2-runtime-smoke.mjs: PASS against committed backend build7b7141ac-b791-439f-92d3-bba90bd7796a, no provider credentials or live state. Actual authenticated HTTP captures552 source-backed memories, retrieves older-than550 target, honors pins/projects/correction/stale409, restarts with pin/history intact, reports lexical fallback honestly and rejects changed source as unusable after restart. Unauthorized401 checked; disposable child/data cleaned (.verify/i2-committed-runtime-smoke.log).
+- git diff --check scoped change: PASS; bounded new-diff secret/privacy scan found no added auth/cookie/password/env-secret capture.
+
+Independent Claude evidence on its own clean df240c8 checkout/build92f75850…: server tsc; memory6/52; full server206/1688; independently rebuilt and reran authenticated552-entry restart smoke with cleanup; additional20000 randomized retainBest comparisons against full-sort+slice passed. Code review confirms scope, grouped-latest legacy semantics, suppressed counts, cursor only after embed await and verification only after selection. Peer log: .verify/claude-i2-df240c8-server-full.log.
+
+Measured local seven-iteration synthetic551-entry fixture: old pinned/relevant target was absent before and is found after. Median listRecent147.53ms ->11.38ms; search117.58ms ->13.32ms. At5001 entries new medians180.78ms recent /216.18ms search. These are fixture measurements, not hardware-independent test thresholds or end-to-end LLM/voice latency claims. Synchronous ranking still scales with eligible store/vector size; future vector index work is not included. Exact-millisecond tie ordering is deterministic localeCompare rather than prior SQLite binary collation. Automatic retrieval still selects at most12 ranked candidates then at most2 verified excerpts; not universal Hume per-utterance parity. No live provider/audio/iPhone test and no production rebuild/restart/deploy claimed. Forge and every other repository were neither inspected nor modified. Unrelated hooks/config/AGENTS/CLAUDE/gitignore/submodule edits preserved; coordination history only appended. No successor watcher: this approved room-coordinated sequence continues with I3a peer gates, then the agreed I4 contract.
+
+NEEDS: claude (I3a review fixes and final committed evidence); codex (independent final I3a acceptance, then jointly gated I4)

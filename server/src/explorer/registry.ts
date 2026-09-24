@@ -234,6 +234,7 @@ export function capabilityIdsForTool(tool: string): string[] {
   }
   if (/^person_/.test(tool)) return ["people.identity-resolution"];
   if (/^notes_/.test(tool)) return ["memory.structured-notes"];
+  if (tool === "room_read" || tool === "room_post") return ["developer-collaboration.agentroom"];
   if (/^(visual_explanation_|research_visual_)/.test(tool)) return ["interface.visual-explanations"];
   if (/^memory_index_/.test(tool)) return ["memory.semantic-index"];
   if (/^memory_/.test(tool)) return ["memory.durable"];

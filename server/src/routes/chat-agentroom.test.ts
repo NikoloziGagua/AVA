@@ -65,6 +65,8 @@ describe("agentroom evidence on the chat boundary", () => {
     expect(CAPABILITIES_MD).toContain('"The room" means the live development room');
     expect(CAPABILITIES_MD).not.toContain("strategy_room_open");
     expect(capabilityIdsForTool("strategy_room_open")).toEqual([]);
+    expect(capabilityIdsForTool("room_read")).toEqual(["developer-collaboration.agentroom"]);
+    expect(capabilityIdsForTool("room_post")).toEqual(["developer-collaboration.agentroom"]);
   });
 
   it("carries a real tool result receipt through runAgent into SSE and message metadata", async () => {

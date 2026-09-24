@@ -512,8 +512,12 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
           if (e.delegation?.target !== "client" || typeof e.delegation?.id !== "string") return;
           // What Sir said since the last delegation is the request.
           if (turns.current === "user") flushTurn();
-          const request = sessionTurns.slice(delegatedUpTo).filter((t) => t.speaker === "user").map((t) => t.text);
-          const context = sessionTurns.slice(0, delegatedUpTo);
+          // The request is Sir's latest words: his turns since AVA last spoke
+          // (and since the previous delegation). Earlier talk is context only.
+          let from = sessionTurns.length;
+          while (from > delegatedUpTo && sessionTurns[from - 1]!.speaker === "user") from -= 1;
+          const request = sessionTurns.slice(from).map((t) => t.text);
+          const context = sessionTurns.slice(0, from);
           delegatedUpTo = sessionTurns.length;
           runJob(composeDelegationTask(context.length ? context : sessionTurns, request), e.delegation.id, request.join(" "));
           return;

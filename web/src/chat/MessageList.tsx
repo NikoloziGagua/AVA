@@ -15,6 +15,14 @@ import { VisualMessageCard, type VisualSemanticActionHandler } from "../visuals/
 import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
 import { MemoryContextCapsule } from "./MemoryContextCapsule.js";
 import type { MemoryContext } from "./memory-context.js";
+import {
+  BUBBLE_REVEAL_SELECTOR,
+  claimBubbles,
+  REVEAL_FROM,
+  REVEAL_TO,
+  replaceRevealBatch,
+  type Killable,
+} from "./bubble-reveal.js";
 
 export type ChatMessage =
   | { role: "user"; text: string; id: string; visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" }
@@ -168,39 +176,30 @@ export function MessageList({
   // second from-tween overwrote the first and animated opacity 0 → 0, leaving
   // Ava's reply invisible. Reveals are also decided at fire time and always end
   // explicitly visible, so no overlap can strand a bubble transparent.
-  const revealTriggers = useRef<ScrollTrigger[]>([]);
+  const revealTriggers = useRef<Killable[]>([]);
   useGSAP(
     () => {
-      revealTriggers.current.forEach((t) => t.kill());
-      revealTriggers.current = [];
-      if (reduced || !scroller.current) return;
-      revealTriggers.current = ScrollTrigger.batch("[data-bubble]:not([data-entered])", {
-        scroller: scroller.current,
-        start: "top 92%",
-        once: true,
-        onEnter: (els) => {
-          const fresh = els.filter((el) => !el.hasAttribute("data-entered"));
-          if (fresh.length === 0) return;
-          fresh.forEach((el) => el.setAttribute("data-entered", ""));
-          gsap.fromTo(
-            fresh,
-            { y: 18, opacity: 0, filter: "blur(6px)" },
-            {
-              y: 0,
-              opacity: 1,
-              filter: "blur(0px)",
+      const scrollerEl = scroller.current;
+      revealTriggers.current = replaceRevealBatch(revealTriggers.current, !reduced && !!scrollerEl, () =>
+        ScrollTrigger.batch(BUBBLE_REVEAL_SELECTOR, {
+          scroller: scrollerEl!,
+          start: "top 92%",
+          once: true,
+          onEnter: (els) => {
+            const fresh = claimBubbles(els);
+            if (fresh.length === 0) return;
+            gsap.fromTo(fresh, { ...REVEAL_FROM }, {
+              ...REVEAL_TO,
               duration: D.section,
               ease: EASE,
               stagger: 0.06,
               overwrite: "auto",
-              clearProps: "transform,opacity,filter",
-            },
-          );
-        },
-      });
+            });
+          },
+        }),
+      );
       return () => {
-        revealTriggers.current.forEach((t) => t.kill());
-        revealTriggers.current = [];
+        revealTriggers.current = replaceRevealBatch(revealTriggers.current, false, () => []);
       };
     },
     { scope: scroller, dependencies: [history.length, reduced] },

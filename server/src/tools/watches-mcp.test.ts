@@ -9,9 +9,9 @@ describe("watch_create tool", () => {
   it("bounds one-off reminder content without changing legacy monitor limits", async () => {
     const db = openInMemoryDb();
     const create = buildWatchTools({ db }).find((entry) => entry.tool.name === "watch_create")!;
-    expect(await create.run({ prompt: "x".repeat(2001), kind: "reminder", run_in_minutes: 1, time_zone: "UTC" })).toMatchObject({ ok: false });
+    expect(await create.run({ prompt: "x".repeat(2001), kind: "reminder", run_in_minutes: 1, time_zone: "UTC" }, { runId: "test-run" })).toMatchObject({ ok: false });
     expect(db.prepare("SELECT count(*) n FROM watches").get()).toEqual({ n: 0 });
-    expect(await create.run({ prompt: "x".repeat(2001), kind: "check", interval_minutes: 5 })).toMatchObject({ ok: true });
+    expect(await create.run({ prompt: "x".repeat(2001), kind: "check", interval_minutes: 5 }, { runId: "test-run" })).toMatchObject({ ok: true });
     db.close();
   });
   it("keeps ordinary AVA monitors on the shared scheduler path", async () => {

@@ -84,6 +84,25 @@ describe("Notes tools", () => {
     expect(search.text).toContain("University/Agile Development");
   });
 
+  it("captures and reorders stable document pages through versioned tools", async () => {
+    await tool("notes_capture").run({
+      folder_path: "Ideas/Book",
+      title: "Page two",
+      content: "Second",
+      document_position: 4,
+    }, { runId: "page-capture" });
+    const note = listNotes(db)[0]!;
+    expect(note.documentPosition).toBe(4);
+
+    const updated = await tool("notes_update").run({
+      id: note.id,
+      expected_version: note.version,
+      document_position: 1,
+    }, { runId: "page-reorder" });
+    expect(updated.ok).toBe(true);
+    expect(getNote(db, note.id)).toMatchObject({ documentPosition: 1, version: 2 });
+  });
+
   it("organises folders with versions and refuses destructive or stale operations", async () => {
     const created = await tool("notes_folders").run({ action: "create", folder_path: "University/Systems" }, { runId: "folder-1" });
     expect(created.ok).toBe(true);

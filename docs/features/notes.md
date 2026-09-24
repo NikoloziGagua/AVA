@@ -21,6 +21,9 @@ does not replace or silently rewrite it.
 - Notes are named documents with stable IDs, Markdown content, a document type,
   source evidence, safe links, tags, a bounded change log and an optimistic
   version.
+- Each document has an explicit stable page position within its folder. New
+  documents append; moving a document to another folder appends there unless a
+  position is supplied; editing content never silently reshuffles page order.
 
 `documentType: "study"` uses one canonical Markdown body with the headings Key
 concepts, Explanations, Questions and weak areas, Examples, Conclusions and
@@ -37,6 +40,8 @@ The hierarchy migration is additive and non-destructive:
   stable ID;
 - every existing note keeps its ID, title, body, source, version, change log
   and promotion lineage;
+- existing documents receive deterministic page positions from their original
+  creation order, with stable ID as the tie-breaker;
 - historical project, section, kind and Kanban-stage fields remain during v1;
 - legacy duplicate titles do not block, rename or merge migration.
 
@@ -56,7 +61,7 @@ AVA exposes five Notes tools in chat and voice:
 - `notes_search` searches title, content and tags, optionally within one folder
   or subtree, and returns stable IDs, breadcrumbs and current versions.
 - `notes_update` version-updates content or moves a document to an existing
-  folder.
+  folder, and can reorder a page through `document_position`.
 - `notes_folders` lists or explicitly creates, renames, moves and deletes-empty
   folders. Rename/move/delete require the current folder version.
 - `notes_promote` turns a document into a task draft or an explicit
@@ -75,7 +80,8 @@ folder until the new UI takes over.
 
 Every folder and document has a monotonically increasing version. Stale writes
 return the latest record rather than overwriting it. A document move updates
-its legacy top-level project projection without changing the document ID.
+its legacy top-level project projection without changing the document ID, and
+appends it to the destination unless an explicit page position is supplied.
 
 Notes are scrubbed at persistence. Only HTTP(S) links without credential-like
 material are retained. All HTTP routes require normal AVA authentication.
@@ -94,14 +100,15 @@ material are retained. All HTTP routes require normal AVA authentication.
   non-built-in folder.
 - Existing project routes remain available during compatibility.
 - Existing note create/update/delete/promote routes remain, with `folderId` and
-  `documentType` added to create/update.
+  `documentType` and `documentPosition` added to create/update.
 
 Typed hierarchy failures distinguish missing/stale records, sibling-name
 conflicts, non-empty folders, invalid moves and excessive depth.
 
 ## Verification and current boundary
 
-State, route and tool tests cover legacy migration (including duplicate titles),
+State, route and tool tests cover legacy migration (including duplicate titles
+and deterministic page order),
 General/root identity, sibling uniqueness, nested paths, subtree search, study
 documents, cycles, depth, optimistic concurrency, compatibility projection,
 empty-only deletion, privacy scrubbing and tool round trips. A separate
@@ -109,7 +116,8 @@ live-database-copy verifier hashes all authoritative note fields before and
 after migration and removes its temporary copy.
 
 This increment is the server/tool foundation. The Finder-style folder tree,
-document list and editor are the next separately reviewed UI increment. Until
+book/page reader with previous/next navigation and editor are the next
+separately reviewed UI increment. Until
 that lands, nested hierarchy operations are available conversationally and via
 the authenticated API, while the existing Notes Board remains the visible
 compatibility view.

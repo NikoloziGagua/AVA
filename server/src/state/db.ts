@@ -182,6 +182,9 @@ export function openDb(path: string): Db {
   // built-in id, and no note body/title/history/version is rewritten.
   tryAddColumn(db, "notes", "folder_id", "TEXT REFERENCES note_folders(id) ON DELETE RESTRICT");
   tryAddColumn(db, "notes", "document_type", "TEXT NOT NULL DEFAULT 'general'");
+  const hadDocumentPosition = (db.prepare("PRAGMA table_info(notes)").all() as Array<{ name: string }>)
+    .some((column) => column.name === "document_position");
+  tryAddColumn(db, "notes", "document_position", "INTEGER NOT NULL DEFAULT 0");
   const notesMigrationNow = Date.now();
   db.prepare(`
     INSERT OR IGNORE INTO note_folders (
@@ -212,6 +215,21 @@ export function openDb(path: string): Db {
     CREATE INDEX IF NOT EXISTS idx_notes_folder_updated
       ON notes(folder_id, updated_at DESC);
   `);
+  if (!hadDocumentPosition) {
+    db.exec(`
+      WITH ranked AS (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY folder_id ORDER BY created_at ASC, id ASC
+        ) - 1 AS position
+        FROM notes
+      )
+      UPDATE notes SET document_position = (
+        SELECT position FROM ranked WHERE ranked.id = notes.id
+      );
+    `);
+  }
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_notes_folder_position
+    ON notes(folder_id, document_position, title COLLATE NOCASE, id)`);
   return db;
 }
 

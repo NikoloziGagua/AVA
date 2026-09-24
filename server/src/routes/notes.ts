@@ -40,6 +40,7 @@ const CreateBody = z.object({
   project: z.string().max(80).nullish(),
   folderId: z.string().max(120).nullish(),
   documentType: z.enum(NOTE_DOCUMENT_TYPES).optional(),
+  documentPosition: z.number().int().min(0).max(1_000_000).optional(),
   section: z.enum(NOTE_SECTIONS).optional(),
   tags: z.array(z.string().max(80)).max(20).optional(),
   links: z.array(Link).max(20).optional(),
@@ -105,6 +106,7 @@ function documentSummary(note: Note) {
     folderId: note.folderId,
     folderPath: note.folderPath,
     documentType: note.documentType,
+    documentPosition: note.documentPosition,
     kind: note.kind,
     status: note.status,
     pinned: note.pinned,
@@ -156,7 +158,11 @@ export function notesRoutes(
   r.get("/tree", auth, (_req, res) => {
     const fetchedAt = Date.now();
     const folders = listNoteFolders(db);
-    const documents = listNotes(db, { includeArchived: true, limit: 500 });
+    const documents = listNotes(db, { includeArchived: true, limit: 500 }).sort((a, b) =>
+      a.folderId.localeCompare(b.folderId) ||
+      a.documentPosition - b.documentPosition ||
+      a.title.localeCompare(b.title, undefined, { sensitivity: "base" }) ||
+      a.id.localeCompare(b.id));
     const totalDocuments = Number((db.prepare("SELECT COUNT(*) AS n FROM notes").get() as { n: number }).n);
     const projects = listNoteProjects(db);
     const maxUpdatedAt = Math.max(0, ...folders.map((folder) => folder.updatedAt), ...documents.map((note) => note.updatedAt));

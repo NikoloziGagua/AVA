@@ -88,6 +88,36 @@ describe("Notes API", () => {
     expect(subtree.body.notes.map((note: { id: string }) => note.id)).toEqual([created.body.note.id]);
   });
 
+  it("returns stable book-page order and version-guards page reordering", async () => {
+    const folder = await request(app()).post("/api/notes/folders").send({ name: "Book" }).expect(201);
+    const later = await request(app()).post("/api/notes").send({
+      folderId: folder.body.folder.id,
+      title: "Later",
+      content: "Later page",
+      documentPosition: 5,
+    }).expect(201);
+    const earlier = await request(app()).post("/api/notes").send({
+      folderId: folder.body.folder.id,
+      title: "Earlier",
+      content: "Earlier page",
+      documentPosition: 1,
+    }).expect(201);
+
+    const tree = await request(app()).get("/api/notes/tree").expect(200);
+    expect(tree.body.documents.filter((note: { folderId: string }) => note.folderId === folder.body.folder.id)
+      .map((note: { id: string; documentPosition: number }) => [note.id, note.documentPosition]))
+      .toEqual([[earlier.body.note.id, 1], [later.body.note.id, 5]]);
+
+    await request(app()).patch(`/api/notes/${later.body.note.id}`).send({
+      expectedVersion: later.body.note.version,
+      documentPosition: 0,
+    }).expect(200);
+    await request(app()).patch(`/api/notes/${later.body.note.id}`).send({
+      expectedVersion: later.body.note.version,
+      documentPosition: 9,
+    }).expect(409);
+  });
+
   it("returns typed hierarchy conflicts and protects built-in/non-empty folders", async () => {
     const root = await request(app()).post("/api/notes/folders").send({ name: "University" }).expect(201);
     await request(app()).post("/api/notes/folders").send({ name: "university" }).expect(409, {

@@ -64,7 +64,7 @@ describe("structured notes store", () => {
 
     db = openDb(path);
     const migrated = getNote(db, "legacy-1");
-    expect(migrated).toMatchObject({ status: "ideas", collection: "AVA", section: "capture", documentType: "general" });
+    expect(migrated).toMatchObject({ status: "ideas", collection: "AVA", section: "capture", documentType: "general", documentPosition: 0 });
     expect(migrated?.projectId).toMatch(/^project_/);
     expect(migrated?.folderId).toBe(migrated?.projectId);
     expect(getNote(db, "legacy-general")).toMatchObject({
@@ -78,6 +78,7 @@ describe("structured notes store", () => {
       content: "Keep the duplicate too",
       version: 4,
       folderId: migrated?.folderId,
+      documentPosition: 1,
     });
     expect(listNoteFolders(db).find((folder) => folder.id === migrated?.folderId)).toMatchObject({
       name: "AVA",
@@ -92,7 +93,7 @@ describe("structured notes store", () => {
     db = openDb(path);
     expect(listNoteFolders(db).map((folder) => ({ id: folder.id, path: folder.path, version: folder.version })))
       .toEqual(folderSnapshot);
-    expect(getNote(db, "legacy-duplicate")).toMatchObject({ content: "Keep the duplicate too", version: 4 });
+    expect(getNote(db, "legacy-duplicate")).toMatchObject({ content: "Keep the duplicate too", version: 4, documentPosition: 1 });
   });
 
   it("creates a structured note and derives a useful title", () => {
@@ -239,6 +240,32 @@ describe("structured notes store", () => {
     expect(resolveNoteFolderPath(db, "university/AGILE development/lectures")?.id).toBe(lectures.id);
     expect(listNotes(db, { folderId: university.id, subtree: true }).map((entry) => entry.id)).toEqual([note.id]);
     expect(getNoteFolder(db, lectures.id)).toMatchObject({ path: "University/Agile Development/Lectures", documentCount: 1 });
+  });
+
+  it("keeps explicit page order stable across edits and appends documents moved between folders", () => {
+    const source = createNoteFolder(db, { name: "Source" });
+    const destination = createNoteFolder(db, { name: "Destination" });
+    const first = createNote(db, { folderId: source.id, title: "First", content: "One" });
+    const second = createNote(db, { folderId: source.id, title: "Second", content: "Two" });
+    const existing = createNote(db, { folderId: destination.id, title: "Existing", content: "Destination page" });
+
+    expect([first.documentPosition, second.documentPosition, existing.documentPosition]).toEqual([0, 1, 0]);
+    const edited = updateNote(db, first.id, first.version, { content: "One, revised" });
+    expect(edited).toMatchObject({ ok: true, note: { documentPosition: 0 } });
+
+    const reordered = updateNote(db, second.id, second.version, { documentPosition: 7 });
+    expect(reordered).toMatchObject({ ok: true, note: { documentPosition: 7, version: 2 } });
+    expect(updateNote(db, second.id, second.version, { documentPosition: 9 })).toMatchObject({
+      ok: false,
+      reason: "version_conflict",
+      note: { documentPosition: 7 },
+    });
+
+    if (!edited.ok) throw new Error("expected edit");
+    const moved = updateNote(db, first.id, edited.note.version, { folderId: destination.id });
+    expect(moved).toMatchObject({ ok: true, note: { folderId: destination.id, documentPosition: 1 } });
+    expect(() => createNote(db, { folderId: source.id, title: "Invalid", content: "No", documentPosition: -1 }))
+      .toThrow(/document position/i);
   });
 
   it("enforces sibling names, document names, cycles, depth and versioned empty-folder deletion", () => {

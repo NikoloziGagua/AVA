@@ -639,6 +639,7 @@ CREATE TABLE IF NOT EXISTS notes (
   project_id TEXT,
   folder_id TEXT REFERENCES note_folders(id) ON DELETE RESTRICT,
   document_type TEXT NOT NULL DEFAULT 'general',
+  document_position INTEGER NOT NULL DEFAULT 0,
   section TEXT NOT NULL DEFAULT 'capture',
   links TEXT NOT NULL DEFAULT '[]',
   change_log TEXT NOT NULL DEFAULT '[]',

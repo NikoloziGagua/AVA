@@ -38,7 +38,7 @@ try {
     throw new Error(`authoritative note bytes changed: ${before.count}/${before.hash} -> ${after.count}/${after.hash}`);
   }
   const folders = new Map(migrated.prepare("SELECT id,parent_id FROM note_folders").all().map((row) => [row.id, row]));
-  const assignments = migrated.prepare("SELECT id,folder_id,project_id FROM notes").all();
+  const assignments = migrated.prepare("SELECT id,folder_id,project_id,document_position,created_at FROM notes").all();
   let relationshipErrors = 0;
   for (const note of assignments) {
     let folder = folders.get(note.folder_id);
@@ -50,8 +50,19 @@ try {
     const expectedProject = folder?.id === "notes_general" ? null : folder?.id;
     if (!folder || note.project_id !== expectedProject) relationshipErrors += 1;
   }
+  const orderingErrors = assignments
+    .slice()
+    .sort((a, b) => a.folder_id.localeCompare(b.folder_id) || a.created_at - b.created_at || a.id.localeCompare(b.id))
+    .reduce((state, note) => {
+      const expected = note.folder_id === state.folderId ? state.position + 1 : 0;
+      return {
+        folderId: note.folder_id,
+        position: expected,
+        errors: state.errors + (note.document_position === expected ? 0 : 1),
+      };
+    }, { folderId: null, position: -1, errors: 0 }).errors;
   const general = migrated.prepare("SELECT id,name,built_in FROM note_folders WHERE id='notes_general'").get();
-  if (relationshipErrors ||
+  if (relationshipErrors || orderingErrors ||
       !general || general.name !== "General" || general.built_in !== 1) {
     throw new Error("folder migration relationship verification failed");
   }

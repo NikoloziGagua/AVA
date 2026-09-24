@@ -58,6 +58,7 @@ type NoteDbRow = {
   project_id: string | null;
   folder_id: string | null;
   document_type: string;
+  document_position: number;
   section: string;
   links: string;
   change_log: string;
@@ -134,6 +135,7 @@ export type Note = {
   folderId: string;
   folderPath: NoteFolderBreadcrumb[];
   documentType: NoteDocumentType;
+  documentPosition: number;
   section: NoteSection;
   tags: string[];
   links: NoteLink[];
@@ -160,6 +162,7 @@ export type CreateNoteInput = {
   projectId?: string | null;
   folderId?: string | null;
   documentType?: NoteDocumentType;
+  documentPosition?: number;
   section?: NoteSection;
   tags?: string[];
   links?: NoteLink[];
@@ -171,7 +174,7 @@ export type CreateNoteInput = {
 export type UpdateNotePatch = Partial<Pick<
   CreateNoteInput,
   "title" | "content" | "kind" | "status" | "collection" | "projectId" |
-  "folderId" | "documentType" | "section" | "tags" | "links" | "pinned"
+  "folderId" | "documentType" | "documentPosition" | "section" | "tags" | "links" | "pinned"
 >>;
 
 export type NoteMutationResult =
@@ -609,6 +612,7 @@ function rowToNote(db: Db, row: NoteDbRow, knownFolder?: NoteFolder): Note {
     folderId: folder?.id ?? GENERAL_NOTE_FOLDER_ID,
     folderPath: folder?.breadcrumb ?? [{ id: GENERAL_NOTE_FOLDER_ID, name: "General" }],
     documentType: normalizeDocumentType(row.document_type),
+    documentPosition: row.document_position,
     section: normalizeSection(row.section, kind, pinned),
     tags: normalizeNoteTags(parseJsonArray(row.tags, (entry): entry is string => typeof entry === "string")),
     links: normalizeNoteLinks(parseJsonArray(row.links, isLink)),
@@ -779,6 +783,21 @@ function assertDocumentTitleAvailable(db: Db, folderId: string, title: string, e
   if (duplicate) throw new NoteHierarchyError("name_conflict", "a document with this title already exists in the folder");
 }
 
+function cleanDocumentPosition(position: number | undefined): number | undefined {
+  if (position === undefined) return undefined;
+  if (!Number.isSafeInteger(position) || position < 0 || position > 1_000_000) {
+    throw new NoteHierarchyError("bad_request", "document position must be an integer from 0 to 1000000");
+  }
+  return position;
+}
+
+function nextDocumentPosition(db: Db, folderId: string, excludeId?: string): number {
+  const row = db.prepare(`SELECT COALESCE(MAX(document_position), -1) + 1 AS position
+    FROM notes WHERE folder_id = ? AND (? IS NULL OR id != ?)`)
+    .get(folderId, excludeId ?? null, excludeId ?? null) as { position?: number } | undefined;
+  return Math.min(1_000_000, Number(row?.position ?? 0));
+}
+
 export function createNote(db: Db, input: CreateNoteInput): Note {
   const content = scrubSecrets(input.content).trim();
   const title = scrubSecrets(input.title ?? "").trim().slice(0, 160) || inferNoteTitle(content);
@@ -797,6 +816,8 @@ export function createNote(db: Db, input: CreateNoteInput): Note {
         : "capture");
   const id = `note_${nanoid(12)}`;
   const now = Date.now();
+  const documentPosition = cleanDocumentPosition(input.documentPosition)
+    ?? nextDocumentPosition(db, folder.id);
   const created = change("created", `Captured in ${folder.path}`, now);
   const row: NoteDbRow = {
     id,
@@ -812,6 +833,7 @@ export function createNote(db: Db, input: CreateNoteInput): Note {
     project_id: compatibility.projectId,
     folder_id: folder.id,
     document_type: input.documentType ?? "general",
+    document_position: documentPosition,
     section,
     links: JSON.stringify(normalizeNoteLinks(input.links)),
     change_log: JSON.stringify([created]),
@@ -825,13 +847,13 @@ export function createNote(db: Db, input: CreateNoteInput): Note {
   db.prepare(`
     INSERT INTO notes (
       id, title, content, kind, status, collection, tags, pinned, source,
-      source_session_id, project_id, folder_id, document_type, section, links, change_log,
+      source_session_id, project_id, folder_id, document_type, document_position, section, links, change_log,
       promoted_type, promoted_id, promoted_at, version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id, row.title, row.content, row.kind, row.status, row.collection,
     row.tags, row.pinned, row.source, row.source_session_id, row.project_id,
-    row.folder_id, row.document_type, row.section, row.links, row.change_log, row.promoted_type, row.promoted_id,
+    row.folder_id, row.document_type, row.document_position, row.section, row.links, row.change_log, row.promoted_type, row.promoted_id,
     row.promoted_at, row.version, row.created_at, row.updated_at,
   );
   if (compatibility.projectId) db.prepare("UPDATE note_projects SET updated_at = ? WHERE id = ?").run(now, compatibility.projectId);
@@ -923,6 +945,14 @@ export function updateNote(
   if (patch.links !== undefined) { sets.push("links = ?"); values.push(JSON.stringify(normalizeNoteLinks(patch.links))); }
   if (patch.pinned !== undefined) { sets.push("pinned = ?"); values.push(patch.pinned ? 1 : 0); }
   if (patch.documentType !== undefined) { sets.push("document_type = ?"); values.push(patch.documentType); }
+  const changesFolder = folder.id !== current.folderId;
+  if (patch.documentPosition !== undefined) {
+    sets.push("document_position = ?");
+    values.push(cleanDocumentPosition(patch.documentPosition)!);
+  } else if (changesFolder) {
+    sets.push("document_position = ?");
+    values.push(nextDocumentPosition(db, folder.id, current.id));
+  }
   if (patch.folderId !== undefined || patch.projectId !== undefined || patch.collection !== undefined) {
     const compatibility = compatibilityForFolder(db, folder);
     sets.push("folder_id = ?", "project_id = ?", "collection = ?");

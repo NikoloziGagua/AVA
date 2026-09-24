@@ -460,6 +460,7 @@ export async function runAgent(opts: RunOpts): Promise<void> {
             result: r.output,
             ...(r.verification ? { verification: r.verification } : {}),
             ...(r.saved && !r.is_error ? { saved: r.saved } : {}),
+            ...(r.roomPost && !r.is_error ? { roomPost: r.roomPost } : {}),
           },
         });
         messages.push({ role: "tool", content: r });

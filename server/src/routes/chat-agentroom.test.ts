@@ -8,13 +8,17 @@ import { openDb } from "../state/db.js";
 import { listMessages } from "../state/messages.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
-import type { AgentEvent } from "../orchestrator/agent.js";
+import { runAgent, type AgentEvent } from "../orchestrator/agent.js";
 import type { AgentroomService } from "../agentroom/service.js";
 import { chatRoutes } from "./chat.js";
 
 const roomPost = { schemaVersion: 1 as const, messageId: 75, roomName: "klevar", correlationId: "run_room", postedAt: 1234 };
 
-function setup(runAgentImpl: (opts: any) => Promise<void>, agentroom?: Partial<AgentroomService>) {
+function setup(
+  runAgentImpl?: (opts: any) => Promise<void>,
+  agentroom?: Partial<AgentroomService>,
+  provider = new MockLLMProvider({ scripts: [] }),
+) {
   const dataDir = mkdtempSync(join(tmpdir(), "ava-room-chat-"));
   const memoryDir = mkdtempSync(join(tmpdir(), "ava-room-memory-"));
   const db = openDb(join(dataDir, "state.db"));
@@ -27,8 +31,8 @@ function setup(runAgentImpl: (opts: any) => Promise<void>, agentroom?: Partial<A
     pidfiles: { register: () => {}, unregister: () => {}, listForRun: () => [] } as never,
     fsRoots: [], memoryDir, dataDir,
     getChrome: async () => ({} as never),
-    provider: new MockLLMProvider({ scripts: [] }),
-    runAgentImpl: runAgentImpl as never,
+    provider,
+    ...(runAgentImpl ? { runAgentImpl: runAgentImpl as never } : {}),
     ...(agentroom ? { agentroom: { toolsEnabled: () => false, ...agentroom } as AgentroomService } : {}),
   }, { anthropic: null, openai: null }));
   return { app, db };
@@ -37,6 +41,61 @@ function setup(runAgentImpl: (opts: any) => Promise<void>, agentroom?: Partial<A
 async function settle() { await new Promise((resolve) => setTimeout(resolve, 30)); }
 
 describe("agentroom evidence on the chat boundary", () => {
+  it("carries a real tool result receipt through runAgent into SSE and message metadata", async () => {
+    const provider = new MockLLMProvider({ scripts: [
+      [
+        { kind: "tool_call", call: { id: "room-call-1", name: "room_post", args: { body: "Review this bounded proposal." } } },
+        { kind: "done", stop_reason: "tool_use" },
+      ],
+      [
+        { kind: "delta", text: "Posted to the development room." },
+        { kind: "done", stop_reason: "end_turn" },
+      ],
+    ] });
+    const post = vi.fn().mockResolvedValue(roomPost);
+    const events: AgentEvent[] = [];
+    const integratedRun = (opts: Parameters<typeof runAgent>[0]) => runAgent({
+      ...opts,
+      emit: (event) => {
+        events.push(event);
+        opts.emit(event);
+      },
+    });
+    const { app, db } = setup(integratedRun, {
+      toolsEnabled: () => true,
+      unreadContext: vi.fn().mockResolvedValue(""),
+      post,
+      read: vi.fn().mockResolvedValue([]),
+    }, provider);
+
+    const started = await request(app).post("/api/chat")
+      .send({ text: "Post this bounded proposal to the development room" })
+      .expect(200);
+    await vi.waitFor(() => {
+      expect(events.find((event) => event.kind === "tool_result")?.payload).toMatchObject({
+        tool: "room_post",
+        ok: true,
+        roomPost,
+      });
+      const assistant = listMessages(db, started.body.sessionId).find((message) => message.role === "assistant");
+      expect(assistant?.metadata?.roomPosts).toEqual({ schemaVersion: 1, items: [roomPost] });
+    });
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({
+      body: "Review this bounded proposal.",
+      sessionId: started.body.sessionId,
+      runId: expect.any(String),
+    }), expect.any(AbortSignal));
+
+    const stream = await request(app).get(`/api/chat/${started.body.sessionId}/stream?taskId=${started.body.taskId}`)
+      .buffer(true).parse((res, done) => {
+        let body = "";
+        res.on("data", (chunk: Buffer) => { body += chunk.toString("utf8"); });
+        res.on("end", () => done(null, body));
+      });
+    expect(stream.body).toContain("event: room_posts");
+    expect(stream.body).toContain('"messageId":75');
+  });
+
   it("persists and replays only successful authoritative post receipts", async () => {
     const run = vi.fn(async (opts: { emit: (event: AgentEvent) => void }) => {
       opts.emit({ kind: "tool_result", payload: { tool: "room_post", ok: true, result: "posted", roomPost } });

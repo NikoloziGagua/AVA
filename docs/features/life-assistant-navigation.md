@@ -3,8 +3,8 @@
 ## What it does
 
 AVA opens on **Today**, a single screen that shows what Sir is in the middle of:
-the three latest conversations, the newest ideas, other recent notes and an
-honest schedule card. Talking to AVA (by voice or typing) is one tap away.
+the three latest conversations, the newest ideas, other recent notes and the
+next reminders with their honest status. Talking to AVA (by voice or typing) is one tap away.
 
 The sidebar is organised around everyday life instead of AVA's own machinery:
 
@@ -12,7 +12,7 @@ The sidebar is organised around everyday life instead of AVA's own machinery:
 |---|---|
 | **Today** | The default screen after the intro |
 | **Talk** | The current conversation exactly, or "Your conversations" if there is none |
-| **Schedule** | An honest page: reminders and deadlines are not active yet |
+| **Schedule** | One-off reminders: add one at an exact time, see what happened to each ([Reminders](reminders.md)) |
 | **Notes** | The existing Notes workspace |
 | **Ideas** | Idea notes: capture one, open one |
 
@@ -38,13 +38,15 @@ time-to-interactive-screen, not the time for data or a reply to arrive.
      never automation runs or unclassified history.
    - *Recent ideas* and *Recent notes* show up to three live notes each.
      Archived notes are excluded. Tapping one opens **that exact note** in Notes.
-   - *Schedule* is one plain sentence. It has no controls, times or statuses,
-     because dependable one-off reminder delivery is not implemented or verified
-     yet. The older watch/push path exists but is not presented as a schedule.
+   - *Schedule* lists the next three upcoming one-off reminders with their
+     receipt status (for example "Scheduled", or why nothing can be sent yet). It
+     is read-only, refreshes every 15 seconds while visible and on focus, and
+     says so when a refresh fails instead of silently showing old statuses.
    - The capture box starts a new chat seeded with what Sir typed. The orb
      ("Talk to AVA") opens voice on the current conversation, or continues the
      latest one.
-2. **First run.** When every section loaded successfully and is empty, Today
+2. **First run.** When every section loaded successfully and is empty (no
+   conversations, notes or reminders), Today
    shows a welcome with three starter prompts and a setup list. Phone
    notifications are listed as not available yet. The copy describes the
    screen; it never claims AVA knows nothing, since durable memories may exist.
@@ -74,8 +76,8 @@ time-to-interactive-screen, not the time for data or a reply to arrive.
   loads under reduced motion or without WebGL, and falls back to a static
   backdrop if its code fails to load or its renderer fails later (a frame or a
   resize).
-- Schedule is deliberately empty until dependable one-off reminders land
-  (contract `i4-one-off-reminders`).
+- Reminder statuses stop at the notification service: "Accepted" never means
+  the phone showed it. The full receipt model is in [Reminders](reminders.md).
 
 ## Technical decisions
 
@@ -93,8 +95,9 @@ time-to-interactive-screen, not the time for data or a reply to arrive.
   binding can never decide what a later visit forgets.
 - **Bundle.** `DottedSurface` (Three.js) is imported only lazily by
   `VoiceScreen`, and the bundle verifier requires it to stay a deferred chunk.
-  Today, Ideas and Schedule add about 11 KB to the eager bundle
-  (853,905 of 900,000 bytes).
+  Today, Ideas and Schedule are eager routes: I3a added about 11 KB and the
+  I4 reminder UI about 20 KB, leaving 874,451 of 900,000 eager bytes. Lazy-
+  loading the non-default routes is the next budget lever.
 - **DottedSurface containment.** Frames and resizes run outside React, so a
   thrown error there is caught locally. The surface stops the loop, releases
   each GL resource once (each release isolated), removes the canvas and calls

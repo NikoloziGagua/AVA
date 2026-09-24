@@ -19,6 +19,14 @@ arranged for project work.
 - The Kanban board uses **Ideas**, **Doing**, **Review**, and **Done**. Archived
   items stay in storage but do not clutter the normal board.
 
+Ideas are ordinary notes with `kind: "idea"`. The **Ideas** page and Today's
+*Recent ideas* read the same snapshot, and capturing an idea there calls the
+existing create endpoint. Opening an idea or a note from Today or Ideas passes
+its exact ID (`initialNoteId`). After the next successful load, Notes selects
+the note's space and opens it in the normal editor, exactly once; the periodic
+refresh never reopens it. A note that is gone or archived shows "That note is
+no longer available" on General; a load error shows the normal error state.
+
 Each note may contain a title, rich plain-text content, kind, section, stage,
 tags, safe HTTP(S) links, pinned state, source metadata and a bounded change log.
 

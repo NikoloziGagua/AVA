@@ -13,11 +13,21 @@ vi.mock("./lib/deckMotion.js", () => ({
 }));
 vi.mock("motion/react", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
+  // One stable component per tag, like the real library. Minting a new
+  // component on every `motion.div` access made React remount each route on
+  // every App re-render, so a late 40ms transition timer could detach the very
+  // button a test was about to click (a test-only flake, not a product race).
+  const components = new Map<string, unknown>();
   const motion = new Proxy({}, {
-    get: (_target, tag: string) => React.forwardRef<HTMLElement, Record<string, unknown>>(
-      ({ children, initial: _initial, animate: _animate, exit: _exit, transition: _transition, ...props }, ref) =>
-        React.createElement(tag, { ...props, ref }, children as React.ReactNode),
-    ),
+    get: (_target, tag: string) => {
+      if (!components.has(tag)) {
+        components.set(tag, React.forwardRef<HTMLElement, Record<string, unknown>>(
+          ({ children, initial: _initial, animate: _animate, exit: _exit, transition: _transition, ...props }, ref) =>
+            React.createElement(tag, { ...props, ref }, children as React.ReactNode),
+        ));
+      }
+      return components.get(tag);
+    },
   });
   return {
     motion,

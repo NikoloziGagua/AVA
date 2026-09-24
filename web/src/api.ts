@@ -2,6 +2,7 @@ import { getToken, clearToken } from "./auth/tokens.js";
 import { receiptFor } from "./reminders/presenter.js";
 import type { VisualMessage, VisualMessageContext } from "./visuals/types.js";
 import type { MemoryContext } from "./chat/memory-context.js";
+import type { SavedItems } from "./chat/saved-items.js";
 
 export class ApiError extends Error {
   readonly name = "ApiError";
@@ -267,7 +268,12 @@ export type SessionMessage = {
   content: string;
   created_at: number;
   visualMessages?: VisualMessage[];
-  metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text"; memoryContext?: MemoryContext };
+  metadata?: {
+    visualContext?: VisualMessageContext;
+    inputSource?: "voice_exact_text";
+    memoryContext?: MemoryContext;
+    savedItems?: SavedItems;
+  };
 };
 
 /**

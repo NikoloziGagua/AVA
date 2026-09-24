@@ -32,6 +32,23 @@ describe("Notes tools", () => {
     });
   });
 
+  it("reports what it saved so the reply can show a Saved card", async () => {
+    const idea = await tool("notes_capture").run({ title: "Solar kiln", content: "Dry timber with sunlight.", kind: "idea" }, { runId: "run-1" });
+    const ideaNote = listNotes(db).find((note) => note.kind === "idea")!;
+    expect(idea.saved).toEqual({ kind: "idea", id: ideaNote.id, title: "Solar kiln" });
+
+    const note = await tool("notes_capture").run({ title: "Groceries", content: "Milk and eggs." }, { runId: "run-2" });
+    expect(note.saved).toMatchObject({ kind: "note", title: "Groceries" });
+
+    const failed = await tool("notes_capture").run({ content: "  " }, { runId: "run-3" });
+    expect(failed.ok).toBe(false);
+    expect(failed.saved).toBeUndefined();
+
+    const updated = await tool("notes_update").run({ id: ideaNote.id, expected_version: 1, stage: "doing" }, { runId: "run-4" });
+    expect(updated.ok).toBe(true);
+    expect(updated.saved).toBeUndefined();
+  });
+
   it("searches, moves and protects versions", async () => {
     await tool("notes_capture").run({ content: "Build a weather briefing", kind: "idea" }, { runId: "run-1" });
     const note = listNotes(db)[0]!;

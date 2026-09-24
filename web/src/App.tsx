@@ -37,6 +37,7 @@ import { PairingScreen } from "./auth/PairingScreen.js";
 import { TodayScreen } from "./today/TodayScreen.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
+import { savedItemDestination, type SavedItem } from "./chat/saved-items.js";
 
 // Measured heavyweight destinations load only at their real navigation
 // boundaries. Chat and Visuals intentionally move together: each reaches the
@@ -348,6 +349,13 @@ export function App() {
   // Nika's conversations.
   const openTalk = () => (lastChatSessionId ? openChat(lastChatSessionId) : setView({ name: "list" }));
   const openNote = (noteId: string) => setView({ name: "notes", noteId, handoff: Date.now() });
+  const openSavedItem = (item: SavedItem) => {
+    const target = savedItemDestination(item);
+    if (target.view === "notes") openNote(target.noteId);
+    else if (target.view === "watches") setView({ name: "watches", focusWatchId: target.watchId });
+    else if (target.view === "schedule") setView({ name: "schedule" });
+    else setView({ name: "memory" });
+  };
   const enterVoiceFromToday = () => setView({
     name: "voice",
     from: "today",
@@ -503,6 +511,7 @@ export function App() {
               })}
               onOpenStrategy={(sessionId) => setView({ name: "strategy", sourceSessionId: sessionId })}
               onOpenVisual={(visualId) => setView({ name: "visuals", visualId })}
+              onOpenSaved={openSavedItem}
             />
           </motion.div>
         )}

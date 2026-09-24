@@ -14,6 +14,8 @@ import { TaskReceiptCard } from "./TaskReceiptCard.js";
 import { VisualMessageCard, type VisualSemanticActionHandler } from "../visuals/VisualMessageCard.js";
 import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
 import { MemoryContextCapsule } from "./MemoryContextCapsule.js";
+import { SavedItemsCard } from "./SavedItemsCard.js";
+import type { SavedItem, SavedItems } from "./saved-items.js";
 import type { MemoryContext } from "./memory-context.js";
 import {
   BUBBLE_REVEAL_SELECTOR,
@@ -26,7 +28,7 @@ import {
 
 export type ChatMessage =
   | { role: "user"; text: string; id: string; visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" }
-  | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[]; memoryContext?: MemoryContext }
+  | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[]; memoryContext?: MemoryContext; savedItems?: SavedItems }
   // `system` rows are server notices (e.g. the "Server restarted…" recovery
   // message) — rendered as a centered notice, never attributed to Ava.
   | { role: "system"; text: string; id: string };
@@ -34,6 +36,8 @@ export type ChatMessage =
 export interface MessageListProps {
   history: ChatMessage[];
   liveEvents: StreamEvent[];
+  /** Open something AVA saved (a row of a reply's Saved card). */
+  onOpenSaved?: (item: SavedItem) => void;
   /** Re-run the last turn (wired to the action row's Retry). */
   onRetry?: () => void;
   /**
@@ -72,6 +76,7 @@ export function MessageList({
   history,
   liveEvents,
   onRetry,
+  onOpenSaved,
   scrollerRef,
   onScrollerMount,
   optimisticThinking = false,
@@ -108,6 +113,8 @@ export function MessageList({
   // the newest snapshot is authoritative for the current run.
   const lastReceipt = [...liveEvents].reverse().find((e) => e.kind === "receipt");
   const liveMemoryContext = [...liveEvents].reverse().find((e) => e.kind === "memory_context");
+  // Each saved_items event is cumulative, so the newest one is the whole list.
+  const liveSavedItems = [...liveEvents].reverse().find((e) => e.kind === "saved_items");
 
   // Retry re-runs the LAST turn (ChatScreen's retryLast), so it only belongs on
   // the LAST assistant bubble — on every bubble it implied re-running THAT turn.
@@ -255,6 +262,7 @@ export function MessageList({
             <AvaBubble reduced={reduced}>
               <AssistantMarkdown text={m.text} />
               {m.memoryContext && <MemoryContextCapsule context={m.memoryContext} />}
+              {m.savedItems && <SavedItemsCard saved={m.savedItems} onOpen={onOpenSaved} />}
               <MessageActions
                 text={m.text}
                 onRetry={!lastFinal && m.id === lastAssistantHistoryId ? onRetry : undefined}
@@ -340,6 +348,7 @@ export function MessageList({
         }
         if (e.kind === "receipt") return null;
         if (e.kind === "memory_context") return null;
+        if (e.kind === "saved_items") return null;
         return null;
       })}
 
@@ -352,6 +361,9 @@ export function MessageList({
             {liveMemoryContext?.kind === "memory_context" && (
               <MemoryContextCapsule context={liveMemoryContext.payload} />
             )}
+            {liveSavedItems?.kind === "saved_items" && (
+              <SavedItemsCard saved={liveSavedItems.payload} onOpen={onOpenSaved} />
+            )}
             <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
           </AvaBubble>
         </div>
@@ -360,6 +372,13 @@ export function MessageList({
       {!lastFinal && runTerminated && liveMemoryContext?.kind === "memory_context" && (
         <div className="ml-9 max-w-[92%]" data-testid="terminated-memory-context">
           <MemoryContextCapsule context={liveMemoryContext.payload} />
+        </div>
+      )}
+
+      {/* A run that failed or was stopped may still have saved something. */}
+      {!lastFinal && runTerminated && liveSavedItems?.kind === "saved_items" && (
+        <div className="ml-9 max-w-[92%]" data-testid="terminated-saved-items">
+          <SavedItemsCard saved={liveSavedItems.payload} onOpen={onOpenSaved} />
         </div>
       )}
 

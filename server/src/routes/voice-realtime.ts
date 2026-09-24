@@ -9,8 +9,11 @@ import {
   appendMessage,
   listMessages,
   listMessagesAfterId,
+  sanitizeMessageSavedItems,
   type Message,
   type MessageMemoryContext,
+  type MessageMetadata,
+  type MessageSavedItems,
 } from "../state/messages.js";
 import { readDevLog, type DevLogEntry } from "../self/dev-log.js";
 import { dirname } from "node:path";
@@ -750,6 +753,15 @@ export function recoverFrame(reason: string): string {
  * starts; this tells it the interruption was a false alarm so it can resume
  * exactly where it paused instead of waiting out its fallback timer.
  */
+/** Combine what several delegated actions saved before the reply that reports them. */
+export function mergeSavedItems(
+  pending: MessageSavedItems | null,
+  next: MessageSavedItems | null | undefined,
+): MessageSavedItems | null {
+  if (!next) return pending;
+  return sanitizeMessageSavedItems({ schemaVersion: 1, items: [...(pending?.items ?? []), ...next.items] });
+}
+
 export function speechDismissedFrame(reason: string): string {
   return JSON.stringify({ type: "ava.speech_dismissed", reason });
 }
@@ -886,7 +898,7 @@ export interface RealtimeProxyDeps {
     onStep?: (tool: string, args: unknown) => void,
     signal?: AbortSignal,
     observability?: ObservabilityParentContext,
-  ) => Promise<{ text: string; sessionId: string | null }>;
+  ) => Promise<{ text: string; sessionId: string | null; savedItems?: MessageSavedItems | null }>;
   /** Shared AVA-owned event stream. Hume remains explicitly out of v1 coverage. */
   observability?: ObservabilityService;
   /** Shared post-turn durable-memory gate used by chat and both voice providers. */
@@ -1315,6 +1327,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     let assistantTurnBuf = "";
     let lastAcceptedUserMessageId: number | null = null;
     let pendingMemoryContext: MessageMemoryContext | null = null;
+    // What a delegated action saved; shown on the spoken reply that reports it.
+    let pendingSavedItems: MessageSavedItems | null = null;
     const flushAssistantTurn = (eligibleForMemory = false): string => {
       const text = assistantTurnBuf.trim();
       assistantTurnBuf = "";
@@ -1323,11 +1337,17 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       if (hybrid && sessionId && text) {
         const memoryContext = pendingMemoryContext;
         pendingMemoryContext = null;
+        const savedItems = pendingSavedItems;
+        pendingSavedItems = null;
+        const metadata: MessageMetadata = {
+          ...(memoryContext ? { memoryContext } : {}),
+          ...(savedItems ? { savedItems } : {}),
+        };
         const stored = appendMessage(deps.db, {
           sessionId,
           role: "assistant",
           content: text,
-          ...(memoryContext ? { metadata: { memoryContext } } : {}),
+          ...(Object.keys(metadata).length ? { metadata } : {}),
         });
         persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
         touchSession(deps.db, sessionId);
@@ -1738,6 +1758,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
                 return;
               }
               try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
+              pendingSavedItems = mergeSavedItems(pendingSavedItems, r.savedItems);
               // Feed the result back to the SAME realtime model and ask it to
               // speak. Its output transcript is the single persisted assistant
               // turn, so stored history matches exactly what Sir heard.
@@ -2371,7 +2392,13 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               if (!actionRuns.isCurrent(action.id)) return;
               try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
               if (sessionId) {
-                appendMessage(deps.db, { sessionId, role: "assistant", content: r.text || "Done." });
+                const savedItems = mergeSavedItems(null, r.savedItems);
+                appendMessage(deps.db, {
+                  sessionId,
+                  role: "assistant",
+                  content: r.text || "Done.",
+                  ...(savedItems ? { metadata: { savedItems } } : {}),
+                });
                 touchSession(deps.db, sessionId);
               }
               const result = r.text || "The action ended without a verifiable result.";

@@ -11,8 +11,11 @@ import {
   appendMessage,
   listMessages,
   listMessagesAfterId,
+  MAX_SAVED_ITEMS,
   type Message,
   type MessageMemoryContext,
+  type MessageSavedItem,
+  type MessageSavedItems,
   type MessageVisualContext,
   type MessageVisualReference,
 } from "../state/messages.js";
@@ -256,6 +259,7 @@ export function chatRoutes(
   // final beside its task id for the same short replay window as the receipt.
   const recentFinals = new Map<string, { taskId: string; text: string; expiresAt: number }>();
   const recentMemoryContexts = new Map<string, { taskId: string; context: MessageMemoryContext; expiresAt: number }>();
+  const recentSavedItems = new Map<string, { taskId: string; saved: MessageSavedItems; expiresAt: number }>();
   const RECEIPT_REPLAY_TTL_MS = 5 * 60_000;
   const pruneRecentReceipts = (now = Date.now()) => {
     for (const [sid, value] of recentReceipts) {
@@ -266,6 +270,9 @@ export function chatRoutes(
     }
     for (const [sid, value] of recentMemoryContexts) {
       if (value.expiresAt <= now) recentMemoryContexts.delete(sid);
+    }
+    for (const [sid, value] of recentSavedItems) {
+      if (value.expiresAt <= now) recentSavedItems.delete(sid);
     }
   };
 
@@ -414,6 +421,7 @@ export function chatRoutes(
     pruneRecentReceipts();
     recentReceipts.delete(sessionId);
     recentMemoryContexts.delete(sessionId);
+    recentSavedItems.delete(sessionId);
 
     const full = getSessionFull(db, sessionId);
     const recent = full?.summary_through_message_id
@@ -650,6 +658,11 @@ export function chatRoutes(
       // distilled into a reusable playbook (best-effort, fire-and-forget).
       const runSteps: RunStep[] = [];
       const runVisualReferences = new Map<string, MessageVisualReference>();
+      // What this run's tools durably saved, in order, for the reply's Saved card.
+      const runSavedItems = new Map<string, MessageSavedItem>();
+      const savedReceipt = (): MessageSavedItems | null => runSavedItems.size
+        ? { schemaVersion: 1, items: [...runSavedItems.values()] }
+        : null;
       const toolStartedAt = new Map<string, number[]>();
       let terminalReceiptPublished = false;
       let finalTextForLearning: string | null = null;
@@ -811,6 +824,15 @@ export function chatRoutes(
           terminalReceiptPublished = true;
         }
         const id = buffer.append({ kind: e.kind, payload: e.payload });
+        if (e.kind === "tool_result" && e.payload.ok && e.payload.saved) {
+          const key = `${e.payload.saved.kind}:${e.payload.saved.id}`;
+          if (!runSavedItems.has(key) && runSavedItems.size < MAX_SAVED_ITEMS) {
+            runSavedItems.set(key, e.payload.saved);
+            const saved = savedReceipt()!;
+            buffer.append({ kind: "saved_items", payload: saved });
+            recentSavedItems.set(sid, { taskId: runId, saved, expiresAt: Date.now() + RECEIPT_REPLAY_TTL_MS });
+          }
+        }
         // Approval is a live lifecycle boundary, not a terminal outcome. Emit a
         // replaceable snapshot after the approval event so the card and receipt
         // describe the same current state. A later snapshot supersedes it.
@@ -823,6 +845,7 @@ export function chatRoutes(
         if (parsed.data.persist !== false) {
           if (e.kind === "final") {
             const visualMessages = [...runVisualReferences.values()];
+            const savedItems = savedReceipt();
             const storedAssistant = appendMessage(db, {
               sessionId: sid,
               role: "assistant",
@@ -830,6 +853,7 @@ export function chatRoutes(
               metadata: {
                 memoryContext,
                 ...(visualMessages.length ? { visualMessages } : {}),
+                ...(savedItems ? { savedItems } : {}),
               },
             });
             persistedAssistantMessageId = storedAssistant.id;
@@ -845,6 +869,8 @@ export function chatRoutes(
                 ...([...runVisualReferences.values()].length
                   ? { visualMessages: [...runVisualReferences.values()] }
                   : {}),
+                // Something may have been saved before the run failed; still show it.
+                ...(savedReceipt() ? { savedItems: savedReceipt()! } : {}),
               },
             });
           }
@@ -1163,6 +1189,10 @@ export function chatRoutes(
           bytes: 0,
           ts: Date.now(),
         });
+      }
+      const rememberedSaved = recentSavedItems.get(sessionId);
+      if (rememberedSaved && (!requestedTaskId || requestedTaskId === rememberedSaved.taskId)) {
+        sink.write({ id: ++id, kind: "saved_items", payload: rememberedSaved.saved, bytes: 0, ts: Date.now() });
       }
       if (replayFinal) {
         sink.write({ id: ++id, kind: "final", payload: { text: replayFinal }, bytes: 0, ts: Date.now() });

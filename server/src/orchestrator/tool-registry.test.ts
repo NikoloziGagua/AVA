@@ -45,6 +45,27 @@ describe("buildToolRegistry", () => {
     expect(r).toEqual({ call_id: "c1", output: "boom", is_error: true });
   });
 
+  it("passes a valid saved item through, and never from a failed call", async () => {
+    const saved = { kind: "note" as const, id: "note_1", title: "Groceries" };
+    const ok = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({ text: "ok", ok: true, saved }))],
+      ctx: { runId: "r1" },
+    });
+    await expect(ok.dispatch({ id: "c1", name: "a", args: {} })).resolves.toMatchObject({ saved });
+
+    const failed = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({ text: "no", ok: false, saved }))],
+      ctx: { runId: "r1" },
+    });
+    await expect(failed.dispatch({ id: "c2", name: "a", args: {} })).resolves.not.toHaveProperty("saved");
+
+    const malformed = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({ text: "ok", ok: true, saved: { kind: "script", id: "x", title: "t" } }))],
+      ctx: { runId: "r1" },
+    });
+    await expect(malformed.dispatch({ id: "c3", name: "a", args: {} })).resolves.not.toHaveProperty("saved");
+  });
+
   it("preserves only valid structured verification evidence", async () => {
     const verification = {
       state: "verified" as const,

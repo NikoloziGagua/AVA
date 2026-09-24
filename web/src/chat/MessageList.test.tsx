@@ -7,6 +7,7 @@ import { MessageList, type ChatMessage } from "./MessageList.js";
 import type { TaskReceipt } from "./task-receipt.js";
 import type { StreamEvent } from "./useChatStream.js";
 import type { MemoryContext } from "./memory-context.js";
+import type { SavedItems } from "./saved-items.js";
 
 beforeEach(() => {
   // jsdom has no scrollIntoView; the list autoscrolls on every append.
@@ -165,5 +166,43 @@ describe("MessageList", () => {
     ]} />);
     expect(screen.getByText("No relevant memory used")).toBeTruthy();
     expect(screen.getAllByTestId("memory-context")).toHaveLength(1);
+  });
+
+  it("shows what AVA saved on persisted and live replies, and opens each item", () => {
+    const saved: SavedItems = {
+      schemaVersion: 1,
+      items: [
+        { kind: "idea", id: "note_kiln", title: "Solar kiln" },
+        { kind: "reminder", id: "w_clothes", title: "Hang the clothes" },
+      ],
+    };
+    const onOpenSaved = vi.fn();
+    const { rerender } = render(<MessageList history={[
+      { id: "a-saved", role: "assistant", text: "Saved both, Sir.", savedItems: saved },
+    ]} liveEvents={[]} onOpenSaved={onOpenSaved} />);
+    expect(screen.getByTestId("saved-items")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open reminder: Hang the clothes" }));
+    expect(onOpenSaved).toHaveBeenCalledWith({ kind: "reminder", id: "w_clothes", title: "Hang the clothes" });
+
+    rerender(<MessageList history={[]} liveEvents={[
+      { id: 1, runEpoch: 3, kind: "saved_items", payload: { schemaVersion: 1, items: [saved.items[0]!] } },
+      { id: 2, runEpoch: 3, kind: "saved_items", payload: saved },
+      { id: 3, runEpoch: 3, kind: "final", payload: { text: "Saved both, Sir." } },
+    ]} onOpenSaved={onOpenSaved} />);
+    // The newest cumulative event wins: one card listing both items.
+    expect(screen.getAllByTestId("saved-items")).toHaveLength(1);
+    expect(screen.getByText("Solar kiln")).toBeTruthy();
+    expect(screen.getByText("Hang the clothes")).toBeTruthy();
+  });
+
+  it("keeps the Saved card when a run fails after saving, and shows none when nothing was saved", () => {
+    const { rerender } = render(<MessageList history={[]} liveEvents={[
+      { id: 1, runEpoch: 4, kind: "saved_items", payload: { schemaVersion: 1, items: [{ kind: "note", id: "n1", title: "Groceries" }] } },
+      { id: 2, runEpoch: 4, kind: "error", payload: { message: "model quota" } },
+    ]} />);
+    expect(screen.getByTestId("terminated-saved-items")).toBeTruthy();
+
+    rerender(<MessageList history={history} liveEvents={[]} />);
+    expect(screen.queryByTestId("saved-items")).toBeNull();
   });
 });

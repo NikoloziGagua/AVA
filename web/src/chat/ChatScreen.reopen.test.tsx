@@ -269,6 +269,28 @@ describe("ChatScreen send failure", () => {
     expect(screen.getAllByText("Use the flexible two-night plan.")).toHaveLength(1);
   });
 
+  it("restores a reply's Saved card, opens its items, and does not duplicate a fast replay", async () => {
+    const savedItems = { schemaVersion: 1 as const, items: [{ kind: "note" as const, id: "note_groceries", title: "Groceries" }] };
+    fetchSession.mockResolvedValue({
+      session,
+      messages: [
+        msg(1, "user", "Note groceries: milk and eggs"),
+        { ...msg(2, "assistant", "Saved to Notes, Sir."), metadata: { savedItems } },
+      ],
+    });
+    const onOpenSaved = vi.fn();
+    render(<ChatScreen sessionId="s1" {...noNav} onOpenSaved={onOpenSaved} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open note: Groceries" }));
+    expect(onOpenSaved).toHaveBeenCalledWith(savedItems.items[0]);
+
+    act(() => {
+      lastES().emit("saved_items", savedItems, 1);
+      lastES().emit("final", { text: "Saved to Notes, Sir." }, 2);
+      lastES().emit("done", {}, 3);
+    });
+    expect(screen.getAllByTestId("saved-items")).toHaveLength(1);
+  });
+
   it("passes the server-assigned new-chat session to voice", async () => {
     const onEnterVoice = vi.fn();
     sendMessage.mockResolvedValue({ sessionId: "created-session", taskId: "task-1" });

@@ -108,7 +108,7 @@ function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
         const text = String(args.text ?? "").trim();
         if (!text) return { ok: false, text: "missing text" };
         appendLine(p.preferences, text);
-        return { ok: true, text: "remembered (preferences)" };
+        return { ok: true, text: "remembered (preferences)", saved: { kind: "memory", id: "file:preferences", title: text } };
       }
 
       if (file === "project") {
@@ -122,7 +122,7 @@ function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
         } catch (e) {
           return { ok: false, text: e instanceof Error ? e.message : String(e) };
         }
-        return { ok: true, text: `remembered (project:${slug})` };
+        return { ok: true, text: `remembered (project:${slug})`, saved: { kind: "memory", id: `project:${slug}`, title: text } };
       }
 
       // file === "observations"
@@ -144,7 +144,7 @@ function buildMemoryRemember(deps: MemoryToolDeps): ToolDef {
       rememberObservation({
         memoryDir: deps.memoryDir, category, confidence, text, today,
       });
-      return { ok: true, text: "remembered (observation)" };
+      return { ok: true, text: "remembered (observation)", saved: { kind: "memory", id: "file:observations", title: text } };
     },
   };
 }
@@ -329,6 +329,7 @@ export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
           const result = captured.result;
           return {
             ok: true,
+            saved: { kind: "memory", id: result.entry.id, title: result.entry.title },
             text: JSON.stringify({
               created: captured.created,
               id: result.entry.id,

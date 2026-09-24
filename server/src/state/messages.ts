@@ -50,6 +50,25 @@ export type MessageMemoryContext = {
   selected: MessageMemoryContextSelection[];
 };
 
+export type MessageSavedItemKind = "note" | "idea" | "reminder" | "watch" | "memory";
+
+/** One thing AVA verifiably saved during a turn (a note, reminder, memory...). */
+export type MessageSavedItem = {
+  kind: MessageSavedItemKind;
+  id: string;
+  title: string;
+};
+
+/**
+ * What AVA saved during one reply, shown as a Saved card. Producers report an
+ * item only after the write succeeded; this receipt carries labels and IDs,
+ * never note bodies or memory text beyond a short title.
+ */
+export type MessageSavedItems = {
+  schemaVersion: 1;
+  items: MessageSavedItem[];
+};
+
 export type MessageMetadata = {
   visualMessages?: MessageVisualReference[];
   visualContext?: MessageVisualContext;
@@ -61,6 +80,8 @@ export type MessageMetadata = {
   interruptedTaskId?: string;
   /** Sanitized, source-aware explanation of whether durable memory informed this reply. */
   memoryContext?: MessageMemoryContext;
+  /** What AVA saved while producing this reply. */
+  savedItems?: MessageSavedItems;
 };
 
 type MessageRow = Omit<Message, "metadata"> & { metadata: string };
@@ -131,6 +152,38 @@ export function sanitizeMessageMemoryContext(value: unknown): MessageMemoryConte
   };
 }
 
+const SAVED_KINDS = new Set<MessageSavedItemKind>(["note", "idea", "reminder", "watch", "memory"]);
+const SAVED_ID = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,159}$/;
+export const MAX_SAVED_ITEMS = 6;
+
+/** Validates one saved item; null when it cannot be shown truthfully. */
+export function sanitizeMessageSavedItem(value: unknown): MessageSavedItem | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const item = value as Record<string, unknown>;
+  if (typeof item.kind !== "string" || !SAVED_KINDS.has(item.kind as MessageSavedItemKind)) return null;
+  if (typeof item.id !== "string" || !SAVED_ID.test(item.id)) return null;
+  const title = cleanMemoryText(item.title, 120);
+  if (!title) return null;
+  return { kind: item.kind as MessageSavedItemKind, id: item.id, title };
+}
+
+/** Validates and re-scrubs a Saved receipt both before persistence and on read. */
+export function sanitizeMessageSavedItems(value: unknown): MessageSavedItems | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.schemaVersion !== 1 || !Array.isArray(candidate.items)) return null;
+  const items: MessageSavedItem[] = [];
+  const seen = new Set<string>();
+  for (const raw of candidate.items) {
+    const item = sanitizeMessageSavedItem(raw);
+    if (!item || seen.has(`${item.kind}:${item.id}`)) continue;
+    seen.add(`${item.kind}:${item.id}`);
+    items.push(item);
+    if (items.length >= MAX_SAVED_ITEMS) break;
+  }
+  return items.length ? { schemaVersion: 1, items } : null;
+}
+
 function validReference(value: unknown): value is MessageVisualReference {
   if (!value || typeof value !== "object") return false;
   const reference = value as Partial<MessageVisualReference>;
@@ -167,6 +220,8 @@ function parseMetadata(raw: string): MessageMetadata {
     }
     const memoryContext = sanitizeMessageMemoryContext(value.memoryContext);
     if (memoryContext) metadata.memoryContext = memoryContext;
+    const savedItems = sanitizeMessageSavedItems(value.savedItems);
+    if (savedItems) metadata.savedItems = savedItems;
     return metadata;
   } catch { return {}; }
 }
@@ -187,6 +242,11 @@ export function appendMessage(
     const memoryContext = sanitizeMessageMemoryContext(metadata.memoryContext);
     if (memoryContext) metadata.memoryContext = memoryContext;
     else delete metadata.memoryContext;
+  }
+  if (metadata.savedItems) {
+    const savedItems = sanitizeMessageSavedItems(metadata.savedItems);
+    if (savedItems) metadata.savedItems = savedItems;
+    else delete metadata.savedItems;
   }
   const info = db
     .prepare(

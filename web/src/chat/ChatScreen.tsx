@@ -13,6 +13,7 @@ import { deriveSteps, isExecuting, currentTool } from "./activity-steps.js";
 import { isSmallScreen } from "../lib/media.js";
 import { fetchVisualExplanation } from "../visuals/api.js";
 import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
+import type { SavedItem } from "./saved-items.js";
 
 export interface ChatScreenProps {
   sessionId: string | null;
@@ -38,6 +39,8 @@ export interface ChatScreenProps {
   onNewChat?: () => void;
   onOpenStrategy?: (sessionId: string) => void;
   onOpenVisual?: (visualId: string) => void;
+  /** Open something AVA saved during a reply (a Saved card row). */
+  onOpenSaved?: (item: SavedItem) => void;
 }
 
 /**
@@ -73,6 +76,7 @@ export function ChatScreen({
   onNewChat,
   onOpenList,
   onOpenStrategy,
+  onOpenSaved,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   // Creation provenance of the loaded conversation. Automated runs are shown
@@ -152,6 +156,7 @@ export function ChatScreen({
           ...(m.role === "user" && m.metadata?.visualContext ? { visualContext: m.metadata.visualContext } : {}),
           ...(m.role === "assistant" && m.visualMessages?.length ? { visualMessages: m.visualMessages } : {}),
           ...(m.role === "assistant" && m.metadata?.memoryContext ? { memoryContext: m.metadata.memoryContext } : {}),
+          ...(m.role === "assistant" && m.metadata?.savedItems ? { savedItems: m.metadata.savedItems } : {}),
         }));
         // Dedupe target = server's replay rule over the RAW rows (not the last
         // mapped bubble), so a trailing `system` row can't shadow the real final.
@@ -204,16 +209,21 @@ export function ChatScreen({
         const memoryContext = [...events]
           .reverse()
           .find((event) => event.runEpoch === epoch && event.kind === "memory_context");
+        const savedItems = [...events]
+          .reverse()
+          .find((event) => event.runEpoch === epoch && event.kind === "saved_items");
         const existingIndex = next.findIndex((m) => m.id === id);
         if (existingIndex >= 0) {
           const existing = next[existingIndex];
           if (existing?.role === "assistant" &&
               ((inlineVisuals.length && existing.visualMessages !== inlineVisuals) ||
-               (memoryContext?.kind === "memory_context" && existing.memoryContext !== memoryContext.payload))) {
+               (memoryContext?.kind === "memory_context" && existing.memoryContext !== memoryContext.payload) ||
+               (savedItems?.kind === "saved_items" && existing.savedItems !== savedItems.payload))) {
             next = next.map((message, index) => index === existingIndex ? {
               ...existing,
               ...(inlineVisuals.length ? { visualMessages: inlineVisuals } : {}),
               ...(memoryContext?.kind === "memory_context" ? { memoryContext: memoryContext.payload } : {}),
+              ...(savedItems?.kind === "saved_items" ? { savedItems: savedItems.payload } : {}),
             } : message);
           }
           continue;
@@ -234,6 +244,7 @@ export function ChatScreen({
           text: final.payload.text,
           ...(inlineVisuals.length ? { visualMessages: inlineVisuals } : {}),
           ...(memoryContext?.kind === "memory_context" ? { memoryContext: memoryContext.payload } : {}),
+          ...(savedItems?.kind === "saved_items" ? { savedItems: savedItems.payload } : {}),
         }];
       }
       return next;
@@ -329,6 +340,8 @@ export function ChatScreen({
         (e.runEpoch === 0 && e.payload.text === seededLastAssistantRef.current))) return false;
     if (e.kind === "memory_context" && (promotedCurrent ||
         (e.runEpoch === 0 && seededAssistant?.role === "assistant" && seededAssistant.memoryContext))) return false;
+    if (e.kind === "saved_items" && (promotedCurrent ||
+        (e.runEpoch === 0 && seededAssistant?.role === "assistant" && seededAssistant.savedItems))) return false;
     return true;
   });
 
@@ -584,6 +597,7 @@ export function ChatScreen({
                     history={history}
                     liveEvents={liveEvents}
                     onRetry={retryLast}
+                    onOpenSaved={onOpenSaved}
                     scrollerRef={scrollerRef}
                     onScrollerMount={setScrollerNode}
                     optimisticThinking={optimisticThinking}

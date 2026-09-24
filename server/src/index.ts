@@ -111,7 +111,7 @@ import { recordMistake } from "./self/friction.js";
 import { createIntent, getIntent, listIntents, failStaleIntents } from "./self/intents.js";
 import { createDiscussion, getDiscussion, listDiscussions, failStaleDiscussions } from "./state/discussions.js";
 import { runDiscussion } from "./self/discuss.js";
-import { appendMessage } from "./state/messages.js";
+import { appendMessage, sanitizeMessageSavedItems, type MessageSavedItems } from "./state/messages.js";
 import { selfRoutes } from "./routes/self.js";
 import { StrategyRoomStore } from "./strategy/store.js";
 import { StrategyRoomCoordinator } from "./strategy/coordinator.js";
@@ -959,7 +959,7 @@ async function runVoiceAction(
   onStep?: (tool: string, args: unknown) => void,
   signal?: AbortSignal,
   observabilityContext?: ObservabilityParentContext,
-): Promise<{ text: string; sessionId: string | null }> {
+): Promise<{ text: string; sessionId: string | null; savedItems?: MessageSavedItems | null }> {
   if (!voiceInternalToken) throw new Error("voice loopback authentication is not ready");
   const base = `http://127.0.0.1:${cfg.port}`;
   const auth = { authorization: `Bearer ${voiceInternalToken}` };
@@ -1022,6 +1022,8 @@ async function runVoiceAction(
     const decoder = new TextDecoder();
     let buf = "", curEvent = "", finalText = "", stop = false;
     let terminal: "completed" | "failed" | "cancelled" | null = null;
+    // Cumulative: each saved_items event replaces the previous one.
+    let savedItems: MessageSavedItems | null = null;
     while (!stop) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -1038,6 +1040,7 @@ async function runVoiceAction(
             stop = true;
           }
           else if (curEvent === "tool_call") { try { const p = JSON.parse(data) as { tool: string; args?: unknown }; onStep?.(p.tool, p.args); } catch { /* */ } }
+          else if (curEvent === "saved_items") { try { savedItems = sanitizeMessageSavedItems(JSON.parse(data)) ?? savedItems; } catch { /* */ } }
           else if (curEvent === "error") {
             try { finalText = `That didn't work, Sir — ${(JSON.parse(data) as { message: string }).message}`; } catch { /* */ }
             terminal = "failed";
@@ -1060,12 +1063,13 @@ async function runVoiceAction(
       return {
         text: finalText || "That didn't work, Sir — the action stream failed without an error message.",
         sessionId: sid,
+        savedItems,
       };
     }
     if (terminal !== "completed" || !finalText.trim()) {
       throw new Error("action ended without a final, verifiable result");
     }
-    return { text: finalText, sessionId: sid };
+    return { text: finalText, sessionId: sid, savedItems };
   } catch (e) {
     if (signal?.aborted || (e instanceof Error && e.name === "AbortError")) {
       throw cancelled();

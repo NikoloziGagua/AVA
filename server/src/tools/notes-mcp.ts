@@ -106,7 +106,11 @@ export function buildNotesTools(options: {
             source: options.source ?? "ava_chat",
             sourceSessionId: options.sessionId ?? null,
           });
-          return { ok: true, text: `Saved to ${note.collection ?? "General"} Notes.\n${JSON.stringify(noteSummary(note))}` };
+          return {
+            ok: true,
+            text: `Saved to ${note.collection ?? "General"} Notes.\n${JSON.stringify(noteSummary(note))}`,
+            saved: { kind: note.kind === "idea" ? "idea" : "note", id: note.id, title: note.title || content },
+          };
         } catch (error) {
           return { ok: false, text: error instanceof Error ? error.message : String(error) };
         }

@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
 import { createSession } from "./sessions.js";
-import { appendMessage, countMessages, listMessages, listMessagesAfterId } from "./messages.js";
+import {
+  appendMessage,
+  countMessages,
+  listMessages,
+  listMessagesAfterId,
+  sanitizeMessageSavedItems,
+} from "./messages.js";
 
 describe("messages repo", () => {
   let db: Db;
@@ -135,5 +141,51 @@ describe("messages repo", () => {
     expect(after.map((m) => m.id)).toEqual([m2.id, m3.id]);
     const afterAll = listMessagesAfterId(db, sessionId, m3.id);
     expect(afterAll).toEqual([]);
+  });
+
+  it("round-trips a Saved receipt and re-validates it on read", () => {
+    const savedItems = {
+      schemaVersion: 1 as const,
+      items: [
+        { kind: "note" as const, id: "note_abc123", title: "Thesis outline" },
+        { kind: "reminder" as const, id: "w_9", title: "Hang the clothes" },
+      ],
+    };
+    const stored = appendMessage(db, { sessionId, role: "assistant", content: "Done.", metadata: { savedItems } });
+    expect(stored.metadata?.savedItems).toEqual(savedItems);
+    expect(listMessages(db, sessionId)[0]!.metadata?.savedItems).toEqual(savedItems);
+
+    // A tampered row cannot smuggle an unknown kind or an unsafe id into the UI.
+    db.prepare("UPDATE messages SET metadata = ? WHERE id = ?").run(JSON.stringify({
+      savedItems: { schemaVersion: 1, items: [{ kind: "script", id: "x", title: "t" }, { kind: "note", id: "../etc", title: "t" }] },
+    }), stored.id);
+    expect(listMessages(db, sessionId)[0]!.metadata).toEqual({});
+  });
+});
+
+describe("sanitizeMessageSavedItems", () => {
+  it("keeps valid items in order, dedupes, caps at six and scrubs titles", () => {
+    const items = [
+      { kind: "idea", id: "n1", title: "  Solar   kiln  idea " },
+      { kind: "idea", id: "n1", title: "duplicate" },
+      { kind: "memory", id: "file:preferences", title: "Prefers tea" },
+      ...Array.from({ length: 8 }, (_, i) => ({ kind: "watch", id: `w${i}`, title: `Watch ${i}` })),
+    ];
+    const receipt = sanitizeMessageSavedItems({ schemaVersion: 1, items });
+    expect(receipt?.items).toHaveLength(6);
+    expect(receipt?.items[0]).toEqual({ kind: "idea", id: "n1", title: "Solar kiln idea" });
+    expect(receipt?.items[1]).toEqual({ kind: "memory", id: "file:preferences", title: "Prefers tea" });
+    const long = sanitizeMessageSavedItems({ schemaVersion: 1, items: [{ kind: "note", id: "n2", title: "x".repeat(300) }] });
+    expect(long?.items[0]!.title).toHaveLength(120);
+    const secret = sanitizeMessageSavedItems({ schemaVersion: 1, items: [{ kind: "note", id: "n3", title: "key sk-proj-abcdefghijklmnopqrstuvwxyz0123456789" }] });
+    expect(secret?.items[0]!.title).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+  });
+
+  it("rejects malformed receipts", () => {
+    expect(sanitizeMessageSavedItems(null)).toBeNull();
+    expect(sanitizeMessageSavedItems({ schemaVersion: 2, items: [{ kind: "note", id: "n", title: "t" }] })).toBeNull();
+    expect(sanitizeMessageSavedItems({ schemaVersion: 1, items: [] })).toBeNull();
+    expect(sanitizeMessageSavedItems({ schemaVersion: 1, items: [{ kind: "note", id: "n", title: "   " }] })).toBeNull();
+    expect(sanitizeMessageSavedItems({ schemaVersion: 1, items: [{ kind: "note", id: "", title: "t" }] })).toBeNull();
   });
 });

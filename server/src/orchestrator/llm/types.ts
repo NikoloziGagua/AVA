@@ -1,4 +1,5 @@
 import type { ToolVerificationEvidence } from "../verification-evidence.js";
+import type { MessageSavedItem } from "../../state/messages.js";
 
 export type ToolDefinition = {
   name: string;
@@ -24,6 +25,8 @@ export type ToolResult = {
   is_error?: boolean;
   /** AVA-local operational evidence. Provider adapters must not manufacture it. */
   verification?: ToolVerificationEvidence;
+  /** AVA-local: what this call durably saved (shown as a Saved card). Never sent to the model. */
+  saved?: MessageSavedItem;
 };
 
 export type Message =

@@ -20,6 +20,7 @@ import {
   bargeInFrame,
   recoverFrame,
   speechDismissedFrame,
+  mergeSavedItems,
   transcriptPendingFrame,
   acceptedTranscriptFrame,
   loadRealtimeVadConfig,
@@ -647,6 +648,15 @@ describe("voice barge-in + PTT recovery control frames", () => {
   });
   it("speechDismissedFrame tells a hands-free client its pause was a false alarm", () => {
     expect(JSON.parse(speechDismissedFrame("echo"))).toEqual({ type: "ava.speech_dismissed", reason: "echo" });
+  });
+  it("mergeSavedItems combines what several voice actions saved before the reply", () => {
+    const note = { kind: "note" as const, id: "n1", title: "Groceries" };
+    const reminder = { kind: "reminder" as const, id: "w1", title: "Hang the clothes" };
+    expect(mergeSavedItems(null, null)).toBeNull();
+    expect(mergeSavedItems(null, { schemaVersion: 1, items: [note] })).toEqual({ schemaVersion: 1, items: [note] });
+    expect(mergeSavedItems({ schemaVersion: 1, items: [note] }, { schemaVersion: 1, items: [note, reminder] }))
+      .toEqual({ schemaVersion: 1, items: [note, reminder] });
+    expect(mergeSavedItems({ schemaVersion: 1, items: [note] }, undefined)).toEqual({ schemaVersion: 1, items: [note] });
   });
 
   it("recoverFrame carries the drop reason so the client re-arms listening", () => {

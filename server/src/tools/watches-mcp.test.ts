@@ -14,6 +14,23 @@ describe("watch_create tool", () => {
     expect(await create.run({ prompt: "x".repeat(2001), kind: "check", interval_minutes: 5 }, { runId: "test-run" })).toMatchObject({ ok: true });
     db.close();
   });
+  it("reports a one-off reminder for Schedule and anything recurring as a watch", async () => {
+    const db = openInMemoryDb();
+    const create = buildWatchTools({ db }).find((entry) => entry.tool.name === "watch_create")!;
+    const reminder = await create.run({ prompt: "Hang the clothes", kind: "reminder", run_in_minutes: 2, time_zone: "Europe/London" }, { runId: "test-run" });
+    expect(reminder.ok).toBe(true);
+    const reminderId = /\(([A-Za-z0-9_-]+)\)/.exec(reminder.text)?.[1];
+    expect(reminder.saved).toEqual({ kind: "reminder", id: reminderId, title: "Hang the clothes" });
+
+    const check = await create.run({ prompt: "check Instagram inbox", interval_minutes: 15, once: false }, { runId: "test-run" });
+    expect(check.saved).toMatchObject({ kind: "watch", title: "check Instagram inbox" });
+
+    const refused = await create.run({ prompt: "Too vague", kind: "reminder", at: "tomorrow", time_zone: "Europe/London" }, { runId: "test-run" });
+    expect(refused.ok).toBe(false);
+    expect(refused.saved).toBeUndefined();
+    db.close();
+  });
+
   it("keeps ordinary AVA monitors on the shared scheduler path", async () => {
     const db = openInMemoryDb();
     const create = buildWatchTools({ db }).find((entry) => entry.tool.name === "watch_create")!;

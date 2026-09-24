@@ -85,6 +85,21 @@ describe("memory_remember", () => {
       .toBe("- [2026-04-28 / low / preferences] uses pwsh\n");
   });
 
+  it("reports each durable write as a saved memory, but not a refresh", async () => {
+    const tools = buildMemoryTools({ memoryDir: dir });
+    const t = tools.find((x) => x.tool.name === "memory_remember")!;
+    expect((await t.run({ file: "preferences", text: "Prefers tea" }, ctx)).saved)
+      .toEqual({ kind: "memory", id: "file:preferences", title: "Prefers tea" });
+    expect((await t.run({ text: "Studies at UCL", category: "context", today: "2026-09-24" }, ctx)).saved)
+      .toEqual({ kind: "memory", id: "file:observations", title: "Studies at UCL" });
+    expect((await t.run({ file: "project", project: "thesis", text: "Due in May" }, ctx)).saved)
+      .toEqual({ kind: "memory", id: "project:thesis", title: "Due in May" });
+    const refreshed = await t.run({ refresh: "UCL", today: "2026-09-25" }, ctx);
+    expect(refreshed.ok).toBe(true);
+    expect(refreshed.saved).toBeUndefined();
+    expect((await t.run({ file: "preferences", text: "" }, ctx)).saved).toBeUndefined();
+  });
+
   it("file=preferences appends a plain line to preferences.md (no confidence)", async () => {
     const tools = buildMemoryTools({ memoryDir: dir });
     const t = tools.find((x) => x.tool.name === "memory_remember")!;
@@ -273,6 +288,7 @@ describe("source-linked memory tools", () => {
     }, ctx);
     expect(captured.ok).toBe(true);
     expect(JSON.parse(captured.text)).toMatchObject({ created: true, source: { status: "verified", messageCount: 3 } });
+    expect(captured.saved).toEqual({ kind: "memory", id: JSON.parse(captured.text).id, title: "Durable research archive" });
 
     const other = createSession(db, { title: "Later chat" });
     appendMessage(db, { sessionId: other.id, role: "user", content: "How should AVA remember prior research?" });

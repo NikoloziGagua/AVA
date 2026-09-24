@@ -48,7 +48,7 @@ vi.mock("./chat/ChatScreen.js", async () => {
   state.chatLoads += 1;
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatScreen: ({ sessionId, initialText, audit, onOpenStrategy, onOpenVisual, onEnterVoice, onSessionChange }: {
+    ChatScreen: ({ sessionId, initialText, audit, onOpenStrategy, onOpenVisual, onEnterVoice, onSessionChange, onOpenSaved }: {
       sessionId?: string | null;
       initialText?: string;
       audit?: boolean;
@@ -56,6 +56,7 @@ vi.mock("./chat/ChatScreen.js", async () => {
       onOpenVisual?: (visualId: string) => void;
       onEnterVoice?: (sessionId: string | null) => void;
       onSessionChange?: (sessionId: string) => void;
+      onOpenSaved?: (item: { kind: "note" | "idea" | "reminder" | "watch" | "memory"; id: string; title: string }) => void;
     }) => {
       const [draftRevision, setDraftRevision] = React.useState(0);
       return (
@@ -68,6 +69,10 @@ vi.mock("./chat/ChatScreen.js", async () => {
           <button onClick={() => onOpenVisual?.("visual_abcdefgh")}>mock open visual</button>
           <button onClick={() => onEnterVoice?.("internal-chat-17")}>mock enter voice</button>
           <button onClick={() => onEnterVoice?.(null)}>mock enter blank voice</button>
+          <button onClick={() => onOpenSaved?.({ kind: "idea", id: "idea-saved-1", title: "Kiln" })}>mock open saved idea</button>
+          <button onClick={() => onOpenSaved?.({ kind: "reminder", id: "w-rem-1", title: "Clothes" })}>mock open saved reminder</button>
+          <button onClick={() => onOpenSaved?.({ kind: "watch", id: "w-watch-2", title: "Inbox" })}>mock open saved watch</button>
+          <button onClick={() => onOpenSaved?.({ kind: "memory", id: "file:preferences", title: "Tea" })}>mock open saved memory</button>
         </div>
       );
     },
@@ -347,6 +352,29 @@ describe("App navigation", () => {
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock open visual" }));
     expect(await screen.findByText("visual-id-visual_abcdefgh")).toBeTruthy();
+  });
+
+  it("opens each kind of item from a reply's Saved card in its own place", async () => {
+    render(<App />);
+    const openChat = async () => {
+      fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+      await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
+    };
+    await openChat();
+    fireEvent.click(screen.getByRole("button", { name: "mock open saved idea" }));
+    expect(await screen.findByText("notes-initial-idea-saved-1", undefined, LAZY_ROUTE)).toBeTruthy();
+
+    await openChat();
+    fireEvent.click(screen.getByRole("button", { name: "mock open saved reminder" }));
+    expect(await screen.findByText("schedule-screen", undefined, LAZY_ROUTE)).toBeTruthy();
+
+    await openChat();
+    fireEvent.click(screen.getByRole("button", { name: "mock open saved watch" }));
+    expect(await screen.findByText("focus-w-watch-2", undefined, LAZY_ROUTE)).toBeTruthy();
+
+    await openChat();
+    fireEvent.click(screen.getByRole("button", { name: "mock open saved memory" }));
+    await waitFor(() => expect(document.querySelector('[data-view="memory"]')).toBeTruthy());
   });
 
   it("hands voice the session ChatScreen actually created, not the stale null route value", async () => {

@@ -179,9 +179,15 @@ export function buildWatchTools(o: {
               text: `reminder scheduled (${w.id}) — ${localTime} [${timeZone}]; ${new Date(runAt!).toISOString()}. ` +
                 "Push service acceptance and phone receipt are not yet confirmed. AVA must remain awake and online." +
                 (status ? `\nreminder_status: ${JSON.stringify(status)}` : "\nDelivery not recorded."),
+              saved: { kind: "reminder", id: w.id, title: prompt },
             };
           }
-          return { ok: true, text: `${kind === "reminder" ? "reminder" : kind === "codex" ? "Codex watch" : "watch"} created (${w.id}) — ${when}.${pin}` };
+          return {
+            ok: true,
+            text: `${kind === "reminder" ? "reminder" : kind === "codex" ? "Codex watch" : "watch"} created (${w.id}) — ${when}.${pin}`,
+            // Recurring reminders and checks live on the Watches page, not Schedule.
+            saved: { kind: "watch", id: w.id, title: prompt },
+          };
         } catch (e) {
           // Say plainly that nothing exists, so the agent reports the failure
           // instead of improvising a local pop-up and calling it scheduled.

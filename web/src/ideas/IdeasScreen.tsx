@@ -117,9 +117,12 @@ export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => vo
                   <Lightbulb size={16} className="mt-0.5 shrink-0 text-[var(--ac-exec)]" aria-hidden />
                   <span className="flex min-w-0 flex-1 flex-col gap-1">
                     <span className="truncate text-sm text-white/90">{idea.title || "Untitled idea"}</span>
-                    {idea.content && <span className="text-xs leading-5 text-white/55">{excerpt(idea.content)}</span>}
+                    {/* Long unbroken text (a pasted URL) wraps inside the card. */}
+                    {idea.content && <span className="text-xs leading-5 text-white/55 [overflow-wrap:anywhere]">{excerpt(idea.content)}</span>}
+                    {/* On a phone the date sits under the text instead of taking its width. */}
+                    <span className="text-[11px] text-white/45 sm:hidden">{formatWhen(idea.updatedAt)}</span>
                   </span>
-                  <span className="shrink-0 text-[11px] text-white/45">{formatWhen(idea.updatedAt)}</span>
+                  <span className="hidden shrink-0 text-[11px] text-white/45 sm:inline">{formatWhen(idea.updatedAt)}</span>
                 </button>
               </li>
             ))}

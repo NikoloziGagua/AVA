@@ -898,6 +898,16 @@ body {
 .ava-sidebar-workspaces { display: grid; gap: 3px; margin-top: 9px; }
 .ava-sidebar-system { display: grid; gap: 3px; margin-top: auto; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.05); }
 
+/* Collapsed rail: only the icon may take space. The hidden labels' widths,
+   their gap and the invisible trailing chevron would otherwise widen the grid
+   column past the 43-49px rail, and focusing a destination would then scroll
+   the rail sideways. */
+.ava-sidebar:not([data-expanded="true"]) .ava-sidebar-destinations,
+.ava-sidebar:not([data-expanded="true"]) .ava-sidebar-system { grid-template-columns: minmax(0, 1fr); }
+.ava-sidebar:not([data-expanded="true"]) .ava-sidebar-destination { gap: 0; }
+.ava-sidebar:not([data-expanded="true"]) .ava-sidebar-trailing,
+.ava-sidebar:not([data-expanded="true"]) .ava-sidebar-key { display: none; }
+
 .ava-sidebar-scrim {
   position: absolute;
   inset: 0;

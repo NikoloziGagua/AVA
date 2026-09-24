@@ -21,9 +21,9 @@ does not replace or silently rewrite it.
 - Notes are named documents with stable IDs, Markdown content, a document type,
   source evidence, safe links, tags, a bounded change log and an optimistic
   version.
-- Each document has an explicit stable page position within its folder. New
+- Each document has an explicit stable file position within its folder. New
   documents append; moving a document to another folder appends there unless a
-  position is supplied; editing content never silently reshuffles page order.
+  position is supplied; editing content never silently reshuffles file order.
 
 `documentType: "study"` uses one canonical Markdown body with the headings Key
 concepts, Explanations, Questions and weak areas, Examples, Conclusions and
@@ -40,15 +40,15 @@ The hierarchy migration is additive and non-destructive:
   stable ID;
 - every existing note keeps its ID, title, body, source, version, change log
   and promotion lineage;
-- existing documents receive deterministic page positions from their original
+- existing documents receive deterministic file positions from their original
   creation order, with stable ID as the tie-breaker;
 - historical project, section, kind and Kanban-stage fields remain during v1;
 - legacy duplicate titles do not block, rename or merge migration.
 
 The current optional Board metadata remains Ideas, Doing, Review, Done and
 Archived. General, Ideas, Today, Project Brief and exact-note links continue to
-read the compatibility fields while the Finder-style Notes interface is built
-in the next increment. Similar-looking folders are never merged automatically.
+read the compatibility fields alongside the folder/file workspace.
+Similar-looking folders are never merged automatically.
 The current Agile course folders are presented for an explicit, versioned move
 into `University/Agile Development` so the data change is reviewable.
 
@@ -61,7 +61,7 @@ AVA exposes five Notes tools in chat and voice:
 - `notes_search` searches title, content and tags, optionally within one folder
   or subtree, and returns stable IDs, breadcrumbs and current versions.
 - `notes_update` version-updates content or moves a document to an existing
-  folder, and can reorder a page through `document_position`.
+  folder, and can reorder a file through `document_position`.
 - `notes_folders` lists or explicitly creates, renames, moves and deletes-empty
   folders. Rename/move/delete require the current folder version.
 - `notes_promote` turns a document into a task draft or an explicit
@@ -74,14 +74,39 @@ persistence. Self-improvement retains its separate approval boundary.
 
 `note_folders`, `note_projects` (compatibility) and `notes` live in AVA's SQLite
 database. General has a fixed ID. Migrated project IDs are reused as folder IDs.
-New top-level folders maintain a project compatibility projection so the old UI
-does not hide their documents; nested documents appear under their top-level
-folder until the new UI takes over.
+New top-level folders maintain a project compatibility projection so legacy
+Board and Project Brief reads do not hide their documents; nested documents
+appear under their top-level folder in those compatibility views.
 
 Every folder and document has a monotonically increasing version. Stale writes
 return the latest record rather than overwriting it. A document move updates
 its legacy top-level project projection without changing the document ID, and
-appends it to the destination unless an explicit page position is supplied.
+appends it to the destination unless an explicit file position is supplied.
+
+## Files and reading pages
+
+The visible Notes hierarchy follows ordinary file semantics:
+
+- folders may contain child folders and multiple named files;
+- each SQLite `notes` row is one authoritative file/document;
+- `documentPosition` orders files in a folder and never identifies a page;
+- the desktop workspace shows folder tree -> file list -> document reader;
+- the phone workspace stacks folder selection -> file list -> reader.
+
+When one selected file is longer than the reader, the web client derives
+book-like pages from its Markdown. It measures the reader width, prefers
+Markdown block and heading boundaries, and splits only ordinary long prose at
+safe word boundaries. Fenced code, tables and complex Markdown remain intact
+and may scroll inside their page. The same file can therefore have a different
+visual page count after a resize or font/layout change.
+
+These page boundaries are disposable UI state. They are not stored in SQLite,
+are not returned by Notes APIs, and are never used by AVA as source identity.
+The canonical Markdown body remains unchanged. The browser may remember a
+best-effort block anchor for reading continuity; a stale anchor falls back
+safely. A **Show as one page** mode renders the complete canonical document for
+screen readers, selection, printing and any content that does not paginate
+cleanly. Editing always opens and version-updates the complete file.
 
 Notes are scrubbed at persistence. Only HTTP(S) links without credential-like
 material are retained. All HTTP routes require normal AVA authentication.
@@ -108,16 +133,14 @@ conflicts, non-empty folders, invalid moves and excessive depth.
 ## Verification and current boundary
 
 State, route and tool tests cover legacy migration (including duplicate titles
-and deterministic page order),
+and deterministic file order),
 General/root identity, sibling uniqueness, nested paths, subtree search, study
 documents, cycles, depth, optimistic concurrency, compatibility projection,
 empty-only deletion, privacy scrubbing and tool round trips. A separate
 live-database-copy verifier hashes all authoritative note fields before and
 after migration and removes its temporary copy.
 
-This increment is the server/tool foundation. The Finder-style folder tree,
-book/page reader with previous/next navigation and editor are the next
-separately reviewed UI increment. Until
-that lands, nested hierarchy operations are available conversationally and via
-the authenticated API, while the existing Notes Board remains the visible
-compatibility view.
+The folder hierarchy, explicit file list, derived in-document reader pages and
+whole-file editor are available in the Notes interface. The optional Board
+continues to use the compatibility metadata. Visual page boundaries remain a
+presentation concern; no page CRUD or parallel page store exists.

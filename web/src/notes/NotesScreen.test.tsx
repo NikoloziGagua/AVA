@@ -92,9 +92,15 @@ function generalPage(id: string, title: string, position: number, content = `Bod
   };
 }
 
-// Stored position decides the book order, not the array order or the title.
-const pageTwo = generalPage("page-2", "Alpha second page", 1);
-const pageOne = generalPage("page-1", "Zulu first page", 0, "## Heading one\n\nFirst page body.");
+// Stored position decides file order. Page boundaries are derived only from
+// the selected file's Markdown and never from neighboring Note records.
+const fileTwo = generalPage("file-2", "Alpha second file", 1);
+const fileOne = generalPage(
+  "file-1",
+  "Zulu first file",
+  0,
+  `## Heading one\n\n${"This is a detailed explanation inside the same file. ".repeat(20)}\n\n## Heading two\n\nA concluding section in the same file.`,
+);
 
 const snapshot: NotesSnapshot = {
   projects: [{
@@ -106,7 +112,7 @@ const snapshot: NotesSnapshot = {
     createdAt: T0,
     updatedAt: T0,
   }],
-  notes: [pageTwo, note, pageOne],
+  notes: [fileTwo, note, fileOne],
 };
 
 const tree: NotesTree = {
@@ -181,7 +187,7 @@ beforeEach(() => {
   window.localStorage.clear();
   vi.mocked(notesApi.fetchNotes).mockResolvedValue(snapshot);
   vi.mocked(notesApi.fetchNotesTree).mockResolvedValue(tree);
-  vi.mocked(notesApi.createNote).mockResolvedValue(generalPage("note-new", "New page", 2));
+  vi.mocked(notesApi.createNote).mockResolvedValue(generalPage("note-new", "New file", 2));
   vi.mocked(notesApi.createNoteFolder).mockResolvedValue(folder({ id: "folder-new", name: "Lectures", parentId: "notes_general" }));
   vi.mocked(notesApi.updateNote).mockResolvedValue({ ...note, version: 2 });
   vi.mocked(notesApi.promoteNote).mockResolvedValue({
@@ -195,7 +201,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 const counter = () => screen.getByTestId("page-counter").textContent;
-const pageHeading = () => within(screen.getByRole("region", { name: "Notes pages" })).getByRole("heading", { level: 2 }).textContent;
+const fileHeading = () => within(screen.getByRole("region", { name: "Note document" })).getByRole("heading", { level: 2 }).textContent;
 
 // jsdom has no PointerEvent; a MouseEvent carries the coordinates React reads.
 const swipe = (target: Element, type: string, clientX: number, clientY: number) =>
@@ -206,19 +212,27 @@ async function openFolder(name: RegExp) {
   fireEvent.click(within(nav).getByRole("button", { name }));
 }
 
-describe("Notes book pages", () => {
-  it("shows one page at a time in stored order and turns pages with the arrows", async () => {
+describe("Notes files and derived pages", () => {
+  it("shows multiple files and turns pages only inside the selected file", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     expect(await screen.findByText("PAGE 1 / 2")).not.toBeNull();
-    expect(pageHeading()).toBe("Zulu first page");
+    expect(fileHeading()).toBe("Zulu first file");
+    const files = screen.getByRole("navigation", { name: "Files in General" });
+    expect(within(files).getByRole("button", { name: "Zulu first file" }).getAttribute("aria-current")).toBe("page");
+    expect(within(files).getByRole("button", { name: "Alpha second file" })).not.toBeNull();
+    expect(within(files).getByText(/Heading one This is a detailed explanation/).textContent?.length).toBeLessThanOrEqual(143);
     expect(screen.getByRole("heading", { name: "Heading one" })).not.toBeNull();
-    expect(screen.queryByText("Alpha second page", { selector: "h2" })).toBeNull();
     expect((screen.getByRole("button", { name: "Previous page" }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     expect(counter()).toBe("PAGE 2 / 2");
-    expect(pageHeading()).toBe("Alpha second page");
+    expect(fileHeading()).toBe("Zulu first file");
+    expect(screen.getByRole("heading", { name: "Heading two" })).not.toBeNull();
     expect((screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.click(within(files).getByRole("button", { name: /Alpha second file/ }));
+    expect(counter()).toBe("PAGE 1 / 1");
+    expect(fileHeading()).toBe("Alpha second file");
   });
 
   it("turns pages with the arrow keys, but not while typing", async () => {
@@ -236,7 +250,7 @@ describe("Notes book pages", () => {
   it("turns pages with a horizontal swipe and ignores a vertical scroll", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     await screen.findByText("PAGE 1 / 2");
-    const article = screen.getByRole("article", { name: "Zulu first page" });
+    const article = screen.getByRole("article", { name: "Zulu first file, page 1" });
     swipe(article, "pointerdown", 300, 100);
     swipe(article, "pointerup", 290, 400);
     expect(counter()).toBe("PAGE 1 / 2");
@@ -248,15 +262,40 @@ describe("Notes book pages", () => {
   it("jumps with the page dots and the numbered contents list", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     await screen.findByText("PAGE 1 / 2");
-    fireEvent.click(screen.getByRole("button", { name: "Page 2: Alpha second page" }));
+    fireEvent.click(screen.getByRole("button", { name: "Page 2: Heading two" }));
     expect(counter()).toBe("PAGE 2 / 2");
     fireEvent.click(screen.getByRole("button", { name: /Contents/ }));
-    const contents = screen.getByRole("navigation", { name: "Contents" });
-    fireEvent.click(within(contents).getByRole("button", { name: /Zulu first page/ }));
+    const contents = screen.getByRole("navigation", { name: "Document contents" });
+    fireEvent.click(within(contents).getByRole("button", { name: /Heading one/ }));
     expect(counter()).toBe("PAGE 1 / 2");
   });
 
-  it("nests folders and shows a folder's own pages", async () => {
+  it("offers a continuous accessible document without changing the saved file", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    await screen.findByText("PAGE 1 / 2");
+    fireEvent.click(screen.getByRole("button", { name: "Show as one page" }));
+    expect(counter()).toBe("FULL DOCUMENT");
+    expect(screen.getByRole("heading", { name: "Heading one" })).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Heading two" })).not.toBeNull();
+    expect((screen.getByRole("button", { name: "Next page" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Show pages" }));
+    expect(counter()).toBe("PAGE 1 / 2");
+  });
+
+  it("restores the selected file's reading position after reload", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    await screen.findByText("PAGE 1 / 2");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(counter()).toBe("PAGE 2 / 2");
+    expect(window.localStorage.getItem("ava:notes-reading-position:file-1")).toBe("block-2-0");
+    cleanup();
+
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    expect(await screen.findByText("PAGE 2 / 2")).not.toBeNull();
+    expect(fileHeading()).toBe("Zulu first file");
+  });
+
+  it("nests folders and shows a folder's own files", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     const nav = await screen.findByRole("navigation", { name: "Folders" });
     expect(within(nav).getByRole("button", { name: /Agile Development/ })).not.toBeNull();
@@ -264,16 +303,16 @@ describe("Notes book pages", () => {
     expect(within(nav).queryByRole("button", { name: /Agile Development/ })).toBeNull();
     await openFolder(/AVA Explorer/);
     expect(counter()).toBe("PAGE 1 / 1");
-    expect(pageHeading()).toBe("Explain watcher failures");
+    expect(fileHeading()).toBe("Explain watcher failures");
     await openFolder(/^University/);
-    expect(screen.getByText("No pages in University yet.")).not.toBeNull();
+    expect(screen.getByText("No files in University yet.")).not.toBeNull();
   });
 
   it("offers the same folders as one menu on a phone", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     await screen.findByText("PAGE 1 / 2");
     fireEvent.change(screen.getByRole("combobox", { name: "Folder" }), { target: { value: "project-1" } });
-    expect(pageHeading()).toBe("Explain watcher failures");
+    expect(fileHeading()).toBe("Explain watcher failures");
   });
 
   it("captures a quick thought into the selected folder", async () => {
@@ -289,18 +328,18 @@ describe("Notes book pages", () => {
     })));
   });
 
-  it("starts a study page from the template headings", async () => {
+  it("starts a study file from the template headings", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     await screen.findByText("PAGE 1 / 2");
-    fireEvent.click(screen.getByRole("button", { name: /Study page/ }));
-    expect(await screen.findByText("New study page")).not.toBeNull();
-    const body = screen.getByPlaceholderText(/Write the page/) as HTMLTextAreaElement;
+    fireEvent.click(screen.getByRole("button", { name: /Study file/ }));
+    expect(await screen.findByText("New study file")).not.toBeNull();
+    const body = screen.getByPlaceholderText(/Write the file/) as HTMLTextAreaElement;
     expect(body.value).toBe(STUDY_TEMPLATE);
     for (const heading of ["Key concepts", "Explanations", "Questions and weak areas", "Examples", "Conclusions", "Sources"]) {
       expect(body.value).toContain(`## ${heading}`);
     }
     fireEvent.change(screen.getByPlaceholderText(/Lecture 4/), { target: { value: "Lecture 1" } });
-    fireEvent.click(screen.getByRole("button", { name: /Save page/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Save file/ }));
     await waitFor(() => expect(notesApi.createNote).toHaveBeenCalledWith(expect.objectContaining({
       title: "Lecture 1",
       documentType: "study",
@@ -308,43 +347,63 @@ describe("Notes book pages", () => {
     })));
   });
 
-  it("moves a page to another folder with a versioned update", async () => {
+  it("moves a file to another folder with a versioned update", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     await screen.findByText("PAGE 1 / 2");
-    fireEvent.click(screen.getByRole("button", { name: /^Move$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Move file$/ }));
     fireEvent.change(screen.getByRole("combobox", { name: "Destination folder" }), { target: { value: "folder-agile" } });
-    await waitFor(() => expect(notesApi.updateNote).toHaveBeenCalledWith("page-1", 1, { folderId: "folder-agile" }));
-    expect(await screen.findByText(/Moved “Zulu first page” to University\/Agile Development/)).not.toBeNull();
+    await waitFor(() => expect(notesApi.updateNote).toHaveBeenCalledWith("file-1", 1, { folderId: "folder-agile" }));
+    expect(await screen.findByText(/Moved “Zulu first file” to University\/Agile Development/)).not.toBeNull();
   });
 
-  it("edits a page without sending an unchanged folder or type", async () => {
+  it("edits a file without sending an unchanged folder or type", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     await screen.findByText("PAGE 1 / 2");
-    fireEvent.click(screen.getByRole("button", { name: /^Edit$/ }));
-    fireEvent.change(await screen.findByDisplayValue("Zulu first page"), { target: { value: "Renamed page" } });
-    fireEvent.click(screen.getByRole("button", { name: /Save page/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Edit file$/ }));
+    fireEvent.change(await screen.findByDisplayValue("Zulu first file"), { target: { value: "Renamed file" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save file/ }));
     await waitFor(() => expect(notesApi.updateNote).toHaveBeenCalled());
     const patch = vi.mocked(notesApi.updateNote).mock.calls[0]![2];
-    expect(patch).toMatchObject({ title: "Renamed page" });
+    expect(patch).toMatchObject({ title: "Renamed file" });
     expect(patch).not.toHaveProperty("folderId");
     expect(patch).not.toHaveProperty("documentType");
   });
 
-  it("asks AVA about the open page in a new chat", async () => {
+  it("repaginates an edited file once and falls back to the nearest valid anchor", async () => {
+    const shortened = { ...fileOne, content: "## Short version\n\nDone.", version: 2 };
+    vi.mocked(notesApi.fetchNotes)
+      .mockResolvedValueOnce(snapshot)
+      .mockResolvedValue({ ...snapshot, notes: [fileTwo, note, shortened] });
+    vi.mocked(notesApi.updateNote).mockResolvedValue(shortened);
+
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    await screen.findByText("PAGE 1 / 2");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Edit file$/ }));
+    fireEvent.change(await screen.findByPlaceholderText(/Write the file/), { target: { value: shortened.content } });
+    fireEvent.click(screen.getByRole("button", { name: /Save file/ }));
+
+    expect(await screen.findByText("PAGE 1 / 1")).not.toBeNull();
+    expect(screen.getByRole("heading", { name: "Short version" })).not.toBeNull();
+    expect(notesApi.updateNote).toHaveBeenCalledTimes(1);
+    expect(window.localStorage.getItem("ava:notes-reading-position:file-1")).toBe("block-0-0");
+  });
+
+  it("asks AVA about the open file in a new chat", async () => {
     const onStartTask = vi.fn();
     render(<NotesScreen onStartTask={onStartTask} />);
     await screen.findByText("PAGE 1 / 2");
-    fireEvent.click(screen.getByRole("button", { name: /Ask AVA about this page/ }));
-    expect(onStartTask).toHaveBeenCalledWith(expect.stringContaining("“Zulu first page” (in General)"));
+    fireEvent.click(screen.getByRole("button", { name: /Ask AVA about this file/ }));
+    expect(onStartTask).toHaveBeenCalledWith(expect.stringContaining("“Zulu first file” (stable ID: file-1; folder: General)"));
   });
 
-  it("searches every folder and opens the chosen page", async () => {
+  it("searches every folder and opens the chosen file", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     await screen.findByText("PAGE 1 / 2");
-    fireEvent.change(screen.getByPlaceholderText("Search all pages"), { target: { value: "watcher" } });
+    fireEvent.change(screen.getByPlaceholderText("Search all files"), { target: { value: "watcher" } });
     const results = screen.getByRole("region", { name: "Search results" });
     fireEvent.click(within(results).getByRole("button", { name: /Explain watcher failures/ }));
-    expect(pageHeading()).toBe("Explain watcher failures");
+    expect(fileHeading()).toBe("Explain watcher failures");
   });
 });
 
@@ -391,7 +450,7 @@ describe("Notes folders", () => {
     expect(await screen.findByText("That name is already used here.")).not.toBeNull();
   });
 
-  it("explains the move to folders once, without claiming any merge", async () => {
+  it("explains the move to folders and files once, without claiming any merge", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     const notice = await screen.findByRole("region", { name: "Notes now use folders" });
     expect(within(notice).getByText(/All 3 of your notes are here unchanged/)).not.toBeNull();
@@ -417,7 +476,7 @@ describe("Notes board view", () => {
     await openBoard();
     for (const stage of ["Ideas", "Doing", "Review", "Done"]) expect(screen.getAllByText(stage).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Explain watcher failures").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Zulu first page")).toBeNull();
+    expect(screen.queryByText("Zulu first file")).toBeNull();
   });
 
   it("promotes a saved note into a prefilled AVA task", async () => {
@@ -456,7 +515,7 @@ describe("Notes board view", () => {
     expect(screen.getByRole("button", { name: /^EXPAND/ }).getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("does not load the project brief while reading pages", async () => {
+  it("does not load the project brief while reading files", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);
     await openFolder(/AVA Explorer/);
     await screen.findByText("PAGE 1 / 1");
@@ -509,29 +568,32 @@ describe("Notes board view", () => {
 });
 
 describe("Notes exact-note handoff", () => {
-  it("opens exactly the requested note as the page in its own folder", async () => {
+  it("opens exactly the requested note as the file in its own folder", async () => {
     render(<NotesScreen onStartTask={vi.fn()} initialNoteId="note-1" />);
     expect(await screen.findByText("PAGE 1 / 1")).not.toBeNull();
-    expect(pageHeading()).toBe("Explain watcher failures");
+    expect(fileHeading()).toBe("Explain watcher failures");
     const nav = screen.getByRole("navigation", { name: "Folders" });
     expect(within(nav).getByRole("button", { name: /AVA Explorer/ }).getAttribute("aria-current")).toBe("true");
   });
 
-  it("opens a later page directly, not the folder's first page", async () => {
-    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="page-2" />);
-    expect(await screen.findByText("PAGE 2 / 2")).not.toBeNull();
-    expect(pageHeading()).toBe("Alpha second page");
+  it("opens a later file directly, not the folder's first file", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="file-2" />);
+    expect(await screen.findByText("PAGE 1 / 1")).not.toBeNull();
+    expect(fileHeading()).toBe("Alpha second file");
+    expect(within(screen.getByRole("navigation", { name: "Files in General" })).getByRole("button", { name: /Alpha second file/ }).getAttribute("aria-current")).toBe("page");
   });
 
   it("applies the handoff once and never re-selects it on refresh", async () => {
-    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="page-2" />);
-    await screen.findByText("PAGE 2 / 2");
-    fireEvent.click(screen.getByRole("button", { name: "Previous page" }));
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="file-2" />);
+    await screen.findByText("PAGE 1 / 1");
+    const files = screen.getByRole("navigation", { name: "Files in General" });
+    fireEvent.click(within(files).getByRole("button", { name: /Zulu first file/ }));
+    expect(fileHeading()).toBe("Zulu first file");
     const loadsBefore = vi.mocked(notesApi.fetchNotes).mock.calls.length;
     window.dispatchEvent(new Event("focus"));
     await waitFor(() => expect(vi.mocked(notesApi.fetchNotes).mock.calls.length).toBeGreaterThan(loadsBefore));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(counter()).toBe("PAGE 1 / 2");
+    expect(fileHeading()).toBe("Zulu first file");
   });
 
   it("says a missing note is unavailable without revealing why", async () => {

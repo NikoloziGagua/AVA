@@ -84,7 +84,7 @@ describe("Notes tools", () => {
     expect(search.text).toContain("University/Agile Development");
   });
 
-  it("captures and reorders stable document pages through versioned tools", async () => {
+  it("captures and reorders stable document files through versioned tools", async () => {
     await tool("notes_capture").run({
       folder_path: "Ideas/Book",
       title: "Page two",

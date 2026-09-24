@@ -54,8 +54,8 @@ export function folderLabel(folder: NoteFolder): string {
   return folder.path || folder.breadcrumb.map((crumb) => crumb.name).join(" / ") || folder.name;
 }
 
-/** The pages of one folder in book order: stored position, then title, then id. */
-export function folderPages(notes: Note[], folderId: string): Note[] {
+/** The files of one folder in stable order: stored position, then title, then id. */
+export function folderDocuments(notes: Note[], folderId: string): Note[] {
   return notes
     .filter((note) => note.status !== "archived" && noteFolderId(note) === folderId)
     .sort((a, b) =>

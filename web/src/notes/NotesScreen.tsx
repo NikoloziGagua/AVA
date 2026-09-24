@@ -55,6 +55,7 @@ import {
   type NotesTree,
 } from "./api.js";
 import { FolderDialog, FolderTree } from "./FolderTree.js";
+import { NoteFileList } from "./NoteFileList.js";
 import { NotePager } from "./NotePager.js";
 import { ProjectBrief } from "./ProjectBrief.js";
 import {
@@ -62,7 +63,7 @@ import {
   buildFolderTree,
   flattenFolderTree,
   folderLabel,
-  folderPages,
+  folderDocuments,
   legacyFolders,
   matchesQuery,
   noteFolderId,
@@ -86,7 +87,7 @@ const SECTION = {
 /** Browser-local only: whether Sir has dismissed the one-time folders notice. */
 const MIGRATION_NOTICE_KEY = "ava:notes-folders-notice-v1";
 
-type View = "pages" | "board";
+type View = "files" | "board";
 type EditorTarget = { note: Note | null; folderId: string; section: NoteSection; documentType: NoteDocumentType };
 type FolderDialogState = { mode: "create"; parent: NoteFolder | null } | { mode: "rename"; folder: NoteFolder };
 type EditorDraft = {
@@ -138,8 +139,8 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   // periodic refresh can never re-open or re-select it.
   const pendingHandoff = useRef<string | null>(initialNoteId);
   const [selected, setSelected] = useState(GENERAL_FOLDER_ID);
-  const [pageId, setPageId] = useState<string | null>(null);
-  const [view, setView] = useState<View>("pages");
+  const [fileId, setFileId] = useState<string | null>(null);
+  const [view, setView] = useState<View>("files");
   const [query, setQuery] = useState("");
   const [capture, setCapture] = useState("");
   const [captureSection, setCaptureSection] = useState<NoteSection>("capture");
@@ -167,8 +168,8 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
         const target = next.notes.find((note) => note.id === handoff && note.status !== "archived");
         if (target) {
           setSelected(noteFolderId(target));
-          setPageId(target.id);
-          setView("pages");
+          setFileId(target.id);
+          setView("files");
         } else {
           // Same wording whether it was deleted, archived or never existed.
           setSelected(GENERAL_FOLDER_ID);
@@ -226,22 +227,23 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     void loadProjectMemory(briefProject.name);
   }, [briefProject?.id, briefProject?.name]);
 
-  const pages = useMemo(() => snapshot ? folderPages(snapshot.notes, selected) : [], [snapshot, selected]);
+  const files = useMemo(() => snapshot ? folderDocuments(snapshot.notes, selected) : [], [snapshot, selected]);
+  const selectedFile = files.find((note) => note.id === fileId) ?? files[0] ?? null;
   const searchResults = useMemo(() => {
     if (!snapshot || !query.trim()) return [];
     return snapshot.notes.filter((note) => note.status !== "archived" && matchesQuery(note, query));
   }, [snapshot, query]);
-  const boardNotes = useMemo(() => pages.filter((note) => matchesQuery(note, query)), [pages, query]);
+  const boardNotes = useMemo(() => files.filter((note) => matchesQuery(note, query)), [files, query]);
 
   const selectFolder = (id: string) => {
     setSelected(id);
-    setPageId(null);
+    setFileId(null);
   };
 
-  const openPage = (note: Note) => {
+  const openFile = (note: Note) => {
     setSelected(noteFolderId(note));
-    setPageId(note.id);
-    setView("pages");
+    setFileId(note.id);
+    setView("files");
     setQuery("");
   };
 
@@ -269,8 +271,8 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
         pinned: captureSection === "priorities",
       });
       setCapture("");
-      setPageId(created.id);
-      setNotice(`Captured as a new page in ${folderName}.`);
+      setFileId(created.id);
+      setNotice(`Captured as a new file in ${folderName}.`);
     });
   };
 
@@ -288,18 +290,18 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     });
   };
 
-  const movePage = async (note: Note, folderId: string) => {
+  const moveFile = async (note: Note, folderId: string) => {
     const destination = tree?.folders.find((entry) => entry.id === folderId);
-    const at = pages.findIndex((page) => page.id === note.id);
-    const neighbour = pages[at + 1] ?? pages[at - 1] ?? null;
-    await perform("page", async () => {
+    const at = files.findIndex((file) => file.id === note.id);
+    const neighbour = files[at + 1] ?? files[at - 1] ?? null;
+    await perform("file", async () => {
       await updateNote(note.id, note.version, { folderId });
-      setPageId(neighbour?.id ?? null);
-      setNotice(`Moved “${note.title}” to ${destination ? folderLabel(destination) : "another folder"}. It is the last page there.`);
+      setFileId(neighbour?.id ?? null);
+      setNotice(`Moved “${note.title}” to ${destination ? folderLabel(destination) : "another folder"}. It is the last file there.`);
     });
   };
 
-  const newPage = (documentType: NoteDocumentType = "general") =>
+  const newFile = (documentType: NoteDocumentType = "general") =>
     setEditor({ note: null, folderId: selected, section: "capture", documentType });
 
   const legacy = tree ? legacyFolders(tree.folders, tree.migration.legacyRootFolderIds) : [];
@@ -371,7 +373,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
       {showMigration && (
         <section aria-label="Notes now use folders" className="lg:col-span-12" data-panel-section>
           <div className="rounded-xl border border-[var(--ac)]/20 bg-[var(--ac)]/[0.05] px-4 py-3 text-xs leading-5 text-white/70">
-            <p className="font-medium text-white">Notes now live in folders, one page at a time.</p>
+            <p className="font-medium text-white">Notes now live as files inside folders.</p>
             <p className="mt-1">
               All {tree.snapshot.totalDocuments} of your notes are here unchanged, in the order they were written.
               Your old project spaces became folders. Nothing was merged or renamed.
@@ -383,7 +385,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                 ))}
               </ul>
             )}
-            <p className="mt-2 text-white/50">If two folders belong together, move the pages yourself or ask AVA to combine them. She will show you first.</p>
+            <p className="mt-2 text-white/50">If two folders belong together, move the files yourself or ask AVA to combine them. She will show you first.</p>
             <button type="button" onClick={dismissMigration} className="hud mt-2 text-[9px] tracking-[0.14em] text-[var(--ac)]/80 hover:text-[var(--ac)]">GOT IT</button>
           </div>
         </section>
@@ -427,7 +429,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
             <p className="truncate text-[10px] text-white/35">{crumbs}</p>
             <div className="flex items-center gap-2">
               <h2 className="truncate text-lg font-semibold text-white">{folderName}</h2>
-              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/40">{pages.length} {pages.length === 1 ? "page" : "pages"}</span>
+              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/40">{files.length} {files.length === 1 ? "file" : "files"}</span>
             </div>
             {folder?.description && <p className="mt-0.5 text-xs text-white/40">{folder.description}</p>}
           </div>
@@ -435,30 +437,30 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
             <label className="relative min-w-0 basis-full sm:w-52 sm:basis-auto sm:flex-none">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
               <input
-                aria-label={view === "pages" ? "Search all pages" : "Search this folder"}
+                aria-label={view === "files" ? "Search all files" : "Search this folder"}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder={view === "pages" ? "Search all pages" : "Search this folder"}
+                placeholder={view === "files" ? "Search all files" : "Search this folder"}
                 className="h-9 w-full rounded-lg border border-white/10 bg-black/40 pl-9 pr-3 text-xs text-white outline-none focus:border-[var(--ac)]/35"
               />
             </label>
             <div role="group" aria-label="View" className="flex rounded-lg border border-white/10 p-0.5">
-              <button type="button" aria-pressed={view === "pages"} onClick={() => setView("pages")} className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11px] ${view === "pages" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/75"}`}><BookOpen size={13} />Pages</button>
+              <button type="button" aria-pressed={view === "files"} onClick={() => setView("files")} className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11px] ${view === "files" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/75"}`}><BookOpen size={13} />Files</button>
               <button type="button" aria-pressed={view === "board"} onClick={() => setView("board")} className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11px] ${view === "board" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/75"}`}><KanbanSquare size={13} />Board</button>
             </div>
             <button type="button" aria-label="Refresh notes" onClick={() => void load()} className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 text-white/40 transition hover:text-white"><RefreshCw size={14} /></button>
-            <Button size="sm" onClick={() => newPage()} className="h-9"><Plus size={14} />New page</Button>
-            <Button size="sm" variant="outline" onClick={() => newPage("study")} className="h-9"><GraduationCap size={14} />Study page</Button>
+            <Button size="sm" onClick={() => newFile()} className="h-9"><Plus size={14} />New file</Button>
+            <Button size="sm" variant="outline" onClick={() => newFile("study")} className="h-9"><GraduationCap size={14} />Study file</Button>
           </div>
         </div>
 
-        {view === "pages" && query.trim() ? (
+        {view === "files" && query.trim() ? (
           <section aria-label="Search results" className="rounded-2xl border border-white/[0.07] bg-black/25 px-3 py-3">
-            <p className="mb-2 px-2 text-[10px] text-white/40">{searchResults.length} {searchResults.length === 1 ? "page matches" : "pages match"} “{query.trim()}”</p>
+            <p className="mb-2 px-2 text-[10px] text-white/40">{searchResults.length} {searchResults.length === 1 ? "file matches" : "files match"} “{query.trim()}”</p>
             <ul className="space-y-0.5">
               {searchResults.map((note) => (
                 <li key={note.id}>
-                  <button type="button" onClick={() => openPage(note)} className="flex w-full flex-col rounded-lg px-3 py-2 text-left transition hover:bg-white/[0.04]">
+                  <button type="button" onClick={() => openFile(note)} className="flex w-full flex-col rounded-lg px-3 py-2 text-left transition hover:bg-white/[0.04]">
                     <span className="text-sm text-white/85">{note.title}</span>
                     <span className="text-[10px] text-white/35">{note.folderPath?.map((crumb) => crumb.name).join(" / ") || "General"}</span>
                   </button>
@@ -466,30 +468,37 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
               ))}
             </ul>
           </section>
-        ) : view === "pages" ? (
-          <NotePager
-            pages={pages}
-            currentId={pageId}
-            folderName={folderName}
-            folders={flatFolders}
-            busy={busy === "page"}
-            onSelect={setPageId}
-            onEdit={(note) => setEditor({ note, folderId: noteFolderId(note), section: note.section, documentType: note.documentType ?? "general" })}
-            onMove={(note, folderId) => void movePage(note, folderId)}
-            onAsk={(note) => onStartTask(`Open my Notes page “${note.title}” (in ${note.folderPath?.map((crumb) => crumb.name).join(" / ") || "General"}) and help me work through it.`)}
-            onNewPage={() => newPage()}
-          />
+        ) : view === "files" ? (
+          <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(180px,0.32fr)_minmax(0,1fr)]">
+            <NoteFileList
+              files={files}
+              selectedId={selectedFile?.id ?? null}
+              folderName={folderName}
+              onSelect={setFileId}
+              onNewFile={() => newFile()}
+            />
+            <NotePager
+              note={selectedFile}
+              folderName={folderName}
+              folders={flatFolders}
+              busy={busy === "file"}
+              onEdit={(note) => setEditor({ note, folderId: noteFolderId(note), section: note.section, documentType: note.documentType ?? "general" })}
+              onMove={(note, folderId) => void moveFile(note, folderId)}
+              onAsk={(note) => onStartTask(`Open my Notes file “${note.title}” (stable ID: ${note.id}; folder: ${note.folderPath?.map((crumb) => crumb.name).join(" / ") || "General"}) and help me work through it.`)}
+              onNewFile={() => newFile()}
+            />
+          </div>
         ) : (
           <>
             {project && (
               <ProjectBrief
                 project={project}
-                notes={pages}
+                notes={files}
                 memory={projectMemory}
                 memoryLoading={projectMemoryLoading}
                 memoryError={projectMemoryError}
                 onRetryMemory={() => void loadProjectMemory(project.name)}
-                onOpenNote={openPage}
+                onOpenNote={openFile}
                 onOpenChat={onOpenChat}
               />
             )}
@@ -499,7 +508,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                 <div className="mb-2 flex items-center gap-2 hud text-[9px] tracking-[0.16em] text-[#f6c76c]/80"><Pin size={12} />PINNED PRIORITIES</div>
                 <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                   {pinned.map((note) => (
-                    <button key={note.id} type="button" onClick={() => openPage(note)}
+                    <button key={note.id} type="button" onClick={() => openFile(note)}
                       className="min-w-52 max-w-72 rounded-lg border border-white/[0.07] bg-black/30 px-3 py-2 text-left text-xs text-white/70 hover:border-[#f6c76c]/25 hover:text-white">
                       <span className="line-clamp-1 font-medium">{note.title}</span>
                       <span className="mt-1 block line-clamp-1 text-[10px] text-white/30">{note.content}</span>
@@ -542,7 +551,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                             onPin={() => void togglePin(note)} />
                         ))}
                         {notes.length === 0 && (
-                          <button type="button" onClick={() => newPage()}
+                          <button type="button" onClick={() => newFile()}
                             className="flex min-h-24 w-full flex-col items-center justify-center rounded-xl border border-dashed border-white/[0.08] text-[10px] text-white/25 transition hover:border-[var(--ac)]/20 hover:text-white/45">
                             <Plus size={15} className="mb-2" />Add to {meta.label}
                           </button>
@@ -592,19 +601,19 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                 ...(folderId !== noteFolderId(current) ? { folderId } : {}),
                 ...(documentType !== (current.documentType ?? "general") ? { documentType } : {}),
               });
-              if (folderId !== noteFolderId(current)) { setSelected(folderId); setPageId(current.id); }
+              if (folderId !== noteFolderId(current)) { setSelected(folderId); setFileId(current.id); }
             } else {
               const created = await createNote(draft);
               setSelected(noteFolderId(created));
-              setPageId(created.id);
-              setView("pages");
+              setFileId(created.id);
+              setView("files");
             }
             setEditor(null);
-            setNotice(current ? "Page updated with a new change-history entry." : "New page added at the end of the folder.");
+            setNotice(current ? "File updated with a new change-history entry." : "New file added at the end of the folder.");
           });
         }}
         onDelete={editor?.note ? async () => {
-          if (!window.confirm("Delete this page permanently?")) return;
+          if (!window.confirm("Delete this file permanently?")) return;
           await perform("editor", async () => { await deleteNote(editor.note!.id, editor.note!.version); setEditor(null); });
         } : undefined}
         onPromote={editor?.note ? async (target) => {
@@ -707,7 +716,7 @@ function NoteEditor({ open, target, folders, busy, onOpenChange, onSave, onDelet
 
   const changeType = (next: NoteDocumentType) => {
     setDocumentType(next);
-    // Only a blank page gets the study headings; existing writing is never replaced.
+    // Only a blank file gets the study headings; existing writing is never replaced.
     if (next === "study" && !content.trim()) setContent(STUDY_TEMPLATE);
     if (next === "general" && content === STUDY_TEMPLATE) setContent("");
   };
@@ -716,14 +725,14 @@ function NoteEditor({ open, target, folders, busy, onOpenChange, onSave, onDelet
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[88vh] max-w-3xl overflow-y-auto border-white/10 bg-[#050708]/95 p-0">
         <div className="sticky top-0 z-10 border-b border-white/[0.07] bg-[#050708]/95 px-6 py-5 backdrop-blur-xl">
-          <div className="flex items-center gap-2"><FileText size={16} className="text-[var(--ac)]" /><DialogTitle className="text-sm font-semibold">{note ? "Edit page" : documentType === "study" ? "New study page" : "New page"}</DialogTitle>{note && <span className="hud text-[8px] text-white/25">V{note.version}</span>}</div>
+          <div className="flex items-center gap-2"><FileText size={16} className="text-[var(--ac)]" /><DialogTitle className="text-sm font-semibold">{note ? "Edit file" : documentType === "study" ? "New study file" : "New file"}</DialogTitle>{note && <span className="hud text-[8px] text-white/25">V{note.version}</span>}</div>
           <DialogDescription className="mt-1 text-[10px] text-white/35">Context, references and every meaningful change stay together.</DialogDescription>
         </div>
         <div className="grid gap-5 px-6 py-5 md:grid-cols-2">
           <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Title</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} className="h-10 w-full rounded-lg border border-white/10 bg-black/45 px-3 text-sm text-white outline-none focus:border-[var(--ac)]/35" placeholder={documentType === "study" ? "e.g. Lecture 4: Scrum roles" : "A clear, useful title"} /></label>
-          <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Page</span><textarea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-56 w-full resize-y rounded-lg border border-white/10 bg-black/45 px-3 py-3 text-sm leading-6 text-white outline-none focus:border-[var(--ac)]/35" placeholder="Write the page. Markdown headings and lists work." /></label>
+          <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Document</span><textarea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-56 w-full resize-y rounded-lg border border-white/10 bg-black/45 px-3 py-3 text-sm leading-6 text-white outline-none focus:border-[var(--ac)]/35" placeholder="Write the file. Markdown headings and lists work." /></label>
           <FieldSelect label="Folder" value={folderId} onChange={setFolderId} options={folders.map(({ folder, depth }) => ({ value: folder.id, label: `${"  ".repeat(depth)}${folder.name}` }))} />
-          <FieldSelect label="Page type" value={documentType} onChange={(value) => changeType(value as NoteDocumentType)} options={[{ value: "general", label: "General page" }, { value: "study", label: "Study notes" }]} />
+          <FieldSelect label="File type" value={documentType} onChange={(value) => changeType(value as NoteDocumentType)} options={[{ value: "general", label: "General file" }, { value: "study", label: "Study notes" }]} />
           <FieldSelect label="Template section" value={section} onChange={(value) => setSection(value as NoteSection)} options={NOTE_SECTIONS.map((value) => ({ value, label: SECTION[value].label }))} />
           <FieldSelect label="Kind" value={kind} onChange={(value) => setKind(value as NoteKind)} options={NOTE_KINDS.map((value) => ({ value, label: value.replace("_", " ") }))} />
           <FieldSelect label="Board stage" value={status} onChange={(value) => setStatus(value as NoteStage)} options={NOTE_STAGES.map((value) => ({ value, label: STAGE[value].label }))} />
@@ -763,7 +772,7 @@ function NoteEditor({ open, target, folders, busy, onOpenChange, onSave, onDelet
           <div className="flex items-center justify-end gap-2">
             {onDelete && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void onDelete()} className="text-red-300/60 hover:text-red-200"><Trash2 size={13} />Delete</Button>}
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button size="sm" disabled={!content.trim() || busy} onClick={() => void onSave({ title, content, kind, status, folderId, documentType, section, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean), links: linksFromText(linkText), pinned })}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}Save page</Button>
+            <Button size="sm" disabled={!content.trim() || busy} onClick={() => void onSave({ title, content, kind, status, folderId, documentType, section, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean), links: linksFromText(linkText), pinned })}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}Save file</Button>
           </div>
         </footer>
       </DialogContent>

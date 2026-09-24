@@ -38,19 +38,20 @@ function props(overrides: Partial<AppSidebarProps> = {}): AppSidebarProps {
   };
 }
 
-function setNarrow(narrow: boolean) {
-  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
-    matches: narrow && query.includes("max-width"),
-    media: query,
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-  })) as unknown as typeof window.matchMedia;
+/** Evaluates min/max-width media queries against a real viewport width. */
+function setViewportWidth(width: number) {
+  window.matchMedia = vi.fn().mockImplementation((query: string) => {
+    const max = /max-width:\s*(\d+)px/.exec(query);
+    const min = /min-width:\s*(\d+)px/.exec(query);
+    const matches = (!max || width <= Number(max[1])) && (!min || width >= Number(min[1]));
+    return { matches, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() };
+  }) as unknown as typeof window.matchMedia;
 }
 
 describe("AppSidebar", () => {
   beforeEach(() => {
     fetchSessionPage.mockReset().mockResolvedValue({ sessions, nextCursor: null });
-    setNarrow(false);
+    setViewportWidth(1280);
   });
   afterEach(cleanup);
 
@@ -94,8 +95,8 @@ describe("AppSidebar", () => {
     expect(input.onExpandedChange).toHaveBeenCalledWith(true);
   });
 
-  it("closes the expanded drawer after a choice on a narrow screen", () => {
-    setNarrow(true);
+  it("closes the expanded drawer after a choice on a phone", () => {
+    setViewportWidth(390);
     const input = props();
     render(<AppSidebar {...input} />);
     fireEvent.click(screen.getByRole("button", { name: "Today" }));
@@ -103,8 +104,24 @@ describe("AppSidebar", () => {
     expect(input.onExpandedChange).toHaveBeenCalledWith(false);
   });
 
-  it("closes the drawer after opening a conversation on a narrow screen", async () => {
-    setNarrow(true);
+  it("closes the drawer after a choice at 800px, where it still overlays the page", () => {
+    setViewportWidth(800);
+    const input = props();
+    render(<AppSidebar {...input} />);
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(input.onExpandedChange).toHaveBeenCalledWith(false);
+  });
+
+  it("keeps the drawer open at 1024px, where it no longer overlays the page", () => {
+    setViewportWidth(1024);
+    const input = props();
+    render(<AppSidebar {...input} />);
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(input.onExpandedChange).not.toHaveBeenCalled();
+  });
+
+  it("closes the drawer after opening a conversation on a phone", async () => {
+    setViewportWidth(390);
     const input = props();
     render(<AppSidebar {...input} />);
     fireEvent.click(await screen.findByText("Newest other chat"));

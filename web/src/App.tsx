@@ -256,6 +256,10 @@ export function App() {
     try { window.localStorage.removeItem(LAST_CHAT_STORAGE_KEY); } catch { /* non-critical */ }
   }, []);
 
+  // The conversation voice actually bound during the current voice visit. It is
+  // tied to that visit's view object, so a later visit never inherits it.
+  const voiceBindingRef = useRef<{ visit: View; sessionId: string } | null>(null);
+
   const openChat = useCallback((sessionId: string | null, options?: { audit?: boolean }) => {
     setView({ name: "chat", sessionId, ...(options?.audit ? { audit: true } : {}) });
   }, []);
@@ -269,6 +273,10 @@ export function App() {
     setNewChatRevision((revision) => revision + 1);
     setView({ name: "chat", sessionId: null, ...(initialText ? { initialText } : {}) });
   };
+
+  // Whatever this tab showed first (the intro, a reduced-motion skip or a deep
+  // link), its first load is over: later reloads go straight to Today.
+  useEffect(() => { markSplashSeen(); }, []);
 
   // Expired/invalid token → back to pairing. api.ts dispatches `ava:unauthorized`
   // (+ clearToken) on a 401; we just listen and drop back to the pairing screen.
@@ -404,7 +412,7 @@ export function App() {
             data-view="splash"
             className="absolute inset-0"
           >
-            <Splash onDone={() => { markSplashSeen(); setView({ name: "today" }); }} />
+            <Splash onDone={() => setView({ name: "today" })} />
           </motion.div>
         )}
         {view.name === "today" && (
@@ -499,8 +507,16 @@ export function App() {
             <VoiceScreen
               initialSessionId={view.sessionId}
               intent={view.intent}
-              onSessionBound={rememberChat}
-              onSessionUnavailable={() => forgetUnavailableChat(view.sessionId)}
+              onSessionBound={(sessionId) => {
+                voiceBindingRef.current = { visit: view, sessionId };
+                rememberChat(sessionId);
+              }}
+              // The unavailable conversation is the one voice last bound in this
+              // visit (a new or continued chat), else the one it was entered with.
+              onSessionUnavailable={() => {
+                const bound = voiceBindingRef.current;
+                forgetUnavailableChat(bound?.visit === view ? bound.sessionId : view.sessionId);
+              }}
               onOpenConversations={() => setView({ name: "list" })}
               onExit={(sid) => {
                 if (view.from === "chat") openChat(sid);

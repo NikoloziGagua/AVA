@@ -119,6 +119,9 @@ describe("Today", () => {
     const input = props();
     render(<TodayScreen {...input} />);
     expect(await screen.findByText("Let's set AVA up to run your week.")).toBeTruthy();
+    // It describes this screen only: memories may exist even when Today is empty.
+    expect(screen.getByText(/Nothing is on Today yet/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/doesn't know|does not know/i);
     fireEvent.click(screen.getByText(STARTERS[1].title));
     expect(input.onStartChat).toHaveBeenCalledWith(STARTERS[1].prompt);
     expect(screen.getByText("Not available yet")).toBeTruthy();

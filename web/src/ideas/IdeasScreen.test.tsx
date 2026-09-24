@@ -55,6 +55,39 @@ describe("Ideas", () => {
     expect((screen.getByLabelText("What's the idea?") as HTMLTextAreaElement).value).toBe("");
   });
 
+  it("holds the draft still while a save is pending, then clears it", async () => {
+    let finish!: () => void;
+    createNote.mockReturnValue(new Promise((resolve) => { finish = () => resolve(note({ id: "new" })); }));
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    await screen.findByText("Split-the-bills app");
+    const box = screen.getByLabelText("What's the idea?") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "Slow save" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save idea" }));
+    await waitFor(() => expect(box.readOnly).toBe(true));
+    expect(screen.getByRole("button", { name: "Saving…" })).toBeTruthy();
+    finish();
+    await waitFor(() => expect(box.value).toBe(""));
+    expect(box.readOnly).toBe(false);
+  });
+
+  it("never clears words that changed while the save was pending", async () => {
+    let finish!: () => void;
+    createNote.mockReturnValue(new Promise((resolve) => { finish = () => resolve(note({ id: "new" })); }));
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    await screen.findByText("Split-the-bills app");
+    const box = screen.getByLabelText("What's the idea?") as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "First thought" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save idea" }));
+    await waitFor(() => expect(box.readOnly).toBe(true));
+    // A programmatic change (read-only blocks typing) must still survive success.
+    fireEvent.change(box, { target: { value: "First thought, and a second one" } });
+    finish();
+    await waitFor(() => expect(box.readOnly).toBe(false));
+    expect(box.value).toBe("First thought, and a second one");
+    expect(createNote).toHaveBeenCalledTimes(1);
+    expect(createNote).toHaveBeenCalledWith(expect.objectContaining({ content: "First thought" }));
+  });
+
   it("cannot save an empty idea", async () => {
     render(<IdeasScreen onOpenNote={vi.fn()} />);
     await screen.findByText("Split-the-bills app");

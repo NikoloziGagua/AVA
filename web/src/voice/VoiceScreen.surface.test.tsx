@@ -110,6 +110,27 @@ describe("VoiceScreen decorative background", () => {
     expect(await screen.findByTestId("webgl-surface")).not.toBeNull();
   });
 
+  it("swaps to the static backdrop when the running surface reports a late failure", async () => {
+    vi.resetModules();
+    const surface = { fail: null as null | ((error: unknown) => void) };
+    vi.doMock("../lib/useReducedMotion.js", () => ({ useReducedMotion: () => false }));
+    vi.doMock("../components/ava/DottedSurface.js", () => ({
+      DottedSurface: ({ onError }: { onError?: (error: unknown) => void }) => {
+        surface.fail = onError ?? null;
+        return <div data-testid="webgl-surface" />;
+      },
+    }));
+    const { VoiceScreen } = await import("./VoiceScreen.js");
+    const onExit = vi.fn();
+    render(<VoiceScreen initialSessionId="shared-session" onExit={onExit} onSwitchToKeyboard={vi.fn()} />);
+    expect(await screen.findByTestId("webgl-surface")).not.toBeNull();
+    act(() => surface.fail?.(new Error("context lost")));
+    expect(screen.queryByTestId("webgl-surface")).toBeNull();
+    expect(document.querySelector("[data-voice-surface='static']")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "exit" }));
+    expect(onExit).toHaveBeenCalledWith("shared-session");
+  });
+
   it("never requests the WebGL module under reduced motion", async () => {
     const VoiceScreen = await loadVoice({ reduced: true, chunk: "resolves" });
     render(<VoiceScreen initialSessionId="shared-session" onExit={vi.fn()} onSwitchToKeyboard={vi.fn()} />);

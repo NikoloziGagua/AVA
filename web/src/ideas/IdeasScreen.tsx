@@ -44,13 +44,15 @@ export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => vo
   useEffect(() => { void refresh(); }, []);
 
   const save = async () => {
-    const content = draft.trim();
+    const submitted = draft;
+    const content = submitted.trim();
     if (!content || saving) return;
     setSaving(true);
     setSaveError(null);
     try {
       await createNote({ content, kind: "idea", section: "capture", projectId: null });
-      setDraft("");
+      // Clear only the words that were saved, never anything newer.
+      setDraft((current) => (current === submitted ? "" : current));
       await refresh();
     } catch (error) {
       // Keep the words; say what went wrong.
@@ -72,6 +74,9 @@ export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => vo
             <textarea
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              // Held still while saving, so no new words can be lost.
+              readOnly={saving}
+              aria-busy={saving || undefined}
               rows={3}
               className="min-h-20 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/90 outline-none focus-visible:border-[var(--ac)]/50"
               placeholder="A thought worth keeping…"

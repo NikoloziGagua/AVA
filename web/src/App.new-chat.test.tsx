@@ -396,6 +396,65 @@ describe("App navigation", () => {
     expect(window.localStorage.getItem("ava:last-chat-session")).toBeNull();
   });
 
+  it("forgets the conversation Today voice bound when that one becomes unavailable", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "mock voice bound" }, LAZY_ROUTE));
+    expect(window.localStorage.getItem("ava:last-chat-session")).toBe("voice-bound-5");
+    fireEvent.click(screen.getByRole("button", { name: "mock voice unavailable" }));
+    expect(window.localStorage.getItem("ava:last-chat-session")).toBeNull();
+  });
+
+  it("forgets the new conversation voice moved to, not the one it was entered with", async () => {
+    window.localStorage.setItem("ava:last-chat-session", "remembered-8");
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "mock voice bound" }, LAZY_ROUTE));
+    fireEvent.click(screen.getByRole("button", { name: "mock voice unavailable" }));
+    expect(window.localStorage.getItem("ava:last-chat-session")).toBeNull();
+  });
+
+  it("never lets an earlier voice visit's binding decide what a later visit forgets", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
+    fireEvent.click(await screen.findByRole("button", { name: "mock voice bound" }, LAZY_ROUTE));
+    fireEvent.click(screen.getByRole("button", { name: "mock voice exit" }));
+    // A different conversation becomes current, then a new voice visit finds it
+    // unavailable before binding anything.
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    fireEvent.click(await screen.findByRole("button", { name: "mock establish session" }));
+    expect(window.localStorage.getItem("ava:last-chat-session")).toBe("internal-chat-17");
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
+    expect(await screen.findByText(/voice-session-internal-chat-17-intent-resume/, undefined, LAZY_ROUTE)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "mock voice unavailable" }));
+    expect(window.localStorage.getItem("ava:last-chat-session")).toBeNull();
+  });
+
+  it("does not play the intro after a reduced-motion first load switches to full motion", () => {
+    window.sessionStorage.clear();
+    window.localStorage.setItem("ava-motion", "reduced");
+    const first = render(<App />);
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
+    first.unmount();
+    window.localStorage.removeItem("ava-motion");
+    render(<App />);
+    expect(screen.queryByText("Splash")).toBeNull();
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
+  });
+
+  it("does not play the intro on a reload after a deep-linked first load", () => {
+    window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/?view=watches&watch=watch_Exact-7&from=mission-control");
+    const first = render(<App />);
+    expect(screen.getByText("watch-management-screen")).toBeTruthy();
+    first.unmount();
+    window.history.replaceState(null, "", "/");
+    render(<App />);
+    expect(screen.queryByText("Splash")).toBeNull();
+    expect(screen.getByTestId("mock-today")).toBeTruthy();
+  });
+
   it("opens a watch run for reference without making it the current chat", async () => {
     window.localStorage.setItem("ava:last-chat-session", "mine-1");
     render(<App />);

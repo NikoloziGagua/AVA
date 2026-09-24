@@ -191,8 +191,8 @@ function FirstRun(props: TodayScreenProps & { dateLine: string }) {
           <p className="text-sm text-white/55">{props.dateLine}</p>
           <h1 className="text-3xl font-semibold tracking-tight text-white/95">Let's set AVA up to run your week.</h1>
           <p className="mx-auto max-w-[600px] text-base leading-7 text-white/70">
-            AVA doesn't know your courses, deadlines or plans yet. Tell it in your own words, typing or
-            talking, and it will keep track of them for you.
+            Nothing is on Today yet. Tell AVA about your courses, deadlines and plans in your own words,
+            typing or talking. Your conversations, ideas and notes appear here as you add them.
           </p>
         </div>
         <div className="w-full">

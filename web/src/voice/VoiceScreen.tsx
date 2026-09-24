@@ -100,14 +100,22 @@ export class VoiceSurfaceBoundary extends Component<{ children: ReactNode }, { f
 
 function VoiceSurface() {
   const reduced = useReducedMotion();
+  // A drawing failure after mount happens in an animation frame, outside any
+  // error boundary; the surface reports it and has already cleaned up.
+  const [failed, setFailed] = useState(false);
   // Reduced motion never probes WebGL or requests the Three.js graph.
   const animated = useMemo(() => !reduced && supportsVoiceWebGL(), [reduced]);
-  if (!animated) return <StaticVoiceSurface />;
+  if (!animated || failed) return <StaticVoiceSurface />;
   return (
     <VoiceSurfaceBoundary>
       <Suspense fallback={<StaticVoiceSurface />}>
         <div aria-hidden="true" data-voice-surface="webgl" className="pointer-events-none absolute inset-0">
-          <DottedSurface />
+          <DottedSurface
+            onError={(error) => {
+              console.warn("[ava] voice background stopped; using static backdrop", error instanceof Error ? error.message : error);
+              setFailed(true);
+            }}
+          />
         </div>
       </Suspense>
     </VoiceSurfaceBoundary>

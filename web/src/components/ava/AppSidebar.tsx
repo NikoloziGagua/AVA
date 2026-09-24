@@ -32,8 +32,11 @@ export interface AppSidebarProps {
 }
 
 const RECENT_LIMIT = 8;
-/** Below this width the expanded drawer covers the page, so choosing closes it. */
-const NARROW_QUERY = "(max-width: 767px)";
+/**
+ * Below 1024px the expanded drawer overlays the page behind a scrim (see
+ * `.ava-sidebar-scrim` in theme.css), so choosing a destination closes it.
+ */
+const OVERLAY_QUERY = "(max-width: 1023px)";
 
 function formatRecentTime(value: number): string {
   const date = new Date(value);
@@ -51,9 +54,9 @@ function orderedRecent(sessions: SessionRow[], current: string | null): SessionR
   return [sessions[index]!, ...sessions.slice(0, index), ...sessions.slice(index + 1)];
 }
 
-function isNarrow(): boolean {
+function drawerOverlays(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function"
-    && window.matchMedia(NARROW_QUERY).matches;
+    && window.matchMedia(OVERLAY_QUERY).matches;
 }
 
 export function AppSidebar({
@@ -111,10 +114,10 @@ export function AppSidebar({
     [activeChatSessionId, sessions],
   );
 
-  /** Every choice made from an expanded drawer on a narrow screen closes it. */
+  /** Every choice made from a drawer that overlays the page closes it. */
   const choose = (action: () => void) => () => {
     action();
-    if (expanded && isNarrow()) onExpandedChange(false);
+    if (expanded && drawerOverlays()) onExpandedChange(false);
   };
 
   const renderDestination = (item: AppSidebarItem) => {

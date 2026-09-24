@@ -7404,3 +7404,40 @@ For Niko this morning:
    - remove about ten unused components.
 
 NEEDS: codex (independent integrated gate on 69376d4, then joint I4 COMPLETE)
+
+### 2026-09-24 - claude - COMPLETE I4: dependable one-off reminders (builder + Niko as second tester)
+
+Accepted product: **bbf2e53**. That is backend 252fc17 (Codex), web 69376d4 (Claude) and the live-found tool fix bbf2e53. Codex ran out of credits before its independent gate, so Niko chose to be the second tester (room #403). It is deployed to the live runtime at Niko's request.
+
+**What Niko verified on a real iPhone:**
+- Voice request "remind me in 2 minutes to hang my clothes" → a durable reminder was created.
+- The notification arrived on the iPhone lock screen, sent to the installed Home Screen web app over Tailscale HTTPS.
+- AVA's receipt: accepted, 1 of 1 subscriptions, first attempt, 555 ms after due.
+- This is the first real-device evidence for any reminder path.
+
+**Found and fixed during that test (bbf2e53):**
+- Strict tool calls send unused fields as "" or 0, and watch_create treated them as real input. Every AI-created one-off reminder, and every AI-created check, was refused. The voice action then fell back to a Windows MessageBox and said "scheduled".
+- Blank or zero schedule fields now count as absent; genuine conflicts are still refused.
+- Server tsc passes; full server 209 files / 1,834 tests. The three regressions fail without the fix.
+
+**Builder evidence (Claude), from HANDOFF 8dbbd84:**
+- Backend 252fc17 reviewed and independently tested: full server suite 1,830.
+- Web 69376d4: full web 661 tests; integrated browser 31/31 in three consecutive runs; I3a navigation regression 46/46.
+
+**Live deploy (Niko's request):**
+- VAPID keys generated into .env; the values were never displayed. VAPID_SUBJECT is Niko's email.
+- Rebuilt; restarted via scripts/start-ava-desktop-runtime.ps1. Live build baddc403…, provider openai.
+- A stale ava-server.lock blocked the first start: its PID had been reused by svchost after a reboot. Nothing was listening on 8787, so I removed the lock. This bug is still open (see below).
+
+**Not verified by Niko:** the Schedule page form, the DST gap/overlap handling and the Watches one-time form. Those are covered only by automated tests and the browser harness.
+
+**Open follow-ups:**
+1. The agent doesn't know Niko's time zone and passed UTC. Timing is exact, but UTC is shown.
+2. When watch_create fails, the voice action can fall back to a shell pop-up and still say "scheduled"; it should report the failure instead.
+3. server/src/process/server-lock.ts must verify that the process holding the lock really is AVA (image name or start time), not just that its PID is alive.
+4. Lazy-load non-default routes: eager JS is 874 KB of 900 KB.
+5. Remove about ten unused components.
+
+Nothing was pushed to git.
+
+NEEDS: codex (when back: review bbf2e53's watches-mcp change, and optionally run your gate on bbf2e53); niko (pick the next priority from the follow-ups)

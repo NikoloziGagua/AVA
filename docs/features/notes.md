@@ -2,111 +2,114 @@
 
 ## Purpose
 
-Notes is AVA's visible, shared place for capturing and organising ideas,
-requirements, priorities, decisions and stable project context. It is separate
-from implicit durable memory: Notes is deliberately user-visible, editable and
-arranged for project work.
+Notes is AVA's visible, editable knowledge workspace. It is where Niko keeps
+named documents for university, projects, ideas and ordinary life context.
+Notes is authoritative content; semantic Memory may later point to a Note but
+does not replace or silently rewrite it.
 
-## Workspace model
+## Folder and document model
 
-- **General** is always available for uncategorised capture.
-- **Projects** are explicit records, so an empty project space remains visible.
-- Every project presents four lightweight template sections:
-  - **Quick capture** for ideas and requirements.
-  - **Pinned priorities** for the few items that deserve persistent focus.
-  - **Decisions** for choices and the reasons behind them.
-  - **Documentation** for stable context that should outlive a single task.
-- The Kanban board uses **Ideas**, **Doing**, **Review**, and **Done**. Archived
-  items stay in storage but do not clutter the normal board.
+- `General` is the stable built-in top-level folder for uncategorised capture.
+- Any number of other top-level folders may be created, such as `University`,
+  `AVA`, or a personal area.
+- Folders may be nested to six levels, for example
+  `University/Agile Development/Lectures`.
+- Names are case-insensitively unique among siblings. Folder names cannot
+  contain `/` because slash separates path segments.
+- Folder create, rename, move and empty-only delete operations are versioned.
+  Moves reject cycles and depth overflow.
+- Notes are named documents with stable IDs, Markdown content, a document type,
+  source evidence, safe links, tags, a bounded change log and an optimistic
+  version.
 
-Ideas are ordinary notes with `kind: "idea"`. The **Ideas** page and Today's
-*Recent ideas* read the same snapshot, and capturing an idea there calls the
-existing create endpoint. Opening an idea or a note from Today or Ideas passes
-its exact ID (`initialNoteId`). After the next successful load, Notes selects
-the note's space and opens it in the normal editor, exactly once; the periodic
-refresh never reopens it. A note that is gone or archived shows "That note is
-no longer available" on General; a load error shows the normal error state.
+`documentType: "study"` uses one canonical Markdown body with the headings Key
+concepts, Explanations, Questions and weak areas, Examples, Conclusions and
+Sources. AVA searches for a matching lecture/topic document before creating
+one, then version-updates it as the discussion develops. There is no parallel
+JSON study body that could disagree with what Niko sees.
 
-Each note may contain a title, rich plain-text content, kind, section, stage,
-tags, safe HTTP(S) links, pinned state, source metadata and a bounded change log.
+## Compatibility and migration
 
-## Connected project brief
+The hierarchy migration is additive and non-destructive:
 
-Selecting a project opens a collapsible **Project brief** above its existing
-template and Kanban board. The Brief is a read-only composition over data AVA
-already owns:
+- every existing General note receives folder `notes_general`;
+- every existing `note_projects` row becomes a top-level folder with the same
+  stable ID;
+- every existing note keeps its ID, title, body, source, version, change log
+  and promotion lineage;
+- historical project, section, kind and Kanban-stage fields remain during v1;
+- legacy duplicate titles do not block, rename or merge migration.
 
-- priorities, open work, decisions and stable context come from the current
-  project Notes;
-- indexed knowledge comes from the existing authenticated memory-index route,
-  explicitly scoped to the project's name;
-- a second client-side scope check excludes personal and other-project entries;
-- every memory shows verified, changed, unavailable or governance-excluded
-  status, with its evidence reason in collapsed details;
-- conversation-backed memory can return directly to its source chat.
-
-The Brief does not generate an AI summary, copy records into a new project
-database, or make memory-governance changes. A failure in memory retrieval is
-shown locally and never hides or disables project Notes. Async responses are
-versioned in the client so a slow result from a previously selected project
-cannot appear in the current workspace.
+The current optional Board metadata remains Ideas, Doing, Review, Done and
+Archived. General, Ideas, Today, Project Brief and exact-note links continue to
+read the compatibility fields while the Finder-style Notes interface is built
+in the next increment. Similar-looking folders are never merged automatically.
+The current Agile course folders are presented for an explicit, versioned move
+into `University/Agile Development` so the data change is reviewable.
 
 ## Working with AVA
 
-AVA exposes four Notes tools in text and voice task runs:
+AVA exposes five Notes tools in chat and voice:
 
-- `notes_capture` creates a note and creates a named project space when needed.
-- `notes_search` finds notes and returns their current versions.
-- `notes_update` edits, pins, categorises or moves a note using optimistic
-  version checks.
-- `notes_promote` turns a note into a prefilled task or explicitly requests a
-  self-improvement while preserving the source note and lineage.
+- `notes_capture` creates a document. `folder_path` may explicitly create
+  missing path segments when Niko asks to save into that path.
+- `notes_search` searches title, content and tags, optionally within one folder
+  or subtree, and returns stable IDs, breadcrumbs and current versions.
+- `notes_update` version-updates content or moves a document to an existing
+  folder.
+- `notes_folders` lists or explicitly creates, renames, moves and deletes-empty
+  folders. Rename/move/delete require the current folder version.
+- `notes_promote` turns a document into a task draft or an explicit
+  approval-gated self-improvement request while preserving source lineage.
 
-Natural requests such as "put this idea in Notes", "save that under the AVA
-project", or "move this note to Review" are routed to the Notes tools. A capture
-defaults to General and Quick capture when no project or section is specified.
-
-## Promotion and safety
-
-Task promotion creates a prompt for a separate AVA task. It does not claim that
-the work has begun or completed. Self-improvement promotion is explicit and uses
-AVA's existing approval-gated queue; Notes cannot bypass that boundary.
-
-Only HTTP and HTTPS links are accepted. Raw secrets must not be stored in Notes.
-Notes can contain sensitive personal and project information, so the API requires
-normal AVA device authentication.
+A folder listing is read-only. Local note/folder changes are low-risk local
+persistence. Self-improvement retains its separate approval boundary.
 
 ## Persistence and concurrency
 
-`note_projects` and `notes` live in AVA's SQLite state database. Existing legacy
-collections are migrated into explicit project spaces. Legacy stages are mapped
-from Inbox to Ideas and Active to Doing.
+`note_folders`, `note_projects` (compatibility) and `notes` live in AVA's SQLite
+database. General has a fixed ID. Migrated project IDs are reused as folder IDs.
+New top-level folders maintain a project compatibility projection so the old UI
+does not hide their documents; nested documents appear under their top-level
+folder until the new UI takes over.
 
-Every note has a monotonically increasing version. Updates and deletes require
-the caller's current version. A stale write returns the latest note rather than
-silently overwriting another edit. The change log is bounded to the most recent
-100 entries.
+Every folder and document has a monotonically increasing version. Stale writes
+return the latest record rather than overwriting it. A document move updates
+its legacy top-level project projection without changing the document ID.
+
+Notes are scrubbed at persistence. Only HTTP(S) links without credential-like
+material are retained. All HTTP routes require normal AVA authentication.
 
 ## API
 
-- `GET /api/notes` returns projects, notes and template metadata.
-- `POST /api/notes/projects` creates or ensures a project space.
-- `PATCH /api/notes/projects/:id` updates project metadata.
-- `POST /api/notes` captures a note.
-- `PATCH /api/notes/:id` performs a version-checked edit.
-- `DELETE /api/notes/:id?version=...` performs a version-checked delete.
-- `POST /api/notes/:id/promote` promotes to `task` or `self_improvement`.
+- `GET /api/notes/tree` returns ordered folders (version, breadcrumb, direct
+  document count), bounded document summaries, a snapshot version/timestamp and
+  migration compatibility evidence.
+- `GET /api/notes/:id` returns one authoritative document and breadcrumb.
+- `GET /api/notes` remains backward compatible and adds `folderId`,
+  `subtree=true` and `documentType` filters.
+- `POST /api/notes/folders` creates a folder.
+- `PATCH /api/notes/folders/:id` performs a versioned rename/move/edit.
+- `DELETE /api/notes/folders/:id?expectedVersion=...` deletes only an empty,
+  non-built-in folder.
+- Existing project routes remain available during compatibility.
+- Existing note create/update/delete/promote routes remain, with `folderId` and
+  `documentType` added to create/update.
 
-## Verification
+Typed hierarchy failures distinguish missing/stale records, sibling-name
+conflicts, non-empty folders, invalid moves and excessive depth.
 
-The feature is covered at four boundaries:
+## Verification and current boundary
 
-- State tests cover migration, project templates, rich details, version
-  conflicts, safe links and promotion lineage.
-- Route tests cover authentication, CRUD, stale writes and promotion.
-- Tool tests cover natural AVA capture/search/update/promotion behaviour.
-- UI tests cover project templates, quick capture and task promotion.
+State, route and tool tests cover legacy migration (including duplicate titles),
+General/root identity, sibling uniqueness, nested paths, subtree search, study
+documents, cycles, depth, optimistic concurrency, compatibility projection,
+empty-only deletion, privacy scrubbing and tool round trips. A separate
+live-database-copy verifier hashes all authoritative note fields before and
+after migration and removes its temporary copy.
 
-Explorer declares Notes as a real beta capability and links the implementation,
-workflow, evidence and limitations. The runtime truth check verifies that all
-four Notes tools and the `/api/notes` route are represented.
+This increment is the server/tool foundation. The Finder-style folder tree,
+document list and editor are the next separately reviewed UI increment. Until
+that lands, nested hierarchy operations are available conversationally and via
+the authenticated API, while the existing Notes Board remains the visible
+compatibility view.

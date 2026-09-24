@@ -176,6 +176,42 @@ export function openDb(path: string): Db {
     CREATE INDEX IF NOT EXISTS idx_notes_project_section
       ON notes(project_id, section, status, updated_at DESC);
   `);
+  // Notes v3: nested folders and named document types become the canonical
+  // organisation model. The migration is deliberately additive: legacy
+  // project ids are reused as root-folder ids, General receives one stable
+  // built-in id, and no note body/title/history/version is rewritten.
+  tryAddColumn(db, "notes", "folder_id", "TEXT REFERENCES note_folders(id) ON DELETE RESTRICT");
+  tryAddColumn(db, "notes", "document_type", "TEXT NOT NULL DEFAULT 'general'");
+  const notesMigrationNow = Date.now();
+  db.prepare(`
+    INSERT OR IGNORE INTO note_folders (
+      id, parent_id, name, description, position, built_in, version, created_at, updated_at
+    ) VALUES ('notes_general', NULL, 'General', '', 0, 1, 1, ?, ?)
+  `).run(notesMigrationNow, notesMigrationNow);
+  db.exec(`
+    INSERT OR IGNORE INTO note_folders (
+      id, parent_id, name, description, position, built_in, version, created_at, updated_at
+    )
+    SELECT id, NULL, name, description, 100, 0, version, created_at, updated_at
+    FROM note_projects;
+
+    UPDATE notes
+    SET folder_id = CASE
+      WHEN project_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM note_folders f WHERE f.id = notes.project_id
+      ) THEN project_id
+      ELSE 'notes_general'
+    END
+    WHERE folder_id IS NULL OR NOT EXISTS (
+      SELECT 1 FROM note_folders f WHERE f.id = notes.folder_id
+    );
+
+    UPDATE notes SET document_type = 'general'
+    WHERE document_type NOT IN ('general', 'study') OR document_type IS NULL;
+
+    CREATE INDEX IF NOT EXISTS idx_notes_folder_updated
+      ON notes(folder_id, updated_at DESC);
+  `);
   return db;
 }
 

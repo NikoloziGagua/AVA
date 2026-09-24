@@ -133,6 +133,8 @@ describe("classifyRisk", () => {
   });
   it("routes Notes reads and local mutations without a redundant approval stall", () => {
     expect(classifyRisk("notes_search", { query: "voice" }).tier).toBe("read-only");
+    expect(classifyRisk("notes_folders", { action: "list" }).tier).toBe("read-only");
+    expect(classifyRisk("notes_folders", { action: "move" }).tier).toBe("low");
     expect(classifyRisk("notes_capture", { content: "idea" }).tier).toBe("low");
     expect(classifyRisk("notes_update", { id: "note_1", expected_version: 1 }).tier).toBe("low");
     expect(classifyRisk("notes_promote", { id: "note_1", target: "self_improvement" }).tier).toBe("low");

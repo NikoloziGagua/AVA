@@ -184,6 +184,11 @@ export function classifyRisk(tool: string, args: unknown): Classification {
     return { tier: "low", reason: "memory mutation stays inside local AVA state" };
   }
 
+  if (tool === "notes_folders") {
+    return (args as { action?: unknown })?.action === "list"
+      ? { tier: "read-only", reason: "read-only Notes folder listing" }
+      : { tier: "low", reason: "versioned Notes folder organisation stays in local AVA state" };
+  }
   if (tool === "notes_capture" || tool === "notes_update" || tool === "notes_promote") {
     return { tier: "low", reason: "Notes mutation stays in local AVA state; downstream improvements retain their own approval gate" };
   }

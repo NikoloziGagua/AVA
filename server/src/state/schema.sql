@@ -590,9 +590,28 @@ CREATE TABLE IF NOT EXISTS strategy_events (
 CREATE INDEX IF NOT EXISTS idx_strategy_events_room
   ON strategy_events(room_id, seq);
 
--- Structured Notes is Sir's intentional knowledge workspace. Project spaces
--- are first-class so an empty project still exists and can expose the standard
--- capture / priorities / decisions / documentation template.
+-- Structured Notes is Sir's intentional knowledge workspace. Folders are the
+-- canonical hierarchy; the older project-space table remains as a v1
+-- compatibility projection for the optional Board and existing clients.
+CREATE TABLE IF NOT EXISTS note_folders (
+  id TEXT PRIMARY KEY,
+  parent_id TEXT REFERENCES note_folders(id) ON DELETE RESTRICT,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  position INTEGER NOT NULL DEFAULT 0,
+  built_in INTEGER NOT NULL DEFAULT 0,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_note_folders_root_name
+  ON note_folders(name COLLATE NOCASE) WHERE parent_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_note_folders_child_name
+  ON note_folders(parent_id, name COLLATE NOCASE) WHERE parent_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_note_folders_parent_order
+  ON note_folders(parent_id, position, name COLLATE NOCASE);
+
 CREATE TABLE IF NOT EXISTS note_projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL COLLATE NOCASE UNIQUE,
@@ -618,6 +637,8 @@ CREATE TABLE IF NOT EXISTS notes (
   source TEXT NOT NULL DEFAULT 'manual',
   source_session_id TEXT,
   project_id TEXT,
+  folder_id TEXT REFERENCES note_folders(id) ON DELETE RESTRICT,
+  document_type TEXT NOT NULL DEFAULT 'general',
   section TEXT NOT NULL DEFAULT 'capture',
   links TEXT NOT NULL DEFAULT '[]',
   change_log TEXT NOT NULL DEFAULT '[]',

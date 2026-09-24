@@ -1574,6 +1574,11 @@ export function useRealtimeVoice({
     // Fix 2: flip the ref the mic gate reads NOW, not a React render later — else
     // the first audio chunks are dropped and the turn commits empty.
     capturingRef.current = true;
+    // iOS suspends audio contexts on interruptions (AVA's own playback, a call,
+    // backgrounding). Resuming inside the press gesture is allowed and keeps the
+    // start of Sir's words from being lost to a silent capture graph.
+    const captureCtx = captureCtxRef.current;
+    if (captureCtx && captureCtx.state === "suspended") void captureCtx.resume().catch(() => { /* best effort */ });
     pttBytesRef.current = 0; // Fix 3: fresh byte count for this turn
     clearPttRecovery();      // a new hold supersedes any pending recovery
     setHint(null);           // clear "hold a bit longer" / "didn't catch that"

@@ -8,6 +8,7 @@ import { gsap, useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { useRealtimeVoice, type RealtimeState } from "./useRealtimeVoice.js";
 import { VoiceExactTextDialog } from "./VoiceExactTextDialog.js";
+import { HoldToTalkButton } from "./HoldToTalkButton.js";
 import type { ConversationIntent } from "../api.js";
 import { Mic, Keyboard, MicOff, Square, X, MessageSquarePlus, PanelsTopLeft, Type } from "lucide-react";
 import {
@@ -98,6 +99,9 @@ export class VoiceSurfaceBoundary extends Component<{ children: ReactNode }, { f
   }
 }
 
+/** A click on Stop this soon after a hold-to-talk release came from that release. */
+const STOP_AFTER_RELEASE_GUARD_MS = 600;
+
 function VoiceSurface() {
   const reduced = useReducedMotion();
   // A drawing failure after mount happens in an animation frame, outside any
@@ -151,6 +155,8 @@ export function VoiceScreen({
   const ptt = v.inputMode === "enter_push_to_talk";
   const capturing = v.capturing;
   const showStop = shouldShowVoiceStop(v.state, v.actionPending);
+  // When the owner last released hold-to-talk; guards the Stop button that replaces it.
+  const pttReleasedAtRef = useRef(0);
   const approvalTiming = useApprovalTiming(v.pendingApproval, v.pendingApproval != null);
   const approvalDeadlineCopy = v.pendingApproval
     ? pendingApprovalCopy(v.pendingApproval, approvalTiming)
@@ -458,43 +464,27 @@ export function VoiceScreen({
           {showStop ? (
             <button
               aria-label={v.actionPending ? "stop current action" : "interrupt Ava"}
-              onClick={v.interrupt}
+              onClick={() => {
+                // Stop takes the hold button's place the instant a turn is sent; a
+                // click that lands within moments of release belongs to that
+                // release (phones synthesize one), not to a decision to stop.
+                if (Date.now() - pttReleasedAtRef.current < STOP_AFTER_RELEASE_GUARD_MS) return;
+                v.interrupt();
+              }}
               className="flex h-16 w-16 items-center justify-center rounded-full active:scale-95"
               style={{ background: "var(--ac)", color: "#04222a", boxShadow: "0 0 26px rgba(92,242,255,0.5)" }}
             >
               <Square size={18} fill="currentColor" />
             </button>
           ) : ptt ? (
-            // TRUE hold-to-talk: press-AND-hold to talk, release to send. Pointer
-            // Events serve mouse + touch from one path; setPointerCapture keeps the
-            // pointerup on THIS element even if the pointer drifts off mid-hold (the
-            // classic "released and nothing sent" bug). onPointerLeave/Cancel are the
-            // fallback commit when pointer capture isn't available.
-            <button
-              aria-label={capturing ? "release to send" : "hold to talk"}
-              onPointerDown={(e) => {
-                e.preventDefault();
-                try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* */ }
-                v.startPtt();
-              }}
-              onPointerUp={(e) => {
-                try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* */ }
+            <HoldToTalkButton
+              capturing={capturing}
+              onStart={v.startPtt}
+              onFinish={() => {
+                pttReleasedAtRef.current = Date.now();
                 v.finishPtt();
               }}
-              onPointerCancel={() => v.finishPtt()}
-              onPointerLeave={() => v.finishPtt()}
-              onContextMenu={(e) => e.preventDefault()}
-              // Capturing = active (solid cyan + glow). ARMED-but-idle push-to-talk
-              // gets the calm living-chrome surface (class provides bg + border + sheen).
-              className={`flex h-16 w-16 select-none items-center justify-center rounded-full transition-all active:scale-95${capturing ? "" : " liquid-chrome"}`}
-              style={
-                capturing
-                  ? { background: "var(--ac)", border: "1px solid rgba(255,255,255,0.18)", color: "#04222a", boxShadow: "0 0 26px rgba(92,242,255,0.5)", touchAction: "none" }
-                  : { touchAction: "none" }
-              }
-            >
-              <Mic size={20} className={capturing ? "" : "text-[#0c2a31]"} />
-            </button>
+            />
           ) : (
             // Hands-free idle mic disc — resting affordance, gets the living-chrome surface.
             <div

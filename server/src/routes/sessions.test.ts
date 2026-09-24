@@ -5,7 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
-import { createSession, listSessions } from "../state/sessions.js";
+import { createSession, listSessions, markHumanActivity, setPinned, setStatus, softDeleteSession } from "../state/sessions.js";
 import { appendMessage } from "../state/messages.js";
 import { sessionsRoutes } from "./sessions.js";
 import { createResearchVisual, createVisualExplanation } from "../state/visual-explanations.js";
@@ -98,6 +98,97 @@ describe("sessionsRoutes", () => {
       expect.objectContaining({ id: "sourcePrimary", url: "https://example.org/research/primary" }),
     ]));
     expect(res.body.messages[0].visualMessages[0]).not.toHaveProperty("html");
+  });
+});
+
+describe("scoped sessions history", () => {
+  it("preserves the no-query response and includes provenance in exact reads", async () => {
+    const { app, db } = setup();
+    const human = createSession(db, { origin: "human" });
+    const automation = createSession(db, { origin: "automation" });
+    markHumanActivity(db, human.id, 123);
+    const old = await request(app).get("/api/sessions").expect(200);
+    expect(old.body).not.toHaveProperty("nextCursor");
+    expect(old.body.sessions).toHaveLength(2);
+    const exact = await request(app).get(`/api/sessions/${human.id}`).expect(200);
+    expect(exact.body.session).toMatchObject({ origin: "human", last_human_activity_at: 123 });
+    const audit = await request(app).get(`/api/sessions/${automation.id}`).expect(200);
+    expect(audit.body.session).toMatchObject({ origin: "automation", last_human_activity_at: null });
+    softDeleteSession(db, human.id);
+    await request(app).get(`/api/sessions/${human.id}`).expect(404);
+    db.close();
+  });
+
+  it("separates human, automation and legacy scopes while preserving pinned legacy", async () => {
+    const { app, db } = setup();
+    const human = createSession(db, { origin: "human" });
+    const automation = createSession(db, { origin: "automation" });
+    const legacy = createSession(db, {});
+    const pinnedLegacy = createSession(db, {});
+    const activeLegacy = createSession(db, {});
+    const archived = createSession(db, { origin: "human" });
+    markHumanActivity(db, human.id, 100);
+    markHumanActivity(db, activeLegacy.id, 200);
+    setPinned(db, pinnedLegacy.id, true);
+    setPinned(db, automation.id, true);
+    setStatus(db, archived.id, "archived");
+    const humans = await request(app).get("/api/sessions?scope=human").expect(200);
+    expect(humans.body.sessions.map((s: { id: string }) => s.id)).toEqual([pinnedLegacy.id, activeLegacy.id, human.id]);
+    expect(humans.body.nextCursor).toBeNull();
+    const automated = await request(app).get("/api/sessions?scope=automation").expect(200);
+    expect(automated.body.sessions.map((s: { id: string }) => s.id)).toEqual([automation.id]);
+    const history = await request(app).get("/api/sessions?scope=legacy").expect(200);
+    expect(history.body.sessions.map((s: { id: string }) => s.id).sort()).toEqual([legacy.id, pinnedLegacy.id].sort());
+    const all = await request(app).get("/api/sessions?scope=all").expect(200);
+    expect(all.body.sessions).toHaveLength(6);
+    db.close();
+  });
+
+  it("defaults scoped pages to 20 and traverses a larger history without hiding exact records", async () => {
+    const { app, db } = setup();
+    const insert = db.prepare(`INSERT INTO sessions (id, created_at, updated_at, origin, last_human_activity_at)
+      VALUES (?, 100, 999, 'human', ?)`);
+    for (let i = 0; i < 57; i++) insert.run(`human-${String(i).padStart(3, "0")}`, i % 5);
+    const first = await request(app).get("/api/sessions?scope=human").expect(200);
+    expect(first.body.sessions).toHaveLength(20);
+    expect(first.body.nextCursor).toEqual(expect.any(String));
+    const firstIds = new Set(first.body.sessions.map((s: { id: string }) => s.id));
+    const absent = listSessions(db).find(row => !firstIds.has(row.id))!;
+    await request(app).get(`/api/sessions/${absent.id}`).expect(200);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const page: request.Response = await request(app).get("/api/sessions").query({ scope: "human", limit: 7, ...(cursor ? { cursor } : {}) }).expect(200);
+      seen.push(...page.body.sessions.map((s: { id: string }) => s.id));
+      cursor = page.body.nextCursor;
+    } while (cursor);
+    expect(seen).toHaveLength(57);
+    expect(new Set(seen).size).toBe(57);
+    const expected = (db.prepare("SELECT id FROM sessions ORDER BY last_human_activity_at DESC, id DESC").all() as { id: string }[]).map(row => row.id);
+    expect(seen).toEqual(expected);
+    db.close();
+  });
+
+  it.each([
+    "scope=invalid", "scope=Human", "scope=", "scope=human&scope=all",
+    "limit=2", "cursor=abc", "scope=human&limit=0", "scope=human&limit=101",
+    "scope=human&limit=-1", "scope=human&limit=1.5", "scope=human&limit=01",
+    "scope=human&limit=1e1", "scope=human&limit=", "scope=human&limit=1&limit=2",
+    "scope=human&cursor=", "scope=human&cursor=???", "scope=human&cursor=a&cursor=b",
+  ])("rejects malformed list query %s", async (query) => {
+    const { app, db } = setup();
+    const response = await request(app).get(`/api/sessions?${query}`).expect(400);
+    expect(response.body).toEqual({ error: "bad_request" });
+    db.close();
+  });
+
+  it("rejects a valid cursor used against another scope", async () => {
+    const { app, db } = setup();
+    createSession(db, { origin: "human" });
+    createSession(db, { origin: "human" });
+    const page = await request(app).get("/api/sessions?scope=human&limit=1").expect(200);
+    await request(app).get("/api/sessions").query({ scope: "all", cursor: page.body.nextCursor }).expect(400);
+    db.close();
   });
 });
 

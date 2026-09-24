@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { openDb, type Db } from "./db.js";
 import { createSession, getMostRecentSession, getSession, getSessionFull, listByStatus, listSessions, purgeDeletedSessions, setPinned, setStatus, softDeleteSession, touchSession, updateSummary, updateTitle } from "./sessions.js";
+import { getMostRecentHumanSession, listSessionsPage, markHumanActivity, SessionListError, type SessionScope } from "./sessions.js";
 
 describe("sessions repo", () => {
   let db: Db;
@@ -128,6 +129,112 @@ describe("sessions repo", () => {
 
     expect(listSessions(db)[0]?.id).toBe(pinnedOlder.id);
     expect(getMostRecentSession(db)?.id).toBe(recent.id);
+  });
+});
+
+describe("human activity and scoped history", () => {
+  it("does not infer provenance or recency from creation, pins or metadata", () => {
+    const db = openDb(":memory:");
+    const legacy = createSession(db, { title: "Watch: misleading title" });
+    expect(legacy).toMatchObject({ origin: "unknown", last_human_activity_at: null });
+    setPinned(db, legacy.id, true);
+    updateTitle(db, legacy.id, "A human-looking title");
+    updateSummary(db, legacy.id, "summary", 1);
+    touchSession(db, legacy.id);
+    setStatus(db, legacy.id, "idle");
+    expect(getSession(db, legacy.id)).toMatchObject({ origin: "unknown", last_human_activity_at: null });
+    expect(getMostRecentHumanSession(db)).toBeNull();
+    db.close();
+  });
+
+  it("stamps human activity monotonically but never stamps automation/deleted rows", () => {
+    const db = openDb(":memory:");
+    const human = createSession(db, { origin: "human" });
+    const legacy = createSession(db, {});
+    const automation = createSession(db, { origin: "automation" });
+    markHumanActivity(db, human.id, 200);
+    markHumanActivity(db, human.id, 100);
+    markHumanActivity(db, legacy.id, 150);
+    markHumanActivity(db, automation.id, 300);
+    expect(getSession(db, human.id)?.last_human_activity_at).toBe(200);
+    expect(getSession(db, legacy.id)).toMatchObject({ origin: "unknown", last_human_activity_at: 150 });
+    expect(getSession(db, automation.id)?.last_human_activity_at).toBeNull();
+    expect(getSession(db, human.id)?.updated_at).toBe(human.updated_at);
+    softDeleteSession(db, human.id);
+    markHumanActivity(db, human.id, 400);
+    expect(getSessionFull(db, human.id)).toBeNull();
+    expect(db.prepare("SELECT last_human_activity_at FROM sessions WHERE id = ?").get(human.id)).toEqual({ last_human_activity_at: 200 });
+    expect(() => markHumanActivity(db, legacy.id, NaN)).toThrow(RangeError);
+    db.close();
+  });
+
+  it("keeps legacy/pinned/automation discoverable without making pins activity", () => {
+    const db = openDb(":memory:");
+    const human = createSession(db, { origin: "human" });
+    const legacy = createSession(db, {});
+    const pinnedLegacy = createSession(db, {});
+    const activeLegacy = createSession(db, {});
+    const automation = createSession(db, { origin: "automation" });
+    const archived = createSession(db, { origin: "human" });
+    const deleted = createSession(db, { origin: "human" });
+    markHumanActivity(db, human.id, 100);
+    markHumanActivity(db, activeLegacy.id, 200);
+    markHumanActivity(db, archived.id, 999);
+    setPinned(db, pinnedLegacy.id, true);
+    setPinned(db, automation.id, true);
+    setStatus(db, archived.id, "archived");
+    softDeleteSession(db, deleted.id);
+    const ids = (scope: SessionScope) => listSessionsPage(db, { scope }).sessions.map(s => s.id);
+    expect(ids("human")).toEqual([pinnedLegacy.id, activeLegacy.id, human.id]);
+    expect(ids("legacy").sort()).toEqual([legacy.id, pinnedLegacy.id].sort());
+    expect(ids("automation")).toEqual([automation.id]);
+    expect(ids("all")).toHaveLength(6);
+    expect(getMostRecentHumanSession(db)?.id).toBe(activeLegacy.id);
+    db.close();
+  });
+
+  it.each<SessionScope>(["human", "automation", "legacy", "all"])("paginates 253 %s rows with tied/null timestamps without loss or duplicates", (scope) => {
+    const db = openDb(":memory:");
+    const insert = db.prepare(`INSERT INTO sessions
+      (id, created_at, updated_at, origin, pinned, last_human_activity_at)
+      VALUES (?, 100, ?, ?, ?, ?)`);
+    for (let i = 0; i < 253; i++) {
+      insert.run(`session-${String(i).padStart(4, "0")}`, 100 + i % 5,
+        scope === "automation" ? "automation" : scope === "legacy" ? "unknown" : "human",
+        i % 3 === 0 ? 1 : 0, scope === "legacy" || i % 4 === 0 ? null : 100 + i % 7);
+    }
+    const order = scope === "human" ? "last_human_activity_at" : "updated_at";
+    const expected = (db.prepare(`SELECT id FROM sessions ORDER BY pinned DESC, ${order} DESC NULLS LAST, id DESC`).all() as { id: string }[]).map(row => row.id);
+    const actual: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = listSessionsPage(db, { scope, limit: 17, cursor });
+      expect(page.sessions.length).toBeLessThanOrEqual(17);
+      actual.push(...page.sessions.map(row => row.id));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(actual).toEqual(expected);
+    expect(new Set(actual).size).toBe(253);
+    db.close();
+  });
+
+  it("rejects malformed, cross-scope and wrong-order cursors", () => {
+    const db = openDb(":memory:");
+    createSession(db, { origin: "human" });
+    createSession(db, { origin: "human" });
+    const cursor = listSessionsPage(db, { scope: "human", limit: 1 }).nextCursor!;
+    expect(() => listSessionsPage(db, { scope: "all", cursor })).toThrow(SessionListError);
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    for (const invalid of ["", "???", cursor + "=", encode(null), encode({}),
+      encode({ ...parsed, order: "updated" }), encode({ ...parsed, at: "100" }),
+      encode({ ...parsed, pinned: 2 }), encode({ ...parsed, extra: true })]) {
+      expect(() => listSessionsPage(db, { scope: "human", cursor: invalid })).toThrow(SessionListError);
+    }
+    for (const limit of [0, -1, 101, 1.5, NaN]) {
+      expect(() => listSessionsPage(db, { scope: "human", limit })).toThrow(SessionListError);
+    }
+    db.close();
   });
 });
 

@@ -143,7 +143,7 @@ describe("chat persist flag", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     const user = listMessages(db, session.id)[0];
     expect(user?.content).toBe(exact);
-    expect(user?.metadata).toEqual({ inputSource: "voice_exact_text" });
+    expect(user?.metadata).toEqual({ inputSource: "voice_exact_text", inputModality: "text" });
   });
 
   it("rejects the voice-only marker on text or non-persisting handoffs", async () => {

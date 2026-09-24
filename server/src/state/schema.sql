@@ -7,7 +7,20 @@ CREATE TABLE IF NOT EXISTS sessions (
   title TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active'
+  status TEXT NOT NULL DEFAULT 'active',
+  origin TEXT NOT NULL DEFAULT 'unknown' CHECK (origin IN ('human', 'automation', 'unknown')),
+  last_human_activity_at INTEGER
+);
+
+-- Retain accepted new-conversation identity after deletion and retention purge.
+-- No cascading session foreign key: retries must fail closed, not create anew.
+CREATE TABLE IF NOT EXISTS session_binding_requests (
+  device_id TEXT NOT NULL,
+  binding_request_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  actor TEXT NOT NULL CHECK (actor IN ('human', 'automation')),
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (device_id, binding_request_id)
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -388,7 +401,8 @@ CREATE TABLE IF NOT EXISTS device_tokens (
   label TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   last_seen_at INTEGER,
-  revoked_at INTEGER
+  revoked_at INTEGER,
+  session_actor TEXT NOT NULL DEFAULT 'human' CHECK (session_actor IN ('human', 'automation', 'voice_action'))
 );
 
 CREATE TABLE IF NOT EXISTS pairing_codes (

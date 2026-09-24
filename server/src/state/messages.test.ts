@@ -26,6 +26,17 @@ describe("messages repo", () => {
     expect(list.map((m) => m.content)).toEqual(["1", "2", "3"]);
   });
 
+  it("round-trips bounded modality/recovery metadata and rejects malformed values on write/read", () => {
+    appendMessage(db, { sessionId, role: "user", content: "exact", metadata: { inputSource: "voice_exact_text", inputModality: "text" } });
+    appendMessage(db, { sessionId, role: "system", content: "restart", metadata: { interruptedTaskId: "task:123" } });
+    const invalid = appendMessage(db, { sessionId, role: "user", content: "invalid", metadata: { inputModality: "other", interruptedTaskId: "x".repeat(161) } as never });
+    expect(invalid.metadata).toEqual({});
+    db.prepare("UPDATE messages SET metadata = ? WHERE id = ?").run('{"inputModality":"other","interruptedTaskId":"secret\\ncontent"}', invalid.id);
+    expect(listMessages(db, sessionId).map(m => m.metadata)).toEqual([
+      { inputSource: "voice_exact_text", inputModality: "text" }, { interruptedTaskId: "task:123" }, {},
+    ]);
+  });
+
   it("round-trips the bounded exact-text voice provenance and drops unknown metadata", () => {
     const stored = appendMessage(db, {
       sessionId,

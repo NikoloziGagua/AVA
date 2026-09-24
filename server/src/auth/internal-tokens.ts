@@ -8,6 +8,16 @@ export type InternalTokens = {
   retiredWatch: number;
 };
 
+/** Classify an already-authenticated device, never a request's voice/persist
+ * flags or message wording. This is attribution, not a replacement auth gate. */
+export function sessionActorForDevice(db: Db, deviceId: string): "human" | "automation" | "voice_action" {
+  const row = db.prepare("SELECT session_actor FROM device_tokens WHERE id = ? AND revoked_at IS NULL")
+    .get(deviceId) as { session_actor: string } | undefined;
+  if (row?.session_actor === "automation") return "automation";
+  if (row?.session_actor === "voice_action") return "voice_action";
+  return "human";
+}
+
 /**
  * Rotate AVA's loopback credentials only after the HTTP listener owns its port.
  *
@@ -19,8 +29,8 @@ export function rotateInternalTokens(db: Db): InternalTokens {
   const retiredVoice = revokeTokensByLabel(db, "voice-internal");
   const retiredWatch = revokeTokensByLabel(db, "watch-internal");
   return {
-    voice: issueToken(db, { label: "voice-internal" }).secret,
-    watch: issueToken(db, { label: "watch-internal" }).secret,
+    voice: issueToken(db, { label: "voice-internal", sessionActor: "voice_action" }).secret,
+    watch: issueToken(db, { label: "watch-internal", sessionActor: "automation" }).secret,
     retiredVoice,
     retiredWatch,
   };

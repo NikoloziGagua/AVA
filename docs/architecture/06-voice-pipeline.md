@@ -147,7 +147,7 @@ turn is explicitly captured. That rule is centralized in `shouldForwardMic`
 
 1. `getUserMedia({ echoCancellation, noiseSuppression, autoGainControl })`.
 2. Open the WS to `/api/voice/realtime` with query params: `t` (token),
-   optional `sessionId`, optional `new=1`, and `inputMode`.
+   optional `sessionId`, `intent`, `bindingRequestId`, legacy `new=1`, and `inputMode`.
 3. On WS open, build an `AudioContext({ sampleRate: 24000 })` and register an
    **AudioWorklet** whose source is embedded as a Blob URL at module scope
    (`WORKLET_SRC`, `useRealtimeVoice.ts:142`). The worklet converts each render
@@ -387,36 +387,62 @@ not provide it.
 
 ## 8. Continuity / recollection workflow
 
-The design goal: **voice and chat share one continuous memory.** Ask something in
-voice, finish in chat, come back to voice — it remembers. Two mechanisms make
-this work.
+Voice and chat use one selected conversation, with bounded provider-specific
+history and memory retrieval. Shared identity prevents accidental chat switching;
+it does not imply unlimited recall.
 
-### 8a. Session continuity (resume vs new)
+### 8a. Canonical binding: New, exact resume, or human continuation
 
-When voice connects **without** a session id (e.g. you entered voice from the
-home orb), the proxy decides whether to resume or start fresh via
-`chooseResumeOrNew` (`voice-realtime.ts:526`):
+`App` owns this browser's remembered chat (`web/src/App.tsx:195`). Home voice
+passes that ID for exact resume; only when none is selected does it ask the
+server to continue a human conversation. A blank New chat and voice "+new" request
+a new conversation. An explicitly opened legacy chat remains a valid selection.
 
-- Default: **resume the most-recent session** (`listSessions(db)[0]`). So
-  re-entering voice and asking "what did you just do?" recalls it, instead of
-  landing in a brand-new empty "Voice chat" (the old bug where every entry minted
-  a fresh session).
-- The client's **"+new conversation"** control sends `?new=1`, which forces a
-  fresh session (`newConversation`, `useRealtimeVoice.ts:872`; `wantNew` →
-  `resumeId: null`).
-- Entering voice from a deliberately blank **New chat** also sends `?new=1`.
-  `App` distinguishes that origin from the Home orb, whose null ID still means
-  resume latest.
+Both `POST /api/chat` and voice use
+`resolveConversation` (`server/src/state/session-binding.ts:63`), not
+`updated_at` ordering or a pin-first list:
 
-The chosen id is echoed to the client in the **session hello** frame
-(`sessionHelloFrame`, `voice-realtime.ts:515`), which also carries `mode`
-(`hybrid` | `transcribe`). The client latches both: it adopts the session id and
-sets `hybridRef` so it knows whether to play realtime audio or own the reply
-(`handleServerEvent`, `useRealtimeVoice.ts:649`).
-That acknowledgement also consumes the one-shot fresh intent and updates the
-session ref synchronously. A reconnect after acknowledgement therefore resumes
-the exact new session rather than creating another one, and an immediate
-Exit/Keyboard handoff returns that same ID before the React state render lands.
+- `new`: create a session, optionally replaying the same device-scoped
+  `bindingRequestId`. The durable unique mapping survives restart and remains
+  after target deletion/purge so a retry cannot silently create a replacement.
+- `resume`: validate exactly the requested non-deleted ID. A missing/deleted
+  or automation-origin target requested by a human returns
+  `session_unavailable`, never a substitute conversation.
+- `continue`: choose a non-archived human-origin session or a legacy session
+  with a recorded human turn; ignore pins and background timestamps. Create a
+  human session if none exists.
+
+Session creation `origin` is immutable: `human`, `automation`, or
+`unknown`. Old rows migrate to unknown/null human activity without guessing
+from titles or transcripts. Binding/connecting does **not** stamp activity.
+Only accepted persisted human input advances `last_human_activity_at`;
+assistant output, internal actions, watches, and rejected busy turns do not.
+Text/voice belongs to turn metadata, not session identity. Scoped human recents
+can include a pinned legacy chat as a preference, but pinning alone does not make
+it an automatic continuation candidate.
+
+Authenticated chat attribution comes from server-owned
+`device_tokens.session_actor`; display labels and `voice`/`persist` flags cannot
+reclassify a human token. Internal rotation stamps watcher and voice-action
+credentials explicitly (`server/src/auth/internal-tokens.ts:13`).
+
+The proxy resolves once before provider initialization
+(`server/src/routes/voice-realtime.ts:965`). Hume-to-OpenAI pre-open fallback
+keeps that binding, as does delegated action completion. The `ava.session`
+hello carries `sessionId`, `mode` (`hybrid` or `transcribe`), and the
+versioned binding. It updates the browser pointer; stale socket epochs and
+mismatched pending-New keys are ignored. An unavailable exact target emits
+`ava.session_error` and closes 4404 without starting a provider; malformed
+intent combinations close 4400.
+
+Hybrid seeding/persistence remains conditional on the action runtime being
+wired. Transcribe-only compatibility still gets a binding, but the client owns
+the chat send and the proxy does not double-store a spoken turn or seed hybrid
+history. Pending New keys survive in-screen retries, not full-page reload before
+acknowledgement; such a reload can leave an empty conversation visible. There is
+no cross-device selected-chat synchronization.
+See [voice continuity](../features/voice-continuity.md) for the full API and
+migration contract.
 
 ### 8b. History + self-knowledge seeding
 
@@ -744,7 +770,9 @@ background audio never does, because it's never forwarded.
 **Auto-reconnect** (`useRealtimeVoice.ts:789`). A transient abnormal close (1006,
 upstream 1011, or any unclean close) auto-reconnects up to **2 times** with an
 800 ms delay, so a brief upstream blip self-heals instead of dead-ending.
-Auth failures (1008 / 4401) do **not** retry — they surface "auth failed". The
+Auth failures (1008 / 4401) do **not** retry — they surface "auth failed". An
+exact-session failure (4404 / `ava.session_error`) is also terminal and offers
+New or conversation-list recovery instead of silently switching chats. The
 budget resets on a healthy connect and never fires after an intentional `stop()`
 or unmount.
 
@@ -811,8 +839,12 @@ assume `/api/speak` can produce the cloned voice.
 - `server/src/routes/voice-realtime.test.ts` — patient semantic VAD
   (`eagerness:low`, `interrupt_response:false`), natural Realtime output speed,
   gate-forward decisions, pending/barge-in frame builders, tool-call parsing,
-  Hume translation, resample/WAV handling, seed content-type, continuity choice,
-  and the assistant-turn `turnEnd` signal (§8d).
+  Hume translation, resample/WAV handling, seed content-type, exact binding and
+  same-binding provider fallback, and the assistant-turn `turnEnd` signal (§8d).
+- `server/src/state/session-binding.test.ts`, `server/src/state/sessions.test.ts`,
+  `server/src/routes/chat.test.ts`, and `server/src/state/recovery.test.ts` — intent validation,
+  keyed-New replay/tombstones, human recency, automation separation, scoped
+  pagination, and restart notices backed by unfinished persisted tasks.
 - `server/src/voice/turn-policy.test.ts` — real incomplete-fragment regressions,
   continuation joining, fresh-command replacement, and expiry without execution.
 - `server/src/voice/action-coordinator.test.ts` — Stop/replacement abort the
@@ -862,20 +894,20 @@ assume `/api/speak` can produce the cloned voice.
   (`REALTIME_SEED_TURNS = 12`) is a deliberate small cap; raising it for better
   recall trades tokens on each voice connect.
 
-## 2026-08-27 continuity hardening
+## Continuity and restart boundaries
 
-- Chat-to-voice uses the actual `ChatScreen.sessionId`, including the ID returned
-  by the first send in a new chat.
-- A still-blank New chat has no ID, so `App` explicitly marks its first voice
-  connection fresh. Home-orb entry remains resume-latest despite also having no
-  explicit ID.
-- Automatic resume uses `getMostRecentSession` (activity order), not the pin-first
-  `listSessions` projection.
-- OpenAI instructions include the durable earlier-conversation summary and the
-  socket keeps a message-ID high-water. Typed rows that arrive while it is open
-  are inserted at the ordered VAD speech-start or push-to-talk commit boundary,
-  before the next spoken item and without replay duplicates.
-- Leaving voice immediately closes capture/playback/WebSocket resources; unmount
-  repeats the cleanup defensively. This prevents stale history snapshots and
-  overlapping realtime speakers.
-- Hume receives the same summary on connect and honors the same `?new=1` choice.
+Leaving voice closes capture, playback, streams, and sockets; unmount repeats
+cleanup. OpenAI imports concurrent typed rows using an ordered message-ID
+high-water, and both providers receive the durable earlier-conversation summary
+plus bounded recent turns on connect. Hume refreshes concurrent typed history on
+reconnect and retrieves durable memory at connection; universal per-utterance
+Hume recall is **not** implemented.
+
+Server restart notices come from unfinished durable `chat_agent` /
+`voice_action` runs, not `session.active` or an idle voice socket.
+`server/src/index.ts:159` records notices in the same transaction that marks
+runs orphaned. `server/src/state/recovery.ts:8` deduplicates by task ID,
+preserves human recency and session timestamps, and keeps orphan-process cleanup.
+The notice reports missing completion status and asks Sir to inspect any saved
+result before retrying. No action is automatically replayed; work never durably
+recorded cannot be reconstructed from a session flag.

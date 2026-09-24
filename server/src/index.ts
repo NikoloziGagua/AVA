@@ -60,7 +60,8 @@ import { startSystray } from "./systray/index.js";
 import { PidfileRegistry } from "./process/pidfile.js";
 import { acquireServerLock } from "./process/server-lock.js";
 import { killTree } from "./process/kill-tree.js";
-import { runRecovery } from "./state/recovery.js";
+import { runRecovery, snapshotInterruptedConversationTasks, recordInterruptedConversationTasks } from "./state/recovery.js";
+import { requireExactSessionAcknowledgement } from "./state/session-binding.js";
 import { buildChrome } from "./tools/chrome.js";
 import { buildVoiceClients } from "./tools/voice-clients.js";
 import { DEFAULT_VOICE } from "./routes/voice-defaults.js";
@@ -155,7 +156,11 @@ const interruptedStrategyRooms = strategyStore.failInterruptedRooms();
 if (interruptedStrategyRooms > 0) {
   log.info({ interruptedStrategyRooms }, "strategy: paused rooms orphaned by restart");
 }
-const orphanedMissionRuns = observability.store.markOrphanedRuns();
+const orphanedMissionRuns = db.transaction(() => {
+  const interrupted = snapshotInterruptedConversationTasks(db);
+  recordInterruptedConversationTasks(db, interrupted);
+  return observability.store.markOrphanedRuns();
+})();
 const purgedMissionDetails = observability.store.purgeExpiredDetails();
 if (
   orphanedMissionRuns > 0 ||
@@ -224,7 +229,7 @@ if (purgedCount > 0) log.info({ purgedCount }, "purged soft-deleted sessions old
 const runs = new ActiveRuns();
 const pidfiles = new PidfileRegistry(cfg.pidfileDir);
 
-await runRecovery({ db, pidfiles, kill: (pid) => killTree(pid) });
+await runRecovery({ db, pidfiles, kill: (pid) => killTree(pid), interruptedTasks: [] });
 bootstrapMemoryDir({ dir: cfg.memoryDir });
 
 let chromePromise: ReturnType<typeof buildChrome> | null = null;
@@ -1003,8 +1008,7 @@ async function runVoiceAction(
     }
     if (!post.ok) throw await responseFailure(post, "action start");
     const started = (await post.json()) as { sessionId?: string; taskId?: string };
-    const sid = started.sessionId ?? sessionId;
-    if (!sid) throw new Error("action start returned no session");
+    const sid = requireExactSessionAcknowledgement(sessionId, started);
     // If the voice connection drops mid-run, kill the loopback run so it stops
     // executing tools (and frees the shared browser) instead of finishing into a
     // dead socket — the zombie-run fix.

@@ -10,6 +10,8 @@ const session: SessionWithSummary = {
   updated_at: 2,
   status: "active",
   pinned: 0,
+  origin: "unknown",
+  last_human_activity_at: null,
   summary: "Earlier context",
   summary_through_message_id: 1,
 };

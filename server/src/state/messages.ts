@@ -55,6 +55,10 @@ export type MessageMetadata = {
   visualContext?: MessageVisualContext;
   /** The owner typed this wording inside voice mode because exact characters mattered. */
   inputSource?: "voice_exact_text";
+  /** Input channel belongs to the turn, not to conversation identity. */
+  inputModality?: "text" | "voice";
+  /** Durable recovery dedupe key, never inferred from session activity. */
+  interruptedTaskId?: string;
   /** Sanitized, source-aware explanation of whether durable memory informed this reply. */
   memoryContext?: MessageMemoryContext;
 };
@@ -157,6 +161,10 @@ function parseMetadata(raw: string): MessageMetadata {
     if (value.inputSource === "voice_exact_text") {
       metadata.inputSource = "voice_exact_text";
     }
+    if (value.inputModality === "text" || value.inputModality === "voice") metadata.inputModality = value.inputModality;
+    if (typeof value.interruptedTaskId === "string" && /^[A-Za-z0-9:_-]{1,160}$/.test(value.interruptedTaskId)) {
+      metadata.interruptedTaskId = value.interruptedTaskId;
+    }
     const memoryContext = sanitizeMessageMemoryContext(value.memoryContext);
     if (memoryContext) metadata.memoryContext = memoryContext;
     return metadata;
@@ -173,6 +181,8 @@ export function appendMessage(
 ): Message {
   const now = Date.now();
   const metadata: MessageMetadata = { ...(opts.metadata ?? {}) };
+  if (metadata.inputModality !== "text" && metadata.inputModality !== "voice") delete metadata.inputModality;
+  if (typeof metadata.interruptedTaskId !== "string" || !/^[A-Za-z0-9:_-]{1,160}$/.test(metadata.interruptedTaskId)) delete metadata.interruptedTaskId;
   if (metadata.memoryContext) {
     const memoryContext = sanitizeMessageMemoryContext(metadata.memoryContext);
     if (memoryContext) metadata.memoryContext = memoryContext;

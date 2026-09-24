@@ -42,6 +42,59 @@ describe("openDb", () => {
     db2.close();
   });
 
+  it("never infers internal token provenance from existing user-selected labels", () => {
+    const legacy = new Database(TEST_DB);
+    legacy.exec(`CREATE TABLE device_tokens (
+      id TEXT PRIMARY KEY, token_hash TEXT UNIQUE NOT NULL, label TEXT NOT NULL,
+      created_at INTEGER NOT NULL, last_seen_at INTEGER, revoked_at INTEGER
+    );
+    INSERT INTO device_tokens VALUES ('old-watch-label', 'old-hash', 'watch-internal', 12, 20, NULL);`);
+    legacy.close();
+    const migrated = openDb(TEST_DB);
+    expect(migrated.prepare("SELECT * FROM device_tokens WHERE id = 'old-watch-label'").get()).toEqual({
+      id: "old-watch-label", token_hash: "old-hash", label: "watch-internal",
+      created_at: 12, last_seen_at: 20, revoked_at: null, session_actor: "human",
+    });
+    migrated.close();
+  });
+
+  it("migrates real pre-origin sessions without inferring human activity or changing history", () => {
+    const legacy = new Database(TEST_DB);
+    legacy.exec(`
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, title TEXT, created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+        summary TEXT, summary_through_message_id INTEGER, deleted_at INTEGER,
+        pinned INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        role TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL
+      );
+      INSERT INTO sessions VALUES ('pinned-old', 'Human sounding title', 10, 500, 'idle', 'summary', 1, NULL, 1);
+      INSERT INTO sessions VALUES ('watch-old', 'Watch: scheduled check', 20, 900, 'archived', NULL, NULL, NULL, 0);
+      INSERT INTO sessions VALUES ('deleted-old', 'Deleted', 30, 999, 'active', NULL, NULL, 1000, 1);
+      INSERT INTO messages (session_id, role, content, created_at) VALUES ('pinned-old', 'user', 'keep this human-looking history', 11);
+      INSERT INTO messages (session_id, role, content, created_at) VALUES ('watch-old', 'user', 'keep this automation-looking history', 21);
+    `);
+    const original = legacy.prepare("SELECT * FROM sessions ORDER BY id").all();
+    legacy.close();
+    const migrated = openDb(TEST_DB);
+    const rows = migrated.prepare("SELECT * FROM sessions ORDER BY id").all() as Array<Record<string, unknown>>;
+    expect(rows.map(({ origin, last_human_activity_at, ...oldFields }) => oldFields)).toEqual(original);
+    expect(rows.every(row => row.origin === "unknown" && row.last_human_activity_at === null)).toBe(true);
+    expect(migrated.prepare("SELECT content FROM messages ORDER BY id").all()).toEqual([
+      { content: "keep this human-looking history" }, { content: "keep this automation-looking history" },
+    ]);
+    migrated.prepare("UPDATE sessions SET origin = 'human', last_human_activity_at = 1234 WHERE id = 'pinned-old'").run();
+    migrated.close();
+    const reopened = openDb(TEST_DB);
+    expect(reopened.prepare("SELECT origin, last_human_activity_at, updated_at, pinned FROM sessions WHERE id = 'pinned-old'").get())
+      .toEqual({ origin: "human", last_human_activity_at: 1234, updated_at: 500, pinned: 1 });
+    reopened.close();
+  });
+
   it("migrates a pre-handoff Strategy Room table before creating its snapshot index", () => {
     const legacy = new Database(TEST_DB);
     legacy.exec(`

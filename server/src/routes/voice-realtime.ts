@@ -3,7 +3,8 @@ import { nanoid } from "nanoid";
 import type { Db } from "../state/db.js";
 import { buildSystemPrompt } from "../orchestrator/system-prompt.js";
 import { validateToken } from "../auth/tokens.js";
-import { createSession, getMostRecentSession, getSessionFull, touchSession } from "../state/sessions.js";
+import { getSessionFull, markHumanActivity, touchSession } from "../state/sessions.js";
+import { resolveConversation, SessionBindingError, type SessionBinding } from "../state/session-binding.js";
 import {
   appendMessage,
   listMessages,
@@ -635,19 +636,29 @@ export function translateClientFrameToHume(raw: string): string | null {
 // We tell it on connect via the session hello frame's `mode`.
 
 /** The first frame the client receives: its session id and the proxy's mode. */
-export function sessionHelloFrame(sessionId: string | null, hybrid: boolean): string {
-  return JSON.stringify({ type: "ava.session", sessionId, mode: hybrid ? "hybrid" : "transcribe" });
+export function sessionHelloFrame(sessionId: string | null, hybrid: boolean, binding?: SessionBinding): string {
+  return JSON.stringify({ type: "ava.session", sessionId, mode: hybrid ? "hybrid" : "transcribe", ...(binding ? { binding } : {}) });
 }
 
-/** When hybrid voice connects WITHOUT a session id (e.g. entering voice from the
- *  home orb), decide whether to resume an existing conversation or start fresh.
- *  Default is to RESUME the most-recent session so voice↔chat share one continuous
- *  memory ("ask in voice → finish in chat → ask in voice again, it remembers").
- *  `wantNew` (the client's "+new conversation" control → `?new=1`) forces a fresh
- *  session. Pure so the resume/new choice is unit-testable without a socket;
- *  `resumeId === null` means the caller should create a new session. */
-export function chooseResumeOrNew(wantNew: boolean, mostRecentId: string | null): { resumeId: string | null } {
-  return { resumeId: wantNew ? null : mostRecentId };
+/** Normalize legacy voice URLs without silently replacing an exact target. */
+function readVoiceSessionRequest(params: URLSearchParams): {
+  intent: "new" | "resume" | "continue";
+  sessionId: string | null;
+  bindingRequestId?: string;
+} {
+  const badRequest = () => new SessionBindingError(400, "bad_request", "Invalid conversation binding request.");
+  for (const name of ["sessionId", "new", "intent", "bindingRequestId"]) {
+    if (params.getAll(name).length > 1) throw badRequest();
+  }
+  const sessionId = params.get("sessionId")?.trim() || null;
+  const wantNew = params.get("new") === "1";
+  const intent = params.get("intent") ?? (wantNew ? "new" : sessionId ? "resume" : "continue");
+  if (intent !== "new" && intent !== "resume" && intent !== "continue") throw badRequest();
+  if (wantNew && (intent !== "new" || sessionId !== null)) throw badRequest();
+  if (intent === "resume" ? !sessionId : sessionId !== null) throw badRequest();
+  const bindingRequestId = params.get("bindingRequestId");
+  if (bindingRequestId !== null && !bindingRequestId.trim()) throw badRequest();
+  return { intent, sessionId, ...(bindingRequestId !== null ? { bindingRequestId } : {}) };
 }
 
 /** Content-part type for seeding a stored turn into the realtime model via
@@ -921,16 +932,26 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         socket.destroy();
         return;
       }
-      const sessionIdParam = url.searchParams.get("sessionId");
-      // "+new conversation" control: force a fresh session instead of resuming.
-      const wantNew = url.searchParams.get("new") === "1";
       // Endpointing mode picked by the client. "enter_push_to_talk" disables the
       // server's automatic VAD/turn-detection for this session; anything else
       // (incl. absent) keeps the default VAD behaviour.
       const pushToTalk = url.searchParams.get("inputMode") === "enter_push_to_talk";
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startSession(ws, sessionIdParam, deviceId, pushToTalk, wantNew).catch((err) => {
+        startSession(ws, url.searchParams, deviceId, pushToTalk).catch((err) => {
+          if (err instanceof SessionBindingError) {
+            const unavailable = err.code === "session_unavailable";
+            try {
+              ws.send(JSON.stringify({
+                type: "ava.session_error",
+                code: err.code,
+                message: unavailable ? "This conversation is unavailable." : "Invalid conversation binding request.",
+                retryable: false,
+              }));
+            } catch { /* client closed */ }
+            try { ws.close(unavailable ? 4404 : 4400, err.code); } catch { /* client closed */ }
+            return;
+          }
           log.error("realtime session error:", err instanceof Error ? err.message : err);
           try { ws.close(1011, "session error"); } catch { /* ignore */ }
         });
@@ -938,28 +959,37 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     });
   }
 
-  async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string, pushToTalk = false, wantNew = false) {
+  async function startSession(client: WebSocket, params: URLSearchParams, deviceId: string, pushToTalk = false) {
+    // Resolve once before provider initialization (including OAuth/fallback).
+    // The acknowledgement establishes the client pointer, never turn recency.
+    const binding = resolveConversation(deps.db, {
+      actor: "human",
+      deviceId,
+      ...readVoiceSessionRequest(params),
+      title: "Voice chat",
+    });
     // PROVIDER BRANCH. The dashboard voice toggle (voice_engine_pref) selects the
     // provider, read here at connect so a toggle change takes effect on reconnect.
     // When the toggle is "hume" AND Hume is configured (HUME_API_KEY in env), try
     // Hume first; if its socket can't be established, fall through to the proven
-    // OpenAI path below. No client handlers are attached until Hume actually opens,
-    // so a failed attempt leaves the connection clean for the OpenAI fallback.
+    // OpenAI path below. A failed attempt detaches its client handlers so the
+    // connection is clean for the OpenAI fallback.
     if (getVoiceEngine(deps.db) === "hume" && providerConfig.hume) {
       // Resolve the upstream URL here (async): prefers OAuth access-token auth when
       // a secret key is set, else the raw api_key. Done before the session Promise
       // so the executor stays synchronous.
       const humeUrl = await resolveHumeWsUrl(providerConfig.hume);
-      const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume, humeUrl, pushToTalk, wantNew);
+      if (client.readyState !== WebSocket.OPEN) return;
+      const opened = await tryStartHumeSession(client, binding, providerConfig.hume, humeUrl, pushToTalk);
       if (opened) return;
+      if (client.readyState !== WebSocket.OPEN) return;
       log.warn("realtime: hume upstream did not establish — falling back to OpenAI");
     }
     // The realtime model always speaks for the OpenAI provider (hybrid: it speaks
     // chitchat AND routes do_on_computer to the full agent).
     const hybrid = !!deps.runAction;
-    // In hybrid mode the proxy owns the action handoff; the session id is tracked
-    // here and may be (re)assigned when an action turn creates one.
-    let sessionId = requestedSessionId;
+    // A delegated action may report its session, but cannot redirect this socket.
+    const sessionId = binding.sessionId;
     // Exactly one action may own this connection. Each action gets its own abort
     // controller + epoch, so Stop/replacement retires the old promise and a late
     // completion can never publish a result or restart AVA's voice.
@@ -972,7 +1002,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         id: voiceSessionRunId,
         traceId: voiceTraceId,
         rootTaskId: voiceSessionRunId,
-        sessionId: requestedSessionId,
+        sessionId,
         runKind: "voice_session",
         runtimeId: "ava:voice",
         runtimeType: "ava",
@@ -1335,12 +1365,6 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         `realtime: upstream open, sending ${hybrid ? "hybrid (speak+tool)" : "transcribe-only"} ` +
         `session.update (${pushToTalk ? "push-to-talk, VAD off" : `${vad.mode ?? "semantic_vad"} eagerness=${vad.semanticEagerness ?? "low"}`})`,
       );
-      // Resolve the canonical conversation before constructing instructions.
-      // Pins affect chat-list presentation, not which conversation was active.
-      if (hybrid && !sessionId) {
-        const { resumeId } = chooseResumeOrNew(wantNew, getMostRecentSession(deps.db)?.id ?? null);
-        sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
-      }
       // Configure the realtime session on connect.
       const system = buildSystemPrompt({
         memoryDir: deps.memoryDir,
@@ -1361,14 +1385,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           )
         : buildRealtimeSessionUpdate(system, vad, { pushToTalk });
       upstream.send(JSON.stringify(sessionUpdate));
-      // HYBRID: unify voice with chat. Voice from the orb may have no session
-      // (requestedSessionId === null). RESUME the most-recent conversation by
-      // default so voice↔chat stay one continuous memory — re-entering voice and
-      // asking "what did you do?" recalls what just happened, instead of landing
-      // in a brand-new empty "Voice chat" session (the old bug: each entry minted
-      // a fresh session). `?new=1` (the client's "+new" control) forces a fresh
-      // one. The hello below sends whichever id we land on; the client latches
-      // `ava.session` and adopts it.
+      // Both providers and modes share the binding resolved at the ingress.
       if (voiceSessionObserved && deps.observability) {
         try {
           deps.observability.updateRunContext(voiceSessionRunId, { sessionId });
@@ -1415,7 +1432,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // Echo the client's current session id back, and tell it the proxy mode so
       // it knows whether to play audio (hybrid) or own the reply (transcribe).
       try {
-        client.send(sessionHelloFrame(sessionId, hybrid));
+        client.send(sessionHelloFrame(sessionId, hybrid, binding));
       } catch { /* ignore */ }
       // Drain anything the client sent before upstream was ready, preserving
       // each frame's text/binary kind.
@@ -1703,8 +1720,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
                 }
                 return;
               }
-              sessionId = r.sessionId ?? sessionId;
-              try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
+              try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
               // Feed the result back to the SAME realtime model and ask it to
               // speak. Its output transcript is the single persisted assistant
               // turn, so stored history matches exactly what Sir heard.
@@ -1936,9 +1952,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         // an action. HYBRID only: transcribe-only persists via /api/chat, so
         // storing here too would double the user turn.
         if (hybrid && sessionId) {
-          const stored = appendMessage(deps.db, { sessionId, role: "user", content: acceptedText });
+          const stored = appendMessage(deps.db, { sessionId, role: "user", content: acceptedText, metadata: { inputModality: "voice" } });
           persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
           lastAcceptedUserMessageId = stored.id;
+          markHumanActivity(deps.db, sessionId);
           touchSession(deps.db, sessionId);
         }
         // Send the caption first. Because upstream and browser are different
@@ -2094,21 +2111,20 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
    * Attempt a Hume EVI session. Resolves `true` once the Hume socket OPENS and
    * the bridge is wired (the session then runs independently); resolves `false`
    * if the socket errors/closes before opening, so the caller can fall back to
-   * OpenAI. No client handlers are attached until the socket opens, leaving the
-   * connection pristine for the fallback. Never logs a secret — upstream errors
+   * OpenAI. Pre-open failure detaches this attempt's client handlers, leaving the
+   * connection pristine for fallback. Never logs a secret — upstream errors
    * are redacted with the API key before they reach a log or the client.
    */
   function tryStartHumeSession(
     client: WebSocket,
-    requestedSessionId: string | null,
+    binding: SessionBinding,
     hume: HumeProviderConfig,
     wsUrl: string,
     pushToTalk = false,
-    wantNew = false,
   ): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const hybrid = !!deps.runAction;
-      let sessionId = requestedSessionId;
+      const sessionId = binding.sessionId;
       const actionRuns = new VoiceActionCoordinator();
       let opened = false;
       // Hume emits one `assistant_message` per sentence; buffer the segments and
@@ -2160,16 +2176,24 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       }
 
       const pendingFromClient: string[] = [];
+      let abandoned = false;
+      const failToOpen = () => {
+        if (opened || abandoned) return;
+        abandoned = true;
+        client.off("message", onClientMessage);
+        client.off("close", onClientClose);
+        client.off("error", onClientClose);
+        pendingFromClient.length = 0;
+        try { upstream.close(); } catch { /* already closed */ }
+        resolve(false);
+      };
 
       upstream.on("open", async () => {
-        opened = true;
-        // Resolve the session FIRST (resume the latest, like the OpenAI path) so we
-        // can seed its recent history into Hume's prompt. Without this Hume starts
-        // blank on every connect — no recollection of prior voice/chat turns.
-        if (hybrid && !sessionId) {
-          const { resumeId } = chooseResumeOrNew(wantNew, getMostRecentSession(deps.db)?.id ?? null);
-          sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
+        if (abandoned) {
+          try { upstream.close(); } catch { /* already closed */ }
+          return;
         }
+        opened = true;
         // Hume truncates the prompt at ~12k, so build it COMPACT + identity-first
         // (buildHumeVoicePrompt): drop the tool-map Hume can't use, and order the
         // anti-confabulation persona + real changelog + recent history AHEAD of the
@@ -2213,7 +2237,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         const humePrompt = buildHumeVoicePrompt({ voicePersona: VOICE_PERSONA_INSTRUCTIONS, updates, history, base: compactBase });
         const contextText = (updates + history).trim();
         try { upstream.send(JSON.stringify(buildHumeSessionSettings(humePrompt, hume, contextText))); } catch { /* */ }
-        try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
+        try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
         log.info("realtime: hume session open (voice via Hume EVI)");
         // Drain client frames buffered before open, translating mic audio.
         for (const raw of pendingFromClient) {
@@ -2225,7 +2249,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       });
 
       // Client → Hume: translate OpenAI-shaped mic frames to Hume audio_input.
-      client.on("message", (data, isBinary) => {
+      function onClientMessage(data: RawData, isBinary: boolean) {
         const raw = isBinary ? data.toString("utf8") : (typeof data === "string" ? data : data.toString("utf8"));
         try {
           const control = JSON.parse(raw) as { type?: string };
@@ -2237,10 +2261,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         if (!opened) { pendingFromClient.push(raw); return; }
         const f = translateClientFrameToHume(raw);
         if (f) try { upstream.send(f); } catch { /* */ }
-      });
+      }
+      client.on("message", onClientMessage);
 
       // Hume → Client: translate to the OpenAI-shaped frames the browser handles.
       upstream.on("message", (data) => {
+        if (!opened || abandoned) return;
         let evt: Parameters<typeof translateHumeEvent>[0] | null = null;
         try { evt = JSON.parse(typeof data === "string" ? data : data.toString("utf8")); } catch { evt = null; }
         if (!evt) return;
@@ -2262,9 +2288,10 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             return;
           }
           if (hybrid && sessionId) {
-            const stored = appendMessage(deps.db, { sessionId, role: "user", content: decision.text });
+            const stored = appendMessage(deps.db, { sessionId, role: "user", content: decision.text, metadata: { inputModality: "voice" } });
             lastAcceptedUserMessageId = stored.id;
             currentTurnMemoryEligible = true;
+            markHumanActivity(deps.db, sessionId);
             touchSession(deps.db, sessionId);
           }
           try {
@@ -2288,8 +2315,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
                 try { client.send(stepFrame(tool, args)); } catch { /* */ }
               }, action.signal);
               if (!actionRuns.isCurrent(action.id)) return;
-              sessionId = r.sessionId ?? sessionId;
-              try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
+              try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
               if (sessionId) {
                 appendMessage(deps.db, { sessionId, role: "assistant", content: r.text || "Done." });
                 touchSession(deps.db, sessionId);
@@ -2336,31 +2362,29 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // problem is diagnosable instead of a blank "error before open".
       upstream.on("unexpected-response", (_req, res) => {
         log.warn({ status: res.statusCode }, "realtime: hume upstream rejected the connection (HTTP status)");
-        if (!opened) { resolve(false); return; }
+        if (!opened) { failToOpen(); return; }
       });
       upstream.on("error", (err) => {
         const msg = redact(err.message);
-        if (!opened) { log.warn({ err: msg }, "realtime: hume upstream error before open"); resolve(false); return; }
+        if (!opened) { log.warn({ err: msg }, "realtime: hume upstream error before open"); failToOpen(); return; }
         log.error({ err: msg }, "realtime: hume upstream error");
         try { client.send(JSON.stringify({ type: "error", error: { message: msg } })); } catch { /* */ }
         try { client.close(1011, "upstream error"); } catch { /* */ }
       });
       upstream.on("close", (code, reason) => {
-        if (!opened) { resolve(false); return; }
+        if (!opened) { failToOpen(); return; }
         flushAssistantTurn(); // don't lose a turn Ava spoke before the socket dropped
         const r = redact(reason?.toString() || "(no reason)");
         try { client.send(JSON.stringify({ type: "error", error: { message: `upstream closed (code=${code}): ${r}` } })); } catch { /* */ }
         try { client.close(code, r); } catch { /* */ }
       });
 
-      client.on("close", () => {
+      function onClientClose() {
         actionRuns.cancel();
         try { upstream.close(); } catch { /* */ }
-      });
-      client.on("error", () => {
-        actionRuns.cancel();
-        try { upstream.close(); } catch { /* */ }
-      });
+      }
+      client.on("close", onClientClose);
+      client.on("error", onClientClose);
     });
   }
 

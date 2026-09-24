@@ -11,14 +11,14 @@ export type DeviceToken = {
 
 export function issueToken(
   db: Db,
-  opts: { label: string }
+  opts: { label: string; sessionActor?: "human" | "automation" | "voice_action" }
 ): { id: string; secret: string } {
   const id = nanoid(12);
   const secret = nanoid(48);
   const hash = bcrypt.hashSync(secret, 10);
   db.prepare(
-    "INSERT INTO device_tokens (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)"
-  ).run(id, hash, opts.label, Date.now());
+    "INSERT INTO device_tokens (id, token_hash, label, created_at, session_actor) VALUES (?, ?, ?, ?, ?)"
+  ).run(id, hash, opts.label, Date.now(), opts.sessionActor ?? "human");
   return { id, secret };
 }
 

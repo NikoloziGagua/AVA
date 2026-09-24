@@ -118,7 +118,7 @@ Before the per-subsystem reference, here are the **cross-cutting flows** that ti
 
 ### W1 — A typed task ("find BMWs under €20k and save the links")
 
-1. The browser **POSTs** the text to `/api/chat`; the server creates/loads the session and registers a **run** (one run per session — a second is rejected 409). [02]
+1. The browser **POSTs** the text to `/api/chat`; the shared conversation resolver applies New, exact resume, or human continuation before the server registers a **run** (one run per session — a second is rejected 409). A missing exact conversation returns 404, never a replacement. [02][06]
 2. The browser opens an **SSE stream** (`GET /api/chat/:id/stream`) and starts rendering live progress. [02][09]
 3. The server assembles the **system prompt** (persona + capabilities + memory + preferences) and may inject a matching **playbook** if Ava has done something similar before. [08]
 4. The **reasoning loop** runs: the LLM streams a plan and **tool calls**; each call is **gated by policy** (classify → rules → maybe approval), then dispatched. [02][04][03]
@@ -312,7 +312,9 @@ flowchart TD
 - **OpenAI** (`gpt-realtime-2.1`, default) — the primary path. Speaks chit-chat directly and, for an action, calls `do_on_computer`.
 - **Hume** (Hume EVI, voice "Alice Bennett") — alternate upstream, **only when configured** (`AVA_VOICE_PROVIDER=hume` + `HUME_API_KEY`). If its socket can't open, the proxy falls back to OpenAI.
 
-**Hybrid action handoff** (the clever bit): the realtime model holds the conversation, but `do_on_computer` runs the **real `/api/chat` agent** with the full tool stack via `runVoiceAction` (`index.ts`). It POSTs to loopback, reads the run's `final` off the SSE stream, and feeds it back to be spoken. **Session continuity:** entering voice with no session resumes the most-recent conversation, so voice ↔ chat share one memory; recent turns are seeded into the model on connect.
+**Hybrid action handoff:** the realtime model holds the conversation, but `do_on_computer` runs the **real `/api/chat` agent** with the full tool stack via `runVoiceAction` (`index.ts`). It POSTs to loopback, validates the acknowledgement against the exact expected session before choosing a stream or cancellation target, and returns the result to be spoken. The proxy owns transcript persistence; this internal run uses `persist:false`.
+
+**Session continuity:** `App` remembers this browser's selected chat; Home voice resumes that exact ID, while a blank New chat explicitly starts fresh. Chat and both voice providers use `state/session-binding.ts:63` for `new` / `resume` / `continue`. Only when no ID is selected does human continuation choose an eligible human conversation, using human activity rather than background updates or pins. Missing/deleted exact targets fail visibly. Hume-to-OpenAI fallback keeps the binding resolved before provider initialization. Recent turns and the durable summary seed hybrid voice; this is bounded context, not guaranteed recall. Hume refreshes memory on connection, not universally per utterance. Cross-device selected-chat synchronization is not implemented. See [`features/voice-continuity.md`](features/voice-continuity.md).
 
 **Honest flags:** Hume is a **weaker conversational model**, **needs Hume credits** (a zero-credit account returns error `E0300`, which surfaces to you as a generic *"auth failed"* — it's a billing problem, not really auth), and **truncates** long prompts (so recent history is folded into the prompt body). The 48 kHz Hume audio is **resampled to 24 kHz** or it sounds an octave low. The toggle defaults to OpenAI. (Chatterbox, an old local-voice option, is retired but its file still compiles.)
 
@@ -321,7 +323,8 @@ flowchart TB
   mic[🎙️ mic audio<br/>PCM16 @ 24k]:::client
   proxy["/api/voice/realtime — WS proxy"]:::server
   mic --> proxy
-  proxy --> branch{provider?}:::server
+  proxy --> bind["Shared resolver: new / exact resume / continue<br/>one canonical session before provider setup"]:::server
+  bind --> branch{provider?}:::server
   branch -->|openai default| oai[gpt-realtime-2.1 WS]:::paid
   branch -->|hume + configured| hume[Hume EVI WS<br/>Alice Bennett]:::paid
   hume -. socket fails .-> oai
@@ -414,6 +417,7 @@ flowchart LR
 **Highlights:**
 - **Chat** (`chat/ChatScreen.tsx`): the Composer sends a message; `useChatStream` consumes the SSE stream via `EventSource`; the **Activity panel** renders live tool steps; the final answer arrives as one `final` event and is revealed word-by-word (the streaming *look* is a visual effect — Ava's answer is not token-streamed; the *tool steps* are what stream live).
 - **Voice** (`voice/VoiceScreen.tsx` + `useRealtimeVoice.ts`): the WS client, mic capture (AudioWorklet), playback, barge-in, the OpenAI/Hume toggle, and the "+new conversation" control.
+- **Conversation selection** (`App.tsx:195`): one remembered chat shared by typing, voice and the sidebar. Authoritative bindings update it; stale callbacks and an absent list-page row do not. Human recents are paginated separately from older unclassified chats and read-only automated history. Unavailable exact conversations offer explicit recovery instead of changing the selection silently.
 - **Settings screens:** Rules (permission rules), Memory, Self (self-improvement status), Approvals, Pairing.
 - **The PWA** (`sw.ts`): a service worker with `skipWaiting`/`clients.claim` and web-push. **Gotcha:** a rebuilt `web/dist` is **not live until the service worker activates** — if a fix "looks like it didn't deploy," fully close and reopen the app so the new bundle takes over.
 - **Visual system** (`components/ava/`): the locked aesthetic — liquid-mercury orb + cyan command-deck, GSAP/Motion animations, desktop-primary.
@@ -426,10 +430,11 @@ flowchart LR
 
 | Table | One-line purpose |
 |-------|------------------|
-| `sessions` | One conversation thread (title, status, soft-delete, summary, **pinned**). |
-| `messages` | Every user/assistant/tool turn, ordered, FK to its session. |
+| `sessions` | One conversation thread (title, status, soft-delete, summary, **pinned**), immutable `origin` (`human` / `automation` / `unknown`) and nullable `last_human_activity_at`. |
+| `session_binding_requests` | Device-scoped New-request identity. Unique device/key pairs survive target deletion/purge so retries return unavailable rather than create a replacement. |
+| `messages` | Ordered conversation turns with a session FK; metadata includes text/voice modality, typed-exact source and durable interruption-task dedupe keys. |
 | `tool_calls` | **Defined but currently unused** — reserved/forward-looking audit schema. |
-| `device_tokens` | Bearer credentials issued at pairing (incl. the `voice-internal` loopback token). |
+| `device_tokens` | Bearer credentials plus server-owned `session_actor` provenance. Pairing defaults to human; internal rotation stamps automation/voice-action identities without inferring them from display labels. |
 | `pairing_codes` | Short-lived pairing handshake codes (minted only by the systray / a script). |
 | `push_subscriptions` | Web-push endpoints for approval/done notifications. |
 | `rules` | User-defined allow/deny rules consulted by the policy enforcer. |
@@ -441,6 +446,20 @@ flowchart LR
 | `voice_engine_pref` | The voice provider toggle (`openai` · `hume`). |
 | `reasoning_pref` | The Fast↔Thorough level (drives OpenAI reasoning effort + voice VAD snappiness). |
 | `device_state` · `chip_overrides` · `chip_label_cache` | Per-device greeting state, custom quick-action chips, and their cached labels. |
+
+**Migration and recency:** existing sessions remain `unknown` with no inferred
+human timestamp. Only accepted persisted human turns advance human activity;
+connection, assistant output, maintenance, automation and rejected busy turns do
+not. Pinning an unknown session makes it visible in human lists but does not
+make it eligible for automatic continuation. These scopes organize a single
+owner's history, not separate account permissions (`state/sessions.ts:75`).
+
+**Truthful restart recovery:** `state/recovery.ts:8` snapshots unfinished durable
+`chat_agent` / `voice_action` runs, not idle voice connections or `session.active`.
+Startup records one notice per run in the same transaction as orphan projection
+(`index.ts:159`), preserving recency/timestamps. The notice says completion status
+was not recorded and asks Sir to inspect any saved result before retrying; it
+does not imply that the action did nothing or automatically replay it.
 
 ---
 

@@ -15,7 +15,16 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "sessions", "summary_through_message_id", "INTEGER");
   tryAddColumn(db, "sessions", "deleted_at", "INTEGER");
   tryAddColumn(db, "sessions", "pinned", "INTEGER NOT NULL DEFAULT 0");
+  // Historical provenance is unknown: message roles, pins and maintenance
+  // timestamps are not evidence of actual human activity.
+  tryAddColumn(db, "sessions", "origin", "TEXT NOT NULL DEFAULT 'unknown' CHECK (origin IN ('human', 'automation', 'unknown'))");
+  tryAddColumn(db, "sessions", "last_human_activity_at", "INTEGER");
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_human_activity
+    ON sessions(last_human_activity_at DESC, id DESC) WHERE deleted_at IS NULL`);
   tryAddColumn(db, "messages", "metadata", "TEXT NOT NULL DEFAULT '{}'");
+  // Labels are user-chosen. Only newly rotated server credentials receive an
+  // internal actor; no provenance is inferred for existing paired devices.
+  tryAddColumn(db, "device_tokens", "session_actor", "TEXT NOT NULL DEFAULT 'human' CHECK (session_actor IN ('human', 'automation', 'voice_action'))");
   // Semantic-memory Phase 2 provenance. Existing explicit entries remain
   // explicit; automatic capture is an additive, inspectable origin.
   tryAddColumn(db, "memory_index_entries", "capture_mode", "TEXT NOT NULL DEFAULT 'explicit'");

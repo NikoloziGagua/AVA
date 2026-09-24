@@ -4,7 +4,9 @@ import { nanoid } from "nanoid";
 import type Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import type { Db } from "../state/db.js";
-import { createSession, getSession, getSessionFull, touchSession, updateTitle } from "../state/sessions.js";
+import { getSessionFull, markHumanActivity, touchSession, updateTitle } from "../state/sessions.js";
+import { resolveConversation, SessionBindingError, type SessionBinding } from "../state/session-binding.js";
+import { sessionActorForDevice } from "../auth/internal-tokens.js";
 import {
   appendMessage,
   listMessages,
@@ -98,6 +100,8 @@ import { planComputerExecution } from "../orchestrator/computer-execution-router
 
 const Body = z.object({
   sessionId: z.string().nullish(),
+  conversationIntent: z.enum(["new", "resume", "continue"]).optional(),
+  bindingRequestId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(),
   text: z.string().min(1).max(10_000),
   // Voice turns ask for minimal reasoning so spoken replies come back fast.
   // Capability is unchanged — the full tool stack still runs.
@@ -294,18 +298,31 @@ export function chatRoutes(
       });
       return;
     }
-    let sessionId = parsed.data.sessionId;
-    let createdNew = false;
-    if (!sessionId || !getSession(db, sessionId)) {
-      sessionId = createSession(db, { title: parsed.data.text.slice(0, 60) }).id;
-      createdNew = true;
-    } else {
-      touchSession(db, sessionId);
+    const actor = sessionActorForDevice(db, req.deviceId!);
+    let binding: SessionBinding;
+    try {
+      binding = resolveConversation(db, {
+        actor, deviceId: req.deviceId!,
+        intent: parsed.data.conversationIntent ?? (parsed.data.sessionId ? "resume" : "new"),
+        sessionId: parsed.data.sessionId,
+        bindingRequestId: parsed.data.bindingRequestId,
+        title: parsed.data.text.slice(0, 60),
+      });
+    } catch (error) {
+      if (!(error instanceof SessionBindingError)) throw error;
+      res.status(error.status).json({ error: error.code, message: error.message });
+      return;
     }
+    const sessionId = binding.sessionId;
+    if (runs.get(sessionId)) {
+      res.status(409).json({ error: "run_in_progress" });
+      return;
+    }
+    const createdNew = binding.resolution === "created" && listMessages(db, sessionId).length === 0;
     // Auto-learn from corrections: if the user is pushing back on the previous
     // assistant turn within 5 minutes, capture it as a low-confidence preference
     // observation. Fire-and-forget; never blocks dispatch.
-    {
+    if (actor === "human" && parsed.data.persist !== false) {
       const prior = listMessages(db, sessionId).at(-1);
       const corrected = detectCorrection({
         userText: parsed.data.text,
@@ -339,11 +356,6 @@ export function chatRoutes(
       })();
     }
 
-    if (runs.get(sessionId)) {
-      res.status(409).json({ error: "run_in_progress" });
-      return;
-    }
-
     // Record the user turn only AFTER the concurrency gate. Appending before it
     // meant a rejected request still stacked an orphan user message with no
     // reply — the exact "voice session goes silent / second job won't run"
@@ -354,15 +366,19 @@ export function chatRoutes(
     let persistedUserMessageId: number | null = null;
     if (parsed.data.persist !== false) {
       const metadata = {
+        ...(actor === "human" ? { inputModality: parsed.data.inputSource === "voice_exact_text" || !parsed.data.voice ? "text" as const : "voice" as const } : {}),
         ...(resolvedVisualContext ? { visualContext: resolvedVisualContext.context } : {}),
         ...(parsed.data.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
       };
-      const storedUser = appendMessage(db, {
-        sessionId,
-        role: "user",
-        content: parsed.data.text,
-        ...(Object.keys(metadata).length ? { metadata } : {}),
-      });
+      const storedUser = db.transaction(() => {
+        const message = appendMessage(db, {
+          sessionId, role: "user", content: parsed.data.text,
+          ...(Object.keys(metadata).length ? { metadata } : {}),
+        });
+        if (actor === "human") markHumanActivity(db, sessionId, message.created_at);
+        touchSession(db, sessionId);
+        return message;
+      })();
       persistedUserMessageId = storedUser.id;
     }
 
@@ -1108,7 +1124,7 @@ export function chatRoutes(
       }
     })();
 
-    res.json({ sessionId, taskId: runId });
+    res.json({ sessionId, taskId: runId, binding });
   });
 
   r.get("/:sessionId/stream", auth, (req, res) => {

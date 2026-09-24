@@ -45,6 +45,17 @@ describe("auth routes", () => {
   let db: Db;
   beforeEach(() => { db = openDb(":memory:"); });
 
+  it("pairing labels and client actor fields never grant internal ingress provenance", async () => {
+    const app = makeApp(db);
+    for (const label of ["watch-internal", "voice-internal"]) {
+      const code = issuePairingCode(db, 60_000);
+      const { status, body } = await callJson(app, "POST", "/api/auth/pair", { code, label, sessionActor: "automation", session_actor: "voice_action" });
+      expect(status).toBe(200);
+      const id = (body as { deviceId: string }).deviceId;
+      expect(db.prepare("SELECT session_actor FROM device_tokens WHERE id = ?").get(id)).toEqual({ session_actor: "human" });
+    }
+  });
+
   it("POST /api/auth/pair exchanges a valid code for a token", async () => {
     const code = issuePairingCode(db, 60_000);
     const app = makeApp(db);

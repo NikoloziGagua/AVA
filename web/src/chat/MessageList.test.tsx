@@ -205,4 +205,15 @@ describe("MessageList", () => {
     rerender(<MessageList history={history} liveEvents={[]} />);
     expect(screen.queryByTestId("saved-items")).toBeNull();
   });
+
+  it("shows the dev-room receipt on persisted and live replies", () => {
+    const posts = { schemaVersion: 1 as const, items: [{ schemaVersion: 1 as const, messageId: 481, roomName: "klevar", correlationId: "c1", postedAt: 1 }] };
+    const { rerender } = render(<MessageList history={[{ id: "a-room", role: "assistant", text: "Told the team.", roomPosts: posts }]} liveEvents={[]} />);
+    expect(screen.getByRole("region", { name: "Posted to the dev room" }).textContent).toContain("#481");
+    rerender(<MessageList history={[]} liveEvents={[
+      { id: 1, runEpoch: 5, kind: "room_posts", payload: posts },
+      { id: 2, runEpoch: 5, kind: "final", payload: { text: "Told the team." } },
+    ]} />);
+    expect(screen.getAllByTestId("room-posts")).toHaveLength(1);
+  });
 });

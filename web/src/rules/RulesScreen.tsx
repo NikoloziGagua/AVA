@@ -9,6 +9,7 @@ import { getToken } from "../auth/tokens.js";
 import { enablePush } from "../push/register.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
+import { DevRoomSection } from "./DevRoomSection.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { getMotionPref, setMotionPref, type MotionPref } from "../lib/motionPref.js";
@@ -211,6 +212,8 @@ export function RulesScreen(_props: { onClose?: () => void }) {
             <div className="text-xs text-white/40">Loading…</div>
           )}
         </PanelSection>
+
+        <DevRoomSection />
 
         <PanelSection title="Motion" span="lg:col-span-4">
           <SegmentedTabs<MotionPref>

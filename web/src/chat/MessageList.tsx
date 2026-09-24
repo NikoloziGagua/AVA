@@ -15,6 +15,8 @@ import { VisualMessageCard, type VisualSemanticActionHandler } from "../visuals/
 import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
 import { MemoryContextCapsule } from "./MemoryContextCapsule.js";
 import { SavedItemsCard } from "./SavedItemsCard.js";
+import { RoomPostReceipt } from "./RoomPostReceipt.js";
+import type { RoomPosts } from "./room-posts.js";
 import type { SavedItem, SavedItems } from "./saved-items.js";
 import type { MemoryContext } from "./memory-context.js";
 import {
@@ -28,7 +30,7 @@ import {
 
 export type ChatMessage =
   | { role: "user"; text: string; id: string; visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" }
-  | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[]; memoryContext?: MemoryContext; savedItems?: SavedItems }
+  | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[]; memoryContext?: MemoryContext; savedItems?: SavedItems; roomPosts?: RoomPosts }
   // `system` rows are server notices (e.g. the "Server restarted…" recovery
   // message) — rendered as a centered notice, never attributed to Ava.
   | { role: "system"; text: string; id: string };
@@ -115,6 +117,7 @@ export function MessageList({
   const liveMemoryContext = [...liveEvents].reverse().find((e) => e.kind === "memory_context");
   // Each saved_items event is cumulative, so the newest one is the whole list.
   const liveSavedItems = [...liveEvents].reverse().find((e) => e.kind === "saved_items");
+  const liveRoomPosts = [...liveEvents].reverse().find((e) => e.kind === "room_posts");
 
   // Retry re-runs the LAST turn (ChatScreen's retryLast), so it only belongs on
   // the LAST assistant bubble — on every bubble it implied re-running THAT turn.
@@ -263,6 +266,7 @@ export function MessageList({
               <AssistantMarkdown text={m.text} />
               {m.memoryContext && <MemoryContextCapsule context={m.memoryContext} />}
               {m.savedItems && <SavedItemsCard saved={m.savedItems} onOpen={onOpenSaved} />}
+              {m.roomPosts && <RoomPostReceipt posts={m.roomPosts} />}
               <MessageActions
                 text={m.text}
                 onRetry={!lastFinal && m.id === lastAssistantHistoryId ? onRetry : undefined}
@@ -349,6 +353,7 @@ export function MessageList({
         if (e.kind === "receipt") return null;
         if (e.kind === "memory_context") return null;
         if (e.kind === "saved_items") return null;
+        if (e.kind === "room_posts") return null;
         return null;
       })}
 
@@ -364,6 +369,7 @@ export function MessageList({
             {liveSavedItems?.kind === "saved_items" && (
               <SavedItemsCard saved={liveSavedItems.payload} onOpen={onOpenSaved} />
             )}
+            {liveRoomPosts?.kind === "room_posts" && <RoomPostReceipt posts={liveRoomPosts.payload} />}
             <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
           </AvaBubble>
         </div>
@@ -379,6 +385,11 @@ export function MessageList({
       {!lastFinal && runTerminated && liveSavedItems?.kind === "saved_items" && (
         <div className="ml-9 max-w-[92%]" data-testid="terminated-saved-items">
           <SavedItemsCard saved={liveSavedItems.payload} onOpen={onOpenSaved} />
+        </div>
+      )}
+      {!lastFinal && runTerminated && liveRoomPosts?.kind === "room_posts" && (
+        <div className="ml-9 max-w-[92%]" data-testid="terminated-room-posts">
+          <RoomPostReceipt posts={liveRoomPosts.payload} />
         </div>
       )}
 

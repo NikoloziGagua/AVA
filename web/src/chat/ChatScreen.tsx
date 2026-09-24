@@ -14,6 +14,7 @@ import { isSmallScreen } from "../lib/media.js";
 import { fetchVisualExplanation } from "../visuals/api.js";
 import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
 import type { SavedItem } from "./saved-items.js";
+import { validRoomPosts } from "./room-posts.js";
 
 export interface ChatScreenProps {
   sessionId: string | null;
@@ -157,6 +158,7 @@ export function ChatScreen({
           ...(m.role === "assistant" && m.visualMessages?.length ? { visualMessages: m.visualMessages } : {}),
           ...(m.role === "assistant" && m.metadata?.memoryContext ? { memoryContext: m.metadata.memoryContext } : {}),
           ...(m.role === "assistant" && m.metadata?.savedItems ? { savedItems: m.metadata.savedItems } : {}),
+          ...(m.role === "assistant" && validRoomPosts(m.metadata?.roomPosts) ? { roomPosts: validRoomPosts(m.metadata?.roomPosts)! } : {}),
         }));
         // Dedupe target = server's replay rule over the RAW rows (not the last
         // mapped bubble), so a trailing `system` row can't shadow the real final.
@@ -212,18 +214,23 @@ export function ChatScreen({
         const savedItems = [...events]
           .reverse()
           .find((event) => event.runEpoch === epoch && event.kind === "saved_items");
+        const roomPosts = [...events]
+          .reverse()
+          .find((event) => event.runEpoch === epoch && event.kind === "room_posts");
         const existingIndex = next.findIndex((m) => m.id === id);
         if (existingIndex >= 0) {
           const existing = next[existingIndex];
           if (existing?.role === "assistant" &&
               ((inlineVisuals.length && existing.visualMessages !== inlineVisuals) ||
                (memoryContext?.kind === "memory_context" && existing.memoryContext !== memoryContext.payload) ||
-               (savedItems?.kind === "saved_items" && existing.savedItems !== savedItems.payload))) {
+               (savedItems?.kind === "saved_items" && existing.savedItems !== savedItems.payload) ||
+               (roomPosts?.kind === "room_posts" && existing.roomPosts !== roomPosts.payload))) {
             next = next.map((message, index) => index === existingIndex ? {
               ...existing,
               ...(inlineVisuals.length ? { visualMessages: inlineVisuals } : {}),
               ...(memoryContext?.kind === "memory_context" ? { memoryContext: memoryContext.payload } : {}),
               ...(savedItems?.kind === "saved_items" ? { savedItems: savedItems.payload } : {}),
+              ...(roomPosts?.kind === "room_posts" ? { roomPosts: roomPosts.payload } : {}),
             } : message);
           }
           continue;
@@ -245,6 +252,7 @@ export function ChatScreen({
           ...(inlineVisuals.length ? { visualMessages: inlineVisuals } : {}),
           ...(memoryContext?.kind === "memory_context" ? { memoryContext: memoryContext.payload } : {}),
           ...(savedItems?.kind === "saved_items" ? { savedItems: savedItems.payload } : {}),
+          ...(roomPosts?.kind === "room_posts" ? { roomPosts: roomPosts.payload } : {}),
         }];
       }
       return next;
@@ -342,6 +350,8 @@ export function ChatScreen({
         (e.runEpoch === 0 && seededAssistant?.role === "assistant" && seededAssistant.memoryContext))) return false;
     if (e.kind === "saved_items" && (promotedCurrent ||
         (e.runEpoch === 0 && seededAssistant?.role === "assistant" && seededAssistant.savedItems))) return false;
+    if (e.kind === "room_posts" && (promotedCurrent ||
+        (e.runEpoch === 0 && seededAssistant?.role === "assistant" && seededAssistant.roomPosts))) return false;
     return true;
   });
 

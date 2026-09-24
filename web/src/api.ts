@@ -3,6 +3,7 @@ import { receiptFor } from "./reminders/presenter.js";
 import type { VisualMessage, VisualMessageContext } from "./visuals/types.js";
 import type { MemoryContext } from "./chat/memory-context.js";
 import type { SavedItems } from "./chat/saved-items.js";
+import type { RoomPosts } from "./chat/room-posts.js";
 
 export class ApiError extends Error {
   readonly name = "ApiError";
@@ -273,6 +274,7 @@ export type SessionMessage = {
     inputSource?: "voice_exact_text";
     memoryContext?: MemoryContext;
     savedItems?: SavedItems;
+    roomPosts?: RoomPosts;
   };
 };
 
@@ -420,6 +422,33 @@ export async function putReasoning(level: "fast" | "thorough"): Promise<void> {
 //   "openai"     — realtime model speaks (OpenAI) + /api/speak = OpenAI TTS.
 //   "hume"   — Hume EVI ("Alice Bennett") speaks; needs HUME_API_KEY on the server.
 export type VoiceEngine = "live" | "openai" | "hume";
+
+/** AVA's development-room membership (contract ava-room-member v2). */
+export type AgentroomStatus = {
+  schemaVersion: 1;
+  enabled: boolean;
+  version: number;
+  availability: "ready" | "disabled" | "unconfigured" | "unreachable" | "identity_mismatch";
+  identity: string;
+  roomName: string | null;
+  reason: string | null;
+};
+
+export async function fetchAgentroomStatus(): Promise<AgentroomStatus> {
+  return request<AgentroomStatus>("/api/agentroom");
+}
+
+/** Versioned switch. A 409 (stale version or unavailable room) resolves with the current status. */
+export async function setAgentroomEnabled(enabled: boolean, expectedVersion: number): Promise<{ ok: boolean; status: AgentroomStatus; error?: string }> {
+  const res = await fetch("/api/agentroom", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${getToken() ?? ""}` },
+    body: JSON.stringify({ enabled, expectedVersion }),
+  });
+  const body = await res.json().catch(() => null) as (AgentroomStatus & { error?: string }) | null;
+  if (!body) throw new Error(`HTTP ${res.status}`);
+  return { ok: res.ok, status: body, ...(res.ok ? {} : { error: body.error }) };
+}
 
 export async function fetchVoiceEngine(): Promise<VoiceEngine> {
   const j = await request<{ engine: VoiceEngine }>("/api/voice/engine");

@@ -4,6 +4,7 @@ import { getToken } from "../auth/tokens.js";
 import type { TaskReceipt } from "./task-receipt.js";
 import type { MemoryContext } from "./memory-context.js";
 import type { SavedItems } from "./saved-items.js";
+import type { RoomPosts } from "./room-posts.js";
 import type { ApprovalPolicyEvidence } from "../approvals/presentation.js";
 
 type EventBase = { id: number; runEpoch: number };
@@ -20,6 +21,7 @@ export type StreamEvent =
   | (EventBase & { kind: "receipt"; payload: TaskReceipt })
   | (EventBase & { kind: "memory_context"; payload: MemoryContext })
   | (EventBase & { kind: "saved_items"; payload: SavedItems })
+  | (EventBase & { kind: "room_posts"; payload: RoomPosts })
   | (EventBase & { kind: "gap"; payload: { from: number; to: number } })
   | (EventBase & { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } & ApprovalPolicyEvidence })
   | (EventBase & { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } & ApprovalPolicyEvidence });
@@ -87,7 +89,7 @@ export function useChatStream(sessionId: string | null, runEpoch: number, taskId
           es.close();
         }
       };
-      for (const k of ["thought", "delta", "tool_call", "tool_result", "final", "error", "killed", "done", "receipt", "memory_context", "saved_items", "gap", "approval_required", "approval_resolved"] as const) {
+      for (const k of ["thought", "delta", "tool_call", "tool_result", "final", "error", "killed", "done", "receipt", "memory_context", "saved_items", "room_posts", "gap", "approval_required", "approval_resolved"] as const) {
         es.addEventListener(k, handle(k));
       }
     }

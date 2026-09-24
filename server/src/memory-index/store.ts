@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import type { Db } from "../state/db.js";
 import { scrubSecrets } from "../security/scrub.js";
 import { MEMORY_CHECKPOINT_KINDS } from "./types.js";
-import { MemoryGovernanceStore, type GovernanceWriteBase, type GovernanceWriteResult } from "./governance.js";
+import { MemoryGovernanceStore, type GovernanceView, type GovernanceWriteBase, type GovernanceWriteResult } from "./governance.js";
 import type {
   CaptureMemoryInput,
   CaptureMemoryResult,
@@ -100,6 +100,21 @@ type EmbeddingRow = {
 
 type CandidateRow = EntryRow & SourceRow & Partial<EmbeddingRow>;
 type MessageRow = { id: number; role: string; content: string };
+
+/** Stable ordered top-K: scan everything, retain only the public result cap. */
+function retainBest<T>(best: T[], value: T, limit: number, compare: (left: T, right: T) => number): void {
+  if (!(limit >= 1)) return;
+  let low = 0;
+  let high = best.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (compare(value, best[middle]!) < 0) high = middle;
+    else low = middle + 1;
+  }
+  if (low >= limit) return;
+  best.splice(low, 0, value);
+  if (best.length > limit) best.pop();
+}
 
 const STOP_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "do", "for", "from",
@@ -771,8 +786,18 @@ export class MemoryIndexService {
       : "This exact verified automation artifact was already indexed.", semanticScore: null, lexicalScore: 0, sharedTerms: [] }) };
   }
 
-  private candidateRows(project: string | null | undefined, latestOnly = false): CandidateRow[] {
+  private candidateRows(project: string | null | undefined, latestOnly = false): IterableIterator<CandidateRow> {
     const scope = projectKey(project).key;
+    // Compute maxima once, not by re-scanning the entry table for every row.
+    // This derived relation holds only thread IDs/sequences, never vector data.
+    const latestJoin = latestOnly ? `
+      JOIN (
+        SELECT COALESCE(thread_id, id) AS thread_key, MAX(checkpoint_sequence) AS sequence
+        FROM memory_index_entries WHERE status = 'active'
+        GROUP BY COALESCE(thread_id, id)
+      ) latest ON latest.thread_key = COALESCE(e.thread_id, e.id)
+              AND latest.sequence = e.checkpoint_sequence
+    ` : "";
     return this.db.prepare(`
       SELECT e.*, s.entry_id, s.session_id, s.source_type, s.source_ref,
              s.source_label, s.from_message_id,
@@ -782,19 +807,10 @@ export class MemoryIndexService {
       FROM memory_index_entries e
       JOIN memory_index_sources s ON s.entry_id = e.id
       LEFT JOIN memory_index_embeddings b ON b.entry_id = e.id
+      ${latestJoin}
       WHERE e.status = 'active'
         AND (e.privacy_level = 'personal' OR (? IS NOT NULL AND e.project_key = ?))
-        AND (
-          ? = 0 OR e.checkpoint_sequence = (
-            SELECT MAX(newest.checkpoint_sequence)
-            FROM memory_index_entries newest
-            WHERE newest.status = 'active'
-              AND COALESCE(newest.thread_id, newest.id) = COALESCE(e.thread_id, e.id)
-          )
-        )
-      ORDER BY e.updated_at DESC, e.id ASC
-      LIMIT 500
-    `).all(scope, scope, latestOnly ? 1 : 0) as CandidateRow[];
+    `).iterate(scope, scope) as IterableIterator<CandidateRow>;
   }
 
   async search(
@@ -803,7 +819,6 @@ export class MemoryIndexService {
   ): Promise<MemorySearchResponse> {
     const cleanQuery = cleanInline(query, 1_000);
     if (!cleanQuery) throw new Error("memory search query is required");
-    const rows = this.candidateRows(options.project, options.latestOnly === true);
     const limit = Math.max(1, Math.min(20, Math.floor(options.limit ?? 8)));
     let queryEmbedding: MemoryEmbedding | null = null;
     let notice: string | null = null;
@@ -814,8 +829,17 @@ export class MemoryIndexService {
       notice = "No embedding provider is configured; AVA used exact and keyword matching only.";
     }
 
-    const scored = rows.flatMap((row) => {
-      const governed = this.governance.view(entryFromRow(row));
+    type Scored = { row: CandidateRow; lexical: ReturnType<typeof lexicalEvidence>; semanticScore: number | null; score: number; governed: GovernanceView };
+    const best: Scored[] = [];
+    const compare = (left: Scored, right: Scored) =>
+      (right.score + (right.governed.pinned ? 0.03 : 0)) - (left.score + (left.governed.pinned ? 0.03 : 0))
+      || right.governed.updatedAt - left.governed.updatedAt
+      || left.row.id.localeCompare(right.row.id);
+    let suppressedByGovernance = 0;
+    // Open the iterator only after the asynchronous embed call. Do not hold a
+    // SQLite cursor across an await, or materialize/source-verify while it is open.
+    for (const row of this.candidateRows(options.project, options.latestOnly === true)) {
+      const governed = this.governance.view(entryFromRow(row), { includeHistory: false });
       const entry = governed.entry;
       const lexical = lexicalEvidence(cleanQuery, entry);
       let semanticScore: number | null = null;
@@ -826,20 +850,16 @@ export class MemoryIndexService {
         const stored = decodeVector(row.vector, row.dimensions);
         if (stored) semanticScore = cosine(queryEmbedding.vector, stored);
       }
-      if (lexical.score <= 0 && (semanticScore === null || semanticScore < 0.45)) return [];
+      if (lexical.score <= 0 && (semanticScore === null || semanticScore < 0.45)) continue;
+      if (!options.includeHistory && !governed.retrievalEligible) {
+        suppressedByGovernance++;
+        continue;
+      }
       const score = lexical.score * 0.48 + Math.max(0, semanticScore ?? 0) * 0.52;
-      return [{ row, lexical, semanticScore, score, governed }];
-    }).sort((left, right) =>
-      (right.score + (right.governed.pinned ? 0.03 : 0)) - (left.score + (left.governed.pinned ? 0.03 : 0))
-      || right.governed.updatedAt - left.governed.updatedAt
-      || left.row.id.localeCompare(right.row.id));
+      retainBest(best, { row, lexical, semanticScore, score, governed }, limit, compare);
+    }
 
-    const visible = options.includeHistory
-      ? scored
-      : scored.filter((item) => item.governed.retrievalEligible);
-    const suppressedByGovernance = scored.length - visible.length;
-
-    const results = visible.slice(0, limit).map(({ row, lexical, semanticScore }) => {
+    const results = best.map(({ row, lexical, semanticScore }) => {
       const usedSemantic = semanticScore !== null;
       const usedLexical = lexical.score > 0;
       const mode: MemoryRetrievalMode = usedSemantic && usedLexical ? "hybrid" : usedSemantic ? "semantic" : "lexical";
@@ -875,17 +895,27 @@ export class MemoryIndexService {
 
   listRecent(options: { project?: string | null; limit?: number } = {}): MemorySearchResponse {
     const limit = Math.max(1, Math.min(50, Math.floor(options.limit ?? 12)));
-    const results = this.candidateRows(options.project).map((row) => this.result(row, {
+    type Recent = { row: CandidateRow; governed: GovernanceView };
+    const best: Recent[] = [];
+    const compare = (left: Recent, right: Recent) =>
+      Number(right.governed.pinned) - Number(left.governed.pinned)
+      || Number(right.governed.retrievalEligible) - Number(left.governed.retrievalEligible)
+      || right.governed.updatedAt - left.governed.updatedAt
+      || right.row.updated_at - left.row.updated_at
+      || left.row.id.localeCompare(right.row.id);
+    for (const row of this.candidateRows(options.project)) {
+      const governed = this.governance.view(entryFromRow(row), { includeHistory: false });
+      retainBest(best, { row, governed }, limit, compare);
+    }
+    // Verification can touch disk/git and updates source health. It belongs to
+    // the selected output, not every candidate (nor an open read cursor).
+    const results = best.map(({ row }) => this.result(row, {
       mode: "recent",
       reason: "Recently captured. The source is verified separately before use.",
       semanticScore: null,
       lexicalScore: 0,
       sharedTerms: [],
-    })).sort((left, right) =>
-      Number(right.governance.pinned) - Number(left.governance.pinned)
-      || Number(right.governance.retrievalEligible) - Number(left.governance.retrievalEligible)
-      || right.governance.updatedAt - left.governance.updatedAt)
-      .slice(0, limit);
+    }));
     return {
       query: "",
       project: projectKey(options.project).display,

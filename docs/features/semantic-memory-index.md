@@ -1,14 +1,24 @@
 # Semantic memory index
 
-## Status
+## What it does
 
-Implemented as a conservative automatic-and-explicit beta with immutable linked
+AVA can find earlier research, developed ideas, decisions and shipped improvements,
+then check their original sources before using them in a reply. This is a
+conservative automatic-and-explicit beta with immutable linked
 Idea checkpoints, source-verified committed improvement records, automatic recall
 across chat and voice, and append-only user governance. It is a retrieval layer
 for substantial research, developed ideas, decisions and shipped AVA changes; it does not
 replace AVA's compact preference/observation memory or copy complete transcripts.
 
-## User contract
+## Why it exists
+
+Sir should not have to rediscover an important idea because a new chat or many
+newer memories pushed it out of reach. The index separates fast discovery from
+source authority: compact records help AVA find the work, but verified source
+content determines what it can use. Search now considers the full permitted
+candidate set instead of discarding everything beyond the 500 newest entries.
+
+## How Sir interacts with it
 
 1. A successfully completed research turn or an idea meaningfully developed by
    both Sir and AVA is offered to the automatic memory gate. Greetings, routine
@@ -51,7 +61,9 @@ version-guarded **Pin**, **Correct**, **Mark obsolete** and **Mark conflict**
 controls. The expandable **Why AVA found this** section preserves the original
 record beside any correction and lists who changed governance, when and why.
 
-## Data model and authority
+## How it works
+
+### Data model and authority
 
 SQLite remains canonical:
 
@@ -128,7 +140,7 @@ Stale writes fail with the current version, repeated delivery of the same reques
 returns the original event, and a replay key cannot be reused across threads or
 privacy scopes.
 
-## Retrieval
+### Retrieval
 
 Search is deliberately hybrid:
 
@@ -142,7 +154,52 @@ The built-in adapter uses OpenAI `text-embedding-3-small` and the documented
 floating-point embeddings response. The adapter is behind `MemoryEmbedder`, so a
 future local or hosted provider can replace it without migrating canonical entries.
 
-### Automatic retrieval gate
+#### Full-scope candidates, bounded results
+
+Old relevant memories can compete with new ones; recency no longer cuts the
+candidate set to 500 before ranking. `candidateRows`
+(`server/src/memory-index/store.ts:789`) streams active entries and their vectors
+from SQLite after applying the existing personal/project boundary. When
+`latestOnly` is requested, one grouped SQLite join computes the highest active
+checkpoint sequence per thread, replacing a repeated latest-checkpoint scan for
+each row.
+
+```mermaid
+flowchart LR
+  S["Active records in permitted scope"] --> L["Latest checkpoint filter when requested"]
+  L --> R["Stream and rank with current governance"]
+  R --> K["Keep bounded best results"]
+  K --> V["Verify selected sources and attach history"]
+  V --> A["Automatic gate: relevance, current state, verified source"]
+  A --> C["Bounded reference context or honest no-match"]
+```
+
+Search retains at most **20** ranked candidates (default 8); recent listing
+retains at most **50** (default 12). This is top-K selection: every scoped
+candidate is considered, but only the best K are held in the ranked result list.
+Search preserves lexical/semantic scoring, relevance thresholds, the small
+post-relevance pin bonus, and deterministic tie-breaking. Recent listing still
+orders by pin, retrieval eligibility and recency. These limits bound output, not
+how far back AVA is allowed to look
+(`server/src/memory-index/store.ts:819`, `:897`).
+
+Ranking reads the current governance state and correction overlays without
+loading the display-only governance event history for every candidate.
+Prepared statements are reused, **not their returned data**: a pin, correction,
+supersession or conflict is read afresh on the next lookup of the same service
+instance (`server/src/memory-index/governance.ts:171`, `:315`).
+
+After the iterator closes, only selected output records undergo source
+verification and full public result assembly, including bounded governance
+history. That verification may read conversation ranges, check Git reachability,
+or inspect a recorded artifact, and updates source health. No SQLite iterator is
+held across the asynchronous query-embedding request or those verification writes.
+Returned records retain the existing original/effective entry, lineage, governance,
+match reason, source status and `usable` fields; the API schema and history opt-in
+have not changed. Changed/unavailable selected sources remain honestly labelled,
+not silently promoted or replaced by an older checkpoint.
+
+#### Automatic retrieval gate
 
 `server/src/memory-index/auto-retrieve.ts` is the one provider-neutral gate used
 by typed chat, OpenAI Realtime and Hume. It:
@@ -161,6 +218,12 @@ by typed chat, OpenAI Realtime and Hume. It:
   actions; and
 - fails open for the live conversation but closed for memory injection.
 
+The gate requests up to 12 ranked results, then applies its existing stricter
+eligibility checks and injects at most two verified sources. Removing the
+candidate cutoff does not widen project scope, relax relevance, restore
+superseded/conflicted history, or increase the prompt budget
+(`server/src/memory-index/auto-retrieve.ts:154`).
+
 OpenAI Realtime waits at the accepted-transcript boundary, injects one system
 reference item, then sends `response.create`. A monotonic epoch invalidates slow
 lookups when Niko interrupts, replaces, stops, or disconnects a turn. Hume begins
@@ -172,7 +235,7 @@ Each chat/OpenAI turn records a bounded `memory.retrieval.*` event in Mission
 Control. The event contains status, mode, source IDs/health and match explanation,
 but never the query or retrieved transcript text. Replayed recording is idempotent.
 
-### Inline memory context receipts
+#### Inline memory context receipts
 
 The same provider-neutral retrieval gate now projects a versioned, sanitized
 `memoryContext` receipt onto the assistant message it informed. Typed chat emits
@@ -199,7 +262,20 @@ restart-safe history authority; Mission Control remains the deeper operational
 record. Hume's receipt reflects its documented connection-time lookup from the
 active chat's latest user context, not an unimplemented per-utterance lookup.
 
-## Privacy and boundaries
+## Edge cases & limitations
+
+The full candidate scan improves recall coverage, not a promise of constant-time
+search. Work still grows with the scoped index and vector dimensions; SQLite's
+latest-thread grouping and correction reads also have a cost. Only the retained
+ranked set and returned result counts are bounded. This increment adds no
+approximate vector index, background re-embedding or separate memory store.
+
+Source verification is intentionally limited to selected outputs. If the top
+matches have changed or unavailable sources, automatic recall can return no-match
+rather than repeatedly searching deeper until something passes. The source check
+proves integrity, not that a captured conclusion is factually correct.
+
+### Privacy and boundaries
 
 - `scrubSecrets` runs before summary persistence, before embedding calls and
   automatic-editor calls, and again when records are materialized for
@@ -311,6 +387,24 @@ The authoritative checkpoint source range also remains capped at 80 messages.
 These should follow only after automatic-and-explicit capture/retrieval quality
 is measured on real AVA conversations.
 
+## Decisions log
+
+- **Scan the permitted index before truncating results.** A recency-first 500-row
+  cap could hide an older exact match, relevant pinned idea, or valid semantic
+  match even when its source still existed. Bounded top-K selection fixes that
+  correctness boundary without expanding the public result or prompt limits.
+- **Rank compact records; verify selected sources.** Opening every source would
+  turn a wider search into unnecessary transcript/file/Git work. The same source
+  checks still run before any selected memory can be used.
+- **Cache SQL statements, not governance results.** Reusing prepared reads avoids
+  repeated preparation while preserving immediate visibility of corrections,
+  pinning and conflict decisions.
+- **Group latest checkpoints once.** SQLite selects current lineage candidates
+  without a per-candidate latest-sequence rescan or a parallel coordination store.
+- **Keep the existing retrieval contract.** Privacy, source verification, history
+  opt-in, relevance and honest lexical fallback remain separate from ranking;
+  a broader candidate scan does not grant broader authority.
+
 ## Verification
 
 Deterministic coverage lives in:
@@ -345,6 +439,13 @@ and current state, then deletes its temporary database.
 The improvement smoke scans real reachable AVA commits into a disposable SQLite
 database, reopens it, proves replay does not duplicate entries, searches for the
 genuine Microsoft UFO update, verifies its exact Git source, and cleans up.
+
+Candidate-coverage regressions in `store.test.ts`, `auto-retrieve.test.ts` and
+`governance.test.ts` exercise older matches beyond 500 newer records, semantic and
+lexical lookup, pinning and latest lineage, fresh governance reads, scope/source
+gates, stable bounded ordering, and source verification restricted to selected
+outputs. These deterministic fixtures do not establish a production latency
+guarantee or substitute for the integrated application's acceptance checks.
 
 The tests cover sanitized compact storage, semantic paraphrase recall, lexical
 fallback, source changes/deletion, project isolation, latest-lineage selection,

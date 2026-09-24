@@ -61,6 +61,114 @@ async function capture(service: MemoryIndexService, source: ReturnType<typeof co
   });
 }
 
+async function newerNoise(service: MemoryIndexService, source: ReturnType<typeof conversation>, count = 550) {
+  source.db.prepare("UPDATE memory_index_entries SET updated_at = 1000").run();
+  for (let i = 0; i < count; i++) {
+    const message = appendMessage(source.db, { sessionId: source.session.id, role: "user", content: `Meal planning fixture ${i}.` });
+    const item = await service.capture({ sessionId: source.session.id, fromMessageId: message.id, throughMessageId: message.id,
+      kind: "idea", title: `Meal planning ${i}`, summary: "Choose seasonal vegetables for dinner." });
+    source.db.prepare("UPDATE memory_index_entries SET updated_at = ? WHERE id = ?").run(10_000 + i, item.result.entry.id);
+    source.db.prepare("UPDATE memory_index_thread_state SET updated_at = ? WHERE thread_id = ?").run(10_000 + i, item.result.lineage.threadId);
+  }
+}
+
+describe("complete memory candidate ranking", () => {
+  it("finds and pins an older match beyond 500 newer records, with stable capped output and bounded source checks", async () => {
+    const source = conversation();
+    const service = new MemoryIndexService(source.db, null);
+    const old = (await capture(service, source)).result;
+    await newerNoise(service, source);
+    // Legacy rows without an explicit lineage use their own ID as the thread.
+    source.db.prepare("UPDATE memory_index_entries SET thread_id = NULL WHERE id = ?").run(old.entry.id);
+    expect(service.setPinned({ threadId: old.lineage.threadId, expectedVersion: old.governance.threadVersion,
+      actor: "user", reason: "Keep this important idea", requestKey: "pin-older", pinned: true }).ok).toBe(true);
+
+    const found = await service.search("Durable memory retrieval", { limit: 1, latestOnly: true });
+    expect(found.results.map(item => item.entry.id)).toEqual([old.entry.id]);
+    expect(found).toMatchObject({ mode: "lexical", semanticAvailable: false });
+    expect(found.results[0]).toMatchObject({ usable: true, source: { status: "verified" } });
+    source.db.prepare("UPDATE memory_index_sources SET last_verified_at = NULL").run();
+    const recent = service.listRecent({ limit: 5000 });
+    expect(recent.results).toHaveLength(50);
+    expect(recent.results[0]?.entry.id).toBe(old.entry.id);
+    expect(source.db.prepare("SELECT COUNT(*) AS count FROM memory_index_sources WHERE last_verified_at IS NOT NULL").get()).toEqual({ count: 50 });
+    expect(service.listRecent({ limit: 5000 }).results.map(item => item.entry.id)).toEqual(recent.results.map(item => item.entry.id));
+    expect((await service.search("Meal planning", { limit: 5000 })).results).toHaveLength(20);
+    expect(service.listRecent({ limit: Number.NaN }).results).toEqual([]);
+    expect((await service.search("Meal planning", { limit: Number.NaN })).results).toEqual([]);
+  });
+
+  it("finds an older semantic-only paraphrase and honestly falls back when embeddings fail", async () => {
+    const source = conversation();
+    const embedder = new FakeEmbedder();
+    const service = new MemoryIndexService(source.db, embedder);
+    const old = (await capture(service, source, { title: "Durable recall", summary: "Storage for cross-session durable recall.",
+      conclusions: [], openQuestions: [], nextSteps: [], tags: [] })).result;
+    await newerNoise(service, source);
+    const result = await service.search("knowledge archive", { latestOnly: true });
+    expect(result.results.map(item => item.entry.id)).toEqual([old.entry.id]);
+    expect(result.results[0]?.match).toMatchObject({ mode: "semantic", lexicalScore: 0, semanticScore: 1 });
+    embedder.fail = true;
+    const fallback = await service.search("Durable recall", { latestOnly: true });
+    expect(fallback).toMatchObject({ mode: "lexical", semanticAvailable: false });
+    expect(fallback.notice).toContain("unavailable");
+    expect(fallback.results[0]?.entry.id).toBe(old.entry.id);
+  });
+
+  it("applies scoped corrections between searches without cached governance, then rejects changed/deleted source evidence", async () => {
+    const source = conversation();
+    const service = new MemoryIndexService(source.db, null);
+    const old = (await capture(service, source, { project: "Aurora", privacyLevel: "project" })).result;
+    await newerNoise(service, source);
+    expect((await service.search("Durable memory retrieval")).results).toEqual([]);
+    expect((await service.search("Durable memory retrieval", { project: "Other" })).results).toEqual([]);
+    expect((await service.search("Durable memory retrieval", { project: "aurora" })).results[0]?.entry.id).toBe(old.entry.id);
+    const corrected = await service.correct({ threadId: old.lineage.threadId, entryId: old.entry.id,
+      expectedVersion: old.governance.threadVersion, actor: "user", reason: "Correct the current topic",
+      requestKey: "older-correction", project: "Aurora", correction: { title: "Origami satellite", summary: "Origami satellite revised." } });
+    expect(corrected.ok).toBe(true);
+    const changed = await service.search("Origami satellite", { project: "Aurora" });
+    expect(changed.results[0]).toMatchObject({ entry: { id: old.entry.id, title: "Origami satellite" },
+      originalEntry: { title: old.entry.title }, governance: { corrected: true, threadVersion: 2 } });
+    expect(changed.results[0]?.governance.events).toHaveLength(1);
+    expect((await service.search("Origami satellite", { project: "Other" })).results).toEqual([]);
+    source.db.prepare("UPDATE messages SET content = 'unexpected rewrite' WHERE id = ?").run(source.first.id);
+    expect((await service.search("Origami satellite", { project: "Aurora" })).results[0]).toMatchObject({ usable: false, source: { status: "changed" } });
+    softDeleteSession(source.db, source.session.id);
+    expect((await service.search("Origami satellite", { project: "Aurora" })).results[0]).toMatchObject({ usable: false, source: { status: "unavailable" } });
+  });
+
+  it("keeps only the latest eligible checkpoint beyond the cutoff, and does not resurrect conflicted or superseded threads", async () => {
+    const source = conversation();
+    const service = new MemoryIndexService(source.db, null);
+    const old = (await capture(service, source)).result;
+    const update = appendMessage(source.db, { sessionId: source.session.id, role: "user", content: "Revised durable memory retrieval plan." });
+    const latest = (await capture(service, source, { throughMessageId: update.id, parentEntryId: old.entry.id,
+      expectedParentVersion: old.entry.version, checkpointKind: "revision", summary: "Revised durable memory retrieval plan." })).result;
+    const alternativeMessage = appendMessage(source.db, { sessionId: source.session.id, role: "user", content: "Alternative durable memory retrieval plan." });
+    const alternative = (await capture(service, source, { fromMessageId: alternativeMessage.id, throughMessageId: alternativeMessage.id })).result;
+    await newerNoise(service, source);
+    const before = await service.search("Durable memory retrieval", { latestOnly: true });
+    expect(before.results.map(item => item.entry.id).sort()).toEqual([latest.entry.id, alternative.entry.id].sort());
+    const conflict = service.openConflict({ threadId: latest.lineage.threadId, expectedVersion: latest.governance.threadVersion,
+      otherThreadId: alternative.lineage.threadId, otherExpectedVersion: alternative.governance.threadVersion,
+      actor: "user", reason: "Competing plans", requestKey: "older-conflict" });
+    expect(conflict.ok).toBe(true);
+    const blocked = await service.search("Durable memory retrieval", { latestOnly: true });
+    expect(blocked.results).toEqual([]);
+    expect(blocked.suppressedByGovernance).toBe(2);
+    const restored = service.resolveConflict({ threadId: latest.lineage.threadId,
+      expectedVersion: service.get(latest.entry.id)!.governance.threadVersion, losingThreadId: alternative.lineage.threadId,
+      losingExpectedVersion: service.get(alternative.entry.id)!.governance.threadVersion,
+      actor: "user", reason: "Keep the revised plan", requestKey: "older-resolve" });
+    expect(restored.ok).toBe(true);
+    expect((await service.search("Durable memory retrieval", { latestOnly: true })).results.map(item => item.entry.id)).toEqual([latest.entry.id]);
+    expect((await service.search("Durable memory retrieval", { includeHistory: true })).results).toHaveLength(3);
+    expect(service.forget(latest.entry.id, latest.entry.version)).toEqual({ ok: true });
+    expect((await service.search("Durable memory retrieval", { latestOnly: true })).results.map(item => item.entry.id)).toEqual([old.entry.id]);
+  });
+});
+
 describe("semantic memory index", () => {
   it("indexes only reachable committed improvements and reuses their immutable source", async () => {
     const source = conversation();

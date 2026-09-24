@@ -3,6 +3,7 @@ import { openInMemoryDb } from "../state/db.js";
 import { appendMessage } from "../state/messages.js";
 import { createSession } from "../state/sessions.js";
 import { MemoryIndexService } from "./store.js";
+import { MemoryGovernanceStore } from "./governance.js";
 
 function setup() {
   const db = openInMemoryDb();
@@ -45,6 +46,28 @@ async function memory(
 }
 
 describe("semantic memory governance", () => {
+  it("ranking omits only audit history and prepared reads observe subsequent partial corrections", async () => {
+    const f = setup();
+    const original = await memory(f, { title: "Moon garden", summary: "Initial planting plan." });
+    const views = new MemoryGovernanceStore(f.db);
+    const compareViews = () => {
+      const full = views.view(original.originalEntry);
+      expect(views.view(original.originalEntry, { includeHistory: false })).toEqual({ ...full, events: [] });
+      return full;
+    };
+    expect(compareViews().corrected).toBe(false);
+    await f.service.correct({ threadId: original.lineage.threadId, entryId: original.entry.id, expectedVersion: 1,
+      actor: "user", reason: "Correct summary", requestKey: "rank-correction-1", correction: { summary: "Revised planting plan." } });
+    await f.service.correct({ threadId: original.lineage.threadId, entryId: original.entry.id, expectedVersion: 2,
+      actor: "user", reason: "Add a tag", requestKey: "rank-correction-2", correction: { tags: ["garden"] } });
+    expect(compareViews()).toMatchObject({ entry: { summary: "Revised planting plan.", tags: ["garden"] },
+      threadVersion: 3, corrected: true, events: expect.any(Array) });
+    expect(compareViews().events).toHaveLength(2);
+    f.service.setPinned({ threadId: original.lineage.threadId, expectedVersion: 3, pinned: true,
+      actor: "user", reason: "Pin current idea", requestKey: "rank-pin" });
+    expect(compareViews().pinned).toBe(true);
+    expect(compareViews().events).toHaveLength(3);
+  });
   it("applies an immutable sanitized correction and rejects stale writes", async () => {
     const f = setup();
     const original = await memory(f, {

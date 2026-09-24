@@ -1,4 +1,5 @@
 import { nanoid } from "nanoid";
+import type Database from "better-sqlite3";
 import type { Db } from "../state/db.js";
 import { scrubSecrets } from "../security/scrub.js";
 import type {
@@ -167,11 +168,27 @@ function hasCorrection(value: MemoryCorrection): boolean {
 }
 
 export class MemoryGovernanceStore {
-  constructor(private readonly db: Db) {}
+  private readonly readState: Database.Statement<[string], StateRow>;
+  private readonly readCorrections: Database.Statement<[string, string], EventRow>;
+  private readonly readHistory: Database.Statement<[string, number], EventRow>;
+
+  constructor(private readonly db: Db) {
+    // Cache statements, never their results: governance writes must be visible
+    // on the next lookup, including a second search on this store instance.
+    this.readState = db.prepare("SELECT * FROM memory_index_thread_state WHERE thread_id = ?");
+    this.readCorrections = db.prepare(`
+      SELECT * FROM memory_index_governance_events
+      WHERE thread_id = ? AND entry_id = ? AND kind = 'corrected'
+      ORDER BY resulting_version ASC, created_at ASC, id ASC
+    `);
+    this.readHistory = db.prepare(`
+      SELECT * FROM memory_index_governance_events
+      WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
+    `);
+  }
 
   private state(threadId: string): StateRow | null {
-    return (this.db.prepare("SELECT * FROM memory_index_thread_state WHERE thread_id = ?")
-      .get(threadId) as StateRow | undefined) ?? null;
+    return (this.readState.get(threadId) as StateRow | undefined) ?? null;
   }
 
   currentEntryId(threadId: string, project?: string | null): string | null {
@@ -295,7 +312,7 @@ export class MemoryGovernanceStore {
     `).run(latest?.id ?? null, now, threadId, latest?.id ?? null);
   }
 
-  view(originalEntry: MemoryIndexEntry): GovernanceView {
+  view(originalEntry: MemoryIndexEntry, options: { includeHistory?: boolean } = {}): GovernanceView {
     const threadId = originalEntry.threadId || originalEntry.id;
     const state = this.state(threadId) ?? {
       thread_id: threadId,
@@ -307,11 +324,7 @@ export class MemoryGovernanceStore {
       conflict_with: "[]",
       updated_at: originalEntry.updatedAt,
     };
-    const corrections = this.db.prepare(`
-      SELECT * FROM memory_index_governance_events
-      WHERE thread_id = ? AND entry_id = ? AND kind = 'corrected'
-      ORDER BY resulting_version ASC, created_at ASC, id ASC
-    `).all(threadId, originalEntry.id) as EventRow[];
+    const corrections = this.readCorrections.all(threadId, originalEntry.id) as EventRow[];
     // Corrections are immutable partial overlays. Compose them in version order
     // so a later correction to (for example) tags does not erase an earlier
     // corrected summary. The checkpoint itself remains untouched.
@@ -336,10 +349,8 @@ export class MemoryGovernanceStore {
       : state.conflict_status === "unresolved"
         ? "conflicted"
         : isCurrent ? "current" : "history";
-    const events = this.db.prepare(`
-      SELECT * FROM memory_index_governance_events
-      WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
-    `).all(threadId, MAX_EVENTS) as EventRow[];
+    const events = options.includeHistory === false
+      ? [] : this.readHistory.all(threadId, MAX_EVENTS) as EventRow[];
     return {
       entry,
       originalEntry,

@@ -74,6 +74,31 @@ async function capture(
 }
 
 describe("automatic source-verified memory retrieval", () => {
+  it("recalls older evidence in every channel beyond 500 newer records, but never injects it after source change", async () => {
+    const f = fixture();
+    const older = await capture(f);
+    f.db.prepare("UPDATE memory_index_entries SET updated_at = 1000").run();
+    for (let i = 0; i < 510; i++) {
+      const message = appendMessage(f.db, { sessionId: f.session.id, role: "user", content: `Meal planning fixture ${i}` });
+      const saved = await f.service.capture({ sessionId: f.session.id, fromMessageId: message.id, throughMessageId: message.id,
+        kind: "idea", title: `Meal planning ${i}`, summary: "Choose seasonal vegetables for dinner." });
+      f.db.prepare("UPDATE memory_index_entries SET updated_at = ? WHERE id = ?").run(10_000 + i, saved.result.entry.id);
+    }
+    for (const channel of ["chat", "openai_voice", "hume_voice"] as const) {
+      const decision = await retrieveAutomaticMemory(f.service, {
+        query: "Recall our aurora observation plan", channel, currentSessionId: "another-human-chat",
+      });
+      expect(decision.status).toBe("used");
+      expect(decision.selected.map(item => item.entryId)).toEqual([older.result.entry.id]);
+      expect(decision.prompt).toContain("cloud checks");
+    }
+    f.db.prepare("UPDATE messages SET content = 'source changed unexpectedly' WHERE id = ?").run(older.result.source.fromMessageId);
+    for (const channel of ["chat", "openai_voice", "hume_voice"] as const) {
+      const decision = await retrieveAutomaticMemory(f.service, { query: "Recall our aurora observation plan", channel });
+      expect(decision.selected).toEqual([]);
+      expect(decision.prompt).not.toContain("cloud checks");
+    }
+  });
   it("uses a relevant latest checkpoint and includes authoritative source text", async () => {
     const f = fixture();
     await capture(f);

@@ -372,6 +372,18 @@ flowchart TB
 
 **Assembly** (`orchestrator/system-prompt.ts`): persona → capability map → memory index → preferences → observations → (action mode only) the tool rubric + writable fsRoots. The same bytes are produced each turn for prompt-cache hits.
 
+**Source-verified retrieval is a separate SQLite layer.** Research, ideas and
+improvement records live in the semantic index, not just the Markdown preference
+files or playbooks. It streams all scoped active candidates rather than only the
+500 newest, retaining at most 20 search or 50 recent results. Ranking uses fresh
+governance state; only selected outputs undergo source verification
+(`server/src/memory-index/store.ts:789`). The automatic gate still enforces
+privacy, relevance and current-checkpoint rules, injecting at most two verified
+source excerpts rather than trusting discovery summaries
+(`server/src/memory-index/auto-retrieve.ts:145`). See
+[Semantic memory index](features/semantic-memory-index.md) for limits and
+provider-specific voice behavior.
+
 **Learning (verified playbook gate):** when a multi-step task reaches its terminal receipt, `maybeCapture` may distil it into a reusable playbook only when independent task-outcome evidence marks the result verified. A final reply and executor `ok` are not proof. On a similar future request the matching playbook's steps are injected into the prompt:
 
 - **Recall is lexical, not an LLM call.** `matchPlaybook` (`playbooks/match.ts`) scores token overlap against each playbook's short canonical trigger + keywords — ~0 ms and free (it replaced a 1.7–2.8 s side-model call before every action turn). *Honest limit:* being lexical, a pure paraphrase with no shared words won't recall — Ava just runs without the hint (a deliberate precision-over-recall trade).
@@ -400,6 +412,11 @@ flowchart LR
   proj --> sp
   pb -->|recall on match| sp
   sp --> model[LLM system prompt]:::paid
+  mi[(SQLite semantic index)]:::data
+  mi --> rank[Scoped streaming ranking<br/>bounded top-K]:::server
+  rank --> verify[Verify selected sources]:::server
+  verify --> recall[Automatic eligibility gate<br/>at most two source excerpts]:::server
+  recall -->|reference context only| model
   log --> rcu[read_claude_updates]:::tool
   rcu --> model
   classDef data fill:#960,color:#fff

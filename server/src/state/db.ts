@@ -25,6 +25,11 @@ export function openDb(path: string): Db {
   // Labels are user-chosen. Only newly rotated server credentials receive an
   // internal actor; no provenance is inferred for existing paired devices.
   tryAddColumn(db, "device_tokens", "session_actor", "TEXT NOT NULL DEFAULT 'human' CHECK (session_actor IN ('human', 'automation', 'voice_action'))");
+  // O(1) token validation (see auth/tokens.ts). Existing tokens have no digest
+  // until their next successful bcrypt check fills it in.
+  tryAddColumn(db, "device_tokens", "token_lookup", "TEXT");
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_device_tokens_lookup
+    ON device_tokens(token_lookup) WHERE token_lookup IS NOT NULL`);
   // Semantic-memory Phase 2 provenance. Existing explicit entries remain
   // explicit; automatic capture is an additive, inspectable origin.
   tryAddColumn(db, "memory_index_entries", "capture_mode", "TEXT NOT NULL DEFAULT 'explicit'");

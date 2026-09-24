@@ -398,6 +398,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_observability_actual_provider_cost
 CREATE TABLE IF NOT EXISTS device_tokens (
   id TEXT PRIMARY KEY,
   token_hash TEXT UNIQUE NOT NULL,
+  -- SHA-256 of the secret for O(1) validation; NULL until a legacy token is next used.
+  token_lookup TEXT,
   label TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   last_seen_at INTEGER,

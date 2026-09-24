@@ -54,6 +54,8 @@ describe("openDb", () => {
     expect(migrated.prepare("SELECT * FROM device_tokens WHERE id = 'old-watch-label'").get()).toEqual({
       id: "old-watch-label", token_hash: "old-hash", label: "watch-internal",
       created_at: 12, last_seen_at: 20, revoked_at: null, session_actor: "human",
+      // Filled in on the token's next successful bcrypt check, never guessed.
+      token_lookup: null,
     });
     migrated.close();
   });

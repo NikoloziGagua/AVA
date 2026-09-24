@@ -19,6 +19,7 @@ import {
   actionStartedFrame,
   bargeInFrame,
   recoverFrame,
+  speechDismissedFrame,
   transcriptPendingFrame,
   acceptedTranscriptFrame,
   loadRealtimeVadConfig,
@@ -644,6 +645,10 @@ describe("voice barge-in + PTT recovery control frames", () => {
   it("bargeInFrame tells the client to stop Ava's audio when the owner talks over her", () => {
     expect(JSON.parse(bargeInFrame())).toEqual({ type: "ava.barge_in" });
   });
+  it("speechDismissedFrame tells a hands-free client its pause was a false alarm", () => {
+    expect(JSON.parse(speechDismissedFrame("echo"))).toEqual({ type: "ava.speech_dismissed", reason: "echo" });
+  });
+
   it("recoverFrame carries the drop reason so the client re-arms listening", () => {
     expect(JSON.parse(recoverFrame("empty"))).toEqual({ type: "ava.recover", reason: "empty" });
   });

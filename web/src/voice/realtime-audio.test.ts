@@ -53,15 +53,20 @@ class FakeSource {
 }
 let startTimes: number[] = [];
 let created: FakeSource[] = [];
+let lastContext: FakeAudioContext | null = null;
 class FakeAudioContext {
   currentTime = 0;
   state = "running";
+  suspends = 0;
+  resumes = 0;
+  constructor() { lastContext = this; }
   get destination() { return {}; }
   createBuffer(_ch: number, len: number, rate: number) {
     return { duration: len / rate, getChannelData: () => new Float32Array(len) };
   }
   createBufferSource() { const s = new FakeSource(); created.push(s); return s as unknown as AudioBufferSourceNode; }
-  resume() { return Promise.resolve(); }
+  suspend() { this.suspends++; this.state = "suspended"; return Promise.resolve(); }
+  resume() { this.resumes++; this.state = "running"; return Promise.resolve(); }
   close() { return Promise.resolve(); }
 }
 
@@ -219,5 +224,62 @@ describe("PcmStreamPlayer.interrupt()", () => {
     p.interrupt();
     expect(() => p.interrupt()).not.toThrow();
     expect(p.playing).toBe(false);
+  });
+});
+
+describe("PcmStreamPlayer.hold() / release(): pause for a possible interruption", () => {
+  beforeEach(() => {
+    startTimes = [];
+    created = [];
+    lastContext = null;
+    (globalThis as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
+  });
+  afterEach(() => {
+    delete (globalThis as unknown as { AudioContext?: unknown }).AudioContext;
+  });
+
+  it("pauses AVA's audio in place and resumes it without dropping anything", () => {
+    const p = new PcmStreamPlayer(24000);
+    p.enqueue(pcm16Chunk(2400));
+    p.hold();
+    expect(p.held).toBe(true);
+    expect(lastContext!.state).toBe("suspended");
+    expect(created[0]!.stopped).toBe(0); // paused, not discarded
+    p.release();
+    expect(p.held).toBe(false);
+    expect(lastContext!.state).toBe("running");
+    expect(created[0]!.stopped).toBe(0);
+  });
+
+  it("keeps new chunks queued behind the pause instead of un-pausing", () => {
+    const p = new PcmStreamPlayer(24000);
+    p.enqueue(pcm16Chunk(2400));
+    p.hold();
+    const resumesBefore = lastContext!.resumes;
+    p.enqueue(pcm16Chunk(2400));
+    expect(lastContext!.state).toBe("suspended");
+    expect(lastContext!.resumes).toBe(resumesBefore);
+    expect(created).toHaveLength(2);
+  });
+
+  it("does nothing when AVA is silent, so a stray noise can't wedge the next reply", () => {
+    const p = new PcmStreamPlayer(24000);
+    p.hold();
+    expect(p.held).toBe(false);
+    p.enqueue(pcm16Chunk(2400));
+    const [source] = created;
+    source!.onended?.();
+    p.hold();
+    expect(p.held).toBe(false);
+  });
+
+  it("a confirmed interruption discards the paused audio and leaves the player able to play", () => {
+    const p = new PcmStreamPlayer(24000);
+    p.enqueue(pcm16Chunk(2400));
+    p.hold();
+    p.interrupt();
+    expect(created[0]!.stopped).toBe(1);
+    expect(p.held).toBe(false);
+    expect(lastContext!.state).toBe("running");
   });
 });

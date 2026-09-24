@@ -39,6 +39,7 @@ import {
   retrieveAutomaticMemory,
 } from "../memory-index/auto-retrieve.js";
 import { detectProject, loadProjectIndex } from "../memory/project-index.js";
+import { voiceMemoryBudgetMs, withinBudget } from "./voice-memory-budget.js";
 import {
   resolveVoiceProvider,
   describeVoiceProvider,
@@ -743,6 +744,16 @@ export function recoverFrame(reason: string): string {
   return JSON.stringify({ type: "ava.recover", reason });
 }
 
+/**
+ * Sent in hands-free mode when a finished transcript is dropped at the gate
+ * (echo, noise, a cough). The client pauses AVA's audio the instant speech
+ * starts; this tells it the interruption was a false alarm so it can resume
+ * exactly where it paused instead of waiting out its fallback timer.
+ */
+export function speechDismissedFrame(reason: string): string {
+  return JSON.stringify({ type: "ava.speech_dismissed", reason });
+}
+
 /** A structurally incomplete automatic-VAD turn is visible, but not actionable. */
 export function transcriptPendingFrame(text: string): string {
   return JSON.stringify({ type: "ava.transcript_pending", text });
@@ -1385,6 +1396,12 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           )
         : buildRealtimeSessionUpdate(system, vad, { pushToTalk });
       upstream.send(JSON.stringify(sessionUpdate));
+      // Warm the memory path while Sir is still opening his mouth: the first
+      // embedding call on a cold connection measured ~1.8 s, which would
+      // otherwise land on his first turn. Results are discarded.
+      if (hybrid && deps.memoryIndex) {
+        void deps.memoryIndex.search("voice session warm-up", { limit: 1 }).catch(() => { /* optional */ });
+      }
       // Both providers and modes share the binding resolved at the ingress.
       if (voiceSessionObserved && deps.observability) {
         try {
@@ -1829,6 +1846,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           // drop now that the gate skips the denylist for held commits).
           if (pushToTalk) {
             try { if (client.readyState === WebSocket.OPEN) client.send(recoverFrame(decision.reason)); } catch { /* */ }
+          } else {
+            try { if (client.readyState === WebSocket.OPEN) client.send(speechDismissedFrame(decision.reason)); } catch { /* */ }
           }
           return; // do not forward — no phantom turn, no /api/chat call
         }
@@ -1974,21 +1993,51 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
               try { return detectProject(acceptedText, loadProjectIndex(deps.memoryDir))?.slug ?? null; }
               catch { return null; }
             })();
-            const memory = await retrieveAutomaticMemory(deps.memoryIndex, {
+            const lookup = retrieveAutomaticMemory(deps.memoryIndex, {
               query: acceptedText,
               channel: "openai_voice",
               currentSessionId: sessionId,
               project: memoryProject,
             });
+            // Memory may not hold the reply hostage: past its budget AVA answers
+            // without it. A late result is recorded, never injected into a turn
+            // that is already being answered (or into a newer one).
+            const budgetMs = voiceMemoryBudgetMs(acceptedText);
+            const outcome = await withinBudget(lookup, budgetMs);
             if (epoch !== memoryRetrievalEpoch || !memoryRetrievalPending) return;
             memoryRetrievalPending = false;
-            pendingMemoryContext = memoryContextFromDecision(memory);
-            if (observedTurn) {
-              recordAutomaticMemoryDecision(deps.observability, observedTurn.runId, memory, "ava:voice-memory");
-            }
-            const memoryFrame = openAiMemoryContextFrame(memory.prompt);
-            if (memoryFrame) {
-              try { upstream.send(memoryFrame); } catch { /* upstream closed */ }
+            if (outcome.status === "ready") {
+              const memory = outcome.value;
+              pendingMemoryContext = memoryContextFromDecision(memory);
+              if (observedTurn) {
+                recordAutomaticMemoryDecision(deps.observability, observedTurn.runId, memory, "ava:voice-memory");
+              }
+              const memoryFrame = openAiMemoryContextFrame(memory.prompt);
+              if (memoryFrame) {
+                try { upstream.send(memoryFrame); } catch { /* upstream closed */ }
+              }
+            } else {
+              pendingMemoryContext = null;
+              if (observedTurn) {
+                recordObservedTurn(observedTurn, {
+                  type: "memory.retrieval.deferred",
+                  status: "skipped",
+                  title: "Answered without waiting for memory",
+                  summary: outcome.status === "late"
+                    ? `The memory lookup took longer than ${budgetMs} ms, so AVA answered without it.`
+                    : "The memory lookup failed, so AVA answered without it.",
+                  payload: { budgetMs, elapsedMs: Math.round(outcome.elapsedMs), reason: outcome.status },
+                });
+                if (outcome.status === "late") {
+                  const turn = observedTurn;
+                  void lookup
+                    .then((memory) => recordAutomaticMemoryDecision(deps.observability, turn.runId, memory, "ava:voice-memory"))
+                    .catch(() => { /* already answered without it */ });
+                }
+              }
+              if (outcome.status === "failed") {
+                log.warn("realtime: memory retrieval failed", outcome.error instanceof Error ? outcome.error.message : outcome.error);
+              }
             }
             if (upstream.readyState !== WebSocket.OPEN || client.readyState !== WebSocket.OPEN) return;
             responseRequested = true;
@@ -2284,6 +2333,8 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             log.info(`realtime(hume): dropped transcript reason=${decision.reason} text=${JSON.stringify(decision.text)}`);
             if (pushToTalk) {
               try { if (client.readyState === WebSocket.OPEN) client.send(recoverFrame(decision.reason)); } catch { /* */ }
+            } else {
+              try { if (client.readyState === WebSocket.OPEN) client.send(speechDismissedFrame(decision.reason)); } catch { /* */ }
             }
             return;
           }

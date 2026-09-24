@@ -53,6 +53,13 @@ describe("classifyRealtimeEvent", () => {
     expect(classifyRealtimeEvent({ type: "ava.recover" })).toEqual({ kind: "recover", reason: "" });
   });
 
+  it("recognizes the dismissed-speech frame that lets a paused Ava resume", () => {
+    expect(classifyRealtimeEvent({ type: "ava.speech_dismissed", reason: "noise" }))
+      .toEqual({ kind: "speech_dismissed", reason: "noise" });
+    expect(classifyRealtimeEvent({ type: "ava.speech_dismissed" }))
+      .toEqual({ kind: "speech_dismissed", reason: "" });
+  });
+
   it("carries the proxy mode on the session hello (hybrid vs transcribe)", () => {
     expect(classifyRealtimeEvent({ type: "ava.session", sessionId: "s1", mode: "hybrid" }))
       .toEqual({ kind: "session", sessionId: "s1", mode: "hybrid" });

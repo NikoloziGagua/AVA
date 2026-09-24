@@ -40,6 +40,7 @@ export class PcmStreamPlayer {
   private turnScheduledEnd = 0;
   private readonly sources = new Set<AudioBufferSourceNode>();
   private readonly sampleRate: number;
+  private isHeld = false;
   /** Called when all scheduled audio has finished playing (queue drained). */
   onEnded: (() => void) | null = null;
   /**
@@ -83,7 +84,8 @@ export class PcmStreamPlayer {
       const samples = pcm16Base64ToFloat32(b64);
       if (samples.length === 0) return;
       const ctx = this.ensureCtx();
-      if (ctx.state === "suspended") void ctx.resume();
+      // A held player stays paused: new chunks queue up behind the pause point.
+      if (ctx.state === "suspended" && !this.isHeld) void ctx.resume();
 
       const buffer = ctx.createBuffer(1, samples.length, this.sampleRate);
       buffer.getChannelData(0).set(samples);
@@ -109,6 +111,29 @@ export class PcmStreamPlayer {
     }
   }
 
+  /**
+   * Pause AVA's audio in place because Sir may be interrupting. Everything
+   * scheduled keeps its position, so release() continues mid-word. The player
+   * has its own AudioContext, so the microphone is unaffected.
+   */
+  hold(): void {
+    if (!this.ctx || this.isHeld || this.sources.size === 0) return;
+    this.isHeld = true;
+    void this.ctx.suspend().catch(() => { /* best effort */ });
+  }
+
+  /** Resume exactly where hold() paused: the interruption was a false alarm. */
+  release(): void {
+    if (!this.isHeld) return;
+    this.isHeld = false;
+    void this.ctx?.resume().catch(() => { /* best effort */ });
+  }
+
+  /** True while AVA's audio is paused for a possible interruption. */
+  get held(): boolean {
+    return this.isHeld;
+  }
+
   /** True while any scheduled chunk is still playing. */
   get playing(): boolean {
     return this.sources.size > 0;
@@ -132,6 +157,11 @@ export class PcmStreamPlayer {
     if (this.ctx) this.playhead = this.ctx.currentTime;
     this.turnStartTime = null;
     this.turnScheduledEnd = 0;
+    // A confirmed interruption ends any pause; the next reply must be audible.
+    if (this.isHeld) {
+      this.isHeld = false;
+      void this.ctx?.resume().catch(() => { /* best effort */ });
+    }
   }
 
   /** Tear down the AudioContext entirely. */

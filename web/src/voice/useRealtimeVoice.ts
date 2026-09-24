@@ -58,6 +58,17 @@ const REOPEN_FALLBACK_MS = 4000;
 // drops a PTT commit, so recovery is usually deterministic, not timer-driven.)
 const PTT_RECOVERY_MS = 5500;
 
+// Hands-free instant barge-in. The server only confirms an interruption after
+// the words are transcribed and pass its gate, which takes a second or more, so
+// Ava used to keep talking over Sir. Now her audio pauses the moment the server
+// VAD hears speech and resumes if that speech is dismissed (a cough, echo,
+// background talk). The same pause-then-resume pattern is LiveKit's
+// "false interruption" handling. If no verdict arrives this long after the
+// speech ends, resume anyway so Ava can never stay silently paused.
+const HOLD_RESUME_FALLBACK_MS = 2500;
+// Absolute cap on one pause, in case the end-of-speech event is lost.
+const HOLD_MAX_MS = 20_000;
+
 /** RMS amplitude (0..1) of one PCM16 mic frame — drives the orb meter from the
  *  SAME audio actually forwarded upstream, so there's no second always-on mic and
  *  the meter can't react to the room when nothing is being sent. */
@@ -412,6 +423,8 @@ export function useRealtimeVoice({
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // end-of-turn debounce
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // hands-free recovery (Fix 1)
   const pttRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // stuck-in-thinking recovery (PTT)
+  const holdResumeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // resume a paused Ava if no verdict comes
+  const holdMaxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // hard cap on one pause
   const pttBytesRef = useRef(0); // bytes forwarded in the current push-to-talk turn (Fix 3)
   const turnSeqRef = useRef(0); // monotonic id source for committed transcript turns
   const exactSubmitPendingRef = useRef(false); // explicit-submit dedupe gate
@@ -474,6 +487,8 @@ export function useRealtimeVoice({
     outputItemRef.current = null;
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
+    if (holdResumeTimerRef.current) { clearTimeout(holdResumeTimerRef.current); holdResumeTimerRef.current = null; }
+    if (holdMaxTimerRef.current) { clearTimeout(holdMaxTimerRef.current); holdMaxTimerRef.current = null; }
     if (pttRecoveryTimerRef.current) { clearTimeout(pttRecoveryTimerRef.current); pttRecoveryTimerRef.current = null; }
 
     try { wsRef.current?.close(); } catch { /* */ }
@@ -1020,10 +1035,22 @@ export function useRealtimeVoice({
   // realtime deltas from the cancelled turn are dropped. Shared by the on-screen
   // interrupt() (which ALSO tells the server/agent to stop) and a server-driven
   // voice barge-in (where the proxy already cancelled upstream).
+  const clearHoldTimers = useCallback(() => {
+    if (holdResumeTimerRef.current) { clearTimeout(holdResumeTimerRef.current); holdResumeTimerRef.current = null; }
+    if (holdMaxTimerRef.current) { clearTimeout(holdMaxTimerRef.current); holdMaxTimerRef.current = null; }
+  }, []);
+
+  // Resume Ava exactly where she paused: the speech was not an interruption.
+  const releaseHold = useCallback(() => {
+    clearHoldTimers();
+    try { playerRef.current?.release(); } catch { /* */ }
+  }, [clearHoldTimers]);
+
   const stopSpokenOutput = useCallback(() => {
     interruptEpochRef.current += 1;
     realtimeAudioBlockedRef.current = true;
     awaitingFreshResponseRef.current = false;
+    clearHoldTimers(); // interrupt() below also ends any pause
     try { playerRef.current?.interrupt(); } catch { /* */ }
     outputItemRef.current = null;
     speakEpochRef.current += 1;
@@ -1034,7 +1061,7 @@ export function useRealtimeVoice({
     ttsDoneRef.current = null;
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
     if (fallbackTimerRef.current) { clearTimeout(fallbackTimerRef.current); fallbackTimerRef.current = null; }
-  }, []);
+  }, [clearHoldTimers]);
 
   // WebSocket Realtime clients own playback, so OpenAI cannot know how much of
   // an assistant item Sir actually heard. Truncate at the player's measured
@@ -1129,6 +1156,45 @@ export function useRealtimeVoice({
       outputItemRef.current = { itemId: action.itemId, contentIndex: action.contentIndex };
       return;
     }
+    // Hands-free instant barge-in (hybrid only; push-to-talk already stops Ava
+    // when Sir presses the key).
+    if (hybridRef.current && inputModeRef.current !== "enter_push_to_talk") {
+      const player = playerRef.current;
+      if (action.kind === "speech_started") {
+        if (player?.held) {
+          // Sir started talking again inside the same pause.
+          if (holdResumeTimerRef.current) { clearTimeout(holdResumeTimerRef.current); holdResumeTimerRef.current = null; }
+        } else if (player?.playing) {
+          player.hold();
+          if (holdMaxTimerRef.current) clearTimeout(holdMaxTimerRef.current);
+          holdMaxTimerRef.current = setTimeout(() => { holdMaxTimerRef.current = null; releaseHold(); }, HOLD_MAX_MS);
+        }
+        return;
+      }
+      if (action.kind === "speech_stopped") {
+        if (player?.held) {
+          if (holdResumeTimerRef.current) clearTimeout(holdResumeTimerRef.current);
+          holdResumeTimerRef.current = setTimeout(() => { holdResumeTimerRef.current = null; releaseHold(); }, HOLD_RESUME_FALLBACK_MS);
+        }
+        return;
+      }
+      if (action.kind === "user_transcript_pending" && player?.held) {
+        // Sir is mid-sentence: stay paused until the rest arrives (the hard cap
+        // and the server's fragment expiry still bound the wait).
+        if (holdResumeTimerRef.current) { clearTimeout(holdResumeTimerRef.current); holdResumeTimerRef.current = null; }
+      }
+      if (action.kind === "user_transcript" && (player?.held || player?.playing)) {
+        // A real new turn while Ava's previous reply is still audible. The server
+        // sends ava.barge_in only while it is still generating; once generation
+        // is done the tail lives only here, so stop it the same way.
+        truncatePlayedResponse();
+        stopSpokenOutput();
+      }
+    }
+    if (action.kind === "speech_dismissed") {
+      releaseHold();
+      return;
+    }
     if (hybridRef.current) {
       handleHybridAction(action);
       return;
@@ -1146,7 +1212,7 @@ export function useRealtimeVoice({
       default:
         return;
     }
-  }, [handleHybridAction, runAgentTurn, stopSpokenOutput, truncatePlayedResponse, clearPttRecovery]);
+  }, [handleHybridAction, runAgentTurn, stopSpokenOutput, truncatePlayedResponse, clearPttRecovery, releaseHold]);
 
   const startingRef = useRef(false);
   // Auto-reconnect on a transient abnormal close (e.g. 1006, or upstream 1011),

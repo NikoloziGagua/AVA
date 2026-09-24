@@ -127,9 +127,12 @@ class FakeAudioContext {
   currentTime = 0;
   state = "running";
   audioWorklet = { addModule: vi.fn(async () => {}) };
+  suspended = 0;
+  resumed = 0;
   constructor(_opts?: unknown) { FakeAudioContext.created.push(this); }
   get destination() { return {}; }
-  resume() { return Promise.resolve(); }
+  suspend() { this.suspended++; this.state = "suspended"; return Promise.resolve(); }
+  resume() { this.resumed++; this.state = "running"; return Promise.resolve(); }
   close() { return Promise.resolve(); }
   createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
   createBuffer(_ch: number, len: number, rate: number) {
@@ -944,5 +947,118 @@ describe("useRealtimeVoice — server-driven voice barge-in", () => {
 
     // Speech onset only stopped playback; it did not provide completion evidence.
     expect(hook.result.current.actionPending).toBe(true);
+  });
+});
+
+// Hands-free instant barge-in: Ava pauses the moment the server VAD hears Sir,
+// and resumes if the speech turns out not to be a turn.
+describe("useRealtimeVoice — hands-free pause on speech", () => {
+  // The player's context is the most recent one created after audio arrives.
+  const playerCtx = () => FakeAudioContext.created[FakeAudioContext.created.length - 1]!;
+
+  async function avaSpeaking() {
+    const booted = await bootHybrid();
+    const { ws } = booted;
+    await act(async () => {
+      ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "tell me a story" });
+    });
+    await act(async () => { ws.fireMessage({ type: "response.created" }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_item.added", item: { id: "item_story", type: "message" } }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
+    await flush();
+    expect(booted.hook.result.current.state).toBe("responding");
+    return booted;
+  }
+
+  it("pauses Ava's audio as soon as Sir starts speaking, without cancelling her reply", async () => {
+    const { hook, ws } = await avaSpeaking();
+    const ctx = playerCtx();
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_started" }); });
+    expect(ctx.suspended).toBe(1);
+    expect(hook.result.current.state).toBe("responding");
+    expect(ws.sent.some((f) => f.includes("response.cancel"))).toBe(false);
+  });
+
+  it("resumes where she paused when the server dismisses the speech", async () => {
+    const { ws } = await avaSpeaking();
+    const ctx = playerCtx();
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_started" }); });
+    const resumedBefore = ctx.resumed;
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_stopped" }); });
+    await act(async () => { ws.fireMessage({ type: "ava.speech_dismissed", reason: "too_short" }); });
+    expect(ctx.resumed).toBe(resumedBefore + 1);
+    expect(ctx.state).toBe("running");
+  });
+
+  it("resumes on its own if no verdict arrives after the speech ends", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const { ws } = await avaSpeaking();
+    const ctx = playerCtx();
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_started" }); });
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_stopped" }); });
+    await act(async () => { vi.advanceTimersByTime(2_000); });
+    expect(ctx.state).toBe("suspended");
+    await act(async () => { vi.advanceTimersByTime(600); });
+    expect(ctx.state).toBe("running");
+  });
+
+  it("stays paused while Sir is mid-sentence (a held fragment)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    const { ws } = await avaSpeaking();
+    const ctx = playerCtx();
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_started" }); });
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_stopped" }); });
+    await act(async () => { ws.fireMessage({ type: "ava.transcript_pending", text: "I want you to go" }); });
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    expect(ctx.state).toBe("suspended");
+  });
+
+  it("an accepted turn stops the paused reply even when generation had already finished", async () => {
+    const { hook, ws } = await avaSpeaking();
+    await act(async () => { ws.fireMessage({ type: "response.done" }); });
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_started" }); });
+    const ctx = playerCtx();
+    expect(ctx.state).toBe("suspended");
+    await act(async () => {
+      ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "actually stop" });
+    });
+    await flush();
+    // The old tail is discarded and the model is told how much Sir heard.
+    expect(ws.sent.some((f) => f.includes("conversation.item.truncate"))).toBe(true);
+    expect(ctx.state).toBe("running");
+    expect(hook.result.current.state).toBe("thinking");
+    // The new reply's audio is audible (not blocked by the old pause).
+    await act(async () => { ws.fireMessage({ type: "response.created" }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
+    await flush();
+    expect(hook.result.current.state).toBe("responding");
+  });
+
+  it("ava.barge_in after a pause stops the reply and leaves the player audible", async () => {
+    const { ws } = await avaSpeaking();
+    const ctx = playerCtx();
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_started" }); });
+    await act(async () => { ws.fireMessage({ type: "ava.barge_in" }); });
+    expect(ctx.state).toBe("running");
+  });
+
+  it("does not pause when nothing is playing", async () => {
+    const { ws } = await bootHybrid();
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_started" }); });
+    expect(FakeAudioContext.created.every((c) => c.suspended === 0)).toBe(true);
+  });
+
+  it("push-to-talk mode is unaffected (the key press already interrupts)", async () => {
+    const { hook, ws } = await bootPtt();
+    await act(async () => { ws.fireMessage({ type: "ava.session", sessionId: "s0", mode: "hybrid" }); });
+    await act(async () => {
+      ws.fireMessage({ type: "conversation.item.input_audio_transcription.completed", transcript: "tell me a story" });
+    });
+    await act(async () => { ws.fireMessage({ type: "response.created" }); });
+    await act(async () => { ws.fireMessage({ type: "response.output_audio.delta", delta: btoa("ABCD") }); });
+    await flush();
+    expect(hook.result.current.state).toBe("responding");
+    await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_started" }); });
+    expect(FakeAudioContext.created.every((c) => c.suspended === 0)).toBe(true);
   });
 });

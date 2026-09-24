@@ -89,6 +89,11 @@ export function memoryContextFromDecision(decision: AutomaticMemoryDecision): Me
 
 const GENERIC_TURN = /^(?:hi|hello|hey|thanks|thank you|okay|ok|yes|no|good morning|good night|how are you|what'?s up)[.!? ]*$/i;
 const EXPLICIT_RECALL = /\b(?:remember|recall|we discussed|we decided|our idea|that research|previous conversation|earlier chat|last time)\b/i;
+/** Sir is asking AVA to recall something, so a slower memory lookup is worth waiting for. */
+export function isExplicitMemoryRecall(query: string): boolean {
+  return EXPLICIT_RECALL.test(query);
+}
+
 const MAX_SELECTED = 2;
 const MAX_SOURCE_CHARS = 2_200;
 const MAX_PROMPT_CHARS = 9_000;

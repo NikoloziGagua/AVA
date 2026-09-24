@@ -111,6 +111,14 @@ function firstUsefulParagraph(markdown: string): string | null {
   return paragraph || null;
 }
 
+/**
+ * How long the branch's reachable commits are trusted before git is asked again.
+ * The check spawns git synchronously; at 1 s it ran on nearly every voice turn
+ * (~40 ms with the event loop blocked, i.e. audio relay paused). New commits
+ * still become visible within this window.
+ */
+export const REACHABILITY_TTL_MS = 30_000;
+
 export class GitImprovementCommitSource implements ImprovementCommitSource {
   private readonly cache = new Map<string, CommittedImprovement>();
   private reachable = new Set<string>();
@@ -121,7 +129,7 @@ export class GitImprovementCommitSource implements ImprovementCommitSource {
 
   private refreshReachability(): void {
     const now = Date.now();
-    if (this.cachedHead && now - this.headCheckedAt < 1_000) return;
+    if (this.cachedHead && now - this.headCheckedAt < REACHABILITY_TTL_MS) return;
     const head = runGit(this.repoRoot, ["rev-parse", "HEAD"]).trim().toLocaleLowerCase();
     this.headCheckedAt = now;
     if (head === this.cachedHead && this.reachable.size) return;

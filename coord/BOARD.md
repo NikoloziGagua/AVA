@@ -7139,3 +7139,98 @@ Changed product files: web/src/App.tsx, web/src/lib/deckMotion.ts, web/src/compo
 Pre-existing unrelated .claude/settings.local.json, .codex/agents/ and persona-research changes remain untouched.
 
 NEEDS: niko (reload AVA and try moving Home -> Notes/Explore/Chats, then expand/collapse the new compact navigation rail)
+
+### 2026-09-24 - claude - CLAIM: I1 web, human conversation binding (agentroom task #10)
+
+Nika approved the Milestone 1 plan in the agentroom (room "klevar", request #205). The work runs as four increments:
+- I1: sessions stay human
+- I2: memory recall correctness
+- I3: Today/Talk/Notes/Ideas UI
+- I4: honest reminders
+
+Every increment needs two-agent exact-commit sign-off. Codex owns I1 core (task #9: server state, resolver, transports, recovery). By agreement with Codex, ownership of the web paths below moves from Codex to Claude for M1:
+- web/src/App.tsx
+- web/src/api.ts
+- web/src/orbit/OrbitScreen.tsx
+- web/src/orbit/ChatListScreen.tsx
+- web/src/voice/**
+- web/src/chat/**
+- web/src/components/ava/AppSidebar.tsx
+- web/src/sessions/**
+- their tests
+
+I am claiming only the I1 web slice of the accepted agentroom contract `i1-conversation-binding` v2:
+- Home voice passes the remembered chat explicitly (resume/continue), and New is a one-shot intent with a device-scoped bindingRequestId reused across reconnect/reload until ack.
+- The current-epoch voice/chat binding ack updates the one shared chat pointer; stale acks are ignored.
+- `session_unavailable` (HTTP 404 / WS 4404) shows choose/new controls and never silently switches.
+- Recents come from the bounded `scope=human` list. The remembered chat is never cleared because it is absent from a paged list.
+- Legacy and automation history stay findable. Automation opens audit-only and is never selected as the conversational target.
+- Dead code removed only where proven unused inside these paths (e.g. the never-imported SessionsScreen).
+
+The broader I3 redesign waits for I1 sign-off. Commits stay local (no push). Unrelated working-tree changes stay untouched.
+
+NEEDS: claude
+
+### 2026-09-24 - codex - CLAIM: I1 authoritative conversation binding and recovery
+
+Nika approved local implementation in room #205. Contract i1-conversation-binding v2 is peer-reviewed and accepted. Core task #9 is claimed by Codex; Claude owns task #10 and the narrow web handoff recorded immediately above. This appended table records the active ownership without rewriting the historical table:
+
+| Increment area | Owner | Status |
+| --- | --- | --- |
+| I1 state/schema, shared resolver, chat/voice ingress, human recency, restart recovery, server tests and integration | codex | active, room task #9 |
+| I1 App/Home/voice binding, bounded recents and web tests | claude | transferred by agreement, room task #10 |
+
+Implement additive provenance and explicit exact/new/continue binding, preserve legacy history, prevent automation from owning human conversations, and stop recovery from changing idle chats or human recency. Helpers operate under the claimed owner with disjoint files. Both agents independently test the same committed revision before an increment is complete. The broader UI, recall and reminder increments follow their gates. Work and commits remain local in AVA; no push or cloud deployment.
+
+Baseline HEAD 8b57ef2; git pull --ff-only returned already up to date. Preserve unrelated .claude/settings.local.json, .codex/hooks.json, .gitignore, AGENTS.md, CLAUDE.md and first-proj submodule state. No other repository is inspected or modified. Both agents directly poll recent room messages, including already-read messages. A stale board append was correctly rejected and is retried after rereading the physical tail.
+
+NEEDS: codex and claude (implement, test, cross-review I1)
+
+### 2026-09-24 - codex - I1 implementation checkpoint: committed, final peer/browser gate still open
+
+Contract i1-conversation-binding v3 is accepted. Backend commit a3ba2d459645ca6b0e718b30cd429c8349b81231 contains 27 scoped files: state/schema/db/sessions/session-binding/messages/recovery and tests; auth/tokens/internal-tokens and route auth tests; chat/chat-persist/sessions/voice-realtime routes and tests; index.ts startup/action acknowledgement; strategy chat-handoff fixture; docs/ARCHITECTURE.md, docs/architecture/06-voice-pipeline.md, docs/features/voice-continuity.md. Adds immutable human/automation/unknown origin, server-owned credential actor, separate modality, exact/new/continue resolver, bounded scoped history, persisted New-request dedupe, exact delegated-action ACK and evidence-based once-only restart notices. Existing data migrates unknown without guessing from text or labels.
+
+Claude's web commits are 717d9b2, ad9aef8, 4b51905, e34d7ef. Codex peer review caught and Claude fixed exact-lookup 404 normalization, late chat/voice acknowledgement pointer changes, and mouse-only history rows. Repeated App test failure was proven to be an unstable motion mock creating a new component per access; e34d7ef fixes the mock without changing product semantics. Claude reports five consecutive full web passes at that SHA; Codex independently passed 101 files/527 tests.
+
+Production-browser review then found an ACTUAL full-motion invisible-reply bug: assistant data-bubble opacity stayed 0 after 1.5 + 3 seconds, while reduced mode passed. Claude's 3cc2a31 replaces accumulated ScrollTrigger batches, checks reveal eligibility at fire time and uses explicit visible fromTo endpoints. The exact previously failing black-box journey now passes at 3cc2a31. Persistent focused regression coverage and final independent peer browser acceptance are still pending; this is NOT a COMPLETE declaration.
+
+Evidence so far:
+- npm.cmd --prefix server test: 206 files/1682 passed at core integration, independently repeated by Claude.
+- npm.cmd --prefix server test -- --maxWorkers=4 --minWorkers=1: 206/1682 passed on committed integrated source (.verify/i1-final-server-bounded-tests.log).
+- npm.cmd --prefix web test -- --maxWorkers=4 --minWorkers=1: 101/527 passed at e34d7ef (.verify/i1-final-web-bounded-tests.log).
+- Server build/tsc, canonical web build/tsc and earlier managed build passed. Latest canonical3cc2a31: 4 eager artifacts/842235 bytes within900000; largest349227 within500000; all24 precache entries retained.
+- Fixed the isolated test setup: root-only node_modules junction accidentally resolved Vite5 instead of workspace Vite7.3.2. Adding BOTH workspace dependency junctions made independent bundle measurements identical. No package changes or warning suppression.
+- Unbounded parallel stress exposed pre-existing TaskInspector5s, Chrome hook10s and asynchronous logger-flush timing failures. Failed logs retained; bounded workers changed no assertions/timeouts.
+- Ignored disposable harness .verify/i1-runtime-smoke.mjs boots committed server, verifies exact build723de907-a7dc-4872-9bcd-144aefa07ae5, authentication, human/automation isolation, exact missing/deleted404, one unfinished-task notice, no idle-voice notice, pairing-label spoof resistance, restart persistence/no recency change. Chrome checks current-chat reload, Enter-key audit navigation without pointer theft, deleted exact recovery,390px layout, actual AVA reduced preference and full-motion visible reply, zero page exceptions. No real provider/audio/phone claims. Fixture child processes are stopped; one bounded20min fixture is retained for Claude's independent browser pass.
+
+Coordination repair: both room hooks formerly loaded Claude's local identity. Ignored agentroom configuration now separates Codex identity; bidirectional unread probes and own/foreign lease checks passed. Both agents directly poll include_read with local dedupe rather than depending on hooks. No trust/lease/auth checks disabled.
+
+Live AVA remains unchanged on build a269c867-d32f-4317-8ef0-755b71b30efb (health ok/ready). No push or deployment. Exact obsolete watcher xkcIkMYAQ01y is still enabled/running; both agents agreed to pause it, but the existing browser connection timed out/no AVA page was available, so no pause is claimed and no token was minted. Unrelated working changes remain preserved. Forge and other repositories were neither inspected nor modified.
+
+Limitations: New retry identity is page-lifetime in the browser (server mapping durable); a reload before acknowledgement can leave an empty conversation. Cross-device current selection and universal Hume per-utterance recall remain outside I1. I2 candidate recall proposal9 is planning only; implementation waits for I1 dual acceptance.
+
+NEEDS: codex and claude (finish reveal regression tests, independent final browser/build acceptance, then append COMPLETE and start approved I2)
+
+### 2026-09-24 - codex - COMPLETE I1: shared human conversation and truthful recovery
+
+Joint acceptance: Nika-claude room #297 and Nika-codex #305 accept integrated commit b58eef4b56509bf482880d612a56eb50a8d56b47. Core a3ba2d459645ca6b0e718b30cd429c8349b81231 and web 717d9b2/ad9aef8/4b51905/e34d7ef/3cc2a31/b58eef4 are local scoped commits. No push or deployment. All preceding checkpoint history remains unchanged.
+
+Exact changed areas: core's 27 files are listed in the previous checkpoint; web is App.tsx/App.new-chat.test.tsx, api.ts/api.test.ts, components/ava/AppSidebar.tsx and tests, sessions/current-chat.ts and tests, orbit/OrbitScreen.tsx/ChatListScreen.tsx and tests, chat/ChatScreen.tsx/useChatStream.ts/MessageList.tsx and tests, voice shared conversation-binding/VoiceScreen/runtime hook files and tests. Final b58eef4 adds chat/bubble-reveal.ts and bubble-reveal.test.ts and wires MessageList to those tested decisions. git diff a3ba2d4 b58eef4 -- server is empty: core acceptance remains exact.
+
+Final independent Codex evidence (isolated .verify/i1-integrated at b58eef4):
+- npm.cmd --prefix web test -- src/chat/bubble-reveal.test.ts src/App.new-chat.test.tsx src/chat/MessageList.test.tsx src/chat/MessageList.smoke.test.tsx --maxWorkers=2 --minWorkers=1: 4 files/34 passed.
+- npm.cmd --prefix web test -- --maxWorkers=4 --minWorkers=1: 102 files/532 passed, 56.07s (.verify/i1-exact-final-web-tests.log).
+- npm.cmd --prefix server test -- --maxWorkers=4 --minWorkers=1: 206 files/1682 passed, 49.43s on unchanged committed core; independently repeated by Claude. Server build/TypeScript passed.
+- npm.cmd --prefix web run build: TypeScript + canonical Vite build + target/bundle/PWA verifier passed. 4 eager JS artifacts/842235 bytes; 17 installed-offline JS artifacts/2378077 bytes; largest349227; 24 precache entries/2510.19KiB. Existing budgets unchanged.
+- npm.cmd --prefix web run build:managed: passed at b58eef4 (.verify/i1-exact-final-managed.log). No dependencies changed.
+- node .verify/i1-runtime-smoke.mjs --browser --full-motion --allow-service-workers: passed at b58eef4; isolated committed server build723de907-a7dc-4872-9bcd-144aefa07ae5; authenticated HTTP, human vs automation recents, missing/deleted exact404, real persisted unfinished-task recovery, no idle-voice false notice, public pairing cannot spoof actor, restart without duplicate notice or human-recency change, keyboard audit opening without pointer theft, current-chat reload, deleted-chat recovery,390px layout and visible assistant text, zero page errors. Claude independently passed17 browser assertions on the same SHA, including full/reduced motion. No live model/audio/iPhone claims.
+- Managed build additionally passed the full-motion journey with real service workers at3cc2a31. A prior Playwright serviceWorkers:block run produced registerSW.js registration.update errors because its mocked registration was undefined; repeating with actual service workers passed. This was a harness artifact, not suppressed product failure.
+- git diff --check passed (existing CRLF conversion warnings remain). Earlier overloaded full-suite timing failures and corrected mock/real-animation failures are retained in .verify logs; see checkpoint. Known intentional renderer test stderr remains.
+
+Operational correction since the checkpoint: exact obsolete watcher xkcIkMYAQ01y was paused through the existing authenticated enabled endpoint, enabled1->0 verified. Existing local pairing flow created one temporary test device; it was revoked and verified afterward, token never printed. No other watchers or running tasks changed. Product backend/assets remain live on prior build a269c867-d32f-4317-8ef0-755b71b30efb; all disposable runtime children and retained20min fixture have stopped. Synthetic data/log artifacts remain isolated under ignored .verify, not user data.
+
+Limitations unchanged: pre-ACK browser reload can leave an empty conversation because New keys are page-lifetime; cross-device selection and universal Hume per-utterance memory parity are deferred. Phone/provider audio acceptance remains a later real-device step. Forge and all other repositories were neither inspected nor modified. Preserve unrelated .claude/settings.local.json, .codex/hooks.json, .gitignore, AGENTS.md, CLAUDE.md and first-proj state.
+
+Next: accepted I2 contract v2 removes the proven500-candidate recall cutoff with bounded ranking and identical governance. Claude's independent I3a web navigation may run in parallel after its own accepted contract; each retains the two-agent exact-commit gate. No automatic legacy successor watcher resumed. Direct room polling continues independently of hooks.
+
+NEEDS: codex (claim/implement/test I2) and claude (finalize I3a navigation contract, then own/test UI and peer-review I2)

@@ -19,7 +19,12 @@ opened, and only a conversation that is actually unavailable is forgotten (I1).
 
 The expanded sidebar fetches `/api/sessions?scope=human&limit=8` and shows Sir's
 recent conversations, keeping the current one first. Automation runs and
-unclassified history never appear there. **All conversations** opens the full
+unclassified history never appear there. Neither does a conversation Sir never
+used: pressing New, or opening voice and saying nothing, creates a conversation
+with no human turn. Since I1 v4 the `scope=human` list skips it, so it no longer
+clutters recents, Today's *Continue talking* or *Your conversations*. It is
+never deleted, and it appears as soon as Sir says or types something in it; a
+pinned one always shows. **All conversations** opens the full
 existing Chats workspace; session deletion and pinning remain there, so the
 shell does not create a second management surface.
 

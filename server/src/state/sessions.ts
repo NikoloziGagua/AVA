@@ -139,7 +139,10 @@ export function listSessionsPage(db: Db, opts: { scope: SessionScope; limit?: nu
     || cursor !== undefined && typeof cursor !== "string") throw new SessionListError();
   const after = cursor === undefined ? null : parseSessionCursor(cursor, scope);
   const filters: Record<SessionScope, string> = {
-    human: "status != 'archived' AND (origin = 'human' OR (origin = 'unknown' AND (last_human_activity_at IS NOT NULL OR pinned = 1)))",
+    // A human-origin row with no accepted human turn (New, or voice opened and
+    // nothing said) has nothing to show, so it is not listed. It is never
+    // deleted: exact lookup, the remembered pointer and continue still reach it.
+    human: "status != 'archived' AND origin != 'automation' AND (last_human_activity_at IS NOT NULL OR pinned = 1)",
     automation: "origin = 'automation'",
     legacy: "origin = 'unknown' AND last_human_activity_at IS NULL",
     all: "1 = 1",

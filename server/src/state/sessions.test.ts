@@ -193,6 +193,25 @@ describe("human activity and scoped history", () => {
     db.close();
   });
 
+  it("does not list a human conversation until its first accepted human turn (v4)", () => {
+    const db = openDb(":memory:");
+    const used = createSession(db, { origin: "human" });
+    const neverUsed = createSession(db, { origin: "human" });
+    const pinnedNeverUsed = createSession(db, { origin: "human" });
+    markHumanActivity(db, used.id, 100);
+    setPinned(db, pinnedNeverUsed.id, true);
+    const ids = (scope: SessionScope) => listSessionsPage(db, { scope }).sessions.map(s => s.id);
+    // Hidden from recents, never deleted: exact lookup and scope=all still see it.
+    expect(ids("human")).toEqual([pinnedNeverUsed.id, used.id]);
+    expect(ids("all")).toContain(neverUsed.id);
+    expect(getSession(db, neverUsed.id)?.id).toBe(neverUsed.id);
+    expect(ids("legacy")).not.toContain(neverUsed.id);
+    // Its first real turn makes it an ordinary recent conversation.
+    markHumanActivity(db, neverUsed.id, 200);
+    expect(ids("human")).toEqual([pinnedNeverUsed.id, neverUsed.id, used.id]);
+    db.close();
+  });
+
   it.each<SessionScope>(["human", "automation", "legacy", "all"])("paginates 253 %s rows with tied/null timestamps without loss or duplicates", (scope) => {
     const db = openDb(":memory:");
     const insert = db.prepare(`INSERT INTO sessions
@@ -204,7 +223,9 @@ describe("human activity and scoped history", () => {
         i % 3 === 0 ? 1 : 0, scope === "legacy" || i % 4 === 0 ? null : 100 + i % 7);
     }
     const order = scope === "human" ? "last_human_activity_at" : "updated_at";
-    const expected = (db.prepare(`SELECT id FROM sessions ORDER BY pinned DESC, ${order} DESC NULLS LAST, id DESC`).all() as { id: string }[]).map(row => row.id);
+    // Never-used human rows are not listed (v4); pinned ones keep the NULL-timestamp path covered.
+    const listed = scope === "human" ? "WHERE last_human_activity_at IS NOT NULL OR pinned = 1" : "";
+    const expected = (db.prepare(`SELECT id FROM sessions ${listed} ORDER BY pinned DESC, ${order} DESC NULLS LAST, id DESC`).all() as { id: string }[]).map(row => row.id);
     const actual: string[] = [];
     let cursor: string | undefined;
     do {
@@ -214,14 +235,15 @@ describe("human activity and scoped history", () => {
       cursor = page.nextCursor ?? undefined;
     } while (cursor);
     expect(actual).toEqual(expected);
-    expect(new Set(actual).size).toBe(253);
+    expect(new Set(actual).size).toBe(expected.length);
+    expect(expected.length).toBe(scope === "human" ? 253 - 42 : 253);
     db.close();
   });
 
   it("rejects malformed, cross-scope and wrong-order cursors", () => {
     const db = openDb(":memory:");
-    createSession(db, { origin: "human" });
-    createSession(db, { origin: "human" });
+    markHumanActivity(db, createSession(db, { origin: "human" }).id, 100);
+    markHumanActivity(db, createSession(db, { origin: "human" }).id, 200);
     const cursor = listSessionsPage(db, { scope: "human", limit: 1 }).nextCursor!;
     expect(() => listSessionsPage(db, { scope: "all", cursor })).toThrow(SessionListError);
     const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));

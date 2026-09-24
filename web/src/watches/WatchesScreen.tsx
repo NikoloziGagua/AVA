@@ -18,6 +18,7 @@ import {
   Trash2,
 } from "lucide-react";
 import {
+  createReminderApi,
   createWatchApi,
   deleteWatchApi,
   fetchMissionMeta,
@@ -33,6 +34,11 @@ import { BorderGlow } from "../components/ava/BorderGlow.js";
 import { PanelShell } from "../components/ava/PanelShell.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 import { scheduleLabel, timeAgo } from "../memory/WatchesSection.js";
+import { isDirectReminder, presentReminder } from "../reminders/presenter.js";
+import { ReminderStatusChip } from "../reminders/ReminderStatusChip.js";
+import { resolveWhen, WhenField, type Occurrence } from "../reminders/WhenField.js";
+import { browserTimeZone } from "../reminders/time.js";
+import { createErrorMessage, createOutcomeUnknown, unconfirmedCreateMessage } from "../reminders/createErrors.js";
 
 const REFRESH_MS = 15_000;
 const EXACT_RECEIPT_REFRESH_MS = 5_000;
@@ -128,7 +134,11 @@ function WatchMetric({ label, value, tone = "text-white" }: { label: string; val
   );
 }
 
-function CreateWatchPanel({ onCreated }: { onCreated: (watch: WatchRow) => void }) {
+function CreateWatchPanel({ onCreated, onUncertain }: {
+  onCreated: (watch: WatchRow) => void;
+  /** Refresh the list after an unconfirmed create; resolves whether it worked. */
+  onUncertain: () => Promise<boolean>;
+}) {
   const [kind, setKind] = useState<"check" | "reminder">("check");
   const [mode, setMode] = useState<ScheduleMode>("interval");
   const [prompt, setPrompt] = useState("");
@@ -138,11 +148,40 @@ function CreateWatchPanel({ onCreated }: { onCreated: (watch: WatchRow) => void 
   const [repeat, setRepeat] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // One-time reminders name their zone and never guess across a clock change
+  // (contract i4-one-off-reminders v2); checks keep their existing path.
+  const zone = useMemo(() => browserTimeZone(), []);
+  const [occurrence, setOccurrence] = useState<Occurrence>(null);
+  const [attempted, setAttempted] = useState(false);
+  const directReminder = kind === "reminder" && mode === "once";
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     const cleanPrompt = prompt.trim();
     if (!cleanPrompt) { setError("Describe what AVA should watch or remind you about."); return; }
+
+    if (directReminder) {
+      setAttempted(true);
+      const when = resolveWhen(runAt, occurrence, zone);
+      if (!when.ok) { setError(null); return; } // the When field says why
+      setBusy(true);
+      setError(null);
+      try {
+        const created = await createReminderApi({ prompt: cleanPrompt, runAt: when.instant, timeZone: zone });
+        onCreated(created);
+        setPrompt("");
+        setAttempted(false);
+        setOccurrence(null);
+      } catch (cause) {
+        // Never resent automatically: an unconfirmed write may still land.
+        setError(createOutcomeUnknown(cause)
+          ? unconfirmedCreateMessage(await onUncertain())
+          : createErrorMessage(cause));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
 
     const input: CreateWatchInput = { prompt: cleanPrompt, kind, once: mode === "once" || !repeat };
     if (mode === "interval") {
@@ -245,7 +284,20 @@ function CreateWatchPanel({ onCreated }: { onCreated: (watch: WatchRow) => void 
           </label>
         )}
 
-        {mode === "once" && (
+        {directReminder && (
+          <WhenField
+            label="Run at"
+            value={runAt}
+            onChange={setRunAt}
+            occurrence={occurrence}
+            onOccurrenceChange={setOccurrence}
+            zone={zone}
+            disabled={busy}
+            showErrors={attempted}
+          />
+        )}
+
+        {mode === "once" && !directReminder && (
           <label className="block text-xs text-white/55">
             <span className="mb-2 block">Run at</span>
             <input
@@ -324,6 +376,9 @@ function WatchCard({ watch, busy, highlighted, onToggle, onDelete, onOpenChat }:
   }, [armed]);
 
   const Icon = watch.kind === "reminder" ? BellRing : watch.kind === "codex" ? Bot : Search;
+  // A direct one-off reminder reports transport evidence only; its historical
+  // last_status/last_result ("delivered") is not proof and is not shown.
+  const receipt = isDirectReminder(watch) ? presentReminder(watch) : null;
   const communicationRunId = watch.communication_evidence?.availability === "available" &&
     CODEX_COMMUNICATION_RUN_ID.test(watch.communication_evidence.runId)
     ? watch.communication_evidence.runId
@@ -344,7 +399,9 @@ function WatchCard({ watch, busy, highlighted, onToggle, onDelete, onOpenChat }:
         <div className="mt-0.5 rounded-lg border border-white/10 bg-white/[0.045] p-2 text-[var(--ac)]"><Icon size={16} /></div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full border px-2 py-1 hud text-[9px] tracking-[0.13em] ${statusTone(watch)}`}>{watchStatusLabel(watch)}</span>
+            {receipt
+              ? <ReminderStatusChip presentation={receipt} />
+              : <span className={`rounded-full border px-2 py-1 hud text-[9px] tracking-[0.13em] ${statusTone(watch)}`}>{watchStatusLabel(watch)}</span>}
             <span className="hud text-[9px] tracking-[0.14em] text-white/35">{watch.kind === "reminder" ? "REMINDER" : watch.kind === "codex" ? "CODEX DELIVERY" : "AVA CHECK"}</span>
           </div>
           <p className="mt-3 whitespace-pre-wrap break-words text-sm leading-6 text-white/88">{watch.prompt}</p>
@@ -353,7 +410,12 @@ function WatchCard({ watch, busy, highlighted, onToggle, onDelete, onOpenChat }:
             <span>created {timeAgo(watch.created_at)}</span>
             {watch.last_run_at && <span>last activity {timeAgo(watch.last_run_at)}</span>}
           </div>
-          {watch.last_result && (
+          {receipt && (
+            <p className="mt-3 text-xs leading-5 text-white/60">
+              <span className="text-white/45">{receipt.due}.</span> {receipt.detail}
+            </p>
+          )}
+          {watch.last_result && !receipt && (
             <div className="mt-3 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-2.5 text-xs leading-5 text-white/58">
               <span className="hud mr-2 text-[9px] tracking-[0.14em] text-white/35">LAST RESULT</span>
               {watch.last_result}
@@ -443,6 +505,7 @@ export function WatchesScreen({
       watchesRef.current = next;
       setWatches(next);
       if (!quiet) setError(null);
+      return true;
     } catch (cause) {
       if (quiet) {
         setWatches((current) => {
@@ -640,7 +703,10 @@ export function WatchesScreen({
         </div>
       </section>
 
-      <CreateWatchPanel onCreated={(watch) => setWatches((current) => [watch, ...(current ?? [])])} />
+      <CreateWatchPanel
+        onCreated={(watch) => setWatches((current) => [watch, ...(current ?? [])])}
+        onUncertain={async () => (await load(true)) === true}
+      />
 
       <BorderGlow dataPanelSection className="lg:col-span-7 px-5 py-5 sm:px-6 sm:py-6">
         <div className="mb-5 flex flex-col gap-3 border-b border-white/[0.07] pb-4">

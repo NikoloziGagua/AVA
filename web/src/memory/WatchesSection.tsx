@@ -5,6 +5,8 @@ import { PanelSection } from "../components/ava/PanelShell.js";
 import { useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { hoverLift } from "../lib/deckMotion.js";
+import { presentReminder } from "../reminders/presenter.js";
+import { ReminderStatusChip } from "../reminders/ReminderStatusChip.js";
 
 /** Light refresh so last-check lines stay fresh while the panel is open. */
 const REFRESH_MS = 30_000;
@@ -127,8 +129,9 @@ export function WatchesSection() {
 
 /**
  * One watch row: enabled toggle · prompt (truncated, tap to expand) · schedule
- * caption · last-check line (status glyph + result + relative time) · a two-tap
- * delete (first tap arms "sure?", second deletes; disarms itself after 2.5s).
+ * caption · last-check line (status glyph + result + relative time), or for a
+ * direct one-off reminder its transport receipt · a two-tap delete (first tap
+ * arms "sure?", second deletes; disarms itself after 2.5s).
  */
 function WatchCard({ watch: w, onToggle, onDelete }: {
   watch: WatchRow;
@@ -148,6 +151,9 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
 
   const on = Boolean(w.enabled);
   const status = statusGlyph(w.last_status);
+  // Direct one-off reminders show their transport receipt; the historical
+  // last_status/last_result ("delivered") is not proof and is not shown.
+  const receipt = presentReminder(w);
 
   return (
     <div
@@ -190,7 +196,14 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
           {w.kind === "codex" && w.continue_cycle ? <span>continuous cycle</span> : null}
         </div>
 
-        {w.last_run_at != null ? (
+        {receipt ? (
+          <div className="mt-1.5 flex items-center gap-2 text-[11px] leading-relaxed">
+            <ReminderStatusChip presentation={receipt} />
+            <span className={"min-w-0 flex-1 text-white/55 " + (expanded ? "whitespace-pre-wrap break-words" : "truncate")}>
+              {receipt.detail}
+            </span>
+          </div>
+        ) : w.last_run_at != null ? (
           <div className="mt-1.5 flex items-baseline gap-2 text-[11px] leading-relaxed">
             <span className={"shrink-0 " + status.cls} aria-label={`last check: ${status.label}`}>
               {status.glyph}

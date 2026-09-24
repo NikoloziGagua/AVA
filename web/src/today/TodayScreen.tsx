@@ -2,8 +2,11 @@ import { useEffect, useState } from "react";
 import { CalendarClock, ChevronRight, FileText, Lightbulb, MessageSquareText, Mic } from "lucide-react";
 import { Orb } from "../components/ava/Orb.js";
 import { CommandBar } from "../chat/CommandBar.js";
-import { fetchSessionPage, lastHumanActivity, type SessionRow } from "../api.js";
+import { fetchSessionPage, lastHumanActivity, type SessionRow, type WatchRow } from "../api.js";
 import { fetchNotes, type Note } from "../notes/api.js";
+import { isDirectReminder, orderReminders, presentReminder } from "../reminders/presenter.js";
+import { ReminderStatusChip } from "../reminders/ReminderStatusChip.js";
+import { fetchedAtLabel, useReminderFeed } from "../reminders/useReminderFeed.js";
 
 export interface TodayScreenProps {
   /** Open one of Nika's conversations exactly. */
@@ -81,6 +84,11 @@ export function splitNotes(notes: Note[]): { ideas: Note[]; notes: Note[] } {
 export function TodayScreen(props: TodayScreenProps) {
   const [talks, setTalks] = useState<Section<SessionRow[]>>({ status: "loading" });
   const [notes, setNotes] = useState<Section<{ ideas: Note[]; notes: Note[] }>>({ status: "loading" });
+  // Reminder statuses change while Today is open, so this card keeps refreshing.
+  const { feed } = useReminderFeed();
+  const reminders: Section<{ upcoming: WatchRow[]; total: number }> = feed.status === "ok"
+    ? { status: "ok", value: { upcoming: orderReminders(feed.watches, feed.fetchedAt).upcoming, total: feed.watches.filter(isDirectReminder).length } }
+    : feed.status === "error" ? { status: "error" } : { status: "loading" };
   const [now] = useState(() => new Date());
 
   useEffect(() => {
@@ -94,8 +102,9 @@ export function TodayScreen(props: TodayScreenProps) {
     return () => { cancelled = true; };
   }, []);
 
-  const firstRun = talks.status === "ok" && notes.status === "ok"
-    && talks.value.length === 0 && notes.value.ideas.length === 0 && notes.value.notes.length === 0;
+  const firstRun = talks.status === "ok" && notes.status === "ok" && reminders.status === "ok"
+    && talks.value.length === 0 && notes.value.ideas.length === 0 && notes.value.notes.length === 0
+    && reminders.value.total === 0;
 
   const dateLine = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
 
@@ -168,10 +177,20 @@ export function TodayScreen(props: TodayScreenProps) {
               />
             </TodayCard>
 
+            {/* Read-only: the status says only what the notification service confirmed. */}
             <TodayCard title="Schedule" icon={<CalendarClock size={15} aria-hidden />}>
-              <p className="text-sm leading-6 text-white/65">
-                Reminders and deadlines come with the next update. They are not active yet.
-              </p>
+              <SectionBody
+                section={reminders.status === "ok" ? { status: "ok", value: reminders.value.upcoming.slice(0, LIST_SIZE) } : reminders}
+                loadingText="Loading reminders…"
+                errorText="Your reminders could not be loaded."
+                emptyText="No reminders coming up."
+                render={(rows) => rows.map((watch) => <ReminderLine key={watch.id} watch={watch} />)}
+              />
+              {feed.status === "ok" && feed.stale && (
+                <p role="status" className="text-[11px] text-amber-100/70">
+                  Couldn't refresh. Showing reminders as of {fetchedAtLabel(feed.fetchedAt)}; their status may have changed since.
+                </p>
+              )}
             </TodayCard>
           </div>
         </div>
@@ -265,6 +284,20 @@ function SectionBody<T>({ section, loadingText, errorText, emptyText, render }: 
   if (section.status === "error") return <p role="alert" className="py-2 text-xs text-red-300/90">{errorText}</p>;
   if (section.value.length === 0) return <p className="py-2 text-sm text-white/55">{emptyText}</p>;
   return <ul className="flex flex-col">{render(section.value)}</ul>;
+}
+
+function ReminderLine({ watch }: { watch: WatchRow }) {
+  const view = presentReminder(watch);
+  if (!view) return null;
+  return (
+    <li className="flex items-center gap-3 px-2 py-2.5">
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-sm text-white/90">{watch.prompt}</span>
+        <span className="truncate text-[11px] text-white/50">{view.due}</span>
+      </span>
+      <ReminderStatusChip presentation={view} />
+    </li>
+  );
 }
 
 function ItemButton({ title, meta, onClick }: { title: string; meta: string; onClick: () => void }) {

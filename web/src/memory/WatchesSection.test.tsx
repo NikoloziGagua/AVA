@@ -172,3 +172,33 @@ describe("WatchesSection", () => {
     expect(timeAgo(now - 2 * 86_400_000, now)).toBe("2d ago");
   });
 });
+
+describe("WatchesSection reminder receipts (i4 v2)", () => {
+  it("shows a direct reminder's receipt instead of its old 'delivered' glyph", async () => {
+    const dueAt = Date.now() - 60_000;
+    fetchWatches.mockResolvedValue([watch({
+      id: "r1", prompt: "Stretch", kind: "reminder", run_at: dueAt, once: 1,
+      last_status: "delivered", last_result: "delivered",
+      reminder_status: {
+        version: 1, occurrenceId: `reminder:r1:${dueAt}`, revision: 1, state: "acceptance_unknown", dueAt, timeZone: "Europe/London",
+        expiresAt: dueAt + 900_000, attempts: 1, attemptedAt: dueAt, nextAttemptAt: null, acceptedAt: null,
+        subscriptions: { total: 1, accepted: 0, rejectedTransient: 0, rejectedPermanent: 0, unknown: 1 },
+        reasonCode: "transport_timeout", phoneReceipt: "unconfirmed",
+      },
+    })]);
+    render(<WatchesSection />);
+    expect(await screen.findByText("Acceptance unknown")).toBeTruthy();
+    expect(screen.getByText(/didn't answer in time/)).toBeTruthy();
+    expect(screen.queryByLabelText(/last check: delivered/)).toBeNull();
+  });
+
+  it("leaves checks and recurring reminders on their existing last-check line", async () => {
+    fetchWatches.mockResolvedValue([
+      watch(),
+      watch({ id: "d1", prompt: "Drink water", kind: "reminder", daily_at: "09:00", last_status: "delivered", last_result: "sent" }),
+    ]);
+    render(<WatchesSection />);
+    expect(await screen.findByLabelText("last check: ok")).toBeTruthy();
+    expect(screen.getByLabelText("last check: delivered")).toBeTruthy();
+  });
+});

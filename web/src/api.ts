@@ -1,9 +1,12 @@
 import { getToken, clearToken } from "./auth/tokens.js";
+import { receiptFor } from "./reminders/presenter.js";
 import type { VisualMessage, VisualMessageContext } from "./visuals/types.js";
 import type { MemoryContext } from "./chat/memory-context.js";
 
 export class ApiError extends Error {
   readonly name = "ApiError";
+  /** A bounded validation code from the body, e.g. `{error:"bad_request", reasonCode}`. */
+  reasonCode: string | null = null;
 
   constructor(
     public status: number,
@@ -18,6 +21,7 @@ export class ApiError extends Error {
 
 type ApiFailureBody = {
   error?: string;
+  reasonCode?: unknown;
   message?: string;
   action?: string;
   retryable?: boolean;
@@ -93,13 +97,17 @@ async function request<T>(
     const code = failure.error ?? `http_${r.status}`;
     const action = failure.action ?? null;
     const message = failure.message ?? failure.error ?? `AVA API returned HTTP ${r.status}.`;
-    throw new ApiError(
+    const error = new ApiError(
       r.status,
       action ? `${message} ${action}` : message,
       code,
       action,
       path,
     );
+    if (typeof failure.reasonCode === "string" && /^[a-z0-9_]{1,64}$/.test(failure.reasonCode)) {
+      error.reasonCode = failure.reasonCode;
+    }
+    throw error;
   }
   if (text && !parsedJson) {
     const action =
@@ -1113,6 +1121,8 @@ export type WatchRow = {
   last_result: string | null;
   /** One-shot: fire once at this epoch-ms (newer column — may be absent). */
   run_at?: number | null;
+  /** The named zone a one-off reminder was chosen in (i4; may be absent). */
+  time_zone?: string | null;
   /** Recurring daily at "HH:MM" local (newer column — may be absent). */
   daily_at?: string | null;
   /** "check" | "reminder" | "codex" (newer column — may be absent). */
@@ -1128,6 +1138,52 @@ export type WatchRow = {
   communication_evidence?:
     | { availability: "available"; runId: string }
     | { availability: "unavailable" };
+  /**
+   * Present only on direct one-off reminders (kind=reminder + run_at), contract
+   * i4-one-off-reminders v1. Evidence of transport acceptance, never of phone
+   * receipt. Read it through `parseReminderStatus`, which tolerates drift.
+   */
+  reminder_status?: unknown;
+};
+
+/** Visible reminder states (internal claimed/sending both surface as "trying"). */
+export const REMINDER_STATES = [
+  "scheduled", "paused", "trying", "retry_scheduled", "accepted",
+  "failed", "expired", "acceptance_unknown", "cancelled",
+] as const;
+export type ReminderState = typeof REMINDER_STATES[number];
+
+/** The closed v1 reason codes. Anything else is shown as "Could not confirm". */
+export const REMINDER_REASON_CODES = [
+  "push_not_configured", "no_subscriptions", "transient_rejection", "permanent_rejection",
+  "subscription_gone", "transport_timeout", "transport_unknown", "missed_window",
+  "retry_exhausted", "delivery_window_expired", "paused", "deleted", "delivery_not_recorded",
+] as const;
+export type ReminderReasonCode = typeof REMINDER_REASON_CODES[number];
+
+export type ReminderStatus = {
+  version: 1;
+  occurrenceId: string;
+  revision: number;
+  /** A ReminderState, or an unknown future state shown as "Could not confirm". */
+  state: string;
+  dueAt: number;
+  timeZone: string | null;
+  expiresAt: number;
+  attempts: number;
+  attemptedAt: number | null;
+  nextAttemptAt: number | null;
+  acceptedAt: number | null;
+  subscriptions: {
+    total: number;
+    accepted: number;
+    rejectedTransient: number;
+    rejectedPermanent: number;
+    unknown: number;
+  };
+  /** A ReminderReasonCode, or an unknown future code. */
+  reasonCode: string | null;
+  phoneReceipt: "unconfirmed";
 };
 
 export async function fetchWatches(): Promise<WatchRow[]> {
@@ -1182,6 +1238,72 @@ export async function createWatchApi(input: CreateWatchInput): Promise<WatchRow>
     }),
   });
   return j.watch;
+}
+
+/**
+ * A create answered 2xx, but its body doesn't prove this reminder was stored.
+ * The write may or may not have happened; it is never resent automatically.
+ */
+export class UnconfirmedWriteError extends Error {
+  readonly name = "UnconfirmedWriteError";
+}
+
+function canonicalZone(zone: unknown): string | null {
+  if (typeof zone !== "string" || !zone) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone: zone }).resolvedOptions().timeZone;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create a direct one-off reminder (contract i4-one-off-reminders v2): an exact
+ * instant plus the named zone it was chosen in. It resolves only with the
+ * stored reminder: same prompt, same instant, an equivalent zone and a
+ * scheduled receipt for exactly that occurrence. Anything less is an
+ * UnconfirmedWriteError, and nothing here ever retries.
+ */
+export async function createReminderApi(input: {
+  prompt: string;
+  runAt: number;
+  timeZone: string;
+}): Promise<WatchRow> {
+  let j: { watch?: unknown } | null;
+  try {
+    j = await request<{ watch?: unknown } | null>("/api/watches", {
+      method: "POST",
+      body: JSON.stringify({
+        prompt: input.prompt,
+        kind: "reminder",
+        run_at: input.runAt,
+        time_zone: input.timeZone,
+        once: true,
+      }),
+    });
+  } catch (error) {
+    // A 2xx whose body couldn't be read may still have stored the reminder.
+    if (error instanceof ApiError && error.status >= 200 && error.status < 300) {
+      throw new UnconfirmedWriteError("AVA's answer didn't confirm the reminder was saved.");
+    }
+    throw error;
+  }
+  const watch = j && typeof j === "object" ? j.watch : undefined;
+  const w = watch && typeof watch === "object" && !Array.isArray(watch) ? watch as WatchRow : null;
+  const zone = canonicalZone(input.timeZone);
+  const receipt = w ? receiptFor(w) : null;
+  if (
+    !w
+    || typeof w.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(w.id)
+    || w.kind !== "reminder"
+    || w.prompt !== input.prompt
+    || w.run_at !== input.runAt
+    || zone === null || canonicalZone(w.time_zone) !== zone
+    || !receipt || receipt.state !== "scheduled"
+  ) {
+    throw new UnconfirmedWriteError("AVA's answer didn't confirm the reminder was saved.");
+  }
+  return w;
 }
 
 // ── People map (GET /api/people) — Ava's identity-resolution layer, read-only here.

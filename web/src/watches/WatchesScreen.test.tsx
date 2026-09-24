@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 const api = vi.hoisted(() => ({
   fetchWatches: vi.fn(),
   createWatchApi: vi.fn(),
+  createReminderApi: vi.fn(),
   setWatchEnabled: vi.fn(),
   deleteWatchApi: vi.fn(),
   fetchWatchCommunicationEvidence: vi.fn(),
@@ -12,14 +13,20 @@ const api = vi.hoisted(() => ({
   subscribeMissionEvents: vi.fn((_options?: unknown) => () => {}),
 }));
 
-vi.mock("../api.js", () => ({
+vi.mock("../api.js", async () => ({
+  ApiError: (await vi.importActual<typeof import("../api.js")>("../api.js")).ApiError,
   fetchWatches: api.fetchWatches,
   createWatchApi: api.createWatchApi,
+  createReminderApi: api.createReminderApi,
   setWatchEnabled: api.setWatchEnabled,
   deleteWatchApi: api.deleteWatchApi,
   fetchWatchCommunicationEvidence: api.fetchWatchCommunicationEvidence,
   fetchMissionMeta: api.fetchMissionMeta,
   subscribeMissionEvents: api.subscribeMissionEvents,
+}));
+vi.mock("../reminders/time.js", async () => ({
+  ...(await vi.importActual<typeof import("../reminders/time.js")>("../reminders/time.js")),
+  browserTimeZone: () => "Europe/London",
 }));
 vi.mock("../components/ava/PanelShell.js", () => ({
   PanelShell: ({ title, children }: { title: string; children: React.ReactNode }) => <main><h1>{title}</h1>{children}</main>,
@@ -52,6 +59,7 @@ beforeEach(() => {
   localStorage.setItem("ava-motion", "reduced");
   api.fetchWatches.mockReset().mockResolvedValue([]);
   api.createWatchApi.mockReset();
+  api.createReminderApi.mockReset();
   api.setWatchEnabled.mockReset().mockResolvedValue(undefined);
   api.deleteWatchApi.mockReset().mockResolvedValue(undefined);
   api.fetchWatchCommunicationEvidence.mockReset().mockResolvedValue({ availability: "unavailable" });
@@ -469,5 +477,88 @@ describe("watchStatusLabel", () => {
     expect(watchStatusLabel(row({ last_status: null }))).toBe("Waiting for first run");
     expect(watchStatusLabel(row({ last_status: "unclear" }))).toBe("Result unclear");
     expect(watchStatusLabel(row({ last_status: "provider_wait" }))).toBe("Status: provider_wait");
+  });
+});
+
+describe("Watches: dependable one-time reminders (i4 v2)", () => {
+  const DUE = Date.UTC(2026, 9, 30, 9, 0);
+  const receipt = (over: Record<string, unknown> = {}) => ({
+    version: 1, occurrenceId: `reminder:r:${DUE}`, revision: 1, state: "accepted", dueAt: DUE, timeZone: "Europe/London",
+    expiresAt: DUE + 900_000, attempts: 1, attemptedAt: DUE, nextAttemptAt: null, acceptedAt: DUE + 500,
+    subscriptions: { total: 1, accepted: 1, rejectedTransient: 0, rejectedPermanent: 0, unknown: 0 },
+    reasonCode: null, phoneReceipt: "unconfirmed", ...over,
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.UTC(2026, 8, 24, 12, 0));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("creates a one-time reminder as an exact instant in the named zone", async () => {
+    api.createReminderApi.mockResolvedValue(row({ id: "r", prompt: "Stretch", kind: "reminder", run_at: DUE }));
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+    await screen.findByText("No watches yet.");
+    fireEvent.click(screen.getByRole("button", { name: "Reminder" }));
+    fireEvent.click(screen.getByRole("button", { name: "One time" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /What should AVA remind you/ }), { target: { value: "Stretch" } });
+    fireEvent.change(screen.getByLabelText("Run at"), { target: { value: "2026-10-30T09:00" } });
+    expect(screen.getByText("Fri 30 Oct 2026, 09:00 · Europe/London (UTC+00:00)")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Create watch" }));
+    await waitFor(() => expect(api.createReminderApi).toHaveBeenCalledWith({
+      prompt: "Stretch", runAt: DUE, timeZone: "Europe/London",
+    }));
+    expect(api.createWatchApi).not.toHaveBeenCalled();
+  });
+
+  it("asks which occurrence is meant instead of guessing across the clock change", async () => {
+    api.createReminderApi.mockResolvedValue(row({ id: "r", kind: "reminder", run_at: DUE }));
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+    await screen.findByText("No watches yet.");
+    fireEvent.click(screen.getByRole("button", { name: "Reminder" }));
+    fireEvent.click(screen.getByRole("button", { name: "One time" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /What should AVA remind you/ }), { target: { value: "Night bus" } });
+    fireEvent.change(screen.getByLabelText("Run at"), { target: { value: "2026-10-25T01:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create watch" }));
+    expect(api.createReminderApi).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText("The first one (UTC+01:00)"));
+    fireEvent.click(screen.getByRole("button", { name: "Create watch" }));
+    await waitFor(() => expect(api.createReminderApi).toHaveBeenCalledWith({
+      prompt: "Night bus", runAt: Date.UTC(2026, 9, 25, 0, 30), timeZone: "Europe/London",
+    }));
+  });
+
+  it("keeps one-time checks on their existing path", async () => {
+    api.createWatchApi.mockResolvedValue(row({ id: "c" }));
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+    await screen.findByText("No watches yet.");
+    fireEvent.click(screen.getByRole("button", { name: "One time" }));
+    fireEvent.change(screen.getByRole("textbox", { name: /What should AVA check/ }), { target: { value: "Check later" } });
+    fireEvent.change(screen.getByLabelText("Run at"), { target: { value: "2026-10-30T09:00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create watch" }));
+    await waitFor(() => expect(api.createWatchApi).toHaveBeenCalled());
+    expect(api.createReminderApi).not.toHaveBeenCalled();
+  });
+
+  it("shows a reminder's transport receipt, not its old 'Delivered' label", async () => {
+    api.fetchWatches.mockResolvedValue([
+      row({ id: "r", prompt: "Stretch", kind: "reminder", run_at: DUE, last_status: "delivered", last_result: "delivered", reminder_status: receipt() }),
+    ]);
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+    const card = await screen.findByRole("article", { name: "Watch: Stretch" });
+    expect(card.textContent).toContain("Accepted by notification service");
+    expect(card.textContent).toContain("AVA can't confirm your phone showed it.");
+    expect(card.textContent).not.toMatch(/\bDelivered\b/);
+    expect(card.textContent).not.toContain("LAST RESULT");
+  });
+
+  it("says a paused in-flight send may still complete", async () => {
+    api.fetchWatches.mockResolvedValue([
+      row({ id: "r", prompt: "Stretch", kind: "reminder", run_at: DUE, enabled: 0, reminder_status: receipt({ state: "trying", acceptedAt: null }) }),
+    ]);
+    render(<WatchesScreen onOpenChat={() => undefined} />);
+    const card = await screen.findByRole("article", { name: "Watch: Stretch" });
+    expect(card.textContent).toContain("Pause requested");
+    expect(card.textContent).toContain("outcome is still pending");
   });
 });

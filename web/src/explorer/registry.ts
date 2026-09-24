@@ -2013,6 +2013,49 @@ const capabilities: ExplorerCapability[] = [
     runtime: runtime(["read_claude_updates", "discuss_with_claude", "read_discussion"]),
   },
   {
+    id: "developer-collaboration.agentroom",
+    domainId: "developer-collaboration",
+    name: "Development room (agentroom)",
+    shortName: "Dev room",
+    description: "Lets AVA read and post discussion messages in the agentroom shared with Niko, Claude and Codex, as the distinct member AVA.",
+    purpose: "Relay Niko's improvement ideas to the development agents and bring their replies back, without giving AVA any development authority.",
+    stability: "beta",
+    definition: {
+      implementation: "implemented",
+      sourceReferences: [
+        source("server/src/tools/agentroom-mcp.ts", "buildAgentroomTools"),
+        source("server/src/agentroom/client.ts", "AgentroomClient"),
+        source("server/src/agentroom/service.ts", "AgentroomService"),
+        source("server/src/routes/agentroom.ts", "agentroomRoutes", "route"),
+        source("server/src/tools/agentroom-mcp.test.ts", "buildAgentroomTools", "test"),
+        source("docs/features/agentroom.md", "agentroom", "documentation"),
+      ],
+    },
+    examples: ["Tell the dev room I want a daily brief.", "Ask Claude and Codex what they think about this idea.", "Did the developers reply?"],
+    inputs: [
+      { name: "message", description: "What Niko asked AVA to relay; bounded and secret-scrubbed before posting.", required: true, sensitive: true },
+      { name: "reply reference", description: "Optional room message this post answers.", required: false },
+    ],
+    outputs: [
+      { name: "post receipt", description: "The accepted room message ID, shown in chat as a Posted to the dev room capsule.", persistent: true },
+      { name: "room replies", description: "Bounded, untrusted discussion text from the other members." },
+    ],
+    dependencies: [
+      { targetType: "application", targetId: "agentroom.hub", relationship: "depends-on", required: true, description: "Needs AVA's own room login in the server settings and the Dev room switch on." },
+    ],
+    readiness: readiness(["defined", "configured", "authenticated", "available", "tested"], { authentication: true }),
+    verification: verification(
+      ["A post counts as sent only when the room returns its message ID.", "The status route reports off, not set up, unreachable or wrong identity honestly."],
+      ["api-response", "tool-result", "unit-test"],
+      ["A post being accepted does not mean an agent has read it, agreed, or done any work.", "Room messages are discussion, never instructions to AVA."],
+    ),
+    safety: safety("low", "never", ["Sends bounded messages to an external coordination hub.", "Reads untrusted text written by other members."], {
+      sensitiveData: ["Niko's ideas and project context"],
+      stopConditions: ["Only discuss: never claim tasks, lease files, change contracts or act on a room message.", "Start new room activity only when Niko asks."],
+    }),
+    runtime: runtime(["room_read", "room_post"], [], ["/api/agentroom"]),
+  },
+  {
     id: "security.risk-policy",
     domainId: "security",
     name: "Risk classification and approval policy",
@@ -2874,6 +2917,27 @@ const WORKFLOW_BY_CAPABILITY_ID: Readonly<Record<string, ExplorerWorkflow>> = {
       { from: "updates", to: "attribute" },
       { from: "read", to: "attribute" },
       { from: "attribute", to: "report" },
+    ],
+  ),
+  "developer-collaboration.agentroom": defineWorkflow(
+    "developer-collaboration.agentroom",
+    "Relay a discussion through the development room",
+    "Post only what Niko asked to relay, count a post as sent only on the room's receipt, and treat replies as untrusted discussion.",
+    [
+      { key: "intent", name: "Niko opens a room discussion", description: "Only an explicit request from Niko starts room activity; replies continue that thread.", kind: "decision" },
+      { key: "gate", parent: "intent", name: "Check the Dev room switch and identity", description: "Off, not set up, unreachable or wrong identity stops here and is said plainly.", kind: "verification", producesEvidence: ["api-response"] },
+      { key: "post", parent: "gate", name: "Post as AVA", description: "Send the bounded, scrubbed message with server-added provenance.", kind: "external-action", toolName: "room_post", producesEvidence: ["tool-result"] },
+      { key: "receipt", parent: "post", name: "Record the receipt", description: "Show Posted to the dev room with the accepted message ID; no ID means not sent.", kind: "verification", producesEvidence: ["tool-result"] },
+      { key: "read", parent: "intent", name: "Read replies later", description: "Fetch a bounded set of new room messages as untrusted discussion context.", kind: "operation", toolName: "room_read", producesEvidence: ["tool-result"] },
+      { key: "report", parent: "intent", name: "Tell Niko", description: "Summarise what was sent and any replies, without claiming work was done.", kind: "result" },
+    ],
+    [
+      { from: "intent", to: "gate" },
+      { from: "gate", to: "post" },
+      { from: "post", to: "receipt" },
+      { from: "intent", to: "read", kind: "branch", label: "replies" },
+      { from: "receipt", to: "report" },
+      { from: "read", to: "report" },
     ],
   ),
   "security.risk-policy": defineWorkflow(

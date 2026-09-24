@@ -1,5 +1,5 @@
 {
-  "generatedAt": 1790277483479,
+  "generatedAt": 1790278141204,
   "generator": "scripts/explorer-reality-check.mjs",
   "note": "Every entry here was resolved against the real source tree at build time. Absence from this manifest means the claim was NOT verified.",
   "verifiedSymbols": [
@@ -550,6 +550,42 @@
       "kind": "test"
     },
     {
+      "capability": "developer-collaboration.agentroom",
+      "path": "server/src/tools/agentroom-mcp.ts",
+      "symbol": "buildAgentroomTools",
+      "kind": "implementation"
+    },
+    {
+      "capability": "developer-collaboration.agentroom",
+      "path": "server/src/agentroom/client.ts",
+      "symbol": "AgentroomClient",
+      "kind": "implementation"
+    },
+    {
+      "capability": "developer-collaboration.agentroom",
+      "path": "server/src/agentroom/service.ts",
+      "symbol": "AgentroomService",
+      "kind": "implementation"
+    },
+    {
+      "capability": "developer-collaboration.agentroom",
+      "path": "server/src/routes/agentroom.ts",
+      "symbol": "agentroomRoutes",
+      "kind": "route"
+    },
+    {
+      "capability": "developer-collaboration.agentroom",
+      "path": "server/src/tools/agentroom-mcp.test.ts",
+      "symbol": "buildAgentroomTools",
+      "kind": "test"
+    },
+    {
+      "capability": "developer-collaboration.agentroom",
+      "path": "docs/features/agentroom.md",
+      "symbol": "agentroom",
+      "kind": "documentation"
+    },
+    {
       "capability": "security.risk-policy",
       "path": "server/src/policy/classify.ts",
       "symbol": "classifyRisk",
@@ -794,6 +830,10 @@
     {
       "capability": "self-improvement.pipeline",
       "route": "/api/self"
+    },
+    {
+      "capability": "developer-collaboration.agentroom",
+      "route": "/api/agentroom"
     },
     {
       "capability": "security.risk-policy",
@@ -1143,21 +1183,9 @@
     }
   ],
   "undeclaredTools": [
-    "room_read",
-    "room_post",
     "strategy_room_open"
   ],
   "problems": [
-    {
-      "kind": "undeclared_tool",
-      "tool": "room_read",
-      "file": "server/src/tools/agentroom-mcp.ts"
-    },
-    {
-      "kind": "undeclared_tool",
-      "tool": "room_post",
-      "file": "server/src/tools/agentroom-mcp.ts"
-    },
     {
       "kind": "undeclared_tool",
       "tool": "strategy_room_open",

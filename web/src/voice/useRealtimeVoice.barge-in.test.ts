@@ -14,7 +14,7 @@
 // can't hang on the 350ms / 4000ms / 800ms timeouts.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 
 // ── Module boundaries ────────────────────────────────────────────────────────
 // Mock the API client so interrupt()'s `api.kill` and any agent send are inert
@@ -199,6 +199,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Unmount every hook so a pending reconnect timer cannot leak into the next test.
+  cleanup();
   vi.useRealTimers();
   vi.restoreAllMocks();
   localStorage.clear(); // don't leak the PTT mode into the vad-default tests
@@ -364,6 +366,33 @@ describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
     });
     expect(hook.result.current.getSessionId()).toBe("current");
     expect(hook.result.current.state).toBe("connecting");
+  });
+
+  it("does not rebind the app to a turn answered after voice started a new conversation", async () => {
+    const bound = vi.fn();
+    const { hook } = await (async () => {
+      const h = renderHook(() => useRealtimeVoice({ initialSessionId: "s0", onSessionBound: bound }));
+      await act(async () => { h.result.current.start(); });
+      await flush();
+      const socket = FakeWebSocket.last!;
+      await act(async () => { socket.fireOpen(); });
+      await flush();
+      await act(async () => { socket.fireMessage({ type: "ava.session", sessionId: "s0", mode: "hybrid" }); });
+      return { hook: h };
+    })();
+    bound.mockClear();
+
+    let answer!: (value: { sessionId: string }) => void;
+    sendSpy.mockImplementationOnce(() => new Promise<{ sessionId: string }>((resolve) => { answer = resolve; }));
+    let submitted!: Promise<boolean>;
+    await act(async () => { submitted = hook.result.current.submitExactText("late words"); });
+    await act(async () => { hook.result.current.newConversation(); });
+    await act(async () => { answer({ sessionId: "s0" }); await submitted; });
+
+    expect(bound).not.toHaveBeenCalled();
+    expect(hook.result.current.getSessionId()).toBeNull();
+    // Retire the hook so the "+new" reconnect timer cannot leak into later tests.
+    act(() => hook.unmount());
   });
 
   it("stops without reconnecting when the exact conversation is unavailable", async () => {

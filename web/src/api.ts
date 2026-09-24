@@ -253,28 +253,30 @@ export function lastHumanActivity(session: SessionRow): number {
   return session.last_human_activity_at ?? session.created_at;
 }
 
-export async function fetchSession(id: string): Promise<{
-  session: SessionRow;
-  messages: Array<{
-    id: number;
-    role: string;
-    content: string;
-    created_at: number;
-    visualMessages?: VisualMessage[];
-    metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text"; memoryContext?: MemoryContext };
-  }>;
-}> {
-  return request<{
-    session: SessionRow;
-    messages: Array<{
-      id: number;
-      role: string;
-      content: string;
-      created_at: number;
-      visualMessages?: VisualMessage[];
-      metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text"; memoryContext?: MemoryContext };
-    }>;
-  }>(`/api/sessions/${encodeURIComponent(id)}`);
+export type SessionMessage = {
+  id: number;
+  role: string;
+  content: string;
+  created_at: number;
+  visualMessages?: VisualMessage[];
+  metadata?: { visualContext?: VisualMessageContext; inputSource?: "voice_exact_text"; memoryContext?: MemoryContext };
+};
+
+/**
+ * The authoritative exact lookup. A 404 here always means this conversation is
+ * unavailable, whatever error code the server attaches (it has historically
+ * answered `not_found`), so it is normalized to the typed `session_unavailable`.
+ */
+export async function fetchSession(id: string): Promise<{ session: SessionRow; messages: SessionMessage[] }> {
+  const path = `/api/sessions/${encodeURIComponent(id)}`;
+  try {
+    return await request<{ session: SessionRow; messages: SessionMessage[] }>(path);
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404 && error.code !== "session_unavailable") {
+      throw new ApiError(404, "This conversation is unavailable.", "session_unavailable", null, path);
+    }
+    throw error;
+  }
 }
 
 export async function fetchVapidPublicKey(): Promise<string> {

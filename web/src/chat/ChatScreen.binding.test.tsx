@@ -161,6 +161,30 @@ describe("ChatScreen conversation binding", () => {
     expect(screen.getByRole("button", { name: "Your conversations" })).toBeTruthy();
   });
 
+  it("ignores a send answered after Nika left the conversation", async () => {
+    const onSessionChange = vi.fn();
+    const onSessionUnavailable = vi.fn();
+    let answer!: (value: unknown) => void;
+    sendMessage.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    const view = render(
+      <ChatScreen
+        sessionId={null}
+        {...noNav}
+        onSessionChange={onSessionChange}
+        onSessionUnavailable={onSessionUnavailable}
+      />,
+    );
+    await typeAndSend("draft for A");
+    await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+
+    // Navigation to another conversation unmounts this screen before A answers.
+    view.unmount();
+    answer({ sessionId: "late-A", binding: { version: 1, sessionId: "late-A", origin: "human", resolution: "created" } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onSessionChange).not.toHaveBeenCalled();
+    expect(onSessionUnavailable).not.toHaveBeenCalled();
+  });
+
   it("keeps the typed words when a send finds the conversation gone", async () => {
     const onSessionUnavailable = vi.fn();
     fetchSession.mockResolvedValue({

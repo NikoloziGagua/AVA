@@ -330,6 +330,10 @@ export function useRealtimeVoice({
   // older socket (a reconnect, "+new", or a stop that raced a late frame) are
   // ignored, so a stale acknowledgement can never replace the current selection.
   const connectionEpochRef = useRef(0);
+  // Changes only when the conversation itself is abandoned ("+new" or leaving
+  // voice), not on a reconnect to the same conversation. A turn answered after
+  // that must not rebind the app's current chat.
+  const conversationGenerationRef = useRef(0);
   const onSessionBoundRef = useRef(onSessionBound);
   useEffect(() => { onSessionBoundRef.current = onSessionBound; }, [onSessionBound]);
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
@@ -623,6 +627,7 @@ export function useRealtimeVoice({
       let firstSpoken = "";
       let acked = false;
       let sid: string;
+      const generation = conversationGenerationRef.current;
       try {
         // voice:true → minimal reasoning on the server for a faster spoken reply
         // (full tool stack is unchanged). The turn goes to exactly the
@@ -636,6 +641,7 @@ export function useRealtimeVoice({
         });
         sid = r.binding?.sessionId ?? r.sessionId;
       } catch (err) {
+        if (generation !== conversationGenerationRef.current) return false;
         if (isSessionUnavailable(err)) {
           setUnavailable(true);
           setErrorMsg(SESSION_UNAVAILABLE_MESSAGE);
@@ -646,6 +652,9 @@ export function useRealtimeVoice({
         setState("listening");
         return false;
       }
+      // Voice left this conversation while the turn was in flight: the answer
+      // belongs to an abandoned conversation and must not rebind anything.
+      if (generation !== conversationGenerationRef.current) return false;
       sessionIdRef.current = sid;
       setSessionId(sid);
       onSessionBoundRef.current?.(sid);
@@ -1403,6 +1412,7 @@ export function useRealtimeVoice({
   useEffect(() => () => {
     intentionalStopRef.current = true;
     connectionEpochRef.current += 1;
+    conversationGenerationRef.current += 1;
     cleanup();
   }, [cleanup]);
 
@@ -1410,6 +1420,7 @@ export function useRealtimeVoice({
   // one (?new=1). Same teardown→reconnect dance as the engine-change effect, so
   // it reuses the proven reconnect path rather than inventing a new one.
   const newConversation = useCallback(() => {
+    conversationGenerationRef.current += 1;
     forceNewRef.current = true;
     pendingBindingKeyRef.current = null; // an explicit New always mints a fresh key
     setUnavailable(false);

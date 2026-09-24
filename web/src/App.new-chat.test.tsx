@@ -128,6 +128,10 @@ vi.mock("./watches/WatchesScreen.js", () => ({
 
 import { App, DeferredScreenBoundary, DeferredScreenFallback } from "./App.js";
 
+// Voice is a lazily loaded route; under a busy full-suite run its first import
+// can take longer than the default one-second lookup.
+const LAZY_ROUTE = { timeout: 5000 };
+
 function BrokenWorkspace(): never {
   throw new Error("chunk unavailable");
 }
@@ -223,7 +227,7 @@ describe("App New-chat navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
-    expect(await screen.findByText(/voice-session-internal-chat-17-intent-resume/)).toBeTruthy();
+    expect(await screen.findByText(/voice-session-internal-chat-17-intent-resume/, undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
   it("marks voice entry from a blank New chat as a fresh conversation", async () => {
@@ -231,14 +235,14 @@ describe("App New-chat navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock enter blank voice" }));
-    expect(await screen.findByText(/voice-session-none-intent-new/)).toBeTruthy();
+    expect(await screen.findByText(/voice-session-none-intent-new/, undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
   it("lets Home voice continue Nika's latest conversation when none is remembered", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
-    expect(await screen.findByText(/voice-session-none-intent-continue/)).toBeTruthy();
+    expect(await screen.findByText(/voice-session-none-intent-continue/, undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
   it("sends Home voice back to the exact remembered conversation", async () => {
@@ -246,14 +250,14 @@ describe("App New-chat navigation", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
-    expect(await screen.findByText(/voice-session-remembered-8-intent-resume/)).toBeTruthy();
+    expect(await screen.findByText(/voice-session-remembered-8-intent-resume/, undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
   it("moves the current chat to the conversation voice actually bound", async () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
-    fireEvent.click(await screen.findByRole("button", { name: "mock voice bound" }));
+    fireEvent.click(await screen.findByRole("button", { name: "mock voice bound" }, LAZY_ROUTE));
     expect(window.localStorage.getItem("ava:last-chat-session")).toBe("voice-bound-5");
     fireEvent.click(screen.getByRole("button", { name: "mock voice exit" }));
     fireEvent.click(screen.getByRole("button", { name: "Return to current chat" }));
@@ -265,7 +269,7 @@ describe("App New-chat navigation", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(screen.getByRole("button", { name: "mock home voice" }));
-    fireEvent.click(await screen.findByRole("button", { name: "mock voice unavailable" }));
+    fireEvent.click(await screen.findByRole("button", { name: "mock voice unavailable" }, LAZY_ROUTE));
     expect(window.localStorage.getItem("ava:last-chat-session")).toBeNull();
   });
 

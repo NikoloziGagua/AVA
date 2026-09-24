@@ -7,6 +7,7 @@ import {
   fetchExplorerLive,
   fetchExplorerTask,
   fetchMissionExport,
+  fetchSession,
   fetchSessionPage,
   fetchWatchCommunicationEvidence,
   saveMissionExport,
@@ -52,6 +53,25 @@ describe("api 401 recovery", () => {
     } finally {
       window.removeEventListener("ava:unauthorized", seen);
     }
+  });
+});
+
+describe("exact conversation lookup", () => {
+  it("normalizes any 404 to the typed session_unavailable error", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 })) as unknown as typeof fetch;
+    const failure = await fetchSession("gone/1").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as ApiError).status).toBe(404);
+    expect((failure as ApiError).code).toBe("session_unavailable");
+    const [path] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(path).toBe("/api/sessions/gone%2F1");
+  });
+
+  it("leaves other failures untouched", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({ error: "boom" }), { status: 500 })) as unknown as typeof fetch;
+    const failure = await fetchSession("s1").catch((error: unknown) => error);
+    expect((failure as ApiError).status).toBe(500);
+    expect((failure as ApiError).code).toBe("boom");
   });
 });
 

@@ -83,6 +83,13 @@ export function ChatScreen({
   // One-time key for this screen's "new conversation", reused if the first
   // send is retried so a lost response can't create a second conversation.
   const newConversationKeyRef = useRef<string | null>(null);
+  // A send answered after Nika navigated elsewhere must not steer the app:
+  // late answers from an unmounted screen are dropped.
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => { unmountedRef.current = true; };
+  }, []);
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [runEpoch, setRunEpoch] = useState(0);
   // The server's run id is also the diagnostic id carried by the receipt. Pass
@@ -392,6 +399,7 @@ export function ChatScreen({
         conversationIntent: current ? "resume" : "new",
         ...(current ? {} : { bindingRequestId: newConversationKeyRef.current! }),
       });
+      if (unmountedRef.current) return;
       const bound = r.binding?.sessionId ?? r.sessionId;
       newConversationKeyRef.current = null;
       setSessionId(bound);
@@ -401,6 +409,7 @@ export function ChatScreen({
       setRunEpoch((n) => n + 1);
       if (visualContext && attachedVisualContext === visualContext) setAttachedVisualContext(null);
     } catch (e) {
+      if (unmountedRef.current) return;
       if (isSessionUnavailable(e)) {
         // The conversation is gone: give the words back instead of losing them,
         // and let Nika choose where they go.

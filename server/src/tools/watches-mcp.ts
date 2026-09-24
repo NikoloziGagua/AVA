@@ -14,6 +14,24 @@ import {
 // standing background check. Ava creates the watch herself in the same turn;
 // the scheduler (watches/scheduler.ts) does the recurring work.
 
+/**
+ * Strict tool calling makes the model send every field, so the ones it does
+ * not mean arrive as "" or 0. Those are absent, never a second schedule: left
+ * as-is, `at: ""` was an invalid date and `run_in_minutes: 0` beside `at` a
+ * conflict, which refused every reminder and check the AI tried to create.
+ */
+export function withoutBlankScheduleFields<T extends Record<string, unknown>>(args: T): T {
+  const clean: Record<string, unknown> = { ...args };
+  for (const key of ["at", "at_local", "daily_at", "time_zone", "parent_watch_id"]) {
+    const value = clean[key];
+    if (value === null || (typeof value === "string" && value.trim() === "")) delete clean[key];
+  }
+  for (const key of ["run_in_minutes", "interval_minutes"]) {
+    if (clean[key] === null || clean[key] === 0) delete clean[key];
+  }
+  return clean as T;
+}
+
 export function buildWatchTools(o: {
   db: Db;
   resolveCodexTarget?: () => CodexWatchTarget | null;
@@ -59,7 +77,8 @@ export function buildWatchTools(o: {
           required: ["prompt"],
         },
       },
-      run: async (args, ctx = { runId: "watch-tool" }) => {
+      run: async (rawArgs, ctx = { runId: "watch-tool" }) => {
+        const args = withoutBlankScheduleFields(rawArgs);
         const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
         if (!prompt) return { ok: false, text: "watch_create needs a non-empty prompt" };
         const kind = args.kind === "reminder" ? "reminder" as const : args.kind === "codex" ? "codex" as const : "check" as const;

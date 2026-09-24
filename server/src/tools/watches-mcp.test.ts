@@ -167,6 +167,60 @@ describe("one-off reminder tool schedules", () => {
     db.close();
   });
 
+  // The exact shapes a strict tool call sent in Nika's first live test: every
+  // field present, unused ones blank. All three were refused before the fix.
+  const STRICT_BLANKS = {
+    interval_minutes: 0, run_in_minutes: 0, at: "", time_zone: "", at_local: "", daily_at: "",
+    once: true, continue_cycle: false, parent_watch_id: "",
+  };
+
+  it("schedules 'in 2 minutes' from a strict call whose unused fields are blank", async () => {
+    const { db, create } = setup();
+    const result = await create.run({
+      ...STRICT_BLANKS, prompt: "Hang my clothes.", kind: "reminder", run_in_minutes: 2, time_zone: "UTC",
+    }, { runId: "strict-relative" });
+    expect(result).toMatchObject({ ok: true });
+    expect(db.prepare("SELECT kind,run_at,time_zone FROM watches").get())
+      .toEqual({ kind: "reminder", run_at: now + 120_000, time_zone: "UTC" });
+    db.close();
+  });
+
+  it("schedules an explicit time from a strict call that sends run_in_minutes 0", async () => {
+    const { db, create } = setup();
+    const result = await create.run({
+      ...STRICT_BLANKS, prompt: "Hang my clothes.", kind: "reminder",
+      at: "2026-01-01T00:23:00+00:00", time_zone: "Europe/London",
+    }, { runId: "strict-explicit" });
+    expect(result).toMatchObject({ ok: true });
+    expect(db.prepare("SELECT run_at,time_zone FROM watches").get())
+      .toEqual({ run_at: Date.parse("2026-01-01T00:23:00Z"), time_zone: "Europe/London" });
+    db.close();
+  });
+
+  it("still refuses a strict call that really asks for two schedules", async () => {
+    const { db, create } = setup();
+    const result = await create.run({
+      ...STRICT_BLANKS, prompt: "Hang my clothes.", kind: "reminder",
+      run_in_minutes: 2, at: "2026-01-01T00:23:00+00:00", time_zone: "Europe/London",
+    }, { runId: "strict-conflict" });
+    expect(result).toMatchObject({ ok: false });
+    expect(db.prepare("SELECT count(*) AS n FROM watches").get()).toEqual({ n: 0 });
+    db.close();
+  });
+
+  it("creates ordinary checks and daily reminders from strict calls too", async () => {
+    const { db, create } = setup();
+    expect(await create.run({ ...STRICT_BLANKS, prompt: "Check the status page", kind: "check", interval_minutes: 15, once: false }, { runId: "strict-check" }))
+      .toMatchObject({ ok: true });
+    expect(await create.run({ ...STRICT_BLANKS, prompt: "Drink water", kind: "reminder", daily_at: "09:00", once: false }, { runId: "strict-daily" }))
+      .toMatchObject({ ok: true });
+    expect(db.prepare("SELECT kind,interval_minutes,daily_at,run_at FROM watches ORDER BY created_at, rowid").all()).toEqual([
+      { kind: "check", interval_minutes: 15, daily_at: null, run_at: null },
+      { kind: "reminder", interval_minutes: 1440, daily_at: "09:00", run_at: null },
+    ]);
+    db.close();
+  });
+
   it.each([
     { run_in_minutes: 5 },
     { run_in_minutes: "5", time_zone: "UTC" },

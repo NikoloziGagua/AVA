@@ -173,6 +173,15 @@ describe("buildVoiceUpdatesBlock — seed Ava's real changelog into the voice pr
     expect(out).not.toContain("in progress"); // started entries excluded
     expect(out.toLowerCase()).toContain("changelog");
   });
+  it("includes what each update does, without the author prefix, so AVA can answer without a tool", () => {
+    const out = buildVoiceUpdatesBlock([
+      { ts: "t1", phase: "shipped", title: "Saved cards in chat", detail: "By Claude. Replies show a Saved card naming what AVA saved." },
+      { ts: "t2", phase: "shipped", title: "Long one", detail: "x".repeat(400) },
+    ]);
+    expect(out).toContain("- Saved cards in chat: Replies show a Saved card naming what AVA saved.");
+    expect(out).not.toContain("By Claude.");
+    expect(out.split("\n").find((line) => line.startsWith("- Long one"))!.length).toBeLessThan(240);
+  });
 });
 
 describe("buildHumeHistoryBlock — seed recollection into Hume's prompt", () => {
@@ -741,6 +750,16 @@ describe("Hume EVI provider helpers", () => {
   it("VOICE_PERSONA_INSTRUCTIONS keeps 'Sir' natural and pacing snappy", () => {
     expect(VOICE_PERSONA_INSTRUCTIONS).toContain("Sir");
     expect(VOICE_PERSONA_INSTRUCTIONS.toLowerCase()).toContain("warm");
+  });
+
+  it("frames AVA as Sir's personal assistant, not a computer manager", () => {
+    expect(VOICE_PERSONA_INSTRUCTIONS).toContain("personal assistant");
+    expect(VOICE_PERSONA_INSTRUCTIONS).toMatch(/university work/);
+    expect(VOICE_PERSONA_INSTRUCTIONS).not.toMatch(/living on Sir's Windows PC/);
+    // "What's new?" is answered from the seeded summary, not by reading a log through a tool.
+    expect(VOICE_PERSONA_INSTRUCTIONS).not.toMatch(/Claude update log/);
+    expect(DO_ON_COMPUTER_TOOL.description).toMatch(/note/);
+    expect(DO_ON_COMPUTER_TOOL.description).toMatch(/reminder/);
   });
 });
 

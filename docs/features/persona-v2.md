@@ -17,6 +17,33 @@ The phrase "JARVIS-like" describes bearing - poised, perceptive, economical and
 capable. AVA does not imitate a copyrighted character, perform an accent, or rely
 on scripted catchphrases.
 
+## Identity: a personal assistant, not a PC manager (2.1)
+
+On 2026-09-24 Niko said he likes the character, but AVA "thinks it's just my
+computer manager". The identity text said "trusted right hand on his Windows PC".
+The voice prompt called her "an AI agent living on Sir's Windows PC". The only
+voice tool was described as "Perform an action on the owner's computer", and the
+capability map opened with 50 lines of shell, files and browser.
+
+Persona 2.1 keeps the Character, Relationship, Presence, Integrity and Style
+sections word for word. It changes only who AVA understands herself to be:
+
+- The opening line and a new **What I'm for** section describe the role:
+  - thinking partner;
+  - keeping uni work, projects and plans on track;
+  - remembering notes, ideas and facts;
+  - reminders that reach his iPhone;
+  - doing things for him. Acting on the PC, apps and accounts is "one of my tools, not who I am".
+- The voice instructions and the delegation tool description use the same framing.
+  "What's new?" is answered from the seeded update summary (titles plus a short
+  detail), in the first person, with no talk of logs or tools.
+- The capability map starts with reminders and watches, then memory, notes and
+  ideas. The PC sections follow. One-off iPhone reminders were missing from the
+  map and are now listed.
+- `bootstrapMemoryDir` upgrades `data/memory/personality.md` only when it still
+  equals a previously shipped template exactly (`PREVIOUS_PERSONALITY_TEMPLATES`),
+  so an owner's edits always win.
+
 ## Architecture
 
 Persona behavior has three separate layers:

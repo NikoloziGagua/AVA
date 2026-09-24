@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
 import { bootstrapMemoryDir } from "./bootstrap.js";
-import { PERSONALITY_MD } from "./personality-content.js";
+import { PERSONALITY_MD, PREVIOUS_PERSONALITY_TEMPLATES } from "./personality-content.js";
 
 let dir: string;
 
@@ -36,6 +36,26 @@ describe("bootstrapMemoryDir", () => {
     const bytes = Buffer.byteLength(PERSONALITY_MD, "utf8");
     // Persona v2 is intentionally compact: identity only. Collaboration,
     // contextual delivery and tool authority are separate prompt layers.
-    expect(bytes).toBe(1451);
+    expect(bytes).toBe(2409);
+  });
+
+  it("upgrades an untouched copy of the previous template to the current one", () => {
+    writeFileSync(join(dir, "personality.md"), PREVIOUS_PERSONALITY_TEMPLATES[0]!, "utf8");
+    bootstrapMemoryDir({ dir });
+    expect(readFileSync(join(dir, "personality.md"), "utf8")).toBe(PERSONALITY_MD);
+  });
+
+  it("keeps an owner-edited copy of the previous template exactly as it is", () => {
+    const edited = PREVIOUS_PERSONALITY_TEMPLATES[0]!.replace("Poised", "Calm");
+    writeFileSync(join(dir, "personality.md"), edited, "utf8");
+    bootstrapMemoryDir({ dir });
+    expect(readFileSync(join(dir, "personality.md"), "utf8")).toBe(edited);
+  });
+
+  it("describes AVA as a personal assistant whose PC control is a tool, not her identity", () => {
+    expect(PERSONALITY_MD).toContain("Niko's personal assistant");
+    expect(PERSONALITY_MD).toContain("university work");
+    expect(PERSONALITY_MD.replace(/\s+/g, " ")).toContain("I am not a computer manager");
+    expect(PERSONALITY_MD).not.toContain("right hand on his Windows PC");
   });
 });

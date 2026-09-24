@@ -60,7 +60,7 @@ vi.mock("../components/ava/DottedSurface.js", () => ({ DottedSurface: () => null
 vi.mock("../lib/gsap.js", () => ({ gsap: { fromTo: vi.fn() }, useGSAP: vi.fn() }));
 vi.mock("../lib/useReducedMotion.js", () => ({ useReducedMotion: () => true }));
 
-import { VoiceScreen } from "./VoiceScreen.js";
+import { RealtimeVoiceScreen as VoiceScreen } from "./VoiceScreen.js";
 
 beforeEach(() => {
   vi.useFakeTimers();

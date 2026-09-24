@@ -72,7 +72,7 @@ const HOLD_MAX_MS = 20_000;
 /** RMS amplitude (0..1) of one PCM16 mic frame — drives the orb meter from the
  *  SAME audio actually forwarded upstream, so there's no second always-on mic and
  *  the meter can't react to the room when nothing is being sent. */
-function pcm16Amplitude(buf: ArrayBuffer): number {
+export function pcm16Amplitude(buf: ArrayBuffer): number {
   const view = new Int16Array(buf);
   if (view.length === 0) return 0;
   let sum = 0;
@@ -249,7 +249,7 @@ registerProcessor("ava-pcm16-capture", PCM16Capture);
 `;
 
 let workletURL: string | null = null;
-function ensureWorkletURL(): string {
+export function ensureWorkletURL(): string {
   if (!workletURL) {
     workletURL = URL.createObjectURL(
       new Blob([WORKLET_SRC], { type: "application/javascript" }),
@@ -258,7 +258,7 @@ function ensureWorkletURL(): string {
   return workletURL;
 }
 
-function arrayBufferToBase64(buf: ArrayBuffer): string {
+export function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf);
   let s = "";
   // Process in chunks to avoid stack overflow on large buffers.
@@ -273,6 +273,7 @@ export function useRealtimeVoice({
   initialSessionId,
   intent,
   onSessionBound,
+  engineOverride,
 }: {
   initialSessionId: string | null;
   /**
@@ -284,6 +285,8 @@ export function useRealtimeVoice({
   intent?: ConversationIntent;
   /** Called with each current, authoritative binding so the app's chat pointer follows voice. */
   onSessionBound?: (sessionId: string) => void;
+  /** One-visit engine choice (the fallback when GPT-Live cannot start). */
+  engineOverride?: "openai" | "hume";
 }) {
   const [state, setState] = useState<RealtimeState>("idle");
   const [sessionId, setSessionId] = useState<string | null>(initialSessionId);
@@ -1268,7 +1271,8 @@ export function useRealtimeVoice({
             ? `&intent=resume&sessionId=${encodeURIComponent(sid)}`
             : "&intent=continue")
         // Tell the proxy to disable automatic VAD/turn-detection in push-to-talk.
-        + `&inputMode=${encodeURIComponent(inputModeRef.current)}`;
+        + `&inputMode=${encodeURIComponent(inputModeRef.current)}`
+        + (engineOverride ? `&engine=${engineOverride}` : "");
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       // From here the live socket itself guards against a second start().

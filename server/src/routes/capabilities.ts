@@ -17,7 +17,7 @@ export type CapabilitySnapshot = {
   uptimeMs: number;
   core: {
     brain: { ready: boolean; provider: string | null; model: string };
-    voice: { ready: boolean; provider: "openai" | "hume"; model: string; speaker: string };
+    voice: { ready: boolean; provider: "live" | "openai" | "hume"; model: string; speaker: string };
     browser: BrowserReadiness & { helper: string };
     memory: {
       ready: boolean;

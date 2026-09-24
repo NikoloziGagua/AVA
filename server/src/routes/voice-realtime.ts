@@ -24,7 +24,8 @@ import {
   type TranscriptGateReason,
 } from "../voice/transcript-gate.js";
 import { getReasoningLevel, type ReasoningLevel } from "../state/reasoning-pref.js";
-import { getVoiceEngine } from "../state/voice-engine-pref.js";
+import { getVoiceEngine, isVoiceEngine } from "../state/voice-engine-pref.js";
+import { LIVE_VOICE_GUIDANCE, startLiveSession } from "./voice-live.js";
 import { formatSpeechText } from "../voice/speechText.js";
 import { DEFAULT_REALTIME_SPEECH_RATE } from "../voice/voiceConfig.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
@@ -758,12 +759,23 @@ export function recoverFrame(reason: string): string {
  * exactly where it paused instead of waiting out its fallback timer.
  */
 /** Combine what several delegated actions saved before the reply that reports them. */
-export function mergeSavedItems(
-  pending: MessageSavedItems | null,
-  next: MessageSavedItems | null | undefined,
-): MessageSavedItems | null {
-  if (!next) return pending;
-  return sanitizeMessageSavedItems({ schemaVersion: 1, items: [...(pending?.items ?? []), ...next.items] });
+export { mergeSavedItems } from "./voice-live.js";
+import { mergeSavedItems } from "./voice-live.js";
+
+/** GPT-Live could not start; the browser retries this visit on the standard engine. */
+export function liveUnavailableFrame(): string {
+  return JSON.stringify({
+    type: "ava.session_error",
+    code: "live_unavailable",
+    message: "GPT-Live could not start, so AVA is using the standard voice for now.",
+    retryable: true,
+  });
+}
+
+/** Today's date and zone, so GPT-Live can talk about "today" and "tomorrow" correctly. */
+export function liveClockLine(now = new Date(), timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"): string {
+  const when = new Intl.DateTimeFormat("en-GB", { timeZone, dateStyle: "full", timeStyle: "short" }).format(now);
+  return `\n\nIt is ${when} in Sir's time zone (${timeZone}).`;
 }
 
 export function speechDismissedFrame(reason: string): string {
@@ -909,6 +921,8 @@ export interface RealtimeProxyDeps {
   memoryAutoCapture?: AutoMemoryCapture;
   /** Shared source-verified retrieval gate used before chat/voice model replies. */
   memoryIndex?: MemoryIndexService;
+  /** Test seam: open the GPT-Live upstream socket. */
+  liveConnect?: (url: string, headers: Record<string, string>) => WebSocket;
   /** Voice for the realtime model's spoken output (hybrid mode). */
   voice?: string;
   /**
@@ -995,13 +1009,41 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       ...readVoiceSessionRequest(params),
       title: "Voice chat",
     });
+    // An explicit per-connection engine (the browser's one-visit fallback) wins
+    // over the stored preference.
+    const requestedEngine = params.get("engine");
+    const engine = isVoiceEngine(requestedEngine) ? requestedEngine : getVoiceEngine(deps.db);
+    if (engine === "live") {
+      const system = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation" });
+      const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
+      const summary = buildVoiceConversationSummary(getSessionFull(deps.db, binding.sessionId)?.summary);
+      const opened = await startLiveSession({
+        client,
+        binding,
+        db: deps.db,
+        apiKey: deps.apiKey!,
+        instructions: `${system}\n\n${LIVE_VOICE_GUIDANCE}${updates}${summary}${liveClockLine()}`,
+        runAction: deps.runAction,
+        memoryIndex: deps.memoryIndex,
+        memoryAutoCapture: deps.memoryAutoCapture,
+        observability: deps.observability,
+        log,
+        hello: (mode) => JSON.stringify({ type: "ava.session", sessionId: binding.sessionId, mode, binding }),
+        connect: deps.liveConnect,
+      });
+      if (opened || client.readyState !== WebSocket.OPEN) return;
+      log.warn("realtime: GPT-Live did not start; telling the browser to use the standard engine");
+      try { client.send(liveUnavailableFrame()); } catch { /* client closed */ }
+      try { client.close(4503, "live_unavailable"); } catch { /* client closed */ }
+      return;
+    }
     // PROVIDER BRANCH. The dashboard voice toggle (voice_engine_pref) selects the
     // provider, read here at connect so a toggle change takes effect on reconnect.
     // When the toggle is "hume" AND Hume is configured (HUME_API_KEY in env), try
     // Hume first; if its socket can't be established, fall through to the proven
     // OpenAI path below. A failed attempt detaches its client handlers so the
     // connection is clean for the OpenAI fallback.
-    if (getVoiceEngine(deps.db) === "hume" && providerConfig.hume) {
+    if (engine === "hume" && providerConfig.hume) {
       // Resolve the upstream URL here (async): prefers OAuth access-token auth when
       // a secret key is set, else the raw api_key. Done before the session Promise
       // so the executor stays synchronous.

@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Db } from "../state/db.js";
 import { getVoiceEngine, setVoiceEngine } from "../state/voice-engine-pref.js";
 
-const PostBody = z.object({ engine: z.enum(["openai", "hume"]) });
+const PostBody = z.object({ engine: z.enum(["live", "openai", "hume"]) });
 
 export function voiceEngineRoutes(db: Db, auth: RequestHandler): Router {
   const r = Router();

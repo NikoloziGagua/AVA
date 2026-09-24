@@ -51,7 +51,7 @@ vi.mock("../lib/gsap.js", () => ({
 }));
 vi.mock("../lib/useReducedMotion.js", () => ({ useReducedMotion: () => true }));
 
-import { VoiceScreen } from "./VoiceScreen.js";
+import { RealtimeVoiceScreen as VoiceScreen } from "./VoiceScreen.js";
 
 beforeEach(() => {
   submitExactText.mockClear().mockResolvedValue(true);

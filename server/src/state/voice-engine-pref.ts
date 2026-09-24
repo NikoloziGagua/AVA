@@ -10,12 +10,15 @@ import type { Db } from "./db.js";
 //
 // (The older "chatterbox"/"hybrid" local-clone options were retired from the UI;
 // a stale row with either value falls back to "openai".)
-export type VoiceEngine = "openai" | "hume";
+//   "live"             — GPT-Live-1 (full duplex; AVA's agent does delegated
+//                        work). The default since 2026-09-24; falls back to
+//                        "openai" for one visit if it cannot start.
+export type VoiceEngine = "live" | "openai" | "hume";
 
 const SCOPE = "global";
 
-function isVoiceEngine(v: unknown): v is VoiceEngine {
-  return v === "openai" || v === "hume";
+export function isVoiceEngine(v: unknown): v is VoiceEngine {
+  return v === "live" || v === "openai" || v === "hume";
 }
 
 export function getVoiceEngine(db: Db): VoiceEngine {
@@ -23,7 +26,7 @@ export function getVoiceEngine(db: Db): VoiceEngine {
     .prepare("SELECT engine FROM voice_engine_pref WHERE scope_id = ?")
     .get(SCOPE) as { engine: string } | undefined;
   if (row && isVoiceEngine(row.engine)) return row.engine;
-  return "openai";
+  return "live";
 }
 
 export function setVoiceEngine(db: Db, engine: VoiceEngine): void {

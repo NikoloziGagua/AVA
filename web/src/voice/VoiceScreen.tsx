@@ -9,6 +9,8 @@ import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { useRealtimeVoice, type RealtimeState } from "./useRealtimeVoice.js";
 import { VoiceExactTextDialog } from "./VoiceExactTextDialog.js";
 import { HoldToTalkButton } from "./HoldToTalkButton.js";
+import { useLiveVoice } from "./useLiveVoice.js";
+import { fetchVoiceEngine, type VoiceEngine } from "../api.js";
 import type { ConversationIntent } from "../api.js";
 import { Mic, Keyboard, MicOff, Square, X, MessageSquarePlus, PanelsTopLeft, Type } from "lucide-react";
 import {
@@ -126,7 +128,46 @@ function VoiceSurface() {
   );
 }
 
-export function VoiceScreen({
+/**
+ * Picks the voice engine for this visit: GPT-Live ("live", the default) or the
+ * realtime engine. If GPT-Live cannot start, this visit falls back to the
+ * standard engine without changing Sir's setting.
+ */
+export function VoiceScreen(props: VoiceScreenProps) {
+  const [engine, setEngine] = useState<VoiceEngine | "fallback" | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void fetchVoiceEngine()
+      .then((e) => { if (alive) setEngine(e); })
+      .catch(() => { if (alive) setEngine("openai"); });
+    return () => { alive = false; };
+  }, []);
+  if (engine === null) return <div className="h-full bg-black" />;
+  if (engine === "live") return <LiveVoiceScreen {...props} onFallback={() => setEngine("fallback")} />;
+  return <RealtimeVoiceScreen {...props} engineOverride={engine === "fallback" ? "openai" : undefined} />;
+}
+
+function LiveVoiceScreen(props: VoiceScreenProps & { onFallback: () => void }) {
+  const v = useLiveVoice({
+    initialSessionId: props.initialSessionId,
+    intent: props.intent,
+    onSessionBound: props.onSessionBound,
+    onFallback: props.onFallback,
+  });
+  return <VoiceScreenBody {...props} v={v} engineLabel="OPENAI · GPT-LIVE 1" />;
+}
+
+export function RealtimeVoiceScreen(props: VoiceScreenProps & { engineOverride?: "openai" | "hume" }) {
+  const v = useRealtimeVoice({
+    initialSessionId: props.initialSessionId,
+    intent: props.intent,
+    onSessionBound: props.onSessionBound,
+    engineOverride: props.engineOverride,
+  });
+  return <VoiceScreenBody {...props} v={v} />;
+}
+
+function VoiceScreenBody({
   initialSessionId,
   intent,
   onSessionBound,
@@ -134,8 +175,10 @@ export function VoiceScreen({
   onOpenConversations,
   onExit,
   onSwitchToKeyboard,
-}: VoiceScreenProps) {
-  const v = useRealtimeVoice({ initialSessionId, intent, onSessionBound });
+  v,
+  engineLabel,
+}: VoiceScreenProps & { v: ReturnType<typeof useRealtimeVoice>; engineLabel?: string }) {
+  void initialSessionId; void intent; void onSessionBound;
   const unavailableReportedRef = useRef(false);
   useEffect(() => {
     if (!v.unavailable) {
@@ -426,7 +469,7 @@ export function VoiceScreen({
             className="glass rounded-full px-3 py-1.5 text-[10px] text-white/55"
             aria-label={v.voiceEngine === "hume" ? "Hume EVI voice" : "OpenAI GPT Realtime 2.1 voice"}
           >
-            {v.voiceEngine === "hume" ? "HUME · EVI" : "OPENAI · REALTIME 2.1"}
+            {engineLabel ?? (v.voiceEngine === "hume" ? "HUME · EVI" : "OPENAI · REALTIME 2.1")}
           </div>
 
           {/* Input-mode toggle: hands-free VAD ↔ hold-to-talk. Persisted. */}

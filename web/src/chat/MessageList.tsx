@@ -160,35 +160,50 @@ export function MessageList({
   // `[data-bubble]:not([data-entered])` keeps the set disjoint across re-runs:
   // already-revealed bubbles carry data-entered and are skipped when the batch
   // is rebuilt (history.length changes), so each bubble animates exactly once.
-  // useGSAP reverts tweens but does NOT kill ScrollTriggers — capture + kill.
+  //
+  // The batch is REPLACED on every run, never accumulated: with dependencies
+  // and no revertOnUpdate, useGSAP defers cleanup until unmount, so returned
+  // kill functions do not run on updates. Accumulated batches used to fire
+  // twice for a bubble that entered view later (e.g. after a resize); the
+  // second from-tween overwrote the first and animated opacity 0 → 0, leaving
+  // Ava's reply invisible. Reveals are also decided at fire time and always end
+  // explicitly visible, so no overlap can strand a bubble transparent.
+  const revealTriggers = useRef<ScrollTrigger[]>([]);
   useGSAP(
     () => {
+      revealTriggers.current.forEach((t) => t.kill());
+      revealTriggers.current = [];
       if (reduced || !scroller.current) return;
-      const triggers: ScrollTrigger[] = [];
-      ScrollTrigger.batch("[data-bubble]:not([data-entered])", {
+      revealTriggers.current = ScrollTrigger.batch("[data-bubble]:not([data-entered])", {
         scroller: scroller.current,
         start: "top 92%",
         once: true,
         onEnter: (els) => {
-          els.forEach((el) => el.setAttribute("data-entered", ""));
-          gsap.from(els, {
-            y: 18,
-            opacity: 0,
-            filter: "blur(6px)",
-            duration: D.section,
-            ease: EASE,
-            stagger: 0.06,
-            overwrite: true,
-            clearProps: "filter",
-          });
+          const fresh = els.filter((el) => !el.hasAttribute("data-entered"));
+          if (fresh.length === 0) return;
+          fresh.forEach((el) => el.setAttribute("data-entered", ""));
+          gsap.fromTo(
+            fresh,
+            { y: 18, opacity: 0, filter: "blur(6px)" },
+            {
+              y: 0,
+              opacity: 1,
+              filter: "blur(0px)",
+              duration: D.section,
+              ease: EASE,
+              stagger: 0.06,
+              overwrite: "auto",
+              clearProps: "transform,opacity,filter",
+            },
+          );
         },
       });
-      ScrollTrigger.getAll().forEach((t) => {
-        if (t.scroller === scroller.current) triggers.push(t);
-      });
-      return () => triggers.forEach((t) => t.kill());
+      return () => {
+        revealTriggers.current.forEach((t) => t.kill());
+        revealTriggers.current = [];
+      };
     },
-    { scope: scroller, dependencies: [history.length] },
+    { scope: scroller, dependencies: [history.length, reduced] },
   );
 
   // ── Cross-fade the thinking row out the moment the final block streams in ──

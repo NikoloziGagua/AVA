@@ -1,4 +1,4 @@
-# AVA UI remodel: "Ink and Paper" (v2, 2026-09-25)
+# AVA UI remodel: "Ink and Paper" (v3, 2026-09-25)
 
 Owner of this document: Claude (UI) with Codex (review, server, screens it owns).
 Status: v2 incorporates Codex's review (#581) and Niko's answers. **Niko approved the plan on
@@ -134,8 +134,8 @@ Every screen is built only from these. Each ships with tests, both looks, 390 an
 | `EmptyState`, `Skeleton`, `ErrorState`, `OfflineBanner` | Ad-hoc states | Required on every screen |
 | `Tag`, `Badge`, `NumberTicker`, `ProgressRing` | `badge` | |
 | `Markdown` | `AssistantMarkdown` styling | New type scale; code blocks get their own surface |
-| `Receipt` | `TaskReceiptCard`, `SavedItemsCard`, `RoomPostReceipt`, `MemoryContextCapsule`, `ToolCallChip` | One receipt family: icon, what happened, proof, action |
-| `ApprovalSheet` | `ApprovalCard` | Risky-action approvals as a clear sheet |
+| Receipt family | `TaskReceiptCard`, `SavedItemsCard`, `RoomPostReceipt`, `MemoryContextCapsule`, `ToolCallChip` | Rebuilt on tokens with their wording and states unchanged: icon, what happened, proof, action |
+| `ApprovalSheet` | (new) | Only for confirmations without a deadline; never for server approvals (see Approvals below) |
 
 Motion helpers: `web/src/design/motion.ts` (springs, `useReducedMotion`, view-transition navigate).
 GSAP is removed from the UI (`lib/gsap.ts`, `deckMotion.ts`); Motion stays.
@@ -211,7 +211,7 @@ Each row is a unit of work: rebuilt on the new components, keeping current behav
 | Settings and rules | `rules/*` incl. `DevRoomSection` | Grouped settings on floating surfaces: Look (Paper/Ink), Motion, Voice, Dev room, rules | Claude |
 | Self development | `self/*` incl. transparency pilot | Journal as cards, pilot views on the new tables | Codex |
 | Activity (Mission Control) | `mission-control/MissionControlScreen.tsx` | Available inside AVA as a normal screen, with an optional pop-out window. Dense but readable: 13px minimum here, status cards | Codex |
-| Approvals | `approvals/*` | `ApprovalSheet` | Claude |
+| Approvals | `approvals/*` | Inline prompt in the conversation, plus the Voice approval panel, on tokens. Server approvals can be veto windows in which silence approves or denies, so the prompt is never a dismissible modal (no Esc, scrim or swipe); only an explicit Approve or Cancel (or voice yes/no) decides. Labels, the absolute server deadline and countdown, and the resolved states are unchanged (contract v3) | Claude |
 | Retired | `strategy/*` | Stays dormant, unregistered and unreachable, as `ava-room-member` v3 requires. No restyle and no deletion | nobody |
 | Global states | many | Offline banner; service-worker update available, apply and recovery; auth expired and re-pair; server unreachable | Claude |
 | Push | `push/register.ts`, reminder receipts | Permission and subscription flow in Settings. Receipts say truthfully whether a push was accepted by the push service or actually shown | Claude (UI) + Codex (receipt truth) |

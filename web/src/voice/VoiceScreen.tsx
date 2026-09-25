@@ -1,18 +1,16 @@
-import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
-import { motion } from "motion/react";
-import { Orb } from "../components/ava/Orb.js";
-import { MagicRings } from "../components/ava/MagicRings.js";
-import { NebulaBackground } from "../components/ava/NebulaBackground.js";
-import { Alert, AlertDescription } from "../components/ui/alert.js";
-import { gsap, useGSAP } from "../lib/gsap.js";
-import { useReducedMotion } from "../lib/useReducedMotion.js";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Keyboard, MessageSquarePlus, Mic, MicOff, PanelsTopLeft, Square, Type, X } from "lucide-react";
 import { useRealtimeVoice, type RealtimeState } from "./useRealtimeVoice.js";
 import { VoiceExactTextDialog } from "./VoiceExactTextDialog.js";
 import { HoldToTalkButton } from "./HoldToTalkButton.js";
 import { useLiveVoice } from "./useLiveVoice.js";
+import { getFaceSignalMode, sampleFaceSignalLevels, subscribeFaceSignalMode } from "./faceSignal.js";
 import { fetchVoiceEngine, type VoiceEngine } from "../api.js";
 import type { ConversationIntent } from "../api.js";
-import { Mic, Keyboard, MicOff, Square, X, MessageSquarePlus, PanelsTopLeft, Type } from "lucide-react";
+import { Button } from "../design/Button.js";
+import { StatusIsland, type IslandMode } from "../design/StatusIsland.js";
+import { cn } from "../design/cn.js";
+import { LazyFace } from "../design/face/LazyFace.js";
 import {
   approvalRiskLabel,
   approvalTimeoutLabel,
@@ -47,86 +45,20 @@ export function shouldShowVoiceStop(state: RealtimeState, actionPending: boolean
   return actionPending || state === "thinking" || state === "responding";
 }
 
-// The WebGL dotted surface is decorative and heavy (Three.js). It loads in its
-// own deferred chunk only when it will actually animate; voice controls, audio
-// and the session never wait on it or fail because of it.
-const DottedSurface = lazy(async () => ({
-  default: (await import("../components/ava/DottedSurface.js")).DottedSurface,
-}));
-
-export function supportsVoiceWebGL(): boolean {
-  if (typeof document === "undefined") return false;
-  try {
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
-    if (!context) return false;
-    context.getExtension("WEBGL_lose_context")?.loseContext();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Static backdrop for reduced motion, no WebGL, loading and load failure. */
-export function StaticVoiceSurface() {
-  return (
-    <div
-      aria-hidden="true"
-      data-voice-surface="static"
-      className="pointer-events-none absolute inset-0 overflow-hidden opacity-55"
-      style={{
-        backgroundImage: "radial-gradient(circle at center, rgba(220,235,245,.28) 0 1px, transparent 1.7px)",
-        backgroundPosition: "center 38%",
-        backgroundSize: "38px 24px",
-        maskImage: "radial-gradient(ellipse 66% 58% at 50% 48%, black 0%, transparent 78%)",
-      }}
-    />
-  );
-}
-
-/** A decorative chunk that fails to load removes only the background. */
-export class VoiceSurfaceBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
-  state = { failed: false };
-
-  static getDerivedStateFromError() {
-    return { failed: true };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo) {
-    console.warn("[ava] voice background unavailable; using static backdrop", error.message, info.componentStack);
-  }
-
-  render() {
-    return this.state.failed ? <StaticVoiceSurface /> : this.props.children;
-  }
+/**
+ * AVA's measured voice, scaled for her mouth and the island's bars. Only a real
+ * measurement counts (contract face-signal v1); synthetic or no output returns
+ * null so the face keeps its own declared rhythm. Read every animation frame,
+ * never through React state.
+ */
+export function measuredVoiceLevel(): number | null {
+  const sample = sampleFaceSignalLevels();
+  if (sample.outputSource !== "measured") return null;
+  return Math.min(1, sample.output * 3);
 }
 
 /** A click on Stop this soon after a hold-to-talk release came from that release. */
 const STOP_AFTER_RELEASE_GUARD_MS = 600;
-
-function VoiceSurface() {
-  const reduced = useReducedMotion();
-  // A drawing failure after mount happens in an animation frame, outside any
-  // error boundary; the surface reports it and has already cleaned up.
-  const [failed, setFailed] = useState(false);
-  // Reduced motion never probes WebGL or requests the Three.js graph.
-  const animated = useMemo(() => !reduced && supportsVoiceWebGL(), [reduced]);
-  if (!animated || failed) return <StaticVoiceSurface />;
-  return (
-    <VoiceSurfaceBoundary>
-      <Suspense fallback={<StaticVoiceSurface />}>
-        <div aria-hidden="true" data-voice-surface="webgl" className="pointer-events-none absolute inset-0">
-          <DottedSurface
-            onError={(error) => {
-              console.warn("[ava] voice background stopped; using static backdrop", error instanceof Error ? error.message : error);
-              setFailed(true);
-            }}
-          />
-        </div>
-      </Suspense>
-    </VoiceSurfaceBoundary>
-  );
-}
 
 /**
  * Picks the voice engine for this visit: GPT-Live ("live", the default) or the
@@ -142,7 +74,7 @@ export function VoiceScreen(props: VoiceScreenProps) {
       .catch(() => { if (alive) setEngine("openai"); });
     return () => { alive = false; };
   }, []);
-  if (engine === null) return <div className="h-full bg-black" />;
+  if (engine === null) return <div className="ds-root h-full bg-canvas" />;
   if (engine === "live") return <LiveVoiceScreen {...props} onFallback={() => setEngine("fallback")} />;
   return <RealtimeVoiceScreen {...props} engineOverride={engine === "fallback" ? "openai" : undefined} />;
 }
@@ -167,7 +99,15 @@ export function RealtimeVoiceScreen(props: VoiceScreenProps & { engineOverride?:
   return <VoiceScreenBody {...props} v={v} />;
 }
 
-function VoiceScreenBody({
+const roundGlass = "ds-focus ds-glass grid h-11 w-11 shrink-0 place-items-center rounded-full text-ink shadow-e1 transition-transform duration-150 active:scale-95";
+const roundQuiet = "ds-focus grid h-12 w-12 shrink-0 place-items-center rounded-full text-ink transition-[transform,background-color] duration-150 hover:bg-glass active:scale-95";
+
+/**
+ * Voice (contract ui-remodel v3 §6): AVA's face fills the screen and moves with
+ * what she is doing, the island says it in words, captions show the current
+ * turn, and the controls sit in one bar at the bottom.
+ */
+export function VoiceScreenBody({
   initialSessionId,
   intent,
   onSessionBound,
@@ -193,8 +133,6 @@ function VoiceScreenBody({
   const [exactTextOpen, setExactTextOpen] = useState(false);
   const mutedBeforeExactText = useRef(false);
   const exactTextTriggerRef = useRef<HTMLButtonElement>(null);
-  const chromeScope = useRef<HTMLDivElement>(null);
-  const reduced = useReducedMotion();
   const ptt = v.inputMode === "enter_push_to_talk";
   const capturing = v.capturing;
   const showStop = shouldShowVoiceStop(v.state, v.actionPending);
@@ -204,6 +142,9 @@ function VoiceScreenBody({
   const approvalDeadlineCopy = v.pendingApproval
     ? pendingApprovalCopy(v.pendingApproval, approvalTiming)
     : null;
+  // What AVA is audibly doing, from the shared face signal: speaking only while
+  // her voice actually plays (contract face-signal v1). Low-frequency only.
+  const signalMode = useSyncExternalStore(subscribeFaceSignalMode, getFaceSignalMode, getFaceSignalMode);
   const setExactTextDialogOpen = (open: boolean) => {
     if (open) {
       mutedBeforeExactText.current = v.muted;
@@ -225,28 +166,11 @@ function VoiceScreenBody({
     else onExit(sessionId);
   };
 
-  // Slowly rotate the living-chrome conic angle on the RESTING CTA (idle mic disc /
-  // inactive push-to-talk). One transform-free CSS-var tween over the whole control
-  // row; targets only elements carrying .liquid-chrome, so the active/interrupt
-  // states (which never get that class) are untouched. Reduced motion → no spin.
-  useGSAP(
-    () => {
-      if (reduced) return;
-      gsap.fromTo(
-        ".liquid-chrome",
-        { "--chrome-angle": "0deg" },
-        { "--chrome-angle": "360deg", duration: 14, ease: "none", repeat: -1 },
-      );
-    },
-    { scope: chromeScope, dependencies: [reduced, v.state, ptt, capturing] },
-  );
-
   useEffect(() => { v.start(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
-  // Per-turn timer (Fix): count only while a turn is ACTUALLY capturing — VAD:
-  // while "listening"; PTT: only while a hold is in flight (capturing). Between PTT
-  // turns the mic is closed, so the timer must not run and the orb must not look
-  // like it's listening. Resetting to 0 whenever capture stops makes it per-turn.
+  // Per-turn timer: count only while a turn is ACTUALLY capturing — hands-free:
+  // while "listening"; hold-to-talk: only while a hold is in flight. Between
+  // hold-to-talk turns the mic is closed, so the timer must not run.
   const timerActive = ptt ? (v.state === "listening" && capturing) : v.state === "listening";
   useEffect(() => {
     if (!timerActive) { setSecs(0); return; }
@@ -254,17 +178,20 @@ function VoiceScreenBody({
     return () => clearInterval(id);
   }, [timerActive]);
 
-  // Compact uppercase HUD (top-left) — honest about PTT idle (mic closed).
-  const hudLabel =
-    exactTextOpen           ? "EXACT TEXT · MIC PAUSED" :
-    v.actionPending         ? "AVA · WORKING" :
-    v.state === "connecting" ? "CONNECTING" :
-    v.state === "thinking"   ? "THINKING" :
-    v.state === "responding" ? "AVA · SPEAKING" :
-    v.state === "listening"  ? (ptt && !capturing ? "PUSH-TO-TALK" : "LISTENING") :
-                                "READY";
+  // What the island says. A decision waiting for Niko outranks everything, then
+  // a running action, then what the voice is audibly doing.
+  const island: { mode: IslandMode; text?: string; detail?: string } =
+    exactTextOpen            ? { mode: "idle", text: "Exact text", detail: "mic paused" } :
+    v.pendingApproval        ? { mode: "attention", detail: "say yes or no, or tap" } :
+    v.actionPending          ? { mode: "working", detail: "your task" } :
+    v.state === "connecting" ? { mode: "idle", text: "Connecting" } :
+    signalMode === "speaking"  ? { mode: "speaking" } :
+    signalMode === "thinking"  ? { mode: "thinking" } :
+    signalMode === "listening" ? { mode: "listening", detail: formatTime(secs) } :
+    v.state === "listening" && ptt ? { mode: "idle", text: "Hold to talk" } :
+                                 { mode: "idle", text: "Ready" };
 
-  // Friendly status chip under the orb.
+  // The friendly line under the face. Honest about hold-to-talk idle (mic closed).
   const statusLabel =
     exactTextOpen           ? "Typing exact wording · nothing sent yet" :
     v.actionPending         ? "Working on your task…" :
@@ -274,212 +201,135 @@ function VoiceScreenBody({
     v.state === "listening"  ? (ptt && !capturing ? "Hold to talk · Space" : `Listening · ${formatTime(secs)}`) :
                                 "Ready";
 
-  // Orb reacts only when audio is truly forwarding: PTT-idle shows the calm "idle"
-  // orb (mic closed between turns), not the reactive "listening" one.
-  const orbState =
-    v.actionPending         ? "thinking" :
-    v.state === "responding" ? "responding" :
-    v.state === "thinking"   ? "thinking" :
-    v.state === "listening"  ? (ptt && !capturing ? "idle" : "listening") :
-                                "idle";
-
-  const tint =
-    v.actionPending         ? "rgba(92,242,255,0.12)" :
-    v.state === "responding" ? "rgba(34,150,255,0.20)" :
-    v.state === "listening"  ? (ptt && !capturing ? "rgba(92,242,255,0.05)" : "rgba(124,92,255,0.18)") :
-    v.state === "thinking"   ? "rgba(92,242,255,0.12)" :
-                                "rgba(92,242,255,0.05)";
+  // The face poses for the same audible truth; a running action reads as thinking.
+  const faceMode = v.actionPending && signalMode !== "speaking" ? "thinking" : signalMode;
 
   return (
-    <div className="relative flex h-full w-full flex-col overflow-hidden bg-black">
-      <VoiceSurface />
-      <NebulaBackground />
-      {/* per-state tint, eased */}
+    <div className="ds-root relative flex h-full w-full flex-col overflow-hidden bg-canvas font-ui text-ink">
+      {/* Top: the compact menu button sits top-left (the app's bar); voice's own
+          actions sit top-right; the island is centred under them. */}
       <div
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background: `radial-gradient(circle at 50% 38%, ${tint} 0%, transparent 60%)`,
-          transition: "background 600ms cubic-bezier(0.22,1,0.36,1)",
-        }}
-      />
-
-      <div className="hud absolute left-20 top-5 z-20 text-[10px]" style={{ color: "var(--ac)" }}>{hudLabel}</div>
-      <button
-        onClick={() => window.open(
-          "/?mission-control=1",
-          "ava-mission-control",
-          "popup,width=1500,height=920,resizable=yes,scrollbars=no",
-        )}
-        aria-label="open Mission Control"
-        title="Open Mission Control beside voice"
-        className="absolute right-28 top-5 z-30 flex h-8 items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 text-[9px] uppercase tracking-wider text-white/60 transition-all hover:text-white active:scale-95"
+        className="relative z-30 flex shrink-0 items-start justify-end gap-2 px-3"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
       >
-        <PanelsTopLeft size={13} />
-        Activity
-      </button>
-      {/* New conversation: voice resumes your latest chat by default, so this is
-          how you deliberately start fresh. */}
-      <button
-        onClick={() => v.newConversation()}
-        aria-label="new conversation"
-        title="New conversation"
-        className="absolute right-16 top-5 z-30 flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white/70 transition-all active:scale-95"
-      >
-        <MessageSquarePlus size={14} />
-      </button>
-      <button
-        onClick={() => leaveVoice("exit")}
-        aria-label="exit"
-        className="absolute right-5 top-5 z-30 flex h-8 w-8 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white/70"
-      >
-        <X size={14} />
-      </button>
+        <button
+          onClick={() => window.open(
+            "/?mission-control=1",
+            "ava-mission-control",
+            "popup,width=1500,height=920,resizable=yes,scrollbars=no",
+          )}
+          aria-label="open Mission Control"
+          title="Open Mission Control beside voice"
+          className={roundGlass}
+        >
+          <PanelsTopLeft size={18} aria-hidden="true" />
+        </button>
+        {/* Voice resumes your latest chat by default, so this is how you deliberately start fresh. */}
+        <button onClick={() => v.newConversation()} aria-label="new conversation" title="New conversation" className={roundGlass}>
+          <MessageSquarePlus size={18} aria-hidden="true" />
+        </button>
+        <button onClick={() => leaveVoice("exit")} aria-label="exit" title="Leave voice" className={roundGlass}>
+          <X size={18} aria-hidden="true" />
+        </button>
+      </div>
+      <div className="relative z-20 flex shrink-0 justify-center px-4 pt-3">
+        <StatusIsland mode={island.mode} text={island.text} detail={island.detail} sampleLevel={measuredVoiceLevel} />
+      </div>
 
       {v.errorMsg && !v.unavailable && (
-        <div className="absolute left-1/2 top-16 z-40 w-72 -translate-x-1/2">
+        <div role="alert" className="relative z-40 mx-auto mt-3 flex w-[min(420px,calc(100%-2rem))] items-start gap-3 rounded-card bg-danger-soft px-4 py-3 text-meta text-ink shadow-e2">
+          <span className="min-w-0 flex-1">{v.errorMsg}</span>
           {/* Dismiss only clears the error — exiting voice is the X button's job. */}
-          <Alert variant="destructive" close onClose={v.clearError}>
-            <AlertDescription>{v.errorMsg}</AlertDescription>
-          </Alert>
+          <button type="button" onClick={v.clearError} aria-label="Dismiss" className="ds-focus -m-1 grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-2 hover:bg-glass">
+            <X size={15} aria-hidden="true" />
+          </button>
         </div>
       )}
 
       {/* The exact conversation is gone. Voice never switches on its own; Nika chooses. */}
       {v.unavailable && (
-        <div
-          role="alert"
-          className="glass absolute left-1/2 top-20 z-40 w-[min(360px,calc(100%-2rem))] -translate-x-1/2 rounded-2xl p-5 text-center"
-        >
-          <div className="text-sm font-medium text-white/90">This conversation is unavailable.</div>
-          <div className="mt-1 text-xs leading-5 text-white/60">
-            It may have been deleted. Start a new conversation or pick one of yours.
-          </div>
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-            <button
-              type="button"
-              onClick={() => v.newConversation()}
-              className="rounded-full px-4 py-2 text-xs font-medium active:scale-95"
-              style={{ background: "var(--ac)", color: "#04222a" }}
-            >
-              Start a new conversation
-            </button>
+        <div role="alert" className="relative z-40 mx-auto mt-3 grid w-[min(380px,calc(100%-2rem))] justify-items-center gap-2 rounded-card bg-raised p-5 text-center shadow-e3">
+          <p className="text-body-lg text-ink">This conversation is unavailable.</p>
+          <p className="text-meta text-ink-2">It may have been deleted. Start a new conversation or pick one of yours.</p>
+          <div className="mt-2 flex flex-wrap justify-center gap-2">
+            <Button variant="solid" size="sm" onClick={() => v.newConversation()}>Start a new conversation</Button>
             {onOpenConversations && (
-              <button
-                type="button"
-                onClick={() => { v.stop(); onOpenConversations(); }}
-                className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs text-white/85 active:scale-95"
-              >
-                Your conversations
-              </button>
+              <Button variant="glass" size="sm" onClick={() => { v.stop(); onOpenConversations(); }}>Your conversations</Button>
             )}
           </div>
         </div>
       )}
 
-      {/* One calm, full-height stage. Voice mode intentionally has no transcript
-          scroller; complete history remains in keyboard mode. */}
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center px-6 pb-4 pt-20">
-        {/* MagicRings is a separate LIGHT GSAP+SVG layer BEHIND the orb on the SAME
-            center, pointer-events-none. The orb Flips in from the home hero. */}
-        <div className="relative">
-          <div className="pointer-events-none absolute left-1/2 top-1/2 -z-10 -translate-x-1/2 -translate-y-1/2">
-            <MagicRings size={160} state={orbState} amplitude={v.amplitude} />
-          </div>
-          <Orb size={160} state={orbState} amplitude={v.amplitude} flipId="ava-orb" />
+      {/* One calm, full-height stage: her face, then the current turn in words.
+          Voice has no transcript scroller; the full history is in Talk. */}
+      <main className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center gap-5 px-6 pb-2">
+        <div className="ds-backlight relative h-[min(50dvh,520px)] w-full max-w-2xl">
+          <LazyFace mode={faceMode} sampleLevel={measuredVoiceLevel} label="AVA" stillSize={240} className="relative" />
         </div>
 
-        <div className="hud mt-6 text-[11px]" style={{ color: "var(--ac)" }}>{statusLabel}</div>
+        <p className="text-meta text-ink-2">{statusLabel}</p>
 
-        {/* ONE live interim line — STABLE key (per who, not per token), so the
-            entrance runs once per new turn and streaming text updates in place
-            instead of remounting + replaying the blur/fade on every delta. */}
-        <div
-          className="mt-5 min-h-[6.5rem] w-full max-w-3xl text-center"
-          aria-live="polite"
-          aria-label="Current voice turn"
-        >
+        {/* ONE live line for the current turn, updated in place as it streams. */}
+        <div className="min-h-[5.5rem] w-full max-w-2xl text-center" aria-live="polite" aria-label="Current voice turn">
           {v.interim && (
-            <motion.div
-              key={`interim-${v.interim.who}`}
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-            >
-              <div className="hud mb-1 text-[9px] text-white/40">
+            <div key={`interim-${v.interim.who}`} className="ds-rise grid gap-1.5">
+              <span className="font-ui-mono text-label uppercase text-ink-3">
                 {v.interim.who === "you"
                   ? (v.interim.inputSource === "voice_exact_text" ? "you · exact text" : "you")
                   : "ava"}
-              </div>
-              <div
-                className="mx-auto overflow-hidden text-[clamp(18px,2.2vw,26px)] leading-snug text-white/80"
-                style={{
-                  display: "-webkit-box",
-                  WebkitLineClamp: 4,
-                  WebkitBoxOrient: "vertical",
-                }}
-              >
-                {v.interim.text}
-              </div>
-            </motion.div>
+              </span>
+              <span className="line-clamp-4 text-heading font-medium text-ink">{v.interim.text}</span>
+            </div>
           )}
-          {!v.interim && v.hint && (
-            <div className="mx-auto text-[14px] leading-snug text-white/45">{v.hint}</div>
-          )}
+          {!v.interim && v.hint && <p className="text-body text-ink-2">{v.hint}</p>}
           {!v.interim && !v.hint && !ptt && v.state === "responding" && (
-            <div className="mx-auto text-[12px] leading-snug text-white/30">Talk any time to interrupt.</div>
+            <p className="text-meta text-ink-3">Talk any time to interrupt.</p>
           )}
         </div>
-      </div>
+      </main>
 
       {v.pendingApproval && (
         <div
-          className="glass absolute bottom-[220px] left-1/2 z-40 w-[340px] -translate-x-1/2 rounded-2xl p-4 text-center"
-          style={{ borderColor: "rgba(92,242,255,0.3)" }}
           role="region"
           aria-label="Approval required"
+          className="ds-rise relative z-40 mx-auto mb-3 grid w-[min(380px,calc(100%-2rem))] gap-2 rounded-card bg-raised p-5 text-center shadow-e3"
         >
-          <div className="hud mb-1 text-[9px]" style={{ color: "var(--ac)" }}>
-            ⚑ {approvalRiskLabel(v.pendingApproval)} · {approvalTimeoutLabel(v.pendingApproval)}
-          </div>
-          <div className="mb-1 text-sm leading-snug text-white/90">{v.pendingApproval.summary}</div>
-          <div className="mb-3 text-[11px] text-white/50">
-            Say <b style={{ color: "var(--ac-live)" }}>“yes”</b> to approve or <b style={{ color: "var(--ac-live)" }}>“no”</b> to deny — or tap.
-          </div>
-          <div className="mb-3 text-[11px] text-white/65" role="status" aria-live="polite" aria-atomic="true">
+          <p className="font-ui-mono text-label uppercase text-ink-3">
+            {approvalRiskLabel(v.pendingApproval)} · {approvalTimeoutLabel(v.pendingApproval)}
+          </p>
+          <p className="text-body-lg text-ink">{v.pendingApproval.summary}</p>
+          <p className="text-meta text-ink-2">Say “yes” to approve or “no” to deny — or tap.</p>
+          <p className="text-meta font-medium text-warning" role="status" aria-live="polite" aria-atomic="true">
             {approvalDeadlineCopy}
-          </div>
-          <div className="flex items-center justify-center gap-3">
-            <button onClick={v.deny} className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs text-white/80 active:scale-95">Deny</button>
-            <button onClick={v.approve} className="rounded-full px-4 py-2 text-xs font-medium active:scale-95" style={{ background: "var(--ac)", color: "#04222a" }}>Approve</button>
+          </p>
+          <div className="mt-1 grid grid-cols-2 gap-2">
+            <Button variant="glass" onClick={v.deny}>Deny</Button>
+            <Button variant="solid" onClick={v.approve}>Approve</Button>
           </div>
         </div>
       )}
 
-      {/* ── CONTROL BAR ──────────────────────────────────────────────────────── */}
+      {/* The control bar: engine and input mode, then one pill with the controls. */}
       <div
-        className="relative z-20 flex shrink-0 flex-col items-center gap-4 pt-3"
-        // bottom padding plus the home-indicator inset on phones (env() is 0 on desktop).
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.5rem)" }}
+        className="relative z-20 flex shrink-0 flex-col items-center gap-3 px-3 pt-1"
+        // Bottom padding plus the home-indicator inset on phones (env() is 0 on desktop).
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }}
       >
-        {/* Provider badge + input mode. AVA is pinned to OpenAI's newest public
-            Realtime model; removing the engine switch prevents accidental voice
-            changes between sessions. */}
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          <div
-            className="glass rounded-full px-3 py-1.5 text-[10px] text-white/55"
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          {/* AVA is pinned to one engine per visit; there is no engine switch here. */}
+          <span
+            className="rounded-full bg-glass px-3 py-1.5 font-ui-mono text-label text-ink-2"
             aria-label={v.voiceEngine === "hume" ? "Hume EVI voice" : "OpenAI GPT Realtime 2.1 voice"}
           >
             {engineLabel ?? (v.voiceEngine === "hume" ? "HUME · EVI" : "OPENAI · REALTIME 2.1")}
-          </div>
-
-          {/* Input-mode toggle: hands-free VAD ↔ hold-to-talk. Persisted. */}
-          <div className="glass flex items-center gap-1 rounded-full p-1 text-[10px]">
+          </span>
+          {/* Input mode: hands-free ↔ hold-to-talk. Persisted by the hook. */}
+          <div className="flex items-center gap-1 rounded-full bg-glass p-1">
             <button
               aria-label="hands-free voice mode"
               aria-pressed={!ptt}
               onClick={() => v.setInputMode("vad")}
-              className="rounded-full px-3 py-1 transition-all"
-              style={!ptt ? { background: "var(--ac)", color: "#04222a" } : { color: "rgba(255,255,255,0.6)" }}
+              className={cn("ds-focus rounded-full px-3 py-1.5 text-meta transition-colors", !ptt ? "bg-solid text-on-solid" : "text-ink-2 hover:text-ink")}
             >
               Hands-free
             </button>
@@ -487,22 +337,17 @@ function VoiceScreenBody({
               aria-label="push to talk mode"
               aria-pressed={ptt}
               onClick={() => v.setInputMode("enter_push_to_talk")}
-              className="rounded-full px-3 py-1 transition-all"
-              style={ptt ? { background: "var(--ac)", color: "#04222a" } : { color: "rgba(255,255,255,0.6)" }}
+              className={cn("ds-focus rounded-full px-3 py-1.5 text-meta transition-colors", ptt ? "bg-solid text-on-solid" : "text-ink-2 hover:text-ink")}
             >
               Hold-to-talk
             </button>
           </div>
         </div>
 
-        {/* Primary control row: mute · (talk / interrupt) · keyboard. */}
-        <div ref={chromeScope} className="flex items-center justify-center gap-5">
-          <button
-            aria-label={v.muted ? "unmute" : "mute"}
-            onClick={() => v.setMuted(!v.muted)}
-            className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white transition-all active:scale-95"
-          >
-            {v.muted ? <MicOff size={18} /> : <Mic size={18} />}
+        {/* mute · (talk / stop) · exact text · keyboard */}
+        <div className="ds-glass flex items-center gap-2 rounded-full p-2 shadow-e3">
+          <button aria-label={v.muted ? "unmute" : "mute"} onClick={() => v.setMuted(!v.muted)} className={roundQuiet}>
+            {v.muted ? <MicOff size={20} aria-hidden="true" /> : <Mic size={20} aria-hidden="true" />}
           </button>
           {showStop ? (
             <button
@@ -514,10 +359,9 @@ function VoiceScreenBody({
                 if (Date.now() - pttReleasedAtRef.current < STOP_AFTER_RELEASE_GUARD_MS) return;
                 v.interrupt();
               }}
-              className="flex h-16 w-16 items-center justify-center rounded-full active:scale-95"
-              style={{ background: "var(--ac)", color: "#04222a", boxShadow: "0 0 26px rgba(92,242,255,0.5)" }}
+              className="ds-focus grid h-16 w-16 place-items-center rounded-full bg-solid text-on-solid shadow-e2 transition-transform duration-150 active:scale-95"
             >
-              <Square size={18} fill="currentColor" />
+              <Square size={20} fill="currentColor" aria-hidden="true" />
             </button>
           ) : ptt ? (
             <HoldToTalkButton
@@ -529,17 +373,13 @@ function VoiceScreenBody({
               }}
             />
           ) : (
-            // Hands-free idle mic disc — resting affordance, gets the living-chrome surface.
+            // Hands-free: the mic is open; this shows it, it is not a control.
             <div
               aria-hidden="true"
-              className="liquid-chrome flex h-16 w-16 items-center justify-center rounded-full"
-              style={{
-                backdropFilter: "blur(14px)",
-                WebkitBackdropFilter: "blur(14px)",
-                boxShadow: v.state === "listening" ? "0 0 24px rgba(92,242,255,0.3)" : undefined,
-              }}
+              data-listening={v.state === "listening" || undefined}
+              className="grid h-16 w-16 place-items-center rounded-full bg-solid text-on-solid shadow-e2 transition-transform duration-240 data-[listening]:scale-105"
             >
-              <Mic size={20} className="text-[#0c2a31]" />
+              <Mic size={22} />
             </div>
           )}
           <button
@@ -548,23 +388,18 @@ function VoiceScreenBody({
             aria-haspopup="dialog"
             aria-expanded={exactTextOpen}
             onClick={() => setExactTextDialogOpen(true)}
-            className="flex h-12 w-12 items-center justify-center rounded-full border border-violet-200/20 bg-violet-300/[0.07] text-violet-100 transition-all hover:bg-violet-300/[0.12] active:scale-95"
+            className={roundQuiet}
             title="Type an exact name, username, URL, code, or correction"
           >
-            <Type size={18} />
+            <Type size={20} aria-hidden="true" />
           </button>
-          <button
-            aria-label="keyboard"
-            onClick={() => leaveVoice("keyboard")}
-            className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/5 text-white transition-all active:scale-95"
-          >
-            <Keyboard size={18} />
+          <button aria-label="keyboard" onClick={() => leaveVoice("keyboard")} className={roundQuiet} title="Continue in Talk">
+            <Keyboard size={20} aria-hidden="true" />
           </button>
         </div>
 
-        {/* Gesture hint for the hold model. */}
         {ptt && v.state !== "responding" && (
-          <div className="hud text-[9px] text-white/30">Hold the mic or Space to talk · release to send</div>
+          <p className="text-meta text-ink-3">Hold the mic or Space to talk · release to send</p>
         )}
       </div>
       <VoiceExactTextDialog

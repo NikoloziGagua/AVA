@@ -14,7 +14,10 @@
     "chat/ToolCallChip.tsx",
     "home/HomeScreen.tsx",
     "home/oneThing.ts",
-    "orbit/ChatListScreen.tsx"
+    "orbit/ChatListScreen.tsx",
+    "voice/HoldToTalkButton.tsx",
+    "voice/VoiceExactTextDialog.tsx",
+    "voice/VoiceScreen.tsx"
   ],
   "files": {
     "App.tsx": {
@@ -316,21 +319,6 @@
       "tinyText": 3,
       "rawColour": 0,
       "backdrop": 0
-    },
-    "voice/HoldToTalkButton.tsx": {
-      "tinyText": 0,
-      "rawColour": 4,
-      "backdrop": 0
-    },
-    "voice/VoiceExactTextDialog.tsx": {
-      "tinyText": 2,
-      "rawColour": 2,
-      "backdrop": 0
-    },
-    "voice/VoiceScreen.tsx": {
-      "tinyText": 10,
-      "rawColour": 18,
-      "backdrop": 1
     },
     "watches/WatchesScreen.tsx": {
       "tinyText": 11,

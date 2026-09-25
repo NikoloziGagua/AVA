@@ -275,6 +275,8 @@ nav[data-compact] .ds-menu[data-open="true"] { clip-path: inset(0 0 0 0 round 30
 .ds-island-bars i:nth-child(2) { animation-delay: -0.3s; }
 .ds-island-bars i:nth-child(3) { animation-delay: -0.6s; }
 .ds-island-bars i:nth-child(4) { animation-delay: -0.15s; }
+/* Measured voice: the bars follow the level each frame instead of the rhythm. */
+.ds-island-bars[data-live="true"] i { animation: none; transition: transform 70ms linear; }
 @keyframes ds-breathe { 50% { opacity: 0.3; } }
 @keyframes ds-bar { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
 

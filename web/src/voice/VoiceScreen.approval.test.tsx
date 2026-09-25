@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { within, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const voice = vi.hoisted(() => ({
@@ -59,6 +59,7 @@ vi.mock("../components/ava/NebulaBackground.js", () => ({ NebulaBackground: () =
 vi.mock("../components/ava/DottedSurface.js", () => ({ DottedSurface: () => null }));
 vi.mock("../lib/gsap.js", () => ({ gsap: { fromTo: vi.fn() }, useGSAP: vi.fn() }));
 vi.mock("../lib/useReducedMotion.js", () => ({ useReducedMotion: () => true }));
+vi.mock("../design/face/FaceStage.js", () => ({ FaceStage: () => <div data-testid="live-face" /> }));
 
 import { RealtimeVoiceScreen as VoiceScreen } from "./VoiceScreen.js";
 
@@ -89,7 +90,9 @@ describe("VoiceScreen approval policy copy", () => {
 
     const region = screen.getByRole("region", { name: "Approval required" });
     expect(region.textContent).toContain("High risk · Silence auto-denies");
-    expect(screen.getByRole("status").textContent).toBe("Auto-denying in 15s — approve now to run.");
+    expect(within(region).getByRole("status").textContent).toBe("Auto-denying in 15s — approve now to run.");
+    // The island asks for Niko's attention while the decision waits.
+    expect(document.querySelector(".ds-island")?.getAttribute("data-mode")).toBe("attention");
     fireEvent.click(screen.getByRole("button", { name: "Deny" }));
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(voice.deny).toHaveBeenCalledTimes(1);
@@ -106,6 +109,7 @@ describe("VoiceScreen approval policy copy", () => {
     render(<VoiceScreen initialSessionId="shared-session" onExit={vi.fn()} onSwitchToKeyboard={vi.fn()} />);
 
     expect(screen.getByText(/Medium risk · Silence auto-approves/)).toBeTruthy();
-    expect(screen.getByRole("status").textContent).toBe("Auto-approving in 15s — cancel to stop.");
+    const region = screen.getByRole("region", { name: "Approval required" });
+    expect(within(region).getByRole("status").textContent).toBe("Auto-approving in 15s — cancel to stop.");
   });
 });

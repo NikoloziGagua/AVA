@@ -1,15 +1,13 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CalendarDays, BellRing, NotebookPen, RotateCw } from "lucide-react";
 import { fetchWatches } from "../api.js";
 import { DEFAULT_TIME_ZONE, fetchCalendarRange } from "../calendar/api.js";
 import { fetchNotes } from "../notes/api.js";
 import { orderReminders } from "../reminders/presenter.js";
 import { Skeleton, StatusIsland, SuggestionChips } from "../design/index.js";
-import { FaceStill } from "../design/face/FaceStill.js";
+import { LazyFace } from "../design/face/LazyFace.js";
 import { pickOneThing, suggestionsFor, type NoteInput, type OneThing, type ReminderInput, type Source } from "./oneThing.js";
 
-// The animated face is its own lazy chunk (contract ui-remodel v2 §1); the still face shows meanwhile.
-const FaceStage = lazy(async () => ({ default: (await import("../design/face/FaceStage.js")).FaceStage }));
 
 type Load = { status: "loading" } | { status: "ready"; thing: OneThing } | { status: "error"; missing: Source[] };
 
@@ -117,9 +115,7 @@ export function HomeScreen({ onStartChat, onOpenNote, onOpenCalendar, onOpenRemi
         <StatusIsland mode="idle" time={clock(now, timeZone)} />
 
         <div className="ds-backlight relative h-[min(46dvh,440px)] w-full">
-          <Suspense fallback={<div className="grid h-full place-items-center"><FaceStill size={220} /></div>}>
-            <FaceStage label="AVA" className="relative" />
-          </Suspense>
+          <LazyFace label="AVA" className="relative" />
         </div>
 
         <div className="grid gap-2">

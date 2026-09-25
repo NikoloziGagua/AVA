@@ -54,6 +54,7 @@ function LiveBar() {
 
 const FaceStage = lazy(async () => ({ default: (await import("./face/FaceStage.js")).FaceStage }));
 const TalkGallery = lazy(async () => ({ default: (await import("../chat/TalkGallery.js")).TalkGallery }));
+const VoicePreview = lazy(async () => ({ default: (await import("../voice/VoicePreview.js")).VoicePreview }));
 
 function FaceDemo() {
   const [mode, setMode] = useState<FaceMode>("idle");
@@ -147,6 +148,10 @@ function Components() {
 
       <GallerySection title="Talk" note="The new conversation screen, with sample content. AVA answers on the page without a bubble; your words sit in soft bubbles. What she is doing shows in the island, and her steps open in a sheet. Only a step that failed shows in the conversation. On Talk the message box is the bar at the bottom.">
         <Suspense fallback={null}><TalkGallery /></Suspense>
+      </GallerySection>
+
+      <GallerySection title="Voice" note="The Voice screen, full size, with a stand-in voice: switch between listening, thinking, speaking, working, an approval and hold-to-talk. It never opens the microphone.">
+        <a href="?design-gallery=voice" className="ds-focus inline-flex h-11 w-fit items-center rounded-full bg-solid px-5 text-body font-medium text-on-solid">Open the Voice preview</a>
       </GallerySection>
 
       <GallerySection title="AVA's face" note="The one animated face. It shows once the face data from Codex's pipeline is in place; until then you see the still fallback.">
@@ -338,6 +343,11 @@ export function DesignGallery() {
   const [look, setLook] = useState<LookPref>(readLookPref());
   useEffect(() => { applyLook(); }, [look]);
   const choose = (next: LookPref) => { mirrorLookPref(next); setLook(next); };
+
+  // ?design-gallery=voice: the Voice screen full size, with the face to itself.
+  if (new URLSearchParams(window.location.search).get("design-gallery") === "voice") {
+    return <Suspense fallback={null}><VoicePreview /></Suspense>;
+  }
 
   return (
     <div className="ds-root min-h-screen bg-canvas font-ui text-ink">

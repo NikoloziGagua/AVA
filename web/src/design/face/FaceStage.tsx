@@ -26,7 +26,15 @@ export type FaceStageProps = {
   mode?: FaceMode;
   /** Live voice energy 0..1 while speaking (voice/faceSignal); omit to simulate. */
   level?: number | null;
+  /**
+   * Read on every animation frame instead of `level`, so live audio never
+   * re-renders React (contract face-signal v1). Return null to use the
+   * simulated speaking rhythm.
+   */
+  sampleLevel?: () => number | null;
   label?: string;
+  /** Size of the still picture shown if the live face can't run. */
+  stillSize?: number;
   className?: string;
 };
 
@@ -36,7 +44,7 @@ export type FaceStageProps = {
  * a pose for each state. It pauses off-screen and in hidden tabs, holds still
  * under reduced motion, and falls back to a still picture if anything fails.
  */
-export function FaceStage({ mode = "idle", level = null, label = "AVA's face", className }: FaceStageProps) {
+export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "AVA's face", stillSize = 220, className }: FaceStageProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const look = useDocumentLook();
   const reduced = useReducedMotion();
@@ -46,8 +54,11 @@ export function FaceStage({ mode = "idle", level = null, label = "AVA's face", c
   const animator = useRef(new FaceAnimator());
   const frame = useRef<{ redraw: () => void } | null>(null);
 
+  const sampleRef = useRef(sampleLevel);
+  sampleRef.current = sampleLevel;
+
   animator.current.mode = mode;
-  animator.current.level = level;
+  if (!sampleLevel) animator.current.level = level;
 
   // Claim the single face slot for this mount; a second stage shows the still picture.
   useEffect(() => {
@@ -96,7 +107,16 @@ export function FaceStage({ mode = "idle", level = null, label = "AVA's face", c
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      if (visible && !document.hidden) { anim.step(now / 1000, dt); active.draw(now / 1000, anim); }
+      if (visible && !document.hidden) {
+        const sample = sampleRef.current;
+        if (sample) {
+          let value: number | null = null;
+          try { value = sample(); } catch { value = null; }
+          anim.level = value === null || !Number.isFinite(value) ? null : Math.min(1, Math.max(0, value));
+        }
+        anim.step(now / 1000, dt);
+        active.draw(now / 1000, anim);
+      }
       raf = requestAnimationFrame(tick);
     };
     const still = reduced || computeReduced();
@@ -137,7 +157,7 @@ export function FaceStage({ mode = "idle", level = null, label = "AVA's face", c
   if (fallback) {
     return (
       <div className={cn("grid place-items-center", className)} data-face="still">
-        <FaceStill size={220} label={label} className="rounded-none" />
+        <FaceStill size={stillSize} label={label} className="rounded-none" />
       </div>
     );
   }

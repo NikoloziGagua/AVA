@@ -55,9 +55,6 @@ export function HoldToTalkButton({
     WebkitUserSelect: "none",
     userSelect: "none",
     WebkitTapHighlightColor: "transparent",
-    ...(capturing
-      ? { background: "var(--ac)", border: "1px solid rgba(255,255,255,0.18)", color: "#04222a", boxShadow: "0 0 26px rgba(92,242,255,0.5)" }
-      : {}),
   };
 
   return (
@@ -84,12 +81,13 @@ export function HoldToTalkButton({
       // Only a fallback when capture was unavailable (it keeps events here otherwise).
       onPointerLeave={() => { if (!capturedRef.current) finish(); }}
       onContextMenu={(e) => e.preventDefault()}
-      // Capturing = active (solid cyan + glow). Armed-but-idle push-to-talk gets
-      // the calm living-chrome surface (the class provides bg + border + sheen).
-      className={`flex h-16 w-16 select-none items-center justify-center rounded-full transition-all active:scale-95${capturing ? "" : " liquid-chrome"}`}
+      // Held: it grows a little and gains a ring, so a finger covering it still
+      // feels the difference; idle it is the solid main control.
+      data-capturing={capturing || undefined}
+      className="ds-focus grid h-16 w-16 select-none place-items-center rounded-full bg-solid text-on-solid shadow-e2 transition-transform duration-150 active:scale-95 data-[capturing]:scale-110 data-[capturing]:ring-4 data-[capturing]:ring-glass-strong"
       style={style}
     >
-      <Mic size={20} className={capturing ? "" : "text-[#0c2a31]"} />
+      <Mic size={22} aria-hidden="true" />
     </button>
   );
 }

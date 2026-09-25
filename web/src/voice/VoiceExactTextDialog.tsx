@@ -6,6 +6,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "../components/ui/dialog.js";
+import { Button } from "../design/Button.js";
 
 export interface VoiceExactTextDialogProps {
   open: boolean;
@@ -68,20 +69,20 @@ export function VoiceExactTextDialog({
           event.preventDefault();
           returnFocusRef.current.focus();
         }}
-        className="w-[calc(100vw-1.5rem)] max-w-xl overflow-hidden rounded-3xl border-cyan-200/20 bg-[#05080c]/95 p-0 shadow-[0_30px_100px_rgba(0,0,0,0.7)]"
+        className="ds-root w-[calc(100vw-1.5rem)] max-w-xl overflow-hidden rounded-sheet border-0 bg-raised p-0 font-ui text-ink shadow-e3"
       >
-        <div className="border-b border-white/10 px-5 pb-4 pt-5 sm:px-6">
-          <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-200/20 bg-cyan-300/[0.08] text-cyan-100">
-            <Type size={17} aria-hidden="true" />
+        <div className="px-5 pt-6 sm:px-6">
+          <div className="mb-3 grid h-10 w-10 place-items-center rounded-full bg-glass text-ink">
+            <Type size={18} aria-hidden="true" />
           </div>
-          <DialogTitle className="text-lg font-medium text-white">Type exact text</DialogTitle>
-          <DialogDescription className="mt-1.5 max-w-md text-sm leading-6 text-white/55">
+          <DialogTitle className="text-heading text-ink">Type exact text</DialogTitle>
+          <DialogDescription className="mt-1.5 max-w-md text-body text-ink-2">
             Use this for names, usernames, URLs, code, quoted wording, or a precise correction. Nothing sends until you submit.
           </DialogDescription>
         </div>
 
-        <div className="space-y-3 px-5 py-5 sm:px-6">
-          <label htmlFor="voice-exact-text" className="hud block text-[9px] text-white/45">
+        <div className="grid gap-3 px-5 py-5 sm:px-6">
+          <label htmlFor="voice-exact-text" className="font-ui-mono text-label uppercase text-ink-3">
             Exact wording
           </label>
           <textarea
@@ -101,39 +102,28 @@ export function VoiceExactTextDialog({
               }
             }}
             placeholder="For example: Open @exact_username — keep the underscore."
-            className="soft-scrollbar w-full resize-y rounded-2xl border border-white/12 bg-black/40 px-4 py-3 font-mono text-[15px] leading-6 text-white outline-none transition-colors placeholder:text-white/25 focus:border-cyan-200/45"
+            className="ds-focus w-full resize-y rounded-card bg-glass px-4 py-3 font-ui-mono text-body text-ink outline-none transition-colors placeholder:text-ink-3 hover:bg-glass-strong"
             aria-describedby="voice-exact-help voice-exact-status"
           />
-          <div className="flex items-start justify-between gap-4 text-[11px] text-white/35">
+          <div className="flex items-start justify-between gap-4 text-meta text-ink-3">
             <p id="voice-exact-help">Enter makes a new line · Ctrl/⌘ + Enter submits</p>
             <span aria-label={`${draft.length} of 10000 characters`}>{draft.length.toLocaleString()} / 10,000</span>
           </div>
 
-          <div id="voice-exact-status" aria-live="polite" className="min-h-5 text-xs">
-            {!sessionReady && <span className="text-amber-200/75">Waiting for the shared voice session…</span>}
-            {sessionReady && !error && <span className="text-cyan-100/55">Microphone paused while you type.</span>}
-            {error && <span role="alert" className="text-red-300">{error}</span>}
+          <div id="voice-exact-status" aria-live="polite" className="min-h-5 text-meta">
+            {!sessionReady && <span className="text-warning">Waiting for the shared voice session…</span>}
+            {sessionReady && !error && <span className="text-ink-2">Microphone paused while you type.</span>}
+            {error && <span role="alert" className="text-danger">{error}</span>}
           </div>
         </div>
 
-        <div className="flex flex-col-reverse gap-2 border-t border-white/10 bg-white/[0.025] px-5 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-6">
-          <button
-            type="button"
-            onClick={() => onOpenChange(false)}
-            disabled={submitting}
-            className="rounded-full border border-white/12 px-4 py-2.5 text-sm text-white/65 transition-colors hover:bg-white/[0.06] hover:text-white disabled:opacity-40"
-          >
+        <div className="flex flex-col-reverse gap-2 px-5 pb-5 sm:flex-row sm:items-center sm:justify-end sm:px-6">
+          <Button variant="glass" onClick={() => onOpenChange(false)} disabled={submitting}>
             Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => void submit()}
-            disabled={!canSubmit}
-            className="flex items-center justify-center gap-2 rounded-full bg-[var(--ac)] px-5 py-2.5 text-sm font-medium text-[#04222a] transition-transform active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-35"
-          >
-            <CornerDownLeft size={15} aria-hidden="true" />
+          </Button>
+          <Button variant="solid" onClick={() => void submit()} disabled={!canSubmit} leading={<CornerDownLeft size={16} aria-hidden="true" />}>
             {submitting ? "Sending…" : "Send to AVA"}
-          </button>
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

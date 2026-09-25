@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { BottomBar, StatusIsland, type Destination } from "./index.js";
@@ -118,6 +118,20 @@ describe("BottomBar", () => {
 });
 
 describe("StatusIsland", () => {
+  it("lets the voice bars follow a measured level, and keeps the rhythm without one", async () => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(0), 4) as unknown as number);
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+    let level: number | null = 0.8;
+    const { container } = render(<StatusIsland mode="speaking" sampleLevel={() => level} />);
+    const bars = container.querySelector<HTMLElement>(".ds-island-bars")!;
+    await waitFor(() => expect(bars.dataset.live).toBe("true"));
+    expect(bars.querySelector("i")!.style.transform).toMatch(/^scaleY\(/);
+    level = null;
+    await waitFor(() => expect(bars.dataset.live).toBe("false"));
+    expect(bars.querySelector("i")!.style.transform).toBe("");
+    vi.unstubAllGlobals();
+  });
+
   it("announces what AVA is doing in words", () => {
     render(<StatusIsland mode="thinking" />);
     expect(screen.getByRole("status").textContent).toContain("Thinking");

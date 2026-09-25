@@ -33,6 +33,7 @@ try {
   await p.getByRole('button',{name:'Type exact wording',exact:true}).click();
   assert.equal(await p.getByRole('textbox').inputValue(),'A precise thought / _username');
   await p.getByRole('textbox').press('Escape');
+  await p.getByText('Preview states',{exact:true}).click();
   await p.getByRole('button',{name:'speaking',exact:true}).click();
   await p.screenshot({path:resolve(tmpdir(),'ava-metal-voice-v2.png')});
   await p.getByRole('button',{name:'Components',exact:true}).click();
@@ -53,7 +54,8 @@ try {
     assert.equal(await p.locator('.am-root').evaluate(e=>e.scrollWidth>e.clientWidth+1),false,`${view} overflow`);
     await p.screenshot({path:resolve(tmpdir(),`ava-metal-${view.toLowerCase()}-mobile.png`)});
   }
-  await p.getByRole('button',{name:'Home',exact:true}).click();
+  await p.getByRole('button',{name:'Components',exact:true}).click();
+  await p.getByRole('navigation',{name:'Component references'}).getByRole('button',{name:/ScrollTimeline/}).click();
   await p.locator('.am-root').evaluate(e=>e.scrollTo({top:e.scrollHeight,behavior:'instant'}));
   assert.ok(await p.locator('.am-root').evaluate(e=>e.scrollTop)>0,'scrollable');
   await p.emulateMedia({reducedMotion:'reduce'});await p.reload();await p.waitForTimeout(800);

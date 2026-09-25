@@ -1,0 +1,15 @@
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { LivingFace } from "./LivingFace.js";
+const spy=vi.hoisted(()=>({reduced:false,release:vi.fn(),dispose:vi.fn(),draw:vi.fn(),fail:false,frames:[] as FrameRequestCallback[]}));
+vi.mock("../motion.js",()=>({useReducedMotion:()=>spy.reduced}));
+vi.mock("../face/FaceStage.js",()=>({claimFaceSlot:()=>spy.release}));
+vi.mock("../face/asset.js",()=>({sharedFaceAsset:async()=>({glow:{count:30000}})}));
+vi.mock("../face/model.js",()=>({buildPoints:()=>({data:new Float32Array(),count:0})}));
+vi.mock("../face/FaceStill.js",()=>({FaceStill:({label}:{label:string})=><span role="img" aria-label={label}>Still face</span>}));
+vi.mock("../face/renderer.js",()=>({FaceRenderer:class {constructor(){if(spy.fail)throw Error("No WebGL");}setPoints(){}resize(){}draw(t:number,a:{state:{think:number}}){spy.draw(t,a.state.think);}dispose(){spy.dispose();}}}));
+beforeEach(()=>{spy.reduced=false;spy.fail=false;spy.frames=[];vi.clearAllMocks();vi.stubGlobal("ResizeObserver",class{observe(){}disconnect(){}});vi.stubGlobal("IntersectionObserver",class{observe(){}disconnect(){}});vi.stubGlobal("requestAnimationFrame",(cb:FrameRequestCallback)=>{spy.frames.push(cb);return spy.frames.length;});vi.stubGlobal("cancelAnimationFrame",vi.fn());});
+afterEach(()=>{cleanup();vi.unstubAllGlobals();});
+it("amplifies per-particle drift and releases the shared slot and GPU resources",async()=>{const {unmount}=render(<LivingFace mode="idle" label="AVA"/>);await waitFor(()=>expect(spy.draw).toHaveBeenCalled());expect(spy.draw.mock.calls[0]?.[1]).toBeGreaterThan(1);expect(spy.frames).toHaveLength(1);unmount();expect(spy.release).toHaveBeenCalledOnce();expect(spy.dispose).toHaveBeenCalledOnce();});
+it("uses a static frame without a continuous loop for reduced motion",async()=>{spy.reduced=true;render(<LivingFace mode="listening" label="AVA"/>);await waitFor(()=>expect(spy.draw).toHaveBeenCalledOnce());expect(spy.draw.mock.calls[0]).toEqual([0,0]);expect(spy.frames).toHaveLength(0);});
+it("falls back accessibly if the renderer cannot start",async()=>{spy.fail=true;render(<LivingFace mode="idle" label="AVA fallback"/>);await waitFor(()=>expect(screen.getByText("Still face")).toBeTruthy());expect(screen.getByRole("img",{name:"AVA fallback"})).toBeTruthy();await waitFor(()=>expect(spy.release).toHaveBeenCalledOnce());});

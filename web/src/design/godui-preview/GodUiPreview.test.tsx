@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GodUiPreview } from "./GodUiPreview.js";
 import { REFERENCES } from "./ReferenceCatalog.js";
 
-vi.mock("../face/FaceStage.js", () => ({ FaceStage: ({mode}: {mode:string}) => <div data-testid="face" data-mode={mode}/> }));
+vi.mock("./LivingFace.js", () => ({ LivingFace: ({mode}: {mode:string}) => <div data-testid="face" data-mode={mode}/> }));
 vi.mock("@paper-design/shaders", () => ({ ShaderMount: class { dispose(){} setSpeed(){} }, liquidMetalFragmentShader:"" }));
 beforeEach(() => {
   vi.stubGlobal("ResizeObserver", class { observe(){} unobserve(){} disconnect(){} });
@@ -21,6 +21,8 @@ describe("metal preview",()=>{
     expect(screen.getByRole("heading",{name:"Good to see you, Niko."})).toBeTruthy();
     expect(screen.getByText("DESIGN PREVIEW")).toBeTruthy();
     expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByText("YOUR DAY")).toBeNull();
+    expect(screen.queryByText("Europe / Dublin")).toBeNull();
     await waitFor(()=>expect(screen.getByTestId("face").dataset.mode).toBe("idle"));
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -54,6 +56,7 @@ describe("metal preview",()=>{
     render(<GodUiPreview/>);
     fireEvent.click(screen.getByRole("button",{name:"Talk to AVA"}));
     await waitFor(()=>expect(screen.getByTestId("face").dataset.mode).toBe("listening"));
+    fireEvent.click(screen.getByText("Preview states"));
     fireEvent.click(screen.getByRole("button",{name:"thinking"}));
     expect(screen.getByTestId("face").dataset.mode).toBe("thinking");
     expect(screen.getAllByTestId("face")).toHaveLength(1);

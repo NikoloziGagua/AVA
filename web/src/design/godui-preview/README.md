@@ -5,8 +5,16 @@ This is an isolated, interactive design preview, not a production screen replace
 Home uses AVA's existing face asset/renderer, a forward-moving starfield, metallic
 surfaces and a compact expanding composer. Voice exercises the real face's
 idle/listening/thinking/speaking animation states without opening a microphone.
-Typed thoughts, sample day/notes/ideas and button actions remain local to this page;
+Typed thoughts and button actions remain local to this page;
 they do not call AVA, persist data, send messages or claim real schedule state.
+
+The quieter revision removes life cards, the clock and explanatory captions from
+Home/Voice. The portrait fills most of the viewport; voice state examples are
+collapsed behind Preview states. Stars increase from 460 to 1,000. LivingFace is
+a preview-only adapter over the shared asset, animator, renderer and single-face
+slot: individual dot drift and cadence are amplified, without changing production
+face code. Reduced motion still renders one static frame; hidden/offscreen draws
+pause, observers/buffers are disposed and rendering failures show FaceStill.
 
 ## All references
 

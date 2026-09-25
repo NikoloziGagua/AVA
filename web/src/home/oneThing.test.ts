@@ -85,6 +85,34 @@ describe("pickOneThing", () => {
   });
 });
 
+describe("pickOneThing with sources that didn't answer", () => {
+  const lecture = occurrence({ title: "Lecture", startsAt: NOW + HOUR });
+  const due = { id: "r", title: "Due soon", dueAt: NOW + 2 * HOUR };
+  const pinned = { id: "n", title: "Pinned", pinned: true, archived: false, updatedAt: 1 };
+
+  it("never shows anything when the calendar is unknown", () => {
+    expect(pickOneThing({ ...empty, occurrences: null, reminders: [due], notes: [pinned] })).toEqual({ kind: "unknown", missing: ["calendar"] });
+    expect(pickOneThing({ ...empty, occurrences: null, reminders: null, notes: null })).toEqual({ kind: "unknown", missing: ["calendar", "reminders", "notes"] });
+  });
+
+  it("still shows a found event, because nothing outranks it", () => {
+    expect(pickOneThing({ ...empty, occurrences: [lecture], reminders: null, notes: null }).kind).toBe("event");
+  });
+
+  it("does not skip unknown reminders to show a note or nothing", () => {
+    expect(pickOneThing({ ...empty, occurrences: [], reminders: null, notes: [pinned] })).toEqual({ kind: "unknown", missing: ["reminders"] });
+    expect(pickOneThing({ ...empty, occurrences: [], reminders: null, notes: [] })).toEqual({ kind: "unknown", missing: ["reminders"] });
+  });
+
+  it("shows a due reminder even when notes are unknown", () => {
+    expect(pickOneThing({ ...empty, occurrences: [], reminders: [due], notes: null }).kind).toBe("reminder");
+  });
+
+  it("does not claim nothing is planned while notes are unknown", () => {
+    expect(pickOneThing({ ...empty, occurrences: [], reminders: [], notes: null })).toEqual({ kind: "unknown", missing: ["notes"] });
+  });
+});
+
 describe("suggestionsFor", () => {
   it("offers three steps tied to the one thing", () => {
     expect(suggestionsFor({ kind: "event", title: "Agile lecture", startsAt: 0, location: "", attendanceIntent: "attend", key: "k" }))

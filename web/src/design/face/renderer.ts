@@ -21,9 +21,11 @@ export class FaceRenderer {
     const gl = canvas.getContext("webgl", { antialias: false, alpha: true, premultipliedAlpha: false, powerPreference: "low-power" });
     if (!gl) throw new FaceRendererError("WebGL is unavailable.");
     this.gl = gl;
+    const shaders: WebGLShader[] = [];
     const compile = (type: number, source: string) => {
       const shader = gl.createShader(type);
       if (!shader) throw new FaceRendererError("Could not create a shader.");
+      shaders.push(shader);
       gl.shaderSource(shader, source);
       gl.compileShader(shader);
       if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new FaceRendererError(gl.getShaderInfoLog(shader) ?? "Shader failed.");
@@ -31,10 +33,18 @@ export class FaceRenderer {
     };
     const program = gl.createProgram();
     if (!program) throw new FaceRendererError("Could not create a program.");
-    gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX_SHADER));
-    gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAGMENT_SHADER));
-    gl.linkProgram(program);
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new FaceRendererError(gl.getProgramInfoLog(program) ?? "Program failed.");
+    let linked = false;
+    try {
+      gl.attachShader(program, compile(gl.VERTEX_SHADER, VERTEX_SHADER));
+      gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAGMENT_SHADER));
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new FaceRendererError(gl.getProgramInfoLog(program) ?? "Program failed.");
+      linked = true;
+    } finally {
+      // A linked program keeps its code, so the shader objects are released either way.
+      shaders.forEach((shader) => { if (linked) gl.detachShader(program, shader); gl.deleteShader(shader); });
+      if (!linked) gl.deleteProgram(program);
+    }
     gl.useProgram(program);
     this.program = program;
     const buffer = gl.createBuffer();

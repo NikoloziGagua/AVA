@@ -107,15 +107,17 @@ export function FaceStage({ mode = "idle", level = null, label = "AVA's face", c
     resize.observe(canvas);
     const seen = new IntersectionObserver(([entry]) => { visible = entry?.isIntersecting ?? true; });
     seen.observe(canvas);
+    // Reduced motion is one static frame: the face does not follow the pointer at all.
     const onMove = (event: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
       anim.pointer = [((event.clientX - rect.left) / rect.width) * 2 - 1, -(((event.clientY - rect.top) / rect.height) * 2 - 1)];
-      if (still) drawOnce();
     };
-    const onLeave = () => { anim.pointer = null; if (still) drawOnce(); };
+    const onLeave = () => { anim.pointer = null; };
     const onLost = (event: Event) => { event.preventDefault(); setFallback(true); };
-    canvas.addEventListener("pointermove", onMove);
-    canvas.addEventListener("pointerleave", onLeave);
+    if (!still) {
+      canvas.addEventListener("pointermove", onMove);
+      canvas.addEventListener("pointerleave", onLeave);
+    }
     canvas.addEventListener("webglcontextlost", onLost);
     return () => {
       cancelAnimationFrame(raf);

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { CalendarDays, BellRing, NotebookPen, RotateCw } from "lucide-react";
 import { fetchWatches } from "../api.js";
 import { DEFAULT_TIME_ZONE, fetchCalendarRange } from "../calendar/api.js";
@@ -6,12 +6,12 @@ import { fetchNotes } from "../notes/api.js";
 import { orderReminders } from "../reminders/presenter.js";
 import { Skeleton, StatusIsland, SuggestionChips } from "../design/index.js";
 import { FaceStill } from "../design/face/FaceStill.js";
-import { pickOneThing, suggestionsFor, type NoteInput, type OneThing, type ReminderInput } from "./oneThing.js";
+import { pickOneThing, suggestionsFor, type NoteInput, type OneThing, type ReminderInput, type Source } from "./oneThing.js";
 
 // The animated face is its own lazy chunk (contract ui-remodel v2 §1); the still face shows meanwhile.
 const FaceStage = lazy(async () => ({ default: (await import("../design/face/FaceStage.js")).FaceStage }));
 
-type Load = { status: "loading" } | { status: "ready"; thing: OneThing } | { status: "error" };
+type Load = { status: "loading" } | { status: "ready"; thing: OneThing } | { status: "error"; missing: Source[] };
 
 function greeting(now: Date, timeZone: string): string {
   const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(now));
@@ -23,29 +23,44 @@ function clock(at: number, timeZone: string): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit" }).format(at);
 }
 
-/** Loads the three sources independently; the day is only unknown if all of them fail. */
+/**
+ * Loads the three sources independently. A source that fails, or a calendar range
+ * the server marks incomplete, is unknown; the ranking then refuses to show
+ * anything that an unknown higher-priority source could outrank.
+ */
 async function loadOneThing(now: number, timeZone: string): Promise<OneThing> {
   const [calendar, watches, notes] = await Promise.allSettled([
     fetchCalendarRange(now - 60_000, now + 86_400_000, timeZone),
     fetchWatches(),
     fetchNotes(),
   ]);
-  if (calendar.status === "rejected" && watches.status === "rejected" && notes.status === "rejected") {
-    throw new Error("No source answered.");
-  }
-  const reminders: ReminderInput[] = watches.status === "fulfilled"
+  const reminders: ReminderInput[] | null = watches.status === "fulfilled"
     ? orderReminders(watches.value, now).upcoming.map((w) => ({ id: w.id, title: w.prompt, dueAt: Number(w.run_at) }))
-    : [];
-  const noteRows: NoteInput[] = notes.status === "fulfilled"
+    : null;
+  const noteRows: NoteInput[] | null = notes.status === "fulfilled"
     ? notes.value.notes.map((n) => ({ id: n.id, title: n.title, pinned: n.pinned, archived: n.status === "archived", updatedAt: n.updatedAt }))
-    : [];
-  return pickOneThing({
+    : null;
+  const thing = pickOneThing({
     now,
     timeZone,
-    occurrences: calendar.status === "fulfilled" ? calendar.value.occurrences : [],
+    occurrences: calendar.status === "fulfilled" && calendar.value.complete ? calendar.value.occurrences : null,
     reminders,
     notes: noteRows,
   });
+  if (thing.kind === "unknown") throw new UnknownDay(thing.missing);
+  return thing;
+}
+
+const SOURCE_NAMES: Record<Source, string> = { calendar: "your calendar", reminders: "your reminders", notes: "your notes" };
+
+class UnknownDay extends Error {
+  constructor(readonly missing: Source[]) { super("A higher-priority source did not answer."); }
+}
+
+/** "your calendar", "your calendar and notes", "your calendar, reminders and notes". */
+function listSources(missing: Source[]): string {
+  const names = missing.map((source, at) => (at === 0 ? SOURCE_NAMES[source] : SOURCE_NAMES[source].replace("your ", "")));
+  return names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 /**
@@ -61,13 +76,18 @@ export function HomeScreen({ onStartChat, onOpenNote, onOpenCalendar, onOpenRemi
 }) {
   const [now, setNow] = useState(() => Date.now());
   const [load, setLoad] = useState<Load>({ status: "loading" });
+  // Interval, focus and Try again can overlap; only the newest request may answer.
+  const latest = useRef(0);
 
   const refresh = useCallback(() => {
     const at = Date.now();
+    const request = ++latest.current;
     setNow(at);
     loadOneThing(at, timeZone).then(
-      (thing) => setLoad({ status: "ready", thing }),
-      () => setLoad({ status: "error" }),
+      (thing) => { if (request === latest.current) setLoad({ status: "ready", thing }); },
+      (error: unknown) => {
+        if (request === latest.current) setLoad({ status: "error", missing: error instanceof UnknownDay ? error.missing : ["calendar", "reminders", "notes"] });
+      },
     );
   }, [timeZone]);
 
@@ -76,7 +96,11 @@ export function HomeScreen({ onStartChat, onOpenNote, onOpenCalendar, onOpenRemi
     const timer = window.setInterval(refresh, 60_000);
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", onFocus); };
+    return () => {
+      latest.current += 1;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [refresh]);
 
   const thing = load.status === "ready" ? load.thing : { kind: "none" as const };
@@ -98,7 +122,7 @@ export function HomeScreen({ onStartChat, onOpenNote, onOpenCalendar, onOpenRemi
         <div className="grid gap-2">
           <h1 className="text-title md:text-display">{greeting(new Date(now), timeZone)}</h1>
           <p className="text-body text-ink-2">
-            {load.status === "error" ? "I couldn't check your day just now." : "Here's the one thing for today."}
+            {load.status === "error" ? `I couldn't check ${listSources(load.missing)} just now, so I can't say what's next.` : "Here's the one thing for today."}
           </p>
         </div>
 
@@ -123,6 +147,7 @@ function OneThingCard({ thing, timeZone, onOpenNote, onOpenCalendar, onOpenRemin
   onOpenCalendar: () => void;
   onOpenReminders: () => void;
 }) {
+  if (thing.kind === "unknown") return null;
   if (thing.kind === "none") {
     return <p className="rounded-full bg-surface px-5 py-3 text-body text-ink-2 shadow-e1">Nothing planned for today.</p>;
   }

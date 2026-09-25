@@ -17,6 +17,7 @@ await mkdir(assets, { recursive: true });
 // The fallback build must be independently installable. Do not rely on a
 // partially completed Vite build having copied public assets first.
 await cp(resolve(root, "public", "fonts"), resolve(dist, "fonts"), { recursive: true, force: true });
+await cp(resolve(root, "public", "face"), resolve(dist, "face"), { recursive: true, force: true });
 await copyFile(resolve(root, "public", "icon-192.png"), resolve(dist, "icon-192.png"));
 await copyFile(resolve(root, "public", "icon-512.png"), resolve(dist, "icon-512.png"));
 await writeFile(resolve(dist, "manifest.webmanifest"), JSON.stringify({
@@ -93,12 +94,18 @@ await injectManifest({
     "assets/index-managed.js",
     "assets/index-managed.css",
     "fonts/*.woff2",
+    "face/*.bin",
+    "face/manifest.json",
   ],
 });
 
 const managedWorker = await readFile(resolve(dist, "sw.js"), "utf8");
 for (const font of ["fonts/Geist-Variable.woff2", "fonts/GeistMono-Variable.woff2"]) {
   if (!managedWorker.includes(font)) throw new Error(`managed offline precache is missing ${font}`);
+}
+const managedFaceManifest = JSON.parse(await readFile(resolve(dist, "face", "manifest.json"), "utf8"));
+for (const faceAsset of ["face/manifest.json", `face/${managedFaceManifest.file}`]) {
+  if (!managedWorker.includes(faceAsset)) throw new Error(`managed offline precache is missing ${faceAsset}`);
 }
 
 console.log("managed production bundle written to web/dist");

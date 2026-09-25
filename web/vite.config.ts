@@ -17,7 +17,10 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         // The UI font is part of the installed experience, not a network-only
         // enhancement. Keep the explicit list aligned with the managed build.
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest,woff2}"],
+        globPatterns: [
+          "**/*.{js,css,html,ico,png,svg,webmanifest,woff2}",
+          "face/*.{bin,json}",
+        ],
       },
       manifest: {
         name: "Ava",

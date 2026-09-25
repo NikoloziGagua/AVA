@@ -1,4 +1,5 @@
 import { readdir, readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -70,6 +71,20 @@ for (const font of ["Geist-Variable.woff2", "GeistMono-Variable.woff2"]) {
   const path = join(webDist, "fonts", font);
   assert((await stat(path)).size > 1_000, `${font} must be emitted as a real local font asset`);
   assert(serviceWorker.includes(`fonts/${font}`), `${font} is absent from the offline service-worker precache`);
+}
+const faceManifest = JSON.parse(await readFile(join(webDist, "face", "manifest.json"), "utf8"));
+assert(faceManifest.schema === 1, "face manifest schema must be 1");
+assert(
+  /^ava-face\.[a-f0-9]{8}\.bin$/.test(faceManifest.file),
+  "face manifest must reference a content-addressed binary",
+);
+const faceBinary = await readFile(join(webDist, "face", faceManifest.file));
+const faceSha256 = createHash("sha256").update(faceBinary).digest("hex");
+assert(faceManifest.sha256 === faceSha256, "face manifest SHA-256 must match its emitted binary");
+assert(faceManifest.file === `ava-face.${faceSha256.slice(0, 8)}.bin`, "face file suffix must match its SHA-256");
+assert(faceManifest.bytes === faceBinary.length, "face manifest byte count must match its emitted binary");
+for (const faceAsset of ["face/manifest.json", `face/${faceManifest.file}`]) {
+  assert(serviceWorker.includes(faceAsset), `${faceAsset} is absent from the offline service-worker precache`);
 }
 const eagerNames = new Set(
   [...indexHtml.matchAll(/(?:src|href)="\/assets\/([^"?]+\.js)(?:\?[^"?]*)?"/g)]

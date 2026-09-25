@@ -1,12 +1,56 @@
-# Metal Home + Voice concept lab
+# Complete AVA metal interface demo
 
 Open `http://127.0.0.1:5174/?godui-preview` with the AVA Vite server running.
 This is an isolated, interactive design preview, not a production screen replacement.
 Home uses AVA's existing face asset/renderer, a forward-moving starfield, metallic
 surfaces and a compact expanding composer. Voice exercises the real face's
 idle/listening/thinking/speaking animation states without opening a microphone.
-Typed thoughts and button actions remain local to this page;
-they do not call AVA, persist data, send messages or claim real schedule state.
+Home/Voice thoughts remain local to the mounted preview. The additional workspaces
+persist their fixture edits in the browser's `ava:metal-demo:v1` localStorage key.
+They never call AVA, send messages, start workers, request microphone/notification
+permission, register devices or modify live data. Sample operational evidence is
+explicitly labelled, not manufactured as a real run.
+
+## Complete navigation and interaction coverage
+
+Open **All AVA** in the top-right corner to reach every destination. The launcher
+supports search, keyboard focus and Escape. `#demo=<destination>` persists the
+selected screen across reload and supports browser Back. Home/Voice stay sparse.
+
+| Destination | Demo interaction / production area inspected |
+|---|---|
+| Today | Check off focus items; resume exact sample conversation; open notes/time (`today/`) |
+| Talk / Conversations | Local scripted replies, exact text, Markdown, copy, save to Notes, approval/steps examples, search/pin/delete/new threads (`chat/`, `orbit/`) |
+| Notes | Nested folders, new/edit/move files, pin, delete/undo, derived reading pages, search and four-stage board (`notes/`) |
+| Calendar | Month/week/agenda, select dates, create/edit/delete events and attendance intent (`calendar/`, `schedule/`) |
+| Ideas | Shared note-backed board/list and stage selection (`ideas/`, `notes/`) |
+| Memory | Mind/index/list, capture/correct/pin/review, source details, people, projects, playbooks and personality (`memory/`) |
+| Reminders & watches | Filters, create/pause/resume/delete and honest no-delivery receipt (`watches/`, `schedule/`) |
+| Explore AVA | Discover, capability map/detail, activity links and explicitly unchecked health (`explorer/`) |
+| Visual explanations | Process/timeline/branching evidence examples, scenes, zoom, keyboard, captions, text fallback, SVG/PNG download and explicit Talk handoff (`visuals/`) |
+| Activity | Run timeline, communications, evidence/correlation disclosure, JSON fixture export and local change log (`mission-control/`) |
+| Self development | Worker preference, proposal, approval example and improvement journal (`self/`) |
+| Settings | General/voice/notifications/rules/devices/dev-room/about, local preferences and demo-only reset (`settings/`, `rules/`) |
+| Strategy Room | Sample discussion, brief/conclusion, local approval and exact new-chat handoff |
+| Pair a device / Welcome | Clearly illustrative six-digit pairing and three-step onboarding |
+| Home / Voice / Components | Large live particle face, stars, compact composer and all 21 supplied references |
+
+This is a visual/interaction replica of the major user-facing surfaces, **not every
+production backend behavior**. No live provider, source verification, recurrence,
+worker execution or external connection is simulated as successful. The Calendar
+is a fuller proposed event workspace; live navigation currently uses Schedule's
+reminder surface. The memory globe is a selectable 2D context study, not the live
+3D brain. Voice state controls are animation demonstrations, not real listening.
+Conversation responses are visibly scripted. Room discussion/approval state and
+unsent Talk drafts are visit-local; durable demo records survive reload. Settings
+describe preview preferences, not operational provider configuration. OS reduced
+motion remains authoritative. Local storage is versioned, size/shape-checked and
+falls back to fresh fixtures for malformed data; it is not a production database.
+
+`demo-model.ts` owns fixtures/local data, `DemoPrimitives.tsx` owns accessible
+controls/dialogs, and `DemoWorkspace.tsx` is a lazy route boundary over the four
+workspace modules. Styles stay in the existing preview stylesheet so both Vite
+and the managed fallback include them. No application route/API/schema changed.
 
 The quieter revision removes life cards, the clock and explanatory captions from
 Home/Voice. The portrait fills most of the viewport; voice state examples are
@@ -79,7 +123,8 @@ npm run build:managed -w web
 ```
 
 The browser verifier serves built assets on a temporary loopback port, checks all
-21 demonstrations, real shader success/motion, desktop/phone layouts, draft handoff,
+21 demonstrations, every workspace at desktop/phone widths, local file persistence,
+delete/undo, SVG/PNG downloads, history/focus, real shader success/motion, draft handoff,
 scrollability, reduced-motion stars, no API writes and console/page errors. It saves
 screenshots under the OS temp directory and closes its server/browser afterward.
 Do not run a build concurrently with this check: builds replace `web/dist`.

@@ -6,6 +6,7 @@ import { REFERENCES } from "./ReferenceCatalog.js";
 vi.mock("./LivingFace.js", () => ({ LivingFace: ({mode}: {mode:string}) => <div data-testid="face" data-mode={mode}/> }));
 vi.mock("@paper-design/shaders", () => ({ ShaderMount: class { dispose(){} setSpeed(){} }, liquidMetalFragmentShader:"" }));
 beforeEach(() => {
+  history.replaceState(null,"","/");localStorage.clear();
   vi.stubGlobal("ResizeObserver", class { observe(){} unobserve(){} disconnect(){} });
   vi.stubGlobal("IntersectionObserver", class { observe(){} unobserve(){} disconnect(){} });
   vi.stubGlobal("matchMedia", vi.fn(() => ({matches:false,addListener:vi.fn(),removeListener:vi.fn(),addEventListener:vi.fn(),removeEventListener:vi.fn()})));
@@ -19,7 +20,7 @@ describe("metal preview",()=>{
     const fetch=vi.spyOn(globalThis,"fetch");
     render(<GodUiPreview/>);
     expect(screen.getByRole("heading",{name:"Good to see you, Niko."})).toBeTruthy();
-    expect(screen.getByText("DESIGN PREVIEW")).toBeTruthy();
+    expect(screen.getByRole("button",{name:"All AVA workspaces"})).toBeTruthy();
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByText("YOUR DAY")).toBeNull();
     expect(screen.queryByText("Europe / Dublin")).toBeNull();

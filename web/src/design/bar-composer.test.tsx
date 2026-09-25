@@ -136,6 +136,47 @@ describe("BottomBar as Talk's message box", () => {
     expect(box().value).toBe("kept");
   });
 
+  it("never lets a cancelled transcription touch the next recording", async () => {
+    let answerFirst!: (text: string) => void;
+    let failFirst!: (error: Error) => void;
+    const dictate = vi.fn<Transcribe>()
+      .mockImplementationOnce(() => new Promise<string>((resolve, reject) => { answerFirst = resolve; failFirst = reject; }))
+      .mockImplementationOnce(async () => "second take");
+    render(<Talk dictate={dictate} initial="kept" />);
+
+    // Clip A: record, stop, and cancel while it is being transcribed.
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop dictation" }));
+    await waitFor(() => expect(dictate).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel dictation" }));
+
+    // Clip B straight away.
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop dictation" }));
+    await waitFor(() => expect(box().value).toBe("kept second take"));
+
+    // A answers late, then fails late: neither reaches the draft or the status.
+    await act(async () => { answerFirst("stale words"); });
+    await act(async () => { failFirst(new Error("late failure")); });
+    expect(box().value).toBe("kept second take");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Dictate message" })).toBeTruthy();
+  });
+
+  it("transcribes nothing after the recorder reports an error", async () => {
+    const dictate = vi.fn<Transcribe>(async () => "never");
+    render(<Talk dictate={dictate} initial="kept" />);
+    fireEvent.click(screen.getByRole("button", { name: "Dictate message" }));
+    await screen.findByRole("button", { name: "Stop dictation" });
+    const recorder = FakeRecorder.last!;
+    act(() => { recorder.onerror?.(); });
+    expect((await screen.findByRole("alert")).textContent).toMatch(/could not record/);
+    act(() => { recorder.stop(); });
+    await act(async () => {});
+    expect(dictate).not.toHaveBeenCalled();
+    expect(box().value).toBe("kept");
+  });
+
   it("tells screens how much room it takes, so nothing hides behind it", () => {
     render(<Talk />);
     expect(document.documentElement.style.getPropertyValue("--ds-bar-space")).toMatch(/px$/);

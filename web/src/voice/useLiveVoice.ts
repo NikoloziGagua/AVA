@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
 import type { ConversationIntent } from "../api.js";
 import { PcmStreamPlayer } from "./realtime-audio.js";
+import { claimFaceSignalWriter, type FaceSignalWriter } from "./faceSignal.js";
 import { arrayBufferToBase64, ensureWorkletURL, pcm16Amplitude, type RealtimeState, type useRealtimeVoice } from "./useRealtimeVoice.js";
 import { loadVoiceInputMode, saveVoiceInputMode, type VoiceInputMode } from "./voiceInputMode.js";
 
@@ -40,6 +41,7 @@ export function useLiveVoice({
   const [unavailable, setUnavailable] = useState(false);
   const [inputMode, setInputModeState] = useState<VoiceInputMode>(() => loadVoiceInputMode());
   const [capturing, setCapturing] = useState(false);
+  const faceWriterRef = useRef<FaceSignalWriter | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const playerRef = useRef<PcmStreamPlayer | null>(null);
@@ -60,6 +62,35 @@ export function useLiveVoice({
   const boundRef = useRef(onSessionBound);
   boundRef.current = onSessionBound;
 
+  useEffect(() => {
+    const writer = claimFaceSignalWriter("live");
+    faceWriterRef.current = writer;
+    return () => {
+      if (faceWriterRef.current === writer) faceWriterRef.current = null;
+      writer.release();
+    };
+  }, []);
+
+  useEffect(() => {
+    const writer = faceWriterRef.current;
+    if (!writer) return;
+    if (unavailable || errorMsg || state === "idle" || state === "connecting") {
+      writer.setMode("idle");
+      return;
+    }
+    const player = playerRef.current;
+    if (player?.playing && !player.held) {
+      writer.setOutputSource("measured", () => player.outputLevel);
+      writer.setMode("speaking");
+    } else if (state === "listening") {
+      writer.setMode(muted || (inputMode === "enter_push_to_talk" && !capturing) ? "idle" : "listening");
+    } else if (state === "thinking") {
+      writer.setMode("thinking");
+    } else {
+      writer.setMode("thinking");
+    }
+  }, [capturing, errorMsg, inputMode, muted, state, unavailable]);
+
   const send = (event: Record<string, unknown>) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(event));
@@ -73,6 +104,7 @@ export function useLiveVoice({
   }, []);
 
   const cleanup = useCallback(() => {
+    faceWriterRef.current?.reset();
     try { nodeRef.current?.port.close(); nodeRef.current?.disconnect(); } catch { /* */ }
     nodeRef.current = null;
     try { streamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* */ }
@@ -115,7 +147,9 @@ export function useLiveVoice({
         const now = performance.now();
         if (now - lastAmpRef.current > 80) {
           lastAmpRef.current = now;
-          setAmplitude(micOpen() ? pcm16Amplitude(buf) : 0);
+          const level = micOpen() ? pcm16Amplitude(buf) : 0;
+          setAmplitude(level);
+          if (micOpen()) faceWriterRef.current?.publishInput(level, now);
         }
         // Continuous input keeps GPT-Live's timeline running; when the mic is
         // closed the server has muted input, so silence costs nothing.
@@ -124,6 +158,7 @@ export function useLiveVoice({
       source.connect(node);
 
       const player = new PcmStreamPlayer();
+      player.onEnded = () => { faceWriterRef.current?.setMode("thinking"); };
       playerRef.current = player;
 
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -153,7 +188,12 @@ export function useLiveVoice({
             setErrorMsg(typeof evt.message === "string" ? evt.message : "Voice is unavailable.");
             return;
           case "response.output_audio.delta":
-            if (typeof evt.delta === "string") player.enqueue(evt.delta);
+            if (typeof evt.delta === "string") {
+              player.enqueue(evt.delta);
+              setState("responding");
+              faceWriterRef.current?.setOutputSource("measured", () => player.outputLevel);
+              faceWriterRef.current?.setMode(player.held ? "thinking" : "speaking");
+            }
             return;
           case "ava.live.transcript":
             if (typeof evt.delta !== "string") return;
@@ -212,6 +252,7 @@ export function useLiveVoice({
     actionRef.current = false;
     setActionPending(false);
     setState("listening");
+    faceWriterRef.current?.setMode("listening");
   }, []);
 
   const setMuted = useCallback((next: boolean) => {

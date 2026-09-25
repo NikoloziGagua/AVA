@@ -40,6 +40,11 @@ vi.mock("../api.js", () => ({
 vi.mock("../auth/tokens.js", () => ({ getToken: () => "tkn" }));
 
 import { useRealtimeVoice } from "./useRealtimeVoice.js";
+import {
+  getFaceSignalMode,
+  resetFaceSignalForTests,
+  sampleFaceSignalLevels,
+} from "./faceSignal.js";
 
 // ── Fakes ────────────────────────────────────────────────────────────────────
 
@@ -95,6 +100,11 @@ class FakeEventSource {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), callback]);
   }
 
+  fire(type: string, payload: unknown) {
+    const event = new MessageEvent(type, { data: JSON.stringify(payload) });
+    for (const listener of this.listeners.get(type) ?? []) listener(event);
+  }
+
   close() { this.closed = true; }
 }
 
@@ -122,6 +132,12 @@ class FakeBufferSource {
   connect() {}
   disconnect() {}
 }
+class FakeAnalyser {
+  fftSize = 256;
+  smoothingTimeConstant = 0;
+  getFloatTimeDomainData(target: Float32Array) { target.fill(0.25); }
+  disconnect() {}
+}
 class FakeAudioContext {
   static created: FakeAudioContext[] = [];
   currentTime = 0;
@@ -139,6 +155,7 @@ class FakeAudioContext {
     return { duration: len / rate, getChannelData: () => new Float32Array(len) };
   }
   createBufferSource() { return new FakeBufferSource() as unknown as AudioBufferSourceNode; }
+  createAnalyser() { return new FakeAnalyser() as unknown as AnalyserNode; }
 }
 
 // Worklet node: capture its port so the test can simulate a mic frame arriving.
@@ -165,6 +182,7 @@ function fakeMediaStream() {
 let fetchSpy: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
+  resetFaceSignalForTests();
   FakeWebSocket.last = null;
   FakeAudio.created = [];
   FakeAudioContext.created = [];
@@ -207,6 +225,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   localStorage.clear(); // don't leak the PTT mode into the vad-default tests
+  resetFaceSignalForTests();
 });
 
 // Let queued microtasks (the speak worker's fetch→blob→play chain, start()'s
@@ -420,6 +439,7 @@ describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
   it("connects, latches hybrid, and lands in listening", async () => {
     const { hook } = await bootHybrid();
     expect(hook.result.current.state).toBe("listening");
+    expect(getFaceSignalMode()).toBe("listening");
   });
 
   it("submits exact typed wording through the canonical voice session once", async () => {
@@ -456,6 +476,33 @@ describe("useRealtimeVoice — hybrid turn-taking (effectful)", () => {
     act(() => hook.unmount());
 
     expect(ws.readyState).toBe(FakeWebSocket.CLOSED);
+    expect(getFaceSignalMode()).toBe("idle");
+  });
+
+  it("marks HTML audio TTS as synthetic without inventing measured output", async () => {
+    const hook = renderHook(() => useRealtimeVoice({ initialSessionId: "s0" }));
+    await act(async () => { hook.result.current.start(); });
+    await flush();
+    const ws = FakeWebSocket.last!;
+    await act(async () => {
+      ws.fireOpen();
+      ws.fireMessage({ type: "ava.session", sessionId: "s0", mode: "transcribe" });
+    });
+    await flush();
+
+    await act(async () => { await hook.result.current.submitExactText("Say this exactly."); });
+    await flush();
+    await act(async () => { FakeEventSource.last!.fire("final", { text: "Exactly, Sir." }); });
+    await flush(10);
+
+    expect(FakeAudio.created).toHaveLength(1);
+    expect(getFaceSignalMode()).toBe("speaking");
+    expect(sampleFaceSignalLevels()).toMatchObject({ output: 0, outputSource: "synthetic" });
+
+    await act(async () => { FakeAudio.created[0]!.onended?.(); });
+    await flush();
+    expect(sampleFaceSignalLevels()).toMatchObject({ output: 0, outputSource: "none" });
+    expect(getFaceSignalMode()).not.toBe("speaking");
   });
 
   it("keeps ava.step and ava.result visual-only so hybrid uses exactly one voice", async () => {
@@ -546,6 +593,8 @@ describe("useRealtimeVoice — barge-in (effectful)", () => {
     expect(killSpy).toHaveBeenCalledTimes(1);
     expect(hook.result.current.actionPending).toBe(false);
     expect(hook.result.current.state).toBe("listening");
+    expect(getFaceSignalMode()).toBe("listening");
+    expect(sampleFaceSignalLevels().output).toBe(0);
   });
 
   it("interrupt() is safe before anything is speaking (no throw, returns to listening)", async () => {
@@ -583,6 +632,8 @@ describe("useRealtimeVoice — barge-in on the realtime audio (play_audio) path"
     const { hook, ws } = await bootHybrid();
     await speakViaRealtime(ws);
     expect(hook.result.current.state).toBe("responding");
+    expect(getFaceSignalMode()).toBe("speaking");
+    expect(sampleFaceSignalLevels()).toMatchObject({ output: 0.25, outputSource: "measured" });
   });
 
   it("interrupt() sends response.cancel + input_audio_buffer.clear upstream", async () => {
@@ -598,6 +649,8 @@ describe("useRealtimeVoice — barge-in on the realtime audio (play_audio) path"
     expect(ws.sent.some((s) => s.includes("response.cancel"))).toBe(true);
     expect(ws.sent.some((s) => s.includes("input_audio_buffer.clear"))).toBe(true);
     expect(hook.result.current.state).toBe("listening");
+    expect(getFaceSignalMode()).toBe("listening");
+    expect(sampleFaceSignalLevels().output).toBe(0);
   });
 
   it("a LATE audio delta after a barge-in is DROPPED (does not re-arm responding)", async () => {
@@ -892,6 +945,7 @@ describe("useRealtimeVoice — amplitude from the forwarded PCM (no second mic)"
     const buf = new Int16Array([20000, -20000, 20000, -20000]).buffer;
     act(() => { node.port.onmessage?.({ data: buf }); });
     expect(hook.result.current.amplitude).toBeGreaterThan(0);
+    expect(sampleFaceSignalLevels().input).toBeGreaterThan(0);
   });
 
   it("stays 0 in push-to-talk between turns (mic closed → orb calm)", async () => {
@@ -901,6 +955,8 @@ describe("useRealtimeVoice — amplitude from the forwarded PCM (no second mic)"
     act(() => { node.port.onmessage?.({ data: buf }); });
     expect(hook.result.current.amplitude).toBe(0);
     expect(ws.appendCount).toBe(0);
+    expect(getFaceSignalMode()).toBe("idle");
+    expect(sampleFaceSignalLevels().input).toBe(0);
   });
 });
 
@@ -976,6 +1032,8 @@ describe("useRealtimeVoice — hands-free pause on speech", () => {
     await act(async () => { ws.fireMessage({ type: "input_audio_buffer.speech_started" }); });
     expect(ctx.suspended).toBe(1);
     expect(hook.result.current.state).toBe("responding");
+    expect(getFaceSignalMode()).toBe("thinking");
+    expect(sampleFaceSignalLevels().output).toBe(0);
     expect(ws.sent.some((f) => f.includes("response.cancel"))).toBe(false);
   });
 
@@ -988,6 +1046,7 @@ describe("useRealtimeVoice — hands-free pause on speech", () => {
     await act(async () => { ws.fireMessage({ type: "ava.speech_dismissed", reason: "too_short" }); });
     expect(ctx.resumed).toBe(resumedBefore + 1);
     expect(ctx.state).toBe("running");
+    expect(getFaceSignalMode()).toBe("speaking");
   });
 
   it("resumes on its own if no verdict arrives after the speech ends", async () => {

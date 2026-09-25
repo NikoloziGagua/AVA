@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getToken } from "../auth/tokens.js";
 import { classifyRealtimeEvent, type RealtimeAction } from "./realtime-events.js";
 import { PcmStreamPlayer } from "./realtime-audio.js";
+import { claimFaceSignalWriter, type FaceSignalWriter } from "./faceSignal.js";
 import {
   type VoiceInputMode,
   loadVoiceInputMode,
@@ -321,6 +322,7 @@ export function useRealtimeVoice({
   const [voiceEngine, setVoiceEngineState] = useState<VoiceEngine>("openai");
   // True while an Enter push-to-talk turn is actively being captured.
   const [capturing, setCapturing] = useState(false);
+  const faceWriterRef = useRef<FaceSignalWriter | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const captureCtxRef = useRef<AudioContext | null>(null);
@@ -353,6 +355,7 @@ export function useRealtimeVoice({
   // Agent-turn plumbing: the SSE stream of the /api/chat run and the TTS player.
   const esRef = useRef<EventSource | null>(null);
   const ttsRef = useRef<HTMLAudioElement | null>(null);
+  const syntheticSpeakingRef = useRef(false);
   // Mic capture is only forwarded upstream while we're actively listening — so
   // Ava's own TTS reply (played on the speakers) can't be re-heard and
   // transcribed into a phantom turn.
@@ -450,6 +453,48 @@ export function useRealtimeVoice({
   // player's actual heard duration for conversation.item.truncate.
   const outputItemRef = useRef<{ itemId: string; contentIndex: number } | null>(null);
 
+  // The selected engine owns one ephemeral writer epoch. Switching engine or
+  // unmounting invalidates every late callback from the retired transport.
+  useEffect(() => {
+    const writer = claimFaceSignalWriter(`realtime:${engineOverride ?? voiceEngine}`);
+    faceWriterRef.current = writer;
+    return () => {
+      if (faceWriterRef.current === writer) faceWriterRef.current = null;
+      writer.release();
+    };
+  }, [engineOverride, voiceEngine]);
+
+  // Low-frequency lifecycle mapping. Audible boundaries publish explicitly
+  // below as well, so a silent "responding" phase never poses as speech.
+  useEffect(() => {
+    const writer = faceWriterRef.current;
+    if (!writer) return;
+    if (unavailable || errorMsg || state === "idle" || state === "connecting") {
+      writer.setMode("idle");
+      return;
+    }
+    const player = playerRef.current;
+    if (player?.playing && !player.held) {
+      writer.setOutputSource("measured", () => player.outputLevel);
+      writer.setMode("speaking");
+      return;
+    }
+    if (syntheticSpeakingRef.current) {
+      writer.setOutputSource("synthetic");
+      writer.setMode("speaking");
+      return;
+    }
+    if (state === "listening") {
+      writer.setMode(muted || (inputMode === "enter_push_to_talk" && !capturing) ? "idle" : "listening");
+      return;
+    }
+    if (state === "thinking") {
+      writer.setMode("thinking");
+      return;
+    }
+    writer.setMode("thinking");
+  }, [capturing, errorMsg, inputMode, muted, state, unavailable]);
+
   const stopAgentStream = useCallback(() => {
     try { esRef.current?.close(); } catch { /* */ }
     esRef.current = null;
@@ -457,9 +502,12 @@ export function useRealtimeVoice({
     speakBusyRef.current = false;
     try { ttsRef.current?.pause(); } catch { /* */ }
     ttsRef.current = null;
+    syntheticSpeakingRef.current = false;
+    faceWriterRef.current?.setOutputSource("none");
   }, []);
 
   const cleanup = useCallback(() => {
+    faceWriterRef.current?.reset();
     try { workletNodeRef.current?.port.close(); } catch { /* */ }
     try { workletNodeRef.current?.disconnect(); } catch { /* */ }
     workletNodeRef.current = null;
@@ -579,11 +627,24 @@ export function useRealtimeVoice({
       await new Promise<void>((resolve) => {
         const el = new Audio(url);
         ttsRef.current = el;
-        const done = () => { URL.revokeObjectURL(url); if (ttsRef.current === el) ttsRef.current = null; ttsDoneRef.current = null; resolve(); };
+        const done = () => {
+          URL.revokeObjectURL(url);
+          if (ttsRef.current === el) ttsRef.current = null;
+          syntheticSpeakingRef.current = false;
+          faceWriterRef.current?.setOutputSource("none");
+          if (stateRef.current === "responding") faceWriterRef.current?.setMode("thinking");
+          ttsDoneRef.current = null;
+          resolve();
+        };
         el.onended = done;
         el.onerror = done;
         ttsDoneRef.current = done;              // interrupt() calls this to end the clip's await
-        void el.play().catch(done);
+        void el.play().then(() => {
+          if (ttsRef.current !== el) return;
+          syntheticSpeakingRef.current = true;
+          faceWriterRef.current?.setOutputSource("synthetic");
+          faceWriterRef.current?.setMode("speaking");
+        }).catch(done);
       });
     }
     speakBusyRef.current = false;
@@ -834,7 +895,10 @@ export function useRealtimeVoice({
   const ensurePlayer = useCallback(() => {
     if (!playerRef.current) {
       const p = new PcmStreamPlayer();
-      p.onEnded = () => { scheduleListen(); };
+      p.onEnded = () => {
+        faceWriterRef.current?.setMode("thinking");
+        scheduleListen();
+      };
       // A single corrupt/undecodable audio delta is skipped by the player (it
       // keeps draining the rest). Surface it as a soft warning rather than
       // cutting Ava off — the next delta resumes the stream.
@@ -972,7 +1036,12 @@ export function useRealtimeVoice({
         }
         genDoneRef.current = false;
         setState("responding");
-        ensurePlayer().enqueue(eff.b64);
+        {
+          const player = ensurePlayer();
+          player.enqueue(eff.b64);
+          faceWriterRef.current?.setOutputSource("measured", () => player.outputLevel);
+          faceWriterRef.current?.setMode(player.held ? "thinking" : "speaking");
+        }
         return;
       case "ava_delta":
         if (realtimeAudioBlockedRef.current) return;
@@ -1046,7 +1115,14 @@ export function useRealtimeVoice({
   // Resume Ava exactly where she paused: the speech was not an interruption.
   const releaseHold = useCallback(() => {
     clearHoldTimers();
-    try { playerRef.current?.release(); } catch { /* */ }
+    try {
+      const player = playerRef.current;
+      player?.release();
+      if (player?.playing) {
+        faceWriterRef.current?.setOutputSource("measured", () => player.outputLevel);
+        faceWriterRef.current?.setMode("speaking");
+      }
+    } catch { /* */ }
   }, [clearHoldTimers]);
 
   const stopSpokenOutput = useCallback(() => {
@@ -1060,6 +1136,8 @@ export function useRealtimeVoice({
     speakQueueRef.current.length = 0;
     try { ttsRef.current?.pause(); } catch { /* */ }
     ttsRef.current = null;
+    syntheticSpeakingRef.current = false;
+    faceWriterRef.current?.setOutputSource("none");
     ttsDoneRef.current?.();
     ttsDoneRef.current = null;
     if (settleTimerRef.current) { clearTimeout(settleTimerRef.current); settleTimerRef.current = null; }
@@ -1153,6 +1231,7 @@ export function useRealtimeVoice({
       // intentional interruption. Stay in a mic-forwarding state for the turn;
       // the accepted caption will then move us to thinking.
       setState("listening");
+      faceWriterRef.current?.setMode("listening");
       return;
     }
     if (action.kind === "output_item") {
@@ -1169,6 +1248,7 @@ export function useRealtimeVoice({
           if (holdResumeTimerRef.current) { clearTimeout(holdResumeTimerRef.current); holdResumeTimerRef.current = null; }
         } else if (player?.playing) {
           player.hold();
+          faceWriterRef.current?.setMode("thinking");
           if (holdMaxTimerRef.current) clearTimeout(holdMaxTimerRef.current);
           holdMaxTimerRef.current = setTimeout(() => { holdMaxTimerRef.current = null; releaseHold(); }, HOLD_MAX_MS);
         }
@@ -1327,7 +1407,9 @@ export function useRealtimeVoice({
             const now = typeof performance !== "undefined" ? performance.now() : Date.now();
             if (now - lastAmpTsRef.current > 45) {
               lastAmpTsRef.current = now;
-              setAmplitude(pcm16Amplitude(buf));
+              const level = pcm16Amplitude(buf);
+              setAmplitude(level);
+              faceWriterRef.current?.publishInput(level, now);
             }
             // Fix 3: track how much real audio this push-to-talk turn forwarded,
             // so finishPtt can refuse to commit an empty/too-short buffer.
@@ -1543,6 +1625,7 @@ export function useRealtimeVoice({
     avaCaptionRef.current = "";
     setInterim(null);
     setState("listening");
+    faceWriterRef.current?.setMode("listening");
     await kill;
   }, [stopAgentStream, stopSpokenOutput, truncatePlayedResponse, clearPttRecovery]);
 

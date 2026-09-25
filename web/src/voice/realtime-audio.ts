@@ -35,6 +35,8 @@ export function pcm16Base64ToFloat32(b64: string): Float32Array {
  */
 export class PcmStreamPlayer {
   private ctx: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private analyserData: Float32Array<ArrayBuffer> | null = null;
   private playhead = 0;
   private turnStartTime: number | null = null;
   private turnScheduledEnd = 0;
@@ -68,6 +70,13 @@ export class PcmStreamPlayer {
     if (!this.ctx) {
       this.ctx = new AudioContext({ sampleRate: this.sampleRate });
       this.playhead = 0;
+      // A parallel measurement tap only. Every source keeps its direct
+      // destination connection below, so measurement cannot alter the audible
+      // path, its gain, or its latency.
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.smoothingTimeConstant = 0;
+      this.analyserData = new Float32Array(this.analyser.fftSize);
     }
     return this.ctx;
   }
@@ -92,6 +101,7 @@ export class PcmStreamPlayer {
       const src = ctx.createBufferSource();
       src.buffer = buffer;
       src.connect(ctx.destination);
+      if (this.analyser) src.connect(this.analyser);
 
       const startAt = Math.max(ctx.currentTime, this.playhead);
       if (this.turnStartTime == null) this.turnStartTime = startAt;
@@ -139,6 +149,20 @@ export class PcmStreamPlayer {
     return this.sources.size > 0;
   }
 
+  /** Current bounded RMS of AVA's audible PCM output, for the local face only. */
+  get outputLevel(): number {
+    if (!this.playing || this.isHeld || !this.analyser || !this.analyserData) return 0;
+    try {
+      this.analyser.getFloatTimeDomainData(this.analyserData);
+      let sum = 0;
+      for (const sample of this.analyserData) sum += sample * sample;
+      const rms = Math.sqrt(sum / this.analyserData.length);
+      return Number.isFinite(rms) ? Math.min(1, Math.max(0, rms)) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   /** Milliseconds from this response that have reached the speakers. */
   get playedMs(): number {
     if (!this.ctx || this.turnStartTime == null) return 0;
@@ -167,6 +191,9 @@ export class PcmStreamPlayer {
   /** Tear down the AudioContext entirely. */
   close(): void {
     this.interrupt();
+    try { this.analyser?.disconnect(); } catch { /* */ }
+    this.analyser = null;
+    this.analyserData = null;
     try { void this.ctx?.close(); } catch { /* */ }
     this.ctx = null;
   }

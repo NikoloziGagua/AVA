@@ -48,23 +48,35 @@ class FakeSource {
   disconnected = 0;
   start(t: number) { startTimes.push(t); }
   stop() { this.stopped++; }
-  connect() {}
+  connections: unknown[] = [];
+  connect(node: unknown) { this.connections.push(node); }
   disconnect() { this.disconnected++; }
 }
 let startTimes: number[] = [];
 let created: FakeSource[] = [];
 let lastContext: FakeAudioContext | null = null;
+let analyserSamples = new Float32Array(256);
+class FakeAnalyser {
+  fftSize = 256;
+  smoothingTimeConstant = 0;
+  disconnected = 0;
+  getFloatTimeDomainData(target: Float32Array) { target.set(analyserSamples.subarray(0, target.length)); }
+  disconnect() { this.disconnected++; }
+}
 class FakeAudioContext {
+  static created = 0;
   currentTime = 0;
   state = "running";
   suspends = 0;
   resumes = 0;
-  constructor() { lastContext = this; }
-  get destination() { return {}; }
+  readonly destination = { kind: "destination" };
+  readonly analyser = new FakeAnalyser();
+  constructor() { lastContext = this; FakeAudioContext.created++; }
   createBuffer(_ch: number, len: number, rate: number) {
     return { duration: len / rate, getChannelData: () => new Float32Array(len) };
   }
   createBufferSource() { const s = new FakeSource(); created.push(s); return s as unknown as AudioBufferSourceNode; }
+  createAnalyser() { return this.analyser as unknown as AnalyserNode; }
   suspend() { this.suspends++; this.state = "suspended"; return Promise.resolve(); }
   resume() { this.resumes++; this.state = "running"; return Promise.resolve(); }
   close() { return Promise.resolve(); }
@@ -84,6 +96,8 @@ describe("PcmStreamPlayer", () => {
   beforeEach(() => {
     startTimes = [];
     created = [];
+    analyserSamples = new Float32Array(256);
+    FakeAudioContext.created = 0;
     (globalThis as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
   });
   afterEach(() => {
@@ -100,6 +114,17 @@ describe("PcmStreamPlayer", () => {
     expect(startTimes[0]).toBeCloseTo(0, 5);
     expect(startTimes[1]).toBeCloseTo(0.1, 5);
     expect(startTimes[2]).toBeCloseTo(0.2, 5);
+  });
+
+  it("measures bounded RMS through a parallel tap without changing the audible path", () => {
+    analyserSamples.fill(0.5);
+    const p = new PcmStreamPlayer(24000);
+    p.enqueue(pcm16Chunk(2400));
+    expect(FakeAudioContext.created).toBe(1);
+    expect(created[0]!.connections).toHaveLength(2);
+    expect(created[0]!.connections[0]).toBe(lastContext!.destination);
+    expect(created[0]!.connections[1]).toBe(lastContext!.analyser);
+    expect(p.outputLevel).toBeCloseTo(0.5, 5);
   });
 
   it("skips a corrupt chunk (onError) and keeps draining the rest — no cut-off", () => {
@@ -126,6 +151,18 @@ describe("PcmStreamPlayer", () => {
     expect(ended).not.toHaveBeenCalled();
     created[1]!.onended?.();  // last finishes — drained
     expect(ended).toHaveBeenCalledTimes(1);
+    expect(p.outputLevel).toBe(0);
+  });
+
+  it("close releases the measurement tap and reports silence", () => {
+    analyserSamples.fill(0.5);
+    const p = new PcmStreamPlayer(24000);
+    p.enqueue(pcm16Chunk(2400));
+    expect(p.outputLevel).toBeGreaterThan(0);
+    const analyser = lastContext!.analyser;
+    p.close();
+    expect(analyser.disconnected).toBe(1);
+    expect(p.outputLevel).toBe(0);
   });
 });
 
@@ -139,6 +176,8 @@ describe("PcmStreamPlayer.interrupt()", () => {
   beforeEach(() => {
     startTimes = [];
     created = [];
+    analyserSamples = new Float32Array(256).fill(0.4);
+    FakeAudioContext.created = 0;
     (globalThis as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
   });
   afterEach(() => {
@@ -159,6 +198,7 @@ describe("PcmStreamPlayer.interrupt()", () => {
     }
     // Nothing is playing anymore — the source set was cleared.
     expect(p.playing).toBe(false);
+    expect(p.outputLevel).toBe(0);
   });
 
   it("does not fire onEnded for the killed sources (barge-in is not a clean drain)", () => {
@@ -232,6 +272,8 @@ describe("PcmStreamPlayer.hold() / release(): pause for a possible interruption"
     startTimes = [];
     created = [];
     lastContext = null;
+    analyserSamples = new Float32Array(256).fill(0.4);
+    FakeAudioContext.created = 0;
     (globalThis as unknown as { AudioContext: unknown }).AudioContext = FakeAudioContext;
   });
   afterEach(() => {
@@ -243,10 +285,12 @@ describe("PcmStreamPlayer.hold() / release(): pause for a possible interruption"
     p.enqueue(pcm16Chunk(2400));
     p.hold();
     expect(p.held).toBe(true);
+    expect(p.outputLevel).toBe(0);
     expect(lastContext!.state).toBe("suspended");
     expect(created[0]!.stopped).toBe(0); // paused, not discarded
     p.release();
     expect(p.held).toBe(false);
+    expect(p.outputLevel).toBeCloseTo(0.4, 5);
     expect(lastContext!.state).toBe("running");
     expect(created[0]!.stopped).toBe(0);
   });

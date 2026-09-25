@@ -2,14 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FaceRenderer, FaceRendererError } from "./renderer.js";
 
 /** A WebGL stand-in that records what was created and released. */
-function fakeGl(options: { compiles?: boolean[]; links?: boolean } = {}) {
+function fakeGl(options: { compiles?: boolean[]; links?: boolean; buffer?: boolean } = {}) {
   const compiles = [...(options.compiles ?? [true, true])];
   const calls = { deleteShader: [] as unknown[], detachShader: [] as unknown[], deleteProgram: [] as unknown[] };
   let shaders = 0;
   const known: Record<string, unknown> = {
     createShader: () => ({ shader: ++shaders }),
     createProgram: () => ({ program: 1 }),
-    createBuffer: () => ({ buffer: 1 }),
+    createBuffer: () => (options.buffer === false ? null : { buffer: 1 }),
     getShaderParameter: () => compiles.shift() ?? true,
     getProgramParameter: () => options.links ?? true,
     getShaderInfoLog: () => "compile failed",
@@ -40,6 +40,13 @@ describe("FaceRenderer shader lifetime", () => {
     expect(() => new FaceRenderer(canvas)).toThrow(FaceRendererError);
     expect(calls.deleteShader).toEqual([{ shader: 1 }, { shader: 2 }]);
     expect(calls.detachShader).toEqual([]);
+    expect(calls.deleteProgram).toEqual([{ program: 1 }]);
+  });
+
+  it("releases the linked program when no buffer can be made", () => {
+    const { canvas, calls } = fakeGl({ buffer: false });
+    expect(() => new FaceRenderer(canvas)).toThrow("Could not create a buffer.");
+    expect(calls.deleteShader).toEqual([{ shader: 1 }, { shader: 2 }]);
     expect(calls.deleteProgram).toEqual([{ program: 1 }]);
   });
 

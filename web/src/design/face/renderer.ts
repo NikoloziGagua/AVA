@@ -48,7 +48,10 @@ export class FaceRenderer {
     gl.useProgram(program);
     this.program = program;
     const buffer = gl.createBuffer();
-    if (!buffer) throw new FaceRendererError("Could not create a buffer.");
+    if (!buffer) {
+      gl.deleteProgram(program);
+      throw new FaceRendererError("Could not create a buffer.");
+    }
     this.buffer = buffer;
     this.u = Object.fromEntries(UNIFORMS.map((name) => [name, gl.getUniformLocation(program, name)])) as FaceRenderer["u"];
     this.attrs = ATTRIBUTES.map(([name, size, offset]) => [gl.getAttribLocation(program, name), size, offset] as [number, number, number])

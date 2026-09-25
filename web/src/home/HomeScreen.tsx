@@ -19,6 +19,9 @@ function greeting(now: Date, timeZone: string): string {
   return `${part}, Niko.`;
 }
 
+// The rest of today can be 25 hours on a clock-change day; pickOneThing drops anything from tomorrow.
+const CALENDAR_HORIZON = 30 * 3_600_000;
+
 function clock(at: number, timeZone: string): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit" }).format(at);
 }
@@ -30,7 +33,7 @@ function clock(at: number, timeZone: string): string {
  */
 async function loadOneThing(now: number, timeZone: string): Promise<OneThing> {
   const [calendar, watches, notes] = await Promise.allSettled([
-    fetchCalendarRange(now - 60_000, now + 86_400_000, timeZone),
+    fetchCalendarRange(now - 60_000, now + CALENDAR_HORIZON, timeZone),
     fetchWatches(),
     fetchNotes(),
   ]);

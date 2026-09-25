@@ -35,7 +35,7 @@ beforeEach(() => {
   sources.watches.mockResolvedValue([]);
   sources.notes.mockResolvedValue({ projects: [], notes: [] });
 });
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.clearAllMocks(); vi.restoreAllMocks(); });
 
 describe("HomeScreen", () => {
   it("is nearly empty: face, greeting, status, one thing and three suggestions", async () => {
@@ -131,6 +131,19 @@ describe("HomeScreen", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(screen.getByText("Nothing planned for today.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Stale note/ })).toBeNull();
+  });
+
+  it("still finds a late event on Dublin's 25-hour clock-change day", async () => {
+    // 00:00:30 Irish Summer Time on 2026-10-25; clocks go back at 02:00, so the day ends 25 hours later.
+    const now = Date.parse("2026-10-24T23:00:30Z");
+    const late = Date.parse("2026-10-25T23:30:00Z"); // 23:30 GMT, still the 25th, 24.5 hours away.
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const event = { eventId: "e", occurrenceKey: "e:late", originalLocalDate: "", localStart: "", localEnd: "", startsAt: late, endsAt: late + HOUR, timeZone: "Europe/Dublin", title: "Late seminar", description: "", location: "", kind: "lecture", attendanceIntent: "attend", attendanceOutcome: "unknown", notesFolderId: null, eventVersion: 1, exceptionVersion: null, cancelled: false, moved: false };
+    sources.calendar.mockImplementation(async (from: number, to: number) => ({ fetchedAt: now, complete: true, occurrences: [event].filter((o) => o.startsAt >= from && o.startsAt < to) }));
+    sources.notes.mockResolvedValue({ projects: [], notes: [{ id: "n1", title: "Agile study notes", pinned: true, status: "ideas", updatedAt: 5 }] });
+    render(<HomeScreen {...props()} />);
+    expect(await screen.findByRole("button", { name: /Late seminar\. You planned to attend\. Open calendar\./ })).toBeTruthy();
+    expect(sources.calendar.mock.calls[0]![1]).toBeGreaterThanOrEqual(Date.parse("2026-10-26T00:00:00Z"));
   });
 
   it("opens the pinned note when every higher source answered with nothing", async () => {

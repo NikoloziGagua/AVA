@@ -1,160 +1,230 @@
 <!doctype html>
-<html lang="en" data-motion="full">
+<html lang="en" data-motion="full" data-tempo="calm">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="description" content="Three original frontier interface directions for AVA.">
-  <title>AVA — Frontier interface lab</title>
+  <meta name="description" content="An interactive motion laboratory for AVA's future interface.">
+  <title>AVA - Motion laboratory</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <a class="skip-link" href="#concept-stage">Skip to concept</a>
-  <div class="noise" aria-hidden="true"></div>
+  <a class="skip-link" href="#motion-stage">Skip to the active experiment</a>
+  <div class="grain" aria-hidden="true"></div>
   <header class="lab-header">
-    <a class="lab-brand" href="#presence" aria-label="AVA interface lab home">
-      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-      <span><b>AVA</b><small>Frontier interface lab</small></span>
+    <a class="lab-brand" href="#signal" aria-label="AVA motion laboratory home">
+      <span class="brand-glyph" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      <span><b>AVA</b><small>Motion laboratory / v2</small></span>
     </a>
-    <nav class="concept-tabs" aria-label="Preview concepts">
-      <button class="concept-tab is-active" type="button" data-target="presence" aria-pressed="true"><kbd>1</kbd> Presence</button>
-      <button class="concept-tab" type="button" data-target="constellation" aria-pressed="false"><kbd>2</kbd> Constellation</button>
-      <button class="concept-tab" type="button" data-target="continuum" aria-pressed="false"><kbd>3</kbd> Continuum</button>
+
+    <nav class="scene-tabs" aria-label="Motion experiments">
+      <button class="scene-tab is-active" type="button" data-target="signal" aria-pressed="true"><kbd>1</kbd><span>Signal</span></button>
+      <button class="scene-tab" type="button" data-target="choreography" aria-pressed="false"><kbd>2</kbd><span>Choreography</span></button>
+      <button class="scene-tab" type="button" data-target="atlas" aria-pressed="false"><kbd>3</kbd><span>Atlas</span></button>
+      <button class="scene-tab" type="button" data-target="time" aria-pressed="false"><kbd>4</kbd><span>Time</span></button>
+      <button class="scene-tab" type="button" data-target="material" aria-pressed="false"><kbd>5</kbd><span>Material</span></button>
     </nav>
+
     <div class="lab-actions">
-      <button class="icon-button" id="motion-toggle" type="button" aria-pressed="false" aria-label="Use reduced motion">
-        <span aria-hidden="true">≈</span><span class="action-label">Motion</span>
-      </button>
-      <button class="icon-button" id="notes-toggle" type="button" aria-expanded="false" aria-controls="design-notes">
-        <span aria-hidden="true">✦</span><span class="action-label">Why</span>
-      </button>
+      <button class="quiet-control" id="tempo-toggle" type="button" aria-label="Switch to quick motion"><span class="tempo-dot"></span><span id="tempo-label">Calm</span></button>
+      <button class="quiet-control" id="motion-toggle" type="button" aria-pressed="false"><span aria-hidden="true">~</span><span id="motion-label">Full motion</span></button>
+      <button class="quiet-control" id="notes-toggle" type="button" aria-expanded="false" aria-controls="design-notes"><span aria-hidden="true">+</span><span>Research</span></button>
     </div>
   </header>
 
-  <main id="concept-stage" class="concept-stage" tabindex="-1">
-    <section class="concept concept-presence is-active" data-concept="presence" aria-labelledby="presence-title">
-      <canvas id="presence-canvas" class="presence-canvas" aria-hidden="true"></canvas>
-      <div class="presence-glow" aria-hidden="true"></div>
-      <header class="ava-status">
-        <span class="status-pulse" aria-hidden="true"></span>
-        <span>AVA is here</span>
-        <span class="status-detail">Thursday · Dublin · 09:41</span>
-      </header>
-      <div class="presence-copy">
-        <p class="eyebrow">Good morning, Niko</p>
-        <h1 id="presence-title">Three things matter<br><em>before noon.</em></h1>
-        <p class="lede">Your 11:00 lecture moved rooms. The visual research is ready. You still have an open decision on hosting.</p>
+  <main id="motion-stage" class="motion-stage" tabindex="-1">
+    <section class="scene scene-signal is-active" data-scene="signal" aria-labelledby="signal-title">
+      <canvas id="signal-canvas" class="signal-canvas" aria-hidden="true"></canvas>
+      <div class="signal-aura" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="scene-number" aria-hidden="true">01</div>
+      <header class="signal-status"><span class="live-dot"></span><span id="signal-state">Present and listening</span><time>09:41 / Dublin</time></header>
+      <div class="signal-copy entrance-cluster">
+        <p class="eyebrow">A calm intelligence, already awake</p>
+        <h1 id="signal-title">Not a dashboard.<br><em>A presence.</em></h1>
+        <p>AVA notices what changed, holds the wider picture, and gives the next useful thing enough space to matter.</p>
       </div>
-      <div class="presence-focus glass-panel">
-        <div class="focus-time"><b>11:00</b><span>in 1h 19m</span></div>
-        <div class="focus-copy"><span class="micro-label">NEXT</span><strong>Agile Development</strong><small>Room B2.14 · attend</small></div>
-        <button class="round-action" type="button" aria-label="Open next event">↗</button>
+
+      <div class="signal-orbit" aria-hidden="true">
+        <span style="--angle: 12deg; --radius: 178px; --delay: -1s"></span>
+        <span style="--angle: 136deg; --radius: 218px; --delay: -3.4s"></span>
+        <span style="--angle: 248deg; --radius: 148px; --delay: -5.1s"></span>
       </div>
-      <form class="command-dock" data-demo-form>
-        <button class="voice-orb" type="button" aria-label="Talk to AVA"><span></span></button>
-        <label class="sr-only" for="presence-command">Ask AVA</label>
-        <input id="presence-command" type="text" placeholder="Ask AVA anything…" autocomplete="off">
-        <button class="send-action" type="submit" aria-label="Send">↑</button>
+
+      <ol class="brief-stack" aria-label="What matters now">
+        <li class="brief-card is-primary"><time>11:00</time><span><small>Changed 12 minutes ago</small><b>Agile Development moved to B2.14</b></span><button type="button">Open</button></li>
+        <li class="brief-card"><time>14:30</time><span><small>Protected focus</small><b>Coursework block / 90 minutes</b></span><button type="button">Keep</button></li>
+        <li class="brief-card"><time>Fri</time><span><small>Open thread</small><b>Follow up with Lasha</b></span><button type="button">Context</button></li>
+      </ol>
+
+      <form class="command-surface" data-prototype-form>
+        <button class="voice-control" id="signal-voice" type="button" aria-pressed="false" aria-label="Simulate voice listening"><span></span><i></i><i></i><i></i></button>
+        <label class="sr-only" for="signal-command">Ask AVA anything</label>
+        <input id="signal-command" autocomplete="off" placeholder="Ask AVA anything...">
+        <button class="send-control" type="submit" aria-label="Send prototype prompt">↑</button>
       </form>
-      <nav class="mini-dock" aria-label="AVA destinations">
-        <button type="button" class="is-current"><span>⌂</span>Home</button>
-        <button type="button"><span>◷</span>Today</button>
-        <button type="button"><span>◌</span>Talk</button>
-        <button type="button"><span>≡</span>Notes</button>
-      </nav>
+      <p class="scene-caption">Motion language: ambient attention, not constant spectacle. The face and field respond only to actual state.</p>
     </section>
 
-    <section class="concept concept-constellation" data-concept="constellation" aria-labelledby="constellation-title" hidden>
-      <div class="aurora aurora-one" aria-hidden="true"></div>
-      <div class="aurora aurora-two" aria-hidden="true"></div>
-      <header class="constellation-heading">
-        <div><p class="eyebrow">Your life · live context</p><h1 id="constellation-title">Everything in its place.<br><em>Nothing buried.</em></h1></div>
-        <div class="signal-chip"><span></span> 6 sources current</div>
+    <section class="scene scene-choreography" data-scene="choreography" aria-labelledby="choreography-title" hidden>
+      <div class="scene-number" aria-hidden="true">02</div>
+      <header class="scene-heading entrance-cluster">
+        <p class="eyebrow">State choreography / request to verified result</p>
+        <h1 id="choreography-title">Watch the work<br><em>become trustworthy.</em></h1>
+        <p>The motion is the explanation: each transition shows what AVA knows, what needs approval, and what has actually happened.</p>
       </header>
-      <div class="life-field" aria-label="Interactive life areas">
-        <svg class="orbit-lines" viewBox="0 0 800 620" role="img" aria-label="Connections between AVA and life areas">
-          <path d="M400 310 C310 210 246 188 150 164"></path>
-          <path d="M400 310 C520 205 582 193 685 170"></path>
-          <path d="M400 310 C315 408 253 446 150 474"></path>
-          <path d="M400 310 C510 402 585 432 690 468"></path>
+
+      <div class="flow-stage" id="flow-stage" data-flow-step="0">
+        <div class="flow-thread" aria-hidden="true"><i></i></div>
+        <article class="flow-card flow-request">
+          <span class="card-kicker">You / request</span>
+          <p>Move Friday's project review so I keep two uninterrupted hours for coursework.</p>
+        </article>
+        <article class="flow-card flow-context">
+          <span class="card-kicker">AVA / context</span>
+          <div class="context-line"><i></i><span>Coursework due Monday</span><b>verified</b></div>
+          <div class="context-line"><i></i><span>Review has no external guest</span><b>verified</b></div>
+          <div class="context-line"><i></i><span>Friday focus preference</span><b>memory</b></div>
+        </article>
+        <article class="flow-card flow-proposal">
+          <span class="card-kicker">Proposed change</span>
+          <div class="time-shift"><time>15:00</time><span>→</span><time>17:30</time></div>
+          <p>Project review / same day</p>
+          <div class="approval-row"><button type="button" class="approve-demo">Approve</button><button type="button">Change</button></div>
+        </article>
+        <article class="flow-card flow-receipt">
+          <div class="receipt-check" aria-hidden="true">✓</div>
+          <span class="card-kicker">Verified result</span>
+          <h2>Friday repaired.</h2>
+          <p>The calendar now shows coursework at 13:00 and the review at 17:30.</p>
+          <small>Calendar read-back / 09:42:16</small>
+        </article>
+        <div class="flow-cursor" aria-hidden="true"><span></span></div>
+      </div>
+
+      <div class="playback-console" aria-label="Choreography playback controls">
+        <button class="replay-button" data-replay="choreography" type="button"><span>▶</span> Play sequence</button>
+        <div class="flow-progress" aria-hidden="true"><i></i></div>
+        <output id="flow-status" aria-live="polite">Ready: request understood</output>
+      </div>
+      <p class="scene-caption">Pattern: animate the truth boundary. A returned “ok” never visually becomes completion until verification arrives.</p>
+    </section>
+
+    <section class="scene scene-atlas" data-scene="atlas" aria-labelledby="atlas-title" hidden>
+      <canvas id="atlas-canvas" class="atlas-canvas" aria-hidden="true"></canvas>
+      <div class="scene-number" aria-hidden="true">03</div>
+      <header class="scene-heading compact entrance-cluster">
+        <p class="eyebrow">Spatial navigation / a map, not a menu</p>
+        <h1 id="atlas-title">Your life has<br><em>shape and gravity.</em></h1>
+        <p>Zoom out to orient. Select one area and everything else quiets down.</p>
+      </header>
+
+      <div class="atlas-viewport" id="atlas-viewport" role="group" aria-label="Life areas; use arrow keys to move between them">
+        <svg class="atlas-lines" viewBox="0 0 900 620" aria-hidden="true">
+          <path data-path="university" d="M450 300 C342 250 294 184 186 132"></path>
+          <path data-path="projects" d="M450 300 C570 240 620 178 746 128"></path>
+          <path data-path="people" d="M450 300 C338 356 278 430 160 492"></path>
+          <path data-path="ideas" d="M450 300 C564 360 640 425 760 492"></path>
+          <path data-path="health" d="M450 300 C448 438 436 494 446 570"></path>
         </svg>
-        <button class="life-node node-centre" type="button" data-detail="ava"><span class="node-orb"></span><strong>AVA</strong><small>4 things in view</small></button>
-        <button class="life-node node-uni" type="button" data-detail="university"><span>U</span><strong>University</strong><small>Lecture at 11:00</small></button>
-        <button class="life-node node-projects" type="button" data-detail="projects"><span>P</span><strong>Projects</strong><small>2 decisions open</small></button>
-        <button class="life-node node-people" type="button" data-detail="people"><span>↗</span><strong>People</strong><small>Lasha · follow up Friday</small></button>
-        <button class="life-node node-ideas" type="button" data-detail="ideas"><span>✦</span><strong>Ideas</strong><small>3 threads evolving</small></button>
+        <button class="atlas-node atlas-centre" type="button" data-atlas="ava" style="--x:50%;--y:48%"><span class="node-pulse"></span><b>AVA</b><small>5 areas in view</small></button>
+        <button class="atlas-node" type="button" data-atlas="university" style="--x:20%;--y:18%"><span>U</span><b>University</b><small>1 change today</small></button>
+        <button class="atlas-node" type="button" data-atlas="projects" style="--x:82%;--y:18%"><span>P</span><b>Projects</b><small>2 decisions</small></button>
+        <button class="atlas-node" type="button" data-atlas="people" style="--x:17%;--y:77%"><span>↗</span><b>People</b><small>1 follow-up</small></button>
+        <button class="atlas-node" type="button" data-atlas="ideas" style="--x:83%;--y:77%"><span>✦</span><b>Ideas</b><small>3 evolving</small></button>
+        <button class="atlas-node" type="button" data-atlas="health" style="--x:50%;--y:91%"><span>○</span><b>Health</b><small>Quiet / current</small></button>
       </div>
-      <aside class="detail-sheet glass-panel" id="life-detail" aria-live="polite">
-        <div class="sheet-head"><span class="micro-label">IN FOCUS</span><span class="sheet-index">01 / 04</span></div>
+
+      <aside class="atlas-detail" id="atlas-detail" aria-live="polite">
+        <header><span class="card-kicker">Area 01 / 05</span><span class="detail-signal">Current</span></header>
         <h2>University</h2>
-        <p>Agile Development begins at 11:00 in B2.14. Your lecture note already contains the sprint review questions from last week.</p>
-        <div class="detail-actions"><button type="button">Open lecture note</button><button type="button">Plan the hour before</button></div>
+        <p>Agile Development starts at 11:00. AVA connected the room change, last week's weak areas, and today's preparation block.</p>
+        <div class="detail-facts"><span><b>3</b> active notes</span><span><b>1</b> next action</span></div>
+        <button type="button">Enter this area <span>→</span></button>
       </aside>
-      <form class="command-dock command-dock-wide" data-demo-form>
-        <span class="command-spark" aria-hidden="true">✦</span>
-        <label class="sr-only" for="constellation-command">Ask about your life</label>
-        <input id="constellation-command" type="text" placeholder="Ask about any part of your life…" autocomplete="off">
-        <button class="send-action" type="submit" aria-label="Send">↑</button>
-      </form>
+      <p class="scene-caption">Interaction: focus behaves like a camera move. DOM controls stay readable while the field supplies depth and lineage.</p>
     </section>
 
-    <section class="concept concept-continuum" data-concept="continuum" aria-labelledby="continuum-title" hidden>
-      <div class="continuum-rail" aria-label="Conversation timeline">
-        <button type="button" class="rail-dot is-active" aria-label="Current answer"></button>
-        <button type="button" class="rail-dot" aria-label="Previous answer"></button>
-        <button type="button" class="rail-dot" aria-label="Earlier answer"></button>
-        <span>Today</span>
-      </div>
-      <div class="conversation-canvas">
-        <header class="conversation-head">
-          <div><p class="eyebrow">Shared conversation · voice + text</p><h1 id="continuum-title">AVA</h1></div>
-          <div class="context-capsule"><span class="status-pulse"></span><b>Context current</b><small>6 memories · 2 sources verified</small></div>
-        </header>
-        <article class="user-turn"><span>You</span><p>Help me understand the week and move anything that clashes.</p></article>
-        <article class="assistant-turn">
-          <header><span class="assistant-mark">A</span><span>AVA · now</span></header>
-          <p class="answer-lead">Friday is the only problem. Your coursework block overlaps the project review, so I would move the review—not the study time.</p>
-          <div class="inline-artifact schedule-artifact">
-            <div class="artifact-head"><div><span class="micro-label">PROPOSED CHANGE</span><h2>Friday · 2 hours recovered</h2></div><button type="button" aria-label="Expand schedule">↗</button></div>
-            <div class="timeline-row"><time>13:00</time><span class="timeline-line"></span><div><b>Coursework</b><small>Protected focus · 2h</small></div></div>
-            <div class="timeline-row is-move"><time>15:00</time><span class="timeline-line"></span><div><b>Project review</b><small>Move to 17:30</small></div><span class="change-pill">+2h30</span></div>
-            <div class="artifact-actions"><button type="button" class="primary-action">Make this change</button><button type="button">Explain the trade-off</button></div>
+    <section class="scene scene-time" data-scene="time" aria-labelledby="time-title" hidden>
+      <div class="scene-number" aria-hidden="true">04</div>
+      <header class="scene-heading compact entrance-cluster">
+        <p class="eyebrow">Temporal interface / understand a day by moving through it</p>
+        <h1 id="time-title">Time should feel<br><em>negotiable, not buried.</em></h1>
+        <p>AVA can show the consequence of a change before it writes anything.</p>
+      </header>
+
+      <div class="day-ribbon" id="day-ribbon">
+        <header><div><span class="card-kicker">Friday / Europe-Dublin</span><h2>One conflict, two good options.</h2></div><button class="resolve-button" type="button" id="resolve-day">Resolve the clash</button></header>
+        <div class="ribbon-grid" aria-label="Friday schedule">
+          <div class="hour-labels" aria-hidden="true"><span>09</span><span>11</span><span>13</span><span>15</span><span>17</span><span>19</span></div>
+          <div class="ribbon-track">
+            <i class="now-line"><span>now</span></i>
+            <article class="time-block lecture"><small>11:00</small><b>Agile Development</b><span>B2.14 / attend</span></article>
+            <article class="time-block focus"><small>13:00</small><b>Coursework</b><span>protected / 2h</span></article>
+            <article class="time-block review"><small class="review-time">15:00</small><b>Project review</b><span class="review-note">conflict</span></article>
+            <article class="time-block dinner"><small>19:00</small><b>Free</b><span>no commitments</span></article>
           </div>
-          <details class="evidence-disclosure"><summary>Why AVA is suggesting this <span>3 signals</span></summary><ul><li>The coursework deadline is Monday.</li><li>You protect Friday study blocks in 4 of 5 recent weeks.</li><li>The project review has no external attendee.</li></ul></details>
+        </div>
+        <footer><div class="change-explanation"><span class="change-icon">↳</span><p id="change-copy"><b>AVA's recommendation</b>Move the flexible review, not the protected study block.</p></div><output id="time-status" aria-live="polite">No change has been made.</output></footer>
+      </div>
+
+      <div class="temporal-cards" aria-label="Alternative temporal views">
+        <button type="button"><span>Week pressure</span><b>Mon</b><i style="--level:82%"></i><small>Coursework due</small></button>
+        <button type="button"><span>Protected time</span><b>7h</b><i style="--level:58%"></i><small>across 3 blocks</small></button>
+        <button type="button"><span>Uncertain</span><b>1</b><i style="--level:20%"></i><small>attendance choice</small></button>
+      </div>
+      <p class="scene-caption">Motion encodes before → proposal → confirmed result. Previewing a schedule change is not the same as performing it.</p>
+    </section>
+
+    <section class="scene scene-material" data-scene="material" aria-labelledby="material-title" hidden>
+      <canvas id="material-canvas" class="material-canvas" aria-hidden="true"></canvas>
+      <div class="scene-number" aria-hidden="true">05</div>
+      <header class="scene-heading entrance-cluster">
+        <p class="eyebrow">Tactile experiments / choose a signature, not a trend</p>
+        <h1 id="material-title">Make software feel<br><em>physical enough to trust.</em></h1>
+        <p>Four material studies. Move the pointer, press the controls, and notice which effects communicate state rather than merely decorating it.</p>
+      </header>
+
+      <div class="material-grid">
+        <article class="material-card prism-card" data-tilt>
+          <div class="prism-light" aria-hidden="true"></div><span class="card-kicker">01 / Optical focus</span><h2>Evidence lens</h2><p>Light follows attention; the readable surface remains ordinary HTML.</p><button type="button" class="magnetic-button">Inspect evidence <span>↗</span></button>
+        </article>
+        <article class="material-card elastic-card" id="elastic-card">
+          <span class="card-kicker">02 / Elastic state</span><h2>A command surface that responds.</h2><p>Pressure compresses the surface; release settles it back into place.</p><button type="button" id="elastic-button">Press and hold</button><div class="elastic-wave" aria-hidden="true"></div>
+        </article>
+        <article class="material-card kinetic-card">
+          <span class="card-kicker">03 / Kinetic type</span><h2 aria-label="AVA is thinking"><span>A</span><span>V</span><span>A</span><small>is thinking</small></h2><p>The phrase changes rhythm with status, without becoming a permanent loading carnival.</p><button type="button" id="kinetic-button">Change state</button>
+        </article>
+        <article class="material-card field-card">
+          <span class="card-kicker">04 / Living field</span><h2>Ambient context</h2><p>A pointer-disturbed field that sleeps when the scene is inactive or motion is reduced.</p><div class="field-readout"><i></i><span>GPU-like study / Canvas 2D</span></div>
         </article>
       </div>
-      <aside class="continuity-panel glass-panel">
-        <header><span class="micro-label">CONTINUITY</span><button type="button" aria-label="Collapse continuity panel">−</button></header>
-        <section><span>Open thought</span><b>Always-on hosting</b><small>Decision pending · yesterday</small></section>
-        <section><span>Latest note</span><b>Agile Development</b><small>7 concepts · 2 weak areas</small></section>
-        <section><span>Person</span><b>Lasha</b><small>Follow up Friday</small></section>
-        <button class="panel-link" type="button">See what AVA remembers <span>→</span></button>
-      </aside>
-      <form class="command-dock continuum-command" data-demo-form>
-        <button class="voice-orb" type="button" aria-label="Switch to voice"><span></span></button>
-        <label class="sr-only" for="continuum-command">Reply to AVA</label>
-        <input id="continuum-command" type="text" placeholder="Reply, revise, or ask why…" autocomplete="off">
-        <button class="send-action" type="submit" aria-label="Send">↑</button>
-      </form>
+      <p class="scene-caption">These are experiments, not recommendations to coat AVA in glass. The winner must survive accessibility, battery and usefulness tests.</p>
     </section>
   </main>
 
+  <aside class="motion-index" aria-label="Current experiment">
+    <span id="current-number">01</span><i></i><span id="current-name">Living signal</span>
+    <button type="button" id="replay-active" aria-label="Replay active motion">Replay</button>
+  </aside>
+
   <aside class="design-notes" id="design-notes" aria-hidden="true" aria-labelledby="notes-title">
-    <button class="notes-scrim" id="notes-scrim" type="button" tabindex="-1" aria-label="Close design notes"></button>
+    <button class="notes-scrim" id="notes-scrim" type="button" tabindex="-1" aria-label="Close research panel"></button>
     <div class="notes-panel" role="dialog" aria-modal="true" aria-labelledby="notes-title">
-      <header><div><span class="micro-label">DESIGN LOGIC</span><h2 id="notes-title">Frontier, without theatre.</h2></div><button class="round-action" id="notes-close" type="button" aria-label="Close design notes">×</button></header>
-      <p>The strongest direction is a synthesis, not a library skin: one calm living centre, spatial context only when it helps, and structured results that remain part of the conversation.</p>
+      <header><div><span class="card-kicker">Research synthesis / 2026</span><h2 id="notes-title">Motion with a job.</h2></div><button id="notes-close" type="button" aria-label="Close research panel">×</button></header>
+      <p>The first lab was too static. This version tests five distinct systems drawn from a much wider scan of current motion, shader, spatial and agent-native work.</p>
       <ol>
-        <li><b>Presence</b><span>Best default home. AVA feels attentive before it feels like software.</span></li>
-        <li><b>Constellation</b><span>Best for orientation. It reveals relationships, then collapses back to one detail.</span></li>
-        <li><b>Continuum</b><span>Best work surface. Conversation, evidence and action stay together.</span></li>
+        <li><b>Signal</b><span>Presence responds to state and input instead of looping as decoration.</span></li>
+        <li><b>Choreography</b><span>A request visibly becomes context, a proposal, approval and verified outcome.</span></li>
+        <li><b>Atlas</b><span>Spatial zoom provides orientation, then returns to one readable detail.</span></li>
+        <li><b>Time</b><span>Changes are previewed in place and distinguish proposal from completion.</span></li>
+        <li><b>Material</b><span>Optics, elasticity, kinetic type and fields are tested as a signature layer.</span></li>
       </ol>
-      <div class="principle-grid"><span>Calm centre</span><span>Motion with meaning</span><span>Progressive disclosure</span><span>Offline by default</span><span>DOM-first access</span><span>One command surface</span></div>
-      <footer>Original AVA concepts · no third-party code or assets embedded</footer>
+      <div class="principle-grid"><span>Interruptible</span><span>State-driven</span><span>Reduced-motion equal</span><span>DOM-first meaning</span><span>Offline</span><span>One signature at a time</span></div>
+      <footer>Original AVA prototypes / no copied component code / no network requests</footer>
     </div>
   </aside>
 
-  <div class="demo-toast" id="demo-toast" role="status" aria-live="polite">Prototype only — no action was sent.</div>
+  <div class="prototype-toast" id="prototype-toast" role="status" aria-live="polite">Prototype only - nothing was changed.</div>
   <script src="app.js"></script>
 </body>
 </html>

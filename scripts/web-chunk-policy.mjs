@@ -53,7 +53,7 @@ export const REQUIRED_PRODUCTION_CHUNKS = [
 ];
 export const REQUIRED_DEFERRED_CHUNKS = [
   "ChatScreen",
-  "DottedSurface",
+  "FaceStage",
   "VisualsScreen",
   "vendor-diagrams",
   "vendor-markdown",

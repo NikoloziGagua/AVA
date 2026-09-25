@@ -1,3 +1,5 @@
+import { normalizeTimeZone, parseLocalDate, parseLocalTime } from "../calendar/time.js";
+
 const MAX_HORIZON_MS = 366 * 24 * 60 * 60_000;
 
 const ERROR_MESSAGES = {
@@ -23,15 +25,9 @@ export class ReminderScheduleError extends Error {
 
 export type ReminderSchedule = { runAt: number; timeZone: string };
 
-function normalizeTimeZone(value: unknown): string {
-  if (
-    typeof value !== "string" || value.length === 0 || value.length > 100 ||
-    (value !== "UTC" && !/^[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+$/.test(value))
-  ) {
-    throw new ReminderScheduleError("invalid_time_zone");
-  }
+function normalizeReminderTimeZone(value: unknown): string {
   try {
-    return new Intl.DateTimeFormat("en-GB", { timeZone: value }).resolvedOptions().timeZone;
+    return normalizeTimeZone(value);
   } catch {
     throw new ReminderScheduleError("invalid_time_zone");
   }
@@ -51,7 +47,7 @@ export function validateReminderSchedule(input: {
   ) {
     throw new ReminderScheduleError("conflicting_schedule");
   }
-  const timeZone = normalizeTimeZone(input.timeZone);
+  const timeZone = normalizeReminderTimeZone(input.timeZone);
   const runAt = input.runAt;
   if (
     typeof runAt !== "number" || !Number.isSafeInteger(runAt) ||
@@ -71,7 +67,7 @@ export function validateReminderSchedule(input: {
  * No naive Date.parse or server-local timezone participates in resolution.
  */
 export function resolveReminderInstant(at: string, timeZone: string, now = Date.now()): ReminderSchedule {
-  const zone = normalizeTimeZone(timeZone);
+  const zone = normalizeReminderTimeZone(timeZone);
   const match = typeof at === "string" && at.length <= 40
     ? /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-]\d{2}:\d{2})$/.exec(at)
     : null;
@@ -80,6 +76,12 @@ export function resolveReminderInstant(at: string, timeZone: string, now = Date.
   const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
   const hour = Number(match[4]), minute = Number(match[5]), second = Number(match[6]);
   const millis = Number((match[7] ?? "").padEnd(3, "0"));
+  try {
+    parseLocalDate(`${match[1]}-${match[2]}-${match[3]}`);
+    parseLocalTime(`${match[4]}:${match[5]}:${match[6]}`);
+  } catch {
+    throw new ReminderScheduleError("invalid_local_date");
+  }
   // setUTCFullYear avoids Date.UTC's special interpretation of years 00-99.
   const wall = new Date(0);
   wall.setUTCFullYear(year, month - 1, day);

@@ -845,3 +845,54 @@ CREATE TABLE IF NOT EXISTS reminder_occurrences (
   UNIQUE(watch_id, due_at)
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminder_occurrences(phase, next_attempt_at);
+
+-- Calendar v1 is the authoritative schedule definition. Reminder delivery is
+-- deliberately not duplicated here: C3 projects event-owned offsets into the
+-- existing watches/reminder_occurrences transport with stable links.
+CREATE TABLE IF NOT EXISTS calendar_events (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  location TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL CHECK (kind IN ('lecture','event','block')),
+  time_zone TEXT NOT NULL DEFAULT 'Europe/Dublin',
+  anchor_local_date TEXT NOT NULL,
+  start_local_time TEXT NOT NULL,
+  duration_minutes INTEGER NOT NULL CHECK (duration_minutes BETWEEN 1 AND 10080),
+  recurrence_kind TEXT NOT NULL CHECK (recurrence_kind IN ('none','weekly')),
+  recurrence_until_date TEXT,
+  dst_policy TEXT NOT NULL DEFAULT 'reject' CHECK (dst_policy IN ('reject','earlier','later')),
+  attendance_intent TEXT NOT NULL DEFAULT 'undecided' CHECK (attendance_intent IN ('undecided','attend','skip')),
+  notes_folder_id TEXT REFERENCES note_folders(id) ON DELETE SET NULL,
+  reminder_minutes_before INTEGER CHECK (reminder_minutes_before IS NULL OR reminder_minutes_before BETWEEN 0 AND 10080),
+  split_from_event_id TEXT REFERENCES calendar_events(id) ON DELETE SET NULL,
+  source TEXT NOT NULL,
+  source_session_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  archived_at INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_events_anchor
+  ON calendar_events(anchor_local_date, recurrence_until_date, archived_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_notes_folder
+  ON calendar_events(notes_folder_id) WHERE notes_folder_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS calendar_event_exceptions (
+  event_id TEXT NOT NULL REFERENCES calendar_events(id) ON DELETE CASCADE,
+  occurrence_local_date TEXT NOT NULL,
+  moved_local_date TEXT,
+  moved_local_time TEXT,
+  moved_duration_minutes INTEGER CHECK (moved_duration_minutes IS NULL OR moved_duration_minutes BETWEEN 1 AND 10080),
+  cancelled INTEGER NOT NULL DEFAULT 0 CHECK (cancelled IN (0,1)),
+  attendance_intent_override TEXT CHECK (attendance_intent_override IS NULL OR attendance_intent_override IN ('undecided','attend','skip')),
+  attendance_outcome TEXT NOT NULL DEFAULT 'unknown' CHECK (attendance_outcome IN ('unknown','attended','skipped','missed')),
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (event_id, occurrence_local_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_calendar_exceptions_event
+  ON calendar_event_exceptions(event_id, occurrence_local_date);

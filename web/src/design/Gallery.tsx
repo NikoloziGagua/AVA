@@ -168,7 +168,7 @@ function Components() {
         <div className="grid max-w-xl gap-2">
           <Receipt icon={<BookOpen size={18} />} title="Saved to Agile Development" status="Saved" statusTone="success" detail="Lecture 4: Scrum roles · 3 new key concepts" proof="file 7Kg · v4" action={<Button size="sm" variant="quiet">Open</Button>} />
           <Receipt icon={<BellRing size={18} />} title="Reminder set" status="Scheduled" statusTone="info" detail="Friday 17:00 · Submit Agile reflection" />
-          <Receipt icon={<Sparkles size={18} />} title="Posted to the dev room" status="Accepted" detail="Accepted by the room. Not yet read by an agent." proof="#512" />
+          <Receipt icon={<Sparkles size={18} />} title="Posted to the dev room" status="Accepted" detail="Accepted by the room. Not yet read by an agent." proof="room message 512" />
         </div>
       </GallerySection>
 

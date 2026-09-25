@@ -45,13 +45,10 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// "#512" is a message number, not a colour: 3-4 character codes made only of digits are ignored.
-const isNumberLike = (match: string) => /^#\d{3,4}$/.test(match);
-
 function count(text: string): Counts {
   const result: Counts = { tinyText: 0, rawColour: 0, backdrop: 0 };
   for (const key of Object.keys(RULES) as (keyof Counts)[]) {
-    for (const pattern of RULES[key]) result[key] += (text.match(pattern) ?? []).filter((match) => !isNumberLike(match)).length;
+    for (const pattern of RULES[key]) result[key] += (text.match(pattern) ?? []).length;
   }
   return result;
 }
@@ -102,7 +99,8 @@ describe("design guard", () => {
     expect(count(`<p className="text-[12px]">x</p>`).tinyText).toBe(0);
     expect(count(`const c = "#5cf2ff"; const d = "rgba(0,0,0,.5)";`).rawColour).toBe(2);
     expect(count(`<a href="#top">`).rawColour).toBe(0);
-    expect(count(`proof="#512"`).rawColour).toBe(0);
+    // Digit-only codes are colours too; write message numbers as words ("room message 512").
+    expect(count(`a { color: #000; } b { color: #123; } c { color: #999; }`).rawColour).toBe(3);
     expect(count(`color: "#fff"; background: #0b0b0c;`).rawColour).toBe(2);
     expect(count(`style={{ fontSize: 10, color: "red" }}`).tinyText).toBe(1);
     expect(count(`className="backdrop-blur-xl"`).backdrop).toBe(1);

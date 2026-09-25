@@ -13,7 +13,7 @@ export function Receipt({ icon, title, detail, status, statusTone = "neutral", p
   detail?: ReactNode;
   status?: string;
   statusTone?: Tone;
-  /** Small verifiable references, e.g. "#512", a file name or a time. */
+  /** Small verifiable references, e.g. "room message 512", a file name or a time. */
   proof?: ReactNode;
   action?: ReactNode;
   className?: string;

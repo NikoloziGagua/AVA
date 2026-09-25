@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import type { FaceMode } from "./face/animator.js";
 import {
   Activity, BellRing, BookOpen, Brain, CalendarDays, CheckCircle2, Folder, FolderPlus, Inbox, Lightbulb, MessageSquareText,
   NotebookPen, Plus, Presentation, Radar, Send, Settings2, Sparkles, Sun, AlarmClock, Home,
@@ -48,6 +49,26 @@ function LiveBar() {
       onSend={(text) => { toast({ message: `Sent: ${text}`, tone: "success" }); setDraft(""); }}
       onTalk={() => toast({ message: "Would start talking to AVA." })}
     />
+  );
+}
+
+const FaceStage = lazy(async () => ({ default: (await import("./face/FaceStage.js")).FaceStage }));
+
+function FaceDemo() {
+  const [mode, setMode] = useState<FaceMode>("idle");
+  return (
+    <div className="grid gap-4">
+      <Segmented
+        label="Face state"
+        value={mode}
+        onChange={setMode}
+        options={[{ value: "idle", label: "Idle" }, { value: "listening", label: "Listening" }, { value: "thinking", label: "Thinking" }, { value: "speaking", label: "Speaking" }]}
+        className="max-w-md"
+      />
+      <div className="ds-backlight relative h-[380px] max-w-md rounded-card bg-surface">
+        <Suspense fallback={null}><FaceStage mode={mode} label="AVA" /></Suspense>
+      </div>
+    </div>
   );
 }
 
@@ -121,6 +142,10 @@ function Components() {
     <>
       <GallerySection title="Bottom bar and menu" note="The only navigation. It is live at the bottom of this page: tap the round button (or press Ctrl+K) and it grows into the menu. Type to see the send button.">
         <LiveBar />
+      </GallerySection>
+
+      <GallerySection title="AVA's face" note="The one animated face. It shows once the face data from Codex's pipeline is in place; until then you see the still fallback.">
+        <FaceDemo />
       </GallerySection>
 
       <GallerySection title="Status island" note="At the top of Home, Talk and Voice. Says what AVA is doing.">

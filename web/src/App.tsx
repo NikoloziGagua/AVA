@@ -36,6 +36,8 @@ import { getToken } from "./auth/tokens.js";
 import { fetchSessionPage, lastHumanActivity, type ConversationIntent } from "./api.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
 import { TodayScreen } from "./today/TodayScreen.js";
+import { HomeScreen } from "./home/HomeScreen.js";
+import { FaceStill } from "./design/face/FaceStill.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 import { savedItemDestination, type SavedItem } from "./chat/saved-items.js";
@@ -99,7 +101,7 @@ type View =
 // Today → voice hero. ChatScreen renders NO orb, so it must not be listed here —
 // otherwise entering chat would capture a still-exiting orb and the next orb
 // view would Flip from a stale snapshot.
-const VIEWS_WITH_ORB = ["splash", "home", "today", "voice"];
+const VIEWS_WITH_ORB = ["splash", "today", "voice"];
 const LAST_CHAT_STORAGE_KEY = "ava:last-chat-session";
 // The intro plays once per browser tab; reloads go straight to Today.
 const SPLASH_SEEN_KEY = "ava:splash-seen";
@@ -489,16 +491,11 @@ export function App() {
             animate={SCREEN.to}
             transition={enterT}
           >
-            <TodayScreen
-              onOpenChat={(sessionId) => openChat(sessionId)}
+            <HomeScreen
               onStartChat={(text) => openNewChat(text)}
-              // Voice goes back to the remembered conversation exactly; with none
-              // remembered the server continues Nika's latest human chat.
-              onEnterVoice={enterVoiceFromToday}
-              onOpenTalk={() => setView({ name: "list" })}
               onOpenNote={openNote}
-              onOpenIdeas={() => setView({ name: "ideas" })}
-              onOpenNotes={() => setView({ name: "notes" })}
+              onOpenCalendar={() => setView({ name: "schedule" })}
+              onOpenReminders={() => setView({ name: "watches" })}
             />
           </motion.div>
         )}
@@ -770,6 +767,7 @@ export function App() {
           onSend={sendFromBar}
           onTalk={enterVoiceFromToday}
           compact={barCompact}
+          face={<FaceStill size={32} />}
         />
       )}
     </div>

@@ -53,6 +53,8 @@
   --ds-warning-soft: rgba(232, 176, 75, 0.14);
   --ds-danger-soft: rgba(255, 122, 107, 0.14);
   --ds-info-soft: rgba(127, 178, 255, 0.14);
+  --ds-face-dot: #d6dbf5;
+  --ds-face-light: #ffffff;
 }
 
 [data-look="paper"] {
@@ -84,6 +86,8 @@
   --ds-warning-soft: rgba(154, 103, 0, 0.1);
   --ds-danger-soft: rgba(180, 35, 24, 0.09);
   --ds-info-soft: rgba(31, 95, 191, 0.09);
+  --ds-face-dot: #0d0d12;
+  --ds-face-light: #383d57;
 }
 
 :root {
@@ -273,6 +277,20 @@ nav[data-compact] .ds-menu[data-open="true"] { clip-path: inset(0 0 0 0 round 30
 .ds-island-bars i:nth-child(4) { animation-delay: -0.15s; }
 @keyframes ds-breathe { 50% { opacity: 0.3; } }
 @keyframes ds-bar { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+
+/* A soft light behind AVA's face (Magic UI Backlight idea): static, no animation. */
+.ds-backlight::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 48%;
+  width: min(92%, 380px);
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, var(--ds-glow), transparent);
+  pointer-events: none;
+}
 
 /* Forced colours: surfaces fall back to system colours with real borders. */
 @media (forced-colors: active) {

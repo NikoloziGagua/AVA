@@ -11,6 +11,8 @@ export { FloatingStack, Tile, TileGrid, Row, type TileProps } from "./Layout.js"
 export { Sheet, ApprovalSheet } from "./Sheet.js";
 export { ToastProvider, useToast, type ToastInput } from "./Toast.js";
 export { Receipt, Prose } from "./Receipt.js";
+export { BottomBar, type BottomBarProps, type Destination, type RecentConversation } from "./BottomBar.js";
+export { StatusIsland, type IslandMode } from "./StatusIsland.js";
 export { cn } from "./cn.js";
 export { springs, durations, easeOutSoft, withViewTransition, useReducedMotion } from "./motion.js";
 export { applyLook, mirrorLookPref, readLookPref, resolveLook, startDesignRuntime, type Look, type LookPref } from "./look.js";

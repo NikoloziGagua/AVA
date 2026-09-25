@@ -1,10 +1,75 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { BellRing, BookOpen, CalendarDays, CheckCircle2, Folder, FolderPlus, Inbox, Lightbulb, MessageSquareText, Plus, Send, Sparkles } from "lucide-react";
 import {
-  ApprovalSheet, Badge, Button, Card, CardMeta, CardTitle, Chip, EmptyState, ErrorState, Field, FloatingStack, NumberTicker,
-  ProgressRing, Prose, Receipt, Row, Segmented, Select, Sheet, Skeleton, SuggestionChips, Surface, Switch, Tag,
-  TextArea, TextInput, Tile, TileGrid, ToastProvider, useToast,
+  Activity, BellRing, BookOpen, Brain, CalendarDays, CheckCircle2, Folder, FolderPlus, Inbox, Lightbulb, MessageSquareText,
+  NotebookPen, Plus, Presentation, Radar, Send, Settings2, Sparkles, Sun, AlarmClock, Home,
+} from "lucide-react";
+import {
+  ApprovalSheet, Badge, BottomBar, Button, Card, CardMeta, CardTitle, Chip, EmptyState, ErrorState, Field, FloatingStack, NumberTicker,
+  ProgressRing, Prose, Receipt, Row, Segmented, Select, Sheet, Skeleton, StatusIsland, SuggestionChips, Surface, Switch, Tag,
+  TextArea, TextInput, Tile, TileGrid, ToastProvider, useToast, type Destination, type IslandMode,
 } from "./index.js";
+
+const DESTINATIONS: Destination[] = [
+  { id: "home", label: "Home", icon: <Home size={18} />, group: "primary" },
+  { id: "today", label: "Today", icon: <Sun size={18} />, group: "primary", meta: "2 due" },
+  { id: "talk", label: "Talk", icon: <MessageSquareText size={18} />, group: "primary" },
+  { id: "notes", label: "Notes", icon: <NotebookPen size={18} />, group: "primary" },
+  { id: "calendar", label: "Calendar", icon: <CalendarDays size={18} />, group: "primary" },
+  { id: "ideas", label: "Ideas", icon: <Lightbulb size={18} />, group: "primary" },
+  { id: "memory", label: "Memory", icon: <Brain size={18} />, group: "system" },
+  { id: "reminders", label: "Reminders & watches", icon: <AlarmClock size={18} />, group: "system" },
+  { id: "explore", label: "Explore AVA", icon: <Radar size={18} />, group: "system" },
+  { id: "visuals", label: "Visual explanations", icon: <Presentation size={18} />, group: "system" },
+  { id: "activity", label: "Activity", icon: <Activity size={18} />, group: "system" },
+  { id: "self", label: "Self development", icon: <Sparkles size={18} />, group: "system" },
+  { id: "settings", label: "Settings", icon: <Settings2 size={18} />, group: "system" },
+];
+
+const RECENTS = [
+  { id: "c1", title: "Plan for the Agile reflection", meta: "Today" },
+  { id: "c2", title: "Lecture 4 questions", meta: "Yesterday" },
+  { id: "c3", title: "Move Monday's reminder", meta: "Tue" },
+];
+
+function LiveBar() {
+  const toast = useToast();
+  const [current, setCurrent] = useState("home");
+  const [draft, setDraft] = useState("");
+  return (
+    <BottomBar
+      destinations={DESTINATIONS}
+      current={current}
+      onNavigate={(id) => { setCurrent(id); toast({ message: `Would open ${DESTINATIONS.find((d) => d.id === id)?.label}.` }); }}
+      recents={RECENTS}
+      onOpenRecent={(id) => toast({ message: `Would open "${RECENTS.find((r) => r.id === id)?.title}".` })}
+      onOpenAllConversations={() => toast({ message: "Would open all conversations." })}
+      draft={draft}
+      onDraftChange={setDraft}
+      onSend={(text) => { toast({ message: `Sent: ${text}`, tone: "success" }); setDraft(""); }}
+      onTalk={() => toast({ message: "Would start talking to AVA." })}
+    />
+  );
+}
+
+function IslandDemo() {
+  const [mode, setMode] = useState<IslandMode>("listening");
+  return (
+    <div className="grid gap-4">
+      <Segmented
+        label="AVA's state"
+        value={mode}
+        onChange={setMode}
+        options={[{ value: "idle", label: "Idle" }, { value: "listening", label: "Listening" }, { value: "thinking", label: "Thinking" }, { value: "speaking", label: "Speaking" }]}
+        className="max-w-md"
+      />
+      <div className="flex flex-wrap items-center gap-4">
+        <StatusIsland mode={mode} time="09:41" className="mx-0" />
+        <StatusIsland mode="working" detail="Filing your Agile notes" className="mx-0" />
+        <StatusIsland mode="attention" text="Reminder" detail="Agile lecture in 15 min" className="mx-0" />
+      </div>
+    </div>
+  );
+}
 import { applyLook, mirrorLookPref, readLookPref, type LookPref } from "./look.js";
 
 /**
@@ -54,6 +119,14 @@ function Components() {
 
   return (
     <>
+      <GallerySection title="Bottom bar and menu" note="The only navigation. It is live at the bottom of this page: tap the round button (or press Ctrl+K) and it grows into the menu. Type to see the send button.">
+        <LiveBar />
+      </GallerySection>
+
+      <GallerySection title="Status island" note="At the top of Home, Talk and Voice. Says what AVA is doing.">
+        <IslandDemo />
+      </GallerySection>
+
       <GallerySection title="Buttons" note="Solid is the one main action on a screen (it can shimmer). Glass for choices. Quiet for low-key actions. Danger only for destructive ones.">
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="solid" shimmer leading={<Send size={16} aria-hidden="true" />}>Ask AVA</Button>

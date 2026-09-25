@@ -15,10 +15,11 @@ import {
   Activity,
   AlarmClock,
   Brain,
-  CalendarClock,
+  CalendarDays,
+  House,
   Lightbulb,
+  MessageSquarePlus,
   MessageSquareText,
-  MessagesSquare,
   NotebookPen,
   Presentation,
   Radar,
@@ -27,12 +28,12 @@ import {
   Sun,
 } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
-import { AppSidebar, type AppSidebarItem } from "./components/ava/AppSidebar.js";
+import { BottomBar, withViewTransition, type Destination, type RecentConversation } from "./design/index.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
 import { useReducedMotion } from "./lib/useReducedMotion.js";
 import { computeReduced } from "./lib/motionPref.js";
 import { getToken } from "./auth/tokens.js";
-import type { ConversationIntent } from "./api.js";
+import { fetchSessionPage, lastHumanActivity, type ConversationIntent } from "./api.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
 import { TodayScreen } from "./today/TodayScreen.js";
 import { Splash } from "./splash/Splash.js";
@@ -73,7 +74,12 @@ const MissionControlScreen = lazy(async () => ({
 
 type View =
   | { name: "splash" }
+  // Home is the calm landing page (phase C redesigns it); until then it shows
+  // the Today screen but stays its own destination and history entry.
+  | { name: "home" }
   | { name: "today" }
+  // Mission Control inside AVA; the standalone ?mission-control=1 window remains.
+  | { name: "activity" }
   // `audit` shows an automated run for reference without making it the current chat.
   | { name: "chat"; sessionId: string | null; initialText?: string; audit?: boolean }
   | { name: "voice"; from: "today" | "chat"; sessionId: string | null; intent: ConversationIntent }
@@ -93,11 +99,8 @@ type View =
 // Today → voice hero. ChatScreen renders NO orb, so it must not be listed here —
 // otherwise entering chat would capture a still-exiting orb and the next orb
 // view would Flip from a stale snapshot.
-const VIEWS_WITH_ORB = ["splash", "today", "voice"];
+const VIEWS_WITH_ORB = ["splash", "home", "today", "voice"];
 const LAST_CHAT_STORAGE_KEY = "ava:last-chat-session";
-// v2 resets the previous always-expanded desktop drawer. The compact rail is
-// the calm default; people can opt back into the labelled panel explicitly.
-const SIDEBAR_STORAGE_KEY = "ava:sidebar-expanded-v2";
 // The intro plays once per browser tab; reloads go straight to Today.
 const SPLASH_SEEN_KEY = "ava:splash-seen";
 const WATCHER_LINK_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -118,7 +121,7 @@ function readInitialView(): View {
   if (typeof window === "undefined") return { name: "splash" };
   const params = new URLSearchParams(window.location.search);
   if (params.get("view") !== "watches" || params.get("from") !== "mission-control") {
-    return shouldPlaySplash() ? { name: "splash" } : { name: "today" };
+    return shouldPlaySplash() ? { name: "splash" } : { name: "home" };
   }
   const requested = params.get("watch");
   return {
@@ -131,14 +134,6 @@ function readInitialView(): View {
 function readStoredChat(): string | null {
   try { return window.localStorage.getItem(LAST_CHAT_STORAGE_KEY); }
   catch { return null; }
-}
-
-function readSidebarPreference(): boolean {
-  try {
-    const stored = window.localStorage.getItem(SIDEBAR_STORAGE_KEY);
-    if (stored !== null) return stored === "true";
-  } catch { /* storage can be unavailable in hardened browsers */ }
-  return false;
 }
 
 export function DeferredScreenFallback() {
@@ -203,30 +198,83 @@ export class DeferredScreenBoundary extends Component<
   }
 }
 
-/** Which sidebar destination to mark for a view. Voice/splash return undefined. */
-function navForView(v: View): string | undefined {
+/** Which bottom-bar destination a view belongs to (contract ui-remodel v2 §4). */
+function destinationForView(v: View): string | null {
   switch (v.name) {
-    case "today": return "Today";
-    // Only a brand-new (sessionId === null) composition lights "New"; every
-    // existing conversation, and the list of them, is Talk.
-    case "chat": return v.sessionId === null ? "New" : "Talk";
-    case "list": return "Talk";
-    case "schedule": return "Schedule";
-    case "notes": return "Notes";
-    case "ideas": return "Ideas";
-    case "memory": return "Memory";
-    case "watches": return "Watches";
-    case "rules": return "Rules";
-    case "self": return "Self";
-    case "visuals": return "Visuals";
-    case "capabilities": return "Explore";
-    default: return undefined;
+    case "home": return "home";
+    case "today": return "today";
+    // A brand-new composition is "New chat"; every existing conversation, and the list of them, is Talk.
+    case "chat": return v.sessionId === null ? "new" : "talk";
+    case "list": return "talk";
+    case "schedule": return "calendar";
+    case "notes": return "notes";
+    case "ideas": return "ideas";
+    case "memory": return "memory";
+    case "watches": return "reminders";
+    case "capabilities": return "explore";
+    case "visuals": return "visuals";
+    case "activity": return "activity";
+    case "self": return "self";
+    case "rules": return "settings";
+    default: return null;
   }
 }
 
-/** Mission Control, the same window voice's Activity button opens. */
-function openActivity(): void {
-  window.open("/?mission-control=1", "ava-mission-control", "popup,width=1500,height=920,resizable=yes,scrollbars=no");
+const DESTINATIONS: Destination[] = [
+  { id: "new", label: "New chat", icon: <MessageSquarePlus size={18} />, group: "primary" },
+  { id: "home", label: "Home", icon: <House size={18} />, group: "primary" },
+  { id: "today", label: "Today", icon: <Sun size={18} />, group: "primary" },
+  { id: "talk", label: "Talk", icon: <MessageSquareText size={18} />, group: "primary" },
+  { id: "notes", label: "Notes", icon: <NotebookPen size={18} />, group: "primary" },
+  { id: "calendar", label: "Calendar", icon: <CalendarDays size={18} />, group: "primary" },
+  { id: "ideas", label: "Ideas", icon: <Lightbulb size={18} />, group: "primary" },
+  { id: "memory", label: "Memory", icon: <Brain size={18} />, group: "system" },
+  { id: "reminders", label: "Reminders & watches", icon: <AlarmClock size={18} />, group: "system" },
+  { id: "explore", label: "Explore AVA", icon: <Radar size={18} />, group: "system" },
+  { id: "visuals", label: "Visual explanations", icon: <Presentation size={18} />, group: "system" },
+  { id: "activity", label: "Activity", icon: <Activity size={18} />, group: "system" },
+  { id: "self", label: "Self development", icon: <Sparkles size={18} />, group: "system" },
+  { id: "settings", label: "Settings", icon: <Settings2 size={18} />, group: "system" },
+];
+
+const RECENT_LIMIT = 5;
+
+function formatRecentTime(value: number): string {
+  const date = new Date(value);
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/**
+ * Nika's recent conversations for the menu: the scoped human-only list, with
+ * the current conversation lifted to the top. A failed lookup shows nothing
+ * rather than a wrong list; "All conversations" stays available.
+ */
+function useRecentConversations(currentSessionId: string | null, enabled: boolean): RecentConversation[] {
+  const [recents, setRecents] = useState<RecentConversation[]>([]);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const page = await fetchSessionPage({ scope: "human", limit: RECENT_LIMIT });
+        if (cancelled) return;
+        const rows = [...page.sessions];
+        const at = currentSessionId ? rows.findIndex((row) => row.id === currentSessionId) : -1;
+        if (at > 0) rows.unshift(...rows.splice(at, 1));
+        setRecents(rows.map((row) => ({
+          id: row.id,
+          title: row.title?.trim() || "Untitled conversation",
+          meta: formatRecentTime(lastHumanActivity(row)),
+        })));
+      } catch {
+        if (!cancelled) setRecents([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentSessionId, enabled]);
+  return recents;
 }
 
 export function App() {
@@ -237,7 +285,9 @@ export function App() {
   // New genuinely discard that draft and mount a clean conversation.
   const [newChatRevision, setNewChatRevision] = useState(0);
   const [lastChatSessionId, setLastChatSessionId] = useState<string | null>(readStoredChat);
-  const [sidebarExpanded, setSidebarExpanded] = useState(readSidebarPreference);
+  // The bottom bar's draft lives here so menu changes and navigation never lose it.
+  const [barDraft, setBarDraft] = useState("");
+  const barSendLock = useRef(false);
   const reduced = useReducedMotion();
 
   // The ONE remembered conversation shared by Chat, Voice and the sidebar. It
@@ -265,11 +315,6 @@ export function App() {
 
   const openChat = useCallback((sessionId: string | null, options?: { audit?: boolean }) => {
     setView({ name: "chat", sessionId, ...(options?.audit ? { audit: true } : {}) });
-  }, []);
-
-  const setSidebarOpen = useCallback((expanded: boolean) => {
-    setSidebarExpanded(expanded);
-    try { window.localStorage.setItem(SIDEBAR_STORAGE_KEY, String(expanded)); } catch { /* non-critical */ }
   }, []);
 
   const openNewChat = (initialText?: string) => {
@@ -360,24 +405,43 @@ export function App() {
     intent: lastChatSessionId ? "resume" : "continue",
   });
 
-  // Everyday destinations first; AVA's own tools live under System. Recent
-  // conversations are fetched by the sidebar, this array is routing-only.
-  const navItems: AppSidebarItem[] = [
-    { name: "Today", label: "Today", icon: Sun, group: "primary", onSelect: () => setView({ name: "today" }) },
-    { name: "Talk", label: "Talk", icon: MessageSquareText, group: "primary", onSelect: openTalk },
-    { name: "Schedule", label: "Schedule", icon: CalendarClock, group: "primary", onSelect: () => setView({ name: "schedule" }) },
-    { name: "Notes", label: "Notes", icon: NotebookPen, group: "primary", onSelect: () => setView({ name: "notes" }) },
-    { name: "Ideas", label: "Ideas", icon: Lightbulb, group: "primary", onSelect: () => setView({ name: "ideas" }) },
-    { name: "Activity", label: "Activity", icon: Activity, group: "system", onSelect: openActivity },
-    { name: "Explore", label: "Explore AVA", icon: Radar, group: "system", onSelect: () => setView({ name: "capabilities" }) },
-    { name: "Watches", label: "Watches", icon: AlarmClock, group: "system", onSelect: () => setView({ name: "watches" }) },
-    { name: "Memory", label: "Memory", icon: Brain, group: "system", onSelect: () => setView({ name: "memory" }) },
-    { name: "Visuals", label: "Visual explanations", icon: Presentation, group: "system", onSelect: () => setView({ name: "visuals" }) },
-    { name: "Rules", label: "Settings & rules", icon: Settings2, group: "system", onSelect: () => setView({ name: "rules" }) },
-    { name: "Self", label: "Self development", icon: Sparkles, group: "system", onSelect: () => setView({ name: "self" }) },
-  ];
-  const activeNav = navForView(view);
-  const showNav = activeNav !== undefined;
+  const goHome = () => setView({ name: "home" });
+
+  const navigate = (id: string) => {
+    switch (id) {
+      case "new": openNewChat(); break;
+      case "home": goHome(); break;
+      case "today": setView({ name: "today" }); break;
+      case "talk": openTalk(); break;
+      case "notes": setView({ name: "notes" }); break;
+      case "calendar": setView({ name: "schedule" }); break;
+      case "ideas": setView({ name: "ideas" }); break;
+      case "memory": setView({ name: "memory" }); break;
+      case "reminders": setView({ name: "watches" }); break;
+      case "explore": setView({ name: "capabilities" }); break;
+      case "visuals": setView({ name: "visuals" }); break;
+      case "activity": setView({ name: "activity" }); break;
+      case "self": setView({ name: "self" }); break;
+      case "settings": setView({ name: "rules" }); break;
+      default: break;
+    }
+  };
+
+  // One bar send becomes exactly one new conversation turn. The lock holds
+  // until the resulting route commits, so a double press cannot start two.
+  useEffect(() => { barSendLock.current = false; }, [view]);
+  const sendFromBar = (text: string) => {
+    if (barSendLock.current) return;
+    barSendLock.current = true;
+    setBarDraft("");
+    withViewTransition(() => openNewChat(text));
+  };
+
+  const barCurrent = destinationForView(view);
+  const barVisible = view.name !== "splash";
+  // Talk and Voice have their own message controls; the bar shrinks to its menu button there.
+  const barCompact = view.name === "chat" || view.name === "voice";
+  const recents = useRecentConversations(lastChatSessionId, paired && barVisible);
 
   // Shared entry timing — the previous screen is already unmounted.
   // A destination owns the stage exclusively. React removes the previous
@@ -401,21 +465,7 @@ export function App() {
   return (
     <div className="relative w-full h-full overflow-hidden bg-black text-white">
       <GlassFilter />
-      <AppSidebar
-        items={navItems}
-        activeName={activeNav}
-        visible={showNav}
-        expanded={sidebarExpanded}
-        activeChatSessionId={lastChatSessionId}
-        onExpandedChange={setSidebarOpen}
-        onNewChat={() => openNewChat()}
-        onOpenChat={(sessionId) => openChat(sessionId)}
-        onOpenAllChats={() => setView({ name: "list" })}
-      />
-      <div
-        className="ava-app-stage"
-        data-sidebar-visible={showNav || undefined}
-      >
+      <div className="ava-app-stage">
       {/* Exactly one route surface is mounted at a time. Entry motion is small
           and compositor-only; destination changes never retain the old Home
           scene or run two heavyweight workspaces concurrently. */}
@@ -427,7 +477,29 @@ export function App() {
             data-view="splash"
             className="absolute inset-0"
           >
-            <Splash onDone={() => setView({ name: "today" })} />
+            <Splash onDone={goHome} />
+          </motion.div>
+        )}
+        {view.name === "home" && (
+          <motion.div
+            key="home"
+            data-view="home"
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <TodayScreen
+              onOpenChat={(sessionId) => openChat(sessionId)}
+              onStartChat={(text) => openNewChat(text)}
+              // Voice goes back to the remembered conversation exactly; with none
+              // remembered the server continues Nika's latest human chat.
+              onEnterVoice={enterVoiceFromToday}
+              onOpenTalk={() => setView({ name: "list" })}
+              onOpenNote={openNote}
+              onOpenIdeas={() => setView({ name: "ideas" })}
+              onOpenNotes={() => setView({ name: "notes" })}
+            />
           </motion.div>
         )}
         {view.name === "today" && (
@@ -450,6 +522,19 @@ export function App() {
               onOpenIdeas={() => setView({ name: "ideas" })}
               onOpenNotes={() => setView({ name: "notes" })}
             />
+          </motion.div>
+        )}
+        {view.name === "activity" && (
+          <motion.div
+            key="activity"
+            data-view="activity"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <MissionControlScreen />
           </motion.div>
         )}
         {view.name === "ideas" && (
@@ -494,7 +579,7 @@ export function App() {
               onSessionChange={rememberChat}
               onSessionUnavailable={forgetUnavailableChat}
               onNewChat={() => openNewChat()}
-              onOpenSessions={() => setView({ name: "today" })}
+              onOpenSessions={goHome}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenMemory={() => setView({ name: "memory" })}
               onOpenList={() => setView({ name: "list" })}
@@ -535,7 +620,7 @@ export function App() {
               onOpenConversations={() => setView({ name: "list" })}
               onExit={(sid) => {
                 if (view.from === "chat") openChat(sid);
-                else setView({ name: "today" });
+                else goHome();
               }}
               onSwitchToKeyboard={(sid) => openChat(sid)}
             />
@@ -552,7 +637,7 @@ export function App() {
             transition={enterT}
           >
             <MemoryScreen
-              onClose={() => setView({ name: "today" })}
+              onClose={goHome}
               onOpenChat={(sessionId) => openChat(sessionId)}
             />
           </motion.div>
@@ -567,7 +652,7 @@ export function App() {
             animate={SCREEN.to}
             transition={enterT}
           >
-            <RulesScreen onClose={() => setView({ name: "today" })} />
+            <RulesScreen onClose={goHome} />
           </motion.div>
         )}
         {view.name === "self" && (
@@ -580,7 +665,7 @@ export function App() {
             animate={SCREEN.to}
             transition={enterT}
           >
-            <SelfScreen onClose={() => setView({ name: "today" })} />
+            <SelfScreen onClose={goHome} />
           </motion.div>
         )}
         {view.name === "notes" && (
@@ -662,7 +747,7 @@ export function App() {
             transition={enterT}
           >
             <ChatListScreen
-              onClose={() => setView({ name: "today" })}
+              onClose={goHome}
               onOpenChat={(sid, options) => (sid ? openChat(sid, options) : openNewChat())}
             />
           </motion.div>
@@ -671,6 +756,22 @@ export function App() {
       </DeferredScreenBoundary>
 
       </div>
+      {/* Mounted once, outside the route switch, so it never remounts on navigation. */}
+      {barVisible && (
+        <BottomBar
+          destinations={DESTINATIONS}
+          current={barCurrent}
+          onNavigate={(id) => withViewTransition(() => navigate(id))}
+          recents={recents}
+          onOpenRecent={(sessionId) => withViewTransition(() => openChat(sessionId))}
+          onOpenAllConversations={() => withViewTransition(() => setView({ name: "list" }))}
+          draft={barDraft}
+          onDraftChange={setBarDraft}
+          onSend={sendFromBar}
+          onTalk={enterVoiceFromToday}
+          compact={barCompact}
+        />
+      )}
     </div>
   );
 }

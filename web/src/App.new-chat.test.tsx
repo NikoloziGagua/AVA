@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-const state = vi.hoisted(() => ({ chatLoads: 0, visualLoads: 0 }));
+const state = vi.hoisted(() => ({ chatLoads: 0, visualLoads: 0, chatMounts: [] as string[] }));
 
 vi.mock("./auth/tokens.js", () => ({ getToken: () => "paired" }));
 vi.mock("./lib/useReducedMotion.js", () => ({ useReducedMotion: () => true }));
@@ -34,7 +34,7 @@ vi.mock("motion/react", async () => {
     AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
   };
 });
-// The real sidebar renders; its recent-chats lookup must not reach the network.
+// The real bottom bar renders; its recent-chats lookup must not reach the network.
 vi.mock("./api.js", async () => ({
   ...(await vi.importActual<typeof import("./api.js")>("./api.js")),
   fetchSessionPage: async () => ({ sessions: [], nextCursor: null }),
@@ -59,6 +59,8 @@ vi.mock("./chat/ChatScreen.js", async () => {
       onOpenSaved?: (item: { kind: "note" | "idea" | "reminder" | "watch" | "memory"; id: string; title: string }) => void;
     }) => {
       const [draftRevision, setDraftRevision] = React.useState(0);
+      // Each mount is one conversation start; a real ChatScreen sends initialText once per mount.
+      React.useEffect(() => { state.chatMounts.push(initialText ?? ""); }, []);
       return (
         <div data-testid="mock-chat">
           session-{sessionId ?? "new"}-draft-{draftRevision}-audit-{String(!!audit)}
@@ -173,12 +175,16 @@ function BrokenWorkspace(): never {
   throw new Error("chunk unavailable");
 }
 
-/** Opens the System group; the compact rail expands onto it. */
-function openSystem() {
-  if (!screen.queryByRole("group", { name: "System tools" })) {
-    fireEvent.click(screen.getByRole("button", { name: "System" }));
-  }
-  return screen.getByRole("group", { name: "System tools" });
+/** Opens the bottom-bar menu if it is closed and returns it. */
+function openMenu(): HTMLElement {
+  const toggle = screen.queryByRole("button", { name: "Open menu" });
+  if (toggle) fireEvent.click(toggle);
+  return document.querySelector<HTMLElement>('[role="dialog"][aria-label="Menu"]')!;
+}
+
+/** Chooses a destination from the bottom-bar menu. */
+function go(label: string) {
+  fireEvent.click(within(openMenu()).getByRole("button", { name: label }));
 }
 
 describe("App navigation", () => {
@@ -200,14 +206,15 @@ describe("App navigation", () => {
     expect(screen.getByText("Splash")).toBeTruthy();
     expect(state.chatLoads).toBe(0);
     expect(state.visualLoads).toBe(0);
-    expect(document.querySelector(".ava-sidebar")?.getAttribute("data-expanded")).toBeNull();
+    // The intro is immersive: no bottom bar yet.
+    expect(screen.queryByRole("navigation", { name: "AVA" })).toBeNull();
   });
 
-  it("plays the intro once per tab and then lands on Today", () => {
+  it("plays the intro once per tab and then lands on Home", () => {
     window.sessionStorage.clear();
     const first = render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "mock splash done" }));
-    expect(screen.getByTestId("mock-today")).toBeTruthy();
+    expect(document.querySelector('[data-view="home"]')).toBeTruthy();
     expect(window.sessionStorage.getItem("ava:splash-seen")).toBe("1");
     first.unmount();
     render(<App />);
@@ -223,56 +230,73 @@ describe("App navigation", () => {
     expect(screen.getByTestId("mock-today")).toBeTruthy();
   });
 
-  it("opens on Today and reaches every everyday destination", async () => {
+  it("opens on Home and reaches every everyday destination from the menu", async () => {
     render(<App />);
     expect(screen.getByTestId("mock-today")).toBeTruthy();
-    expect(document.querySelector('[data-view="today"]')).toBeTruthy();
+    expect(document.querySelector('[data-view="home"]')).toBeTruthy();
 
-    // Every destination but Today now loads on first use.
-    fireEvent.click(screen.getByRole("button", { name: "Talk" }));
+    // Every destination but Home and Today loads on first use.
+    go("Talk");
     expect(await screen.findByText("chat-list-screen", undefined, LAZY_ROUTE)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
+    go("Calendar");
     expect(await screen.findByText("schedule-screen", undefined, LAZY_ROUTE)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+    go("Notes");
     expect(await screen.findByText("notes-initial-none", undefined, LAZY_ROUTE)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Ideas" }));
+    go("Ideas");
     expect(await screen.findByText("ideas-screen", undefined, LAZY_ROUTE)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    go("New chat");
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-new");
-    fireEvent.click(screen.getByRole("button", { name: "Today" }));
-    expect(screen.getByTestId("mock-today")).toBeTruthy();
+    go("Today");
+    expect(document.querySelector('[data-view="today"]')).toBeTruthy();
+    go("Home");
+    expect(document.querySelector('[data-view="home"]')).toBeTruthy();
   });
 
-  it("keeps every previous destination under System, plus Activity", async () => {
+  // Temporary until phase C redesigns Home: both render the Today screen but are
+  // distinct destinations, so replacing Home later changes no navigation.
+  it("keeps Home and Today as distinct destinations while both show Today", () => {
     render(<App />);
-    const group = openSystem();
-    const labels = Array.from(group.querySelectorAll("button")).map((button) => button.getAttribute("aria-label"));
+    expect(document.querySelector('[data-view="home"]')).toBeTruthy();
+    expect(within(openMenu()).getByRole("button", { name: "Home" }).getAttribute("aria-current")).toBe("page");
+    go("Today");
+    expect(document.querySelector('[data-view="today"]')).toBeTruthy();
+    expect(document.querySelector('[data-view="home"]')).toBeNull();
+    expect(within(openMenu()).getByRole("button", { name: "Today" }).getAttribute("aria-current")).toBe("page");
+    expect(within(openMenu()).getByRole("button", { name: "Home" }).hasAttribute("aria-current")).toBe(false);
+  });
+
+  it("keeps every previous destination in the menu's AVA section, plus Activity", async () => {
+    render(<App />);
+    const menu = openMenu();
+    const section = within(menu).getByRole("heading", { name: "AVA" }).parentElement!;
+    const labels = Array.from(section.querySelectorAll("button")).map((button) => button.textContent);
     expect(labels).toEqual([
-      "Activity", "Explore AVA", "Watches", "Memory",
-      "Visual explanations", "Settings & rules", "Self development",
+      "Memory", "Reminders & watches", "Explore AVA", "Visual explanations", "Activity", "Self development", "Settings",
     ]);
 
     const destinations: Array<[string, string]> = [
       ["Explore AVA", "capabilities"],
-      ["Watches", "watches"],
+      ["Reminders & watches", "watches"],
       ["Memory", "memory"],
       ["Visual explanations", "visuals"],
-      ["Settings & rules", "rules"],
+      ["Settings", "rules"],
       ["Self development", "self"],
+      ["Activity", "activity"],
     ];
     for (const [label, view] of destinations) {
-      fireEvent.click(within(openSystem()).getByRole("button", { name: label }));
-      // Explore, Memory and Visuals are lazy routes.
+      go(label);
+      // Explore, Memory, Visuals and Activity are lazy routes.
       await waitFor(() => expect(document.querySelector(`[data-view="${view}"]`), label).toBeTruthy(), LAZY_ROUTE);
     }
   });
 
-  it("opens Activity as Mission Control without leaving the current screen", () => {
+  it("opens Activity inside AVA instead of a separate window", async () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     render(<App />);
-    fireEvent.click(within(openSystem()).getByRole("button", { name: "Activity" }));
-    expect(open).toHaveBeenCalledWith("/?mission-control=1", "ava-mission-control", expect.any(String));
-    expect(screen.getByTestId("mock-today")).toBeTruthy();
+    go("Activity");
+    expect(await screen.findByText("mission-control-screen", undefined, LAZY_ROUTE)).toBeTruthy();
+    expect(open).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-view="activity"]')).toBeTruthy();
   });
 
   it("exposes accessible loading and reload recovery states", async () => {
@@ -301,12 +325,12 @@ describe("App navigation", () => {
 
   it("mounts a clean ChatScreen every time New is pressed", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    go("New chat");
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock change draft" }));
     expect(screen.getByTestId("mock-chat").textContent).toContain("draft-1");
 
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    go("New chat");
     await waitFor(() => expect(screen.getByTestId("mock-chat").textContent).toContain("draft-0"));
   });
 
@@ -320,7 +344,7 @@ describe("App navigation", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "mock today note" }));
     expect(await screen.findByText("notes-initial-note-7", undefined, LAZY_ROUTE)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Ideas" }));
+    go("Ideas");
     fireEvent.click(await screen.findByRole("button", { name: "mock open idea" }, LAZY_ROUTE));
     expect(await screen.findByText("notes-initial-idea-3", undefined, LAZY_ROUTE)).toBeTruthy();
   });
@@ -328,7 +352,7 @@ describe("App navigation", () => {
   it("unmounts Today before another workspace is presented", async () => {
     render(<App />);
     expect(screen.getByRole("button", { name: "mock today command" })).toBeTruthy();
-    fireEvent.click(within(openSystem()).getByRole("button", { name: "Explore AVA" }));
+    go("Explore AVA");
     expect(await screen.findByText("explorer-workspace")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "mock today command" })).toBeNull();
     expect(document.querySelectorAll("[data-view]")).toHaveLength(1);
@@ -337,8 +361,8 @@ describe("App navigation", () => {
 
   it("has retired the legacy Strategy Room: no destination and no chat handoff", async () => {
     render(<App />);
-    expect(within(openSystem()).queryByRole("button", { name: "Strategy Room" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    expect(within(openMenu()).queryByRole("button", { name: "Strategy Room" })).toBeNull();
+    go("New chat");
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock take to room" }));
     expect(screen.queryByText(/room-source-/)).toBeNull();
@@ -347,7 +371,7 @@ describe("App navigation", () => {
 
   it("opens the exact AVA visual emitted by the chat tool path", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    go("New chat");
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock open visual" }));
     expect(await screen.findByText("visual-id-visual_abcdefgh")).toBeTruthy();
@@ -356,7 +380,7 @@ describe("App navigation", () => {
   it("opens each kind of item from a reply's Saved card in its own place", async () => {
     render(<App />);
     const openChat = async () => {
-      fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+      go("New chat");
       await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
     };
     await openChat();
@@ -378,7 +402,7 @@ describe("App navigation", () => {
 
   it("hands voice the session ChatScreen actually created, not the stale null route value", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    go("New chat");
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
     expect(await screen.findByText(/voice-session-internal-chat-17-intent-resume/, undefined, LAZY_ROUTE)).toBeTruthy();
@@ -386,7 +410,7 @@ describe("App navigation", () => {
 
   it("marks voice entry from a blank New chat as a fresh conversation", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    go("New chat");
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock enter blank voice" }));
     expect(await screen.findByText(/voice-session-none-intent-new/, undefined, LAZY_ROUTE)).toBeTruthy();
@@ -412,7 +436,7 @@ describe("App navigation", () => {
     expect(window.localStorage.getItem("ava:last-chat-session")).toBe("voice-bound-5");
     fireEvent.click(screen.getByRole("button", { name: "mock voice exit" }));
     expect(screen.getByTestId("mock-today")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Talk" }));
+    go("Talk");
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-voice-bound-5");
   });
 
@@ -449,10 +473,10 @@ describe("App navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "mock voice exit" }));
     // A different conversation becomes current, then a new voice visit finds it
     // unavailable before binding anything.
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    go("New chat");
     fireEvent.click(await screen.findByRole("button", { name: "mock establish session" }));
     expect(window.localStorage.getItem("ava:last-chat-session")).toBe("internal-chat-17");
-    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    go("Today");
     fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
     expect(await screen.findByText(/voice-session-internal-chat-17-intent-resume/, undefined, LAZY_ROUTE)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "mock voice unavailable" }));
@@ -486,7 +510,7 @@ describe("App navigation", () => {
   it("opens a watch run for reference without making it the current chat", async () => {
     window.localStorage.setItem("ava:last-chat-session", "mine-1");
     render(<App />);
-    fireEvent.click(within(openSystem()).getByRole("button", { name: "Watches" }));
+    go("Reminders & watches");
     fireEvent.click(screen.getByRole("button", { name: "mock open watch run" }));
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-watch-run-9-draft-0-audit-true");
     expect(window.localStorage.getItem("ava:last-chat-session")).toBe("mine-1");
@@ -518,11 +542,11 @@ describe("App navigation", () => {
 
   it("Talk returns directly to the same chat after visiting another workspace", async () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
+    go("New chat");
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock establish session" }));
-    fireEvent.click(within(openSystem()).getByRole("button", { name: "Explore AVA" }));
-    fireEvent.click(screen.getByRole("button", { name: "Talk" }));
+    go("Explore AVA");
+    go("Talk");
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-internal-chat-17");
   });
 
@@ -531,15 +555,90 @@ describe("App navigation", () => {
     const first = render(<App />);
     first.unmount();
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Talk" }));
+    go("Talk");
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-persisted-chat-42");
   });
 
   it("Schedule's only action goes to Talk", async () => {
     window.localStorage.setItem("ava:last-chat-session", "persisted-chat-42");
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
+    go("Calendar");
     fireEvent.click(await screen.findByRole("button", { name: "mock schedule talk" }, LAZY_ROUTE));
     expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-persisted-chat-42");
+  });
+
+  describe("bottom bar", () => {
+    beforeEach(() => { state.chatMounts.length = 0; });
+
+    it("sends the bar's text as exactly one new conversation, even on a double press", async () => {
+      render(<App />);
+      const input = screen.getByLabelText("Message AVA") as HTMLInputElement;
+      fireEvent.change(input, { target: { value: "Plan my day" } });
+      const form = input.closest("form")!;
+      fireEvent.submit(form);
+      fireEvent.submit(form);
+      expect((await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE)).textContent).toContain("initial-Plan my day");
+      expect(state.chatMounts).toEqual(["Plan my day"]);
+      expect((screen.getByLabelText("Message AVA") as HTMLInputElement).value).toBe("");
+    });
+
+    it("is mounted once: navigation and the menu never remount it or lose the draft", async () => {
+      render(<App />);
+      const bar = screen.getByRole("navigation", { name: "AVA" });
+      fireEvent.change(screen.getByLabelText("Message AVA"), { target: { value: "half-written thought" } });
+      go("Notes");
+      expect(await screen.findByText("notes-initial-none", undefined, LAZY_ROUTE)).toBeTruthy();
+      go("Today");
+      expect(screen.getByRole("navigation", { name: "AVA" })).toBe(bar);
+      expect((screen.getByLabelText("Message AVA") as HTMLInputElement).value).toBe("half-written thought");
+    });
+
+    it("shrinks to its menu button on Talk and Voice, so there is never a second message box", async () => {
+      render(<App />);
+      const bar = screen.getByRole("navigation", { name: "AVA" });
+      fireEvent.change(screen.getByLabelText("Message AVA"), { target: { value: "kept for later" } });
+      go("New chat");
+      await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
+      expect(bar.hasAttribute("data-compact")).toBe(true);
+      expect(within(bar).queryByRole("button", { name: "Send" })).toBeNull();
+      expect(within(bar).queryByRole("button", { name: "Talk to AVA" })).toBeNull();
+      expect(within(bar).queryByRole("textbox")).toBeNull();
+
+      fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
+      await screen.findByText(/voice-session-/, undefined, LAZY_ROUTE);
+      expect(screen.getByRole("navigation", { name: "AVA" })).toBe(bar);
+      expect(bar.hasAttribute("data-compact")).toBe(true);
+      // Voice keeps the way back: the menu still opens from the compact button.
+      go("Home");
+      expect(document.querySelector('[data-view="home"]')).toBeTruthy();
+      expect(bar.hasAttribute("data-compact")).toBe(false);
+      expect((screen.getByLabelText("Message AVA") as HTMLInputElement).value).toBe("kept for later");
+    });
+
+    it("returns focus to the menu button when the menu closes with Escape", () => {
+      render(<App />);
+      const menu = openMenu();
+      fireEvent.keyDown(within(menu).getByRole("button", { name: "Home" }), { key: "Escape" });
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "Open menu" }));
+    });
+
+    it("goes Home when leaving Voice that was entered from the landing page", async () => {
+      render(<App />);
+      fireEvent.click(screen.getByRole("button", { name: "mock today voice" }));
+      fireEvent.click(await screen.findByRole("button", { name: "mock voice exit" }, LAZY_ROUTE));
+      expect(document.querySelector('[data-view="home"]')).toBeTruthy();
+    });
+
+    it("lists recent human conversations and opens one", async () => {
+      const api = await import("./api.js");
+      vi.spyOn(api, "fetchSessionPage").mockResolvedValue({
+        sessions: [{ id: "recent-1", title: "Agile reflection plan", lastHumanMessageAt: Date.now(), updatedAt: Date.now(), createdAt: Date.now() } as never],
+        nextCursor: null,
+      } as never);
+      render(<App />);
+      const menu = openMenu();
+      fireEvent.click(await within(menu).findByRole("button", { name: /Agile reflection plan/ }));
+      expect((await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE)).textContent).toContain("session-recent-1");
+    });
   });
 });

@@ -303,7 +303,7 @@ function VoiceScreenBody({
         }}
       />
 
-      <div className="hud absolute left-5 top-5 z-20 text-[10px]" style={{ color: "var(--ac)" }}>{hudLabel}</div>
+      <div className="hud absolute left-20 top-5 z-20 text-[10px]" style={{ color: "var(--ac)" }}>{hudLabel}</div>
       <button
         onClick={() => window.open(
           "/?mission-control=1",

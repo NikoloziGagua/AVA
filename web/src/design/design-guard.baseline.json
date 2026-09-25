@@ -1,14 +1,25 @@
 {
-  "migrated": [],
+  "migrated": [
+    "approvals/ApprovalCard.tsx",
+    "chat/AssistantMarkdown.tsx",
+    "chat/ChatScreen.tsx",
+    "chat/MemoryContextCapsule.tsx",
+    "chat/MessageActions.tsx",
+    "chat/MessageList.tsx",
+    "chat/RoomPostReceipt.tsx",
+    "chat/SavedItemsCard.tsx",
+    "chat/StepsSheet.tsx",
+    "chat/TaskReceiptCard.tsx",
+    "chat/ThinkingIndicator.tsx",
+    "chat/ToolCallChip.tsx",
+    "home/HomeScreen.tsx",
+    "home/oneThing.ts",
+    "orbit/ChatListScreen.tsx"
+  ],
   "files": {
     "App.tsx": {
       "tinyText": 1,
       "rawColour": 0,
-      "backdrop": 1
-    },
-    "approvals/ApprovalCard.tsx": {
-      "tinyText": 4,
-      "rawColour": 10,
       "backdrop": 1
     },
     "auth/PairingScreen.tsx": {
@@ -26,11 +37,6 @@
       "rawColour": 7,
       "backdrop": 0
     },
-    "chat/ChatScreen.tsx": {
-      "tinyText": 1,
-      "rawColour": 0,
-      "backdrop": 0
-    },
     "chat/CommandBar.tsx": {
       "tinyText": 0,
       "rawColour": 6,
@@ -40,41 +46,6 @@
       "tinyText": 1,
       "rawColour": 22,
       "backdrop": 2
-    },
-    "chat/MemoryContextCapsule.tsx": {
-      "tinyText": 6,
-      "rawColour": 0,
-      "backdrop": 0
-    },
-    "chat/MessageActions.tsx": {
-      "tinyText": 0,
-      "rawColour": 4,
-      "backdrop": 0
-    },
-    "chat/MessageList.tsx": {
-      "tinyText": 3,
-      "rawColour": 8,
-      "backdrop": 1
-    },
-    "chat/RoomPostReceipt.tsx": {
-      "tinyText": 1,
-      "rawColour": 0,
-      "backdrop": 0
-    },
-    "chat/SavedItemsCard.tsx": {
-      "tinyText": 2,
-      "rawColour": 0,
-      "backdrop": 0
-    },
-    "chat/TaskReceiptCard.tsx": {
-      "tinyText": 15,
-      "rawColour": 19,
-      "backdrop": 0
-    },
-    "chat/ToolCallChip.tsx": {
-      "tinyText": 2,
-      "rawColour": 0,
-      "backdrop": 0
     },
     "components/ava/EdgeFade.tsx": {
       "tinyText": 0,
@@ -244,11 +215,6 @@
     "notes/ProjectBrief.tsx": {
       "tinyText": 27,
       "rawColour": 3,
-      "backdrop": 0
-    },
-    "orbit/ChatListScreen.tsx": {
-      "tinyText": 5,
-      "rawColour": 0,
       "backdrop": 0
     },
     "reminders/presenter.ts": {

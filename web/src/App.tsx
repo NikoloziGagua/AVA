@@ -28,12 +28,13 @@ import {
   Sun,
 } from "lucide-react";
 import { Flip } from "./lib/gsap.js";
-import { BottomBar, withViewTransition, type Destination, type RecentConversation } from "./design/index.js";
+import { BottomBar, withViewTransition, type BarConversation, type Destination, type RecentConversation } from "./design/index.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
 import { useReducedMotion } from "./lib/useReducedMotion.js";
 import { computeReduced } from "./lib/motionPref.js";
 import { getToken } from "./auth/tokens.js";
-import { fetchSessionPage, lastHumanActivity, type ConversationIntent } from "./api.js";
+import { fetchSessionPage, lastHumanActivity, transcribeAudio, type ConversationIntent } from "./api.js";
+import { isCoarsePointer } from "./lib/media.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
 import { TodayScreen } from "./today/TodayScreen.js";
 import { HomeScreen } from "./home/HomeScreen.js";
@@ -290,6 +291,20 @@ export function App() {
   // The bottom bar's draft lives here so menu changes and navigation never lose it.
   const [barDraft, setBarDraft] = useState("");
   const barSendLock = useRef(false);
+  // While Talk is open it lends the bar its conversation: sends go there, Send
+  // becomes Stop while AVA replies, and voice continues that conversation.
+  const [talkBar, setTalkBar] = useState<BarConversation | null>(null);
+  const [barFocus, setBarFocus] = useState(0);
+  const putInBar = useCallback((text: string) => {
+    setBarDraft(text);
+    setBarFocus((request) => request + 1);
+  }, []);
+  // Opening Talk on a desktop puts the cursor straight in the box; phones skip
+  // it so the soft keyboard doesn't cover the conversation uninvited.
+  const talkOpen = talkBar !== null;
+  useEffect(() => {
+    if (talkOpen && !isCoarsePointer()) setBarFocus((request) => request + 1);
+  }, [talkOpen]);
   const reduced = useReducedMotion();
 
   // The ONE remembered conversation shared by Chat, Voice and the sidebar. It
@@ -433,6 +448,11 @@ export function App() {
   // until the resulting route commits, so a double press cannot start two.
   useEffect(() => { barSendLock.current = false; }, [view]);
   const sendFromBar = (text: string) => {
+    if (talkBar) {
+      talkBar.onSend(text);
+      setBarDraft("");
+      return;
+    }
     if (barSendLock.current) return;
     barSendLock.current = true;
     setBarDraft("");
@@ -441,8 +461,9 @@ export function App() {
 
   const barCurrent = destinationForView(view);
   const barVisible = view.name !== "splash";
-  // Talk and Voice have their own message controls; the bar shrinks to its menu button there.
-  const barCompact = view.name === "chat" || view.name === "voice";
+  // Voice has its own controls; the bar shrinks to its menu button there. On
+  // Talk the bar is the message box.
+  const barCompact = view.name === "voice";
   const recents = useRecentConversations(lastChatSessionId, paired && barVisible);
 
   // Shared entry timing — the previous screen is already unmounted.
@@ -589,6 +610,8 @@ export function App() {
               })}
               onOpenVisual={(visualId) => setView({ name: "visuals", visualId })}
               onOpenSaved={openSavedItem}
+              onComposer={setTalkBar}
+              onDraft={putInBar}
             />
           </motion.div>
         )}
@@ -765,7 +788,12 @@ export function App() {
           draft={barDraft}
           onDraftChange={setBarDraft}
           onSend={sendFromBar}
-          onTalk={enterVoiceFromToday}
+          onTalk={talkBar ? talkBar.onVoice : enterVoiceFromToday}
+          busy={talkBar?.busy ?? false}
+          onStop={talkBar?.onStop}
+          dictate={talkBar ? transcribeAudio : undefined}
+          focusRequest={barFocus}
+          placeholder={talkBar ? "Message AVA…" : undefined}
           compact={barCompact}
           face={<FaceStill size={32} />}
         />

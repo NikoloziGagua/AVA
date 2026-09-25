@@ -31,7 +31,7 @@ vi.mock("../api.js", () => {
   };
 });
 
-import { ChatScreen } from "./ChatScreen.js";
+import { TalkScreen } from "./TalkScreen.test-helper.js";
 import { ApiError } from "../api.js";
 
 class FakeEventSource {
@@ -48,7 +48,7 @@ const unavailableError = () => new (ApiError as unknown as new (s: number, m: st
 );
 
 async function typeAndSend(text: string) {
-  const ta = await screen.findByPlaceholderText("Message Ava…");
+  const ta = await screen.findByRole("textbox", { name: "Message AVA" });
   fireEvent.change(ta, { target: { value: text } });
   fireEvent.keyDown(ta, { key: "Enter" });
 }
@@ -76,7 +76,7 @@ describe("ChatScreen conversation binding", () => {
         sessionId: "created-1",
         binding: { version: 1, sessionId: "created-1", origin: "human", resolution: "created" },
       });
-    render(<ChatScreen sessionId={null} {...noNav} onSessionChange={onSessionChange} />);
+    render(<TalkScreen sessionId={null} {...noNav} onSessionChange={onSessionChange} />);
 
     await typeAndSend("plan my week");
     await screen.findByText(/didn't send/i);
@@ -95,7 +95,7 @@ describe("ChatScreen conversation binding", () => {
   it("resumes the exact requested conversation, even before it finishes loading", async () => {
     fetchSession.mockReturnValue(new Promise(() => {})); // still hydrating
     sendMessage.mockResolvedValue({ sessionId: "exact-7" });
-    render(<ChatScreen sessionId="exact-7" {...noNav} />);
+    render(<TalkScreen sessionId="exact-7" {...noNav} />);
 
     await typeAndSend("one more thing");
     await waitFor(() => expect(sendMessage).toHaveBeenCalled());
@@ -111,7 +111,7 @@ describe("ChatScreen conversation binding", () => {
       session: { id: "legacy-1", title: "t", created_at: 0, updated_at: 0, status: "idle", pinned: 0, origin: "unknown" },
       messages: [],
     });
-    render(<ChatScreen sessionId="legacy-1" {...noNav} onSessionChange={onSessionChange} />);
+    render(<TalkScreen sessionId="legacy-1" {...noNav} onSessionChange={onSessionChange} />);
     await waitFor(() => expect(onSessionChange).toHaveBeenCalledWith("legacy-1"));
   });
 
@@ -121,11 +121,13 @@ describe("ChatScreen conversation binding", () => {
       session: { id: "auto-1", title: "Watch run", created_at: 0, updated_at: 0, status: "idle", pinned: 0, origin: "automation" },
       messages: [{ id: 1, role: "user", content: "[SCHEDULED WATCH CHECK]", created_at: 0 }],
     });
-    render(<ChatScreen sessionId="auto-1" {...noNav} onSessionChange={onSessionChange} onNewChat={() => {}} />);
+    render(<TalkScreen sessionId="auto-1" {...noNav} onSessionChange={onSessionChange} onNewChat={() => {}} />);
 
     expect(await screen.findByRole("note")).toBeTruthy();
     expect(screen.getByText(/automated run AVA did on its own/)).toBeTruthy();
-    expect(screen.queryByPlaceholderText("Message Ava…")).toBeNull();
+    // The run is never lent the bar: typing there starts a new conversation.
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Message AVA" }).getAttribute("placeholder")).toBe("Ask AVA anything…"));
+    expect(screen.queryByRole("button", { name: "Talk to AVA" })).toBeNull();
     expect(onSessionChange).not.toHaveBeenCalled();
   });
 
@@ -135,7 +137,7 @@ describe("ChatScreen conversation binding", () => {
       session: { id: "legacy-watch", title: "t", created_at: 0, updated_at: 0, status: "idle", pinned: 0, origin: "unknown" },
       messages: [],
     });
-    render(<ChatScreen sessionId="legacy-watch" audit {...noNav} onSessionChange={onSessionChange} />);
+    render(<TalkScreen sessionId="legacy-watch" audit {...noNav} onSessionChange={onSessionChange} />);
     expect(await screen.findByRole("note")).toBeTruthy();
     expect(onSessionChange).not.toHaveBeenCalled();
   });
@@ -145,7 +147,7 @@ describe("ChatScreen conversation binding", () => {
     const onNewChat = vi.fn();
     fetchSession.mockRejectedValue(unavailableError());
     render(
-      <ChatScreen
+      <TalkScreen
         sessionId="deleted-3"
         {...noNav}
         onSessionUnavailable={onSessionUnavailable}
@@ -167,7 +169,7 @@ describe("ChatScreen conversation binding", () => {
     let answer!: (value: unknown) => void;
     sendMessage.mockReturnValue(new Promise((resolve) => { answer = resolve; }));
     const view = render(
-      <ChatScreen
+      <TalkScreen
         sessionId={null}
         {...noNav}
         onSessionChange={onSessionChange}
@@ -192,12 +194,12 @@ describe("ChatScreen conversation binding", () => {
       messages: [],
     });
     sendMessage.mockRejectedValue(unavailableError());
-    render(<ChatScreen sessionId="s9" {...noNav} onSessionUnavailable={onSessionUnavailable} onNewChat={() => {}} />);
+    render(<TalkScreen sessionId="s9" {...noNav} onSessionUnavailable={onSessionUnavailable} onNewChat={() => {}} />);
 
     await typeAndSend("remember the exam on Monday");
     expect(await screen.findByText("This conversation is unavailable.")).toBeTruthy();
     expect(onSessionUnavailable).toHaveBeenCalledWith("s9");
-    const box = screen.getByPlaceholderText("Message Ava…") as HTMLTextAreaElement;
+    const box = screen.getByRole("textbox", { name: "Message AVA" }) as HTMLTextAreaElement;
     await waitFor(() => expect(box.value).toBe("remember the exam on Monday"));
   });
 });

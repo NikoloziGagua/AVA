@@ -1,4 +1,5 @@
-import { BrainCircuit, Check, CircleOff, Database, ShieldCheck, TriangleAlert } from "lucide-react";
+import { BrainCircuit, Check, ChevronDown, CircleOff, Database, ShieldCheck, TriangleAlert } from "lucide-react";
+import { cn } from "../design/cn.js";
 import type { MemoryContext } from "./memory-context.js";
 
 function labelFor(context: MemoryContext): string {
@@ -12,58 +13,62 @@ function labelFor(context: MemoryContext): string {
 }
 
 function Icon({ status }: { status: MemoryContext["status"] }) {
-  if (status === "used") return <BrainCircuit size={13} aria-hidden="true" />;
-  if (status === "no_match" || status === "suppressed") return <CircleOff size={13} aria-hidden="true" />;
-  return <TriangleAlert size={13} aria-hidden="true" />;
+  if (status === "used") return <BrainCircuit size={15} aria-hidden="true" />;
+  if (status === "no_match" || status === "suppressed") return <CircleOff size={15} aria-hidden="true" />;
+  return <TriangleAlert size={15} aria-hidden="true" />;
 }
 
+const tag = "inline-flex items-center gap-1.5 rounded-full bg-glass px-2.5 py-1";
+
+/** Which memory AVA used for this reply, and why: labels and evidence only, never private text. */
 export function MemoryContextCapsule({ context }: { context: MemoryContext }) {
   const used = context.status === "used";
+  const failed = context.status === "unavailable" || context.status === "error";
   return (
     <details
       data-testid="memory-context"
-      className={`group/memory mt-1 rounded-xl border px-3 py-2 text-[11px] ${
-        used
-          ? "border-violet-300/20 bg-violet-300/[0.06] text-violet-50/75"
-          : "border-white/10 bg-white/[0.025] text-white/48"
-      }`}
+      className={cn(
+        "group/memory rounded-card px-4 py-2.5 text-meta",
+        used ? "bg-info-soft text-ink" : failed ? "bg-warning-soft text-ink" : "bg-glass text-ink-2",
+      )}
     >
-      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60 [&::-webkit-details-marker]:hidden">
-        <Icon status={context.status} />
-        <span className="font-medium tracking-wide">{labelFor(context)}</span>
-        {context.project && <span className="ml-auto truncate text-[10px] text-white/35">{context.project}</span>}
-        <span className="ml-auto text-[9px] uppercase tracking-[0.16em] text-white/30 group-open/memory:hidden">Details</span>
+      <summary className="ds-focus -mx-1 flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-control px-1 [&::-webkit-details-marker]:hidden">
+        <span className={cn("shrink-0", used ? "text-info" : failed ? "text-warning" : "text-ink-3")}><Icon status={context.status} /></span>
+        <span className="font-medium">{labelFor(context)}</span>
+        {context.project && <span className="ml-auto hidden min-w-0 truncate text-label text-ink-3 sm:block">{context.project}</span>}
+        <ChevronDown size={15} aria-hidden="true" className={cn("ml-auto shrink-0 text-ink-3 transition-transform group-open/memory:rotate-180", context.project && "sm:ml-0")} />
       </summary>
 
-      <div className="mt-2 space-y-2 border-t border-white/8 pt-2 leading-relaxed">
-        <p>{context.reason}</p>
-        <div className="flex flex-wrap gap-1.5 text-[10px] text-white/45">
-          <span className="inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-1">
-            <Database size={10} aria-hidden="true" />
+      <div className="mt-3 grid gap-3">
+        <p className="text-ink-2">{context.reason}</p>
+        {context.project && <p className="text-ink-2 sm:hidden">Project: {context.project}</p>}
+        <div className="flex flex-wrap gap-1.5 text-label text-ink-2">
+          <span className={tag}>
+            <Database size={13} aria-hidden="true" />
             {context.mode ? `${context.mode} retrieval` : "retrieval skipped"}
           </span>
-          <span className="inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-1">
-            {context.semanticAvailable ? <Check size={10} aria-hidden="true" /> : <CircleOff size={10} aria-hidden="true" />}
+          <span className={tag}>
+            {context.semanticAvailable ? <Check size={13} aria-hidden="true" /> : <CircleOff size={13} aria-hidden="true" />}
             semantic search {context.semanticAvailable ? "available" : "unavailable"}
           </span>
         </div>
-        {context.notice && <p className="text-amber-100/60">{context.notice}</p>}
+        {context.notice && <p className="text-warning">{context.notice}</p>}
         {context.selected.map((source) => (
-          <article key={source.entryId} className="rounded-lg border border-white/8 bg-black/15 p-2.5">
+          <article key={source.entryId} className="grid gap-1.5 rounded-control bg-surface p-3 shadow-e1">
             <div className="flex min-w-0 items-center gap-2">
-              <ShieldCheck size={12} className="shrink-0 text-emerald-300/70" aria-hidden="true" />
-              <strong className="min-w-0 truncate font-medium text-white/80">{source.title}</strong>
-              <span className="ml-auto shrink-0 uppercase tracking-[0.12em] text-white/30">{source.kind}</span>
+              <ShieldCheck size={14} className="shrink-0 text-success" aria-hidden="true" />
+              <strong className="min-w-0 truncate font-medium text-ink">{source.title}</strong>
+              <span className="ml-auto shrink-0 font-ui-mono text-label uppercase text-ink-3">{source.kind}</span>
             </div>
-            <p className="mt-1.5 text-white/48">{source.matchReason}</p>
-            <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[9px] uppercase tracking-[0.12em] text-white/30">
+            <p className="text-ink-2">{source.matchReason}</p>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 font-ui-mono text-label uppercase text-ink-3">
               <span>source {source.sourceStatus}</span>
               <span>{source.matchMode} match</span>
               {source.sourceTruncated && <span>bounded excerpt used</span>}
             </div>
           </article>
         ))}
-        <p className="text-[9px] uppercase tracking-[0.13em] text-white/25">
+        <p className="text-label text-ink-3">
           This receipt contains source labels and retrieval evidence, never the private source text.
         </p>
       </div>

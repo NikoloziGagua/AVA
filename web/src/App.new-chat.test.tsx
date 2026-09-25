@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
-const state = vi.hoisted(() => ({ chatLoads: 0, visualLoads: 0, chatMounts: [] as string[] }));
+const state = vi.hoisted(() => ({ chatLoads: 0, visualLoads: 0, chatMounts: [] as string[], talkSends: [] as string[], talkStops: 0 }));
 
 vi.mock("./auth/tokens.js", () => ({ getToken: () => "paired" }));
 vi.mock("./lib/useReducedMotion.js", () => ({ useReducedMotion: () => true }));
@@ -48,7 +48,7 @@ vi.mock("./chat/ChatScreen.js", async () => {
   state.chatLoads += 1;
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatScreen: ({ sessionId, initialText, audit, onOpenStrategy, onOpenVisual, onEnterVoice, onSessionChange, onOpenSaved }: {
+    ChatScreen: ({ sessionId, initialText, audit, onOpenStrategy, onOpenVisual, onEnterVoice, onSessionChange, onOpenSaved, onComposer, onDraft }: {
       sessionId?: string | null;
       initialText?: string;
       audit?: boolean;
@@ -57,8 +57,22 @@ vi.mock("./chat/ChatScreen.js", async () => {
       onEnterVoice?: (sessionId: string | null) => void;
       onSessionChange?: (sessionId: string) => void;
       onOpenSaved?: (item: { kind: "note" | "idea" | "reminder" | "watch" | "memory"; id: string; title: string }) => void;
+      onComposer?: (bar: { onSend: (text: string) => void; busy: boolean; onStop: () => void; onVoice: () => void } | null) => void;
+      onDraft?: (text: string) => void;
     }) => {
       const [draftRevision, setDraftRevision] = React.useState(0);
+      const [busy, setBusy] = React.useState(false);
+      // Like the real screen: lend the bar this conversation unless it is read-only.
+      React.useEffect(() => {
+        if (audit) return;
+        onComposer?.({
+          onSend: (text) => { state.talkSends.push(text); },
+          busy,
+          onStop: () => { state.talkStops += 1; },
+          onVoice: () => onEnterVoice?.("internal-chat-17"),
+        });
+        return () => onComposer?.(null);
+      }, [audit, busy]);
       // Each mount is one conversation start; a real ChatScreen sends initialText once per mount.
       React.useEffect(() => { state.chatMounts.push(initialText ?? ""); }, []);
       return (
@@ -66,6 +80,8 @@ vi.mock("./chat/ChatScreen.js", async () => {
           session-{sessionId ?? "new"}-draft-{draftRevision}-audit-{String(!!audit)}
           <span>initial-{initialText ?? "none"}</span>
           <button onClick={() => setDraftRevision((value) => value + 1)}>mock change draft</button>
+          <button onClick={() => setBusy((value) => !value)}>mock toggle busy</button>
+          <button onClick={() => onDraft?.("words given back")}>mock give words back</button>
           <button onClick={() => onSessionChange?.("internal-chat-17")}>mock establish session</button>
           <button onClick={() => onOpenStrategy?.("internal-chat-17")}>mock take to room</button>
           <button onClick={() => onOpenVisual?.("visual_abcdefgh")}>mock open visual</button>
@@ -202,6 +218,8 @@ describe("App navigation", () => {
     window.sessionStorage.clear();
     // The intro has already played in this tab; the splash tests clear this.
     window.sessionStorage.setItem("ava:splash-seen", "1");
+    state.talkSends = [];
+    state.talkStops = 0;
     window.history.replaceState(null, "", "/");
   });
   afterEach(() => {
@@ -602,26 +620,64 @@ describe("App navigation", () => {
       expect((screen.getByLabelText("Message AVA") as HTMLInputElement).value).toBe("half-written thought");
     });
 
-    it("shrinks to its menu button on Talk and Voice, so there is never a second message box", async () => {
+    it("is Talk's message box: sends go into that conversation, never a new one", async () => {
       render(<App />);
       const bar = screen.getByRole("navigation", { name: "AVA" });
-      fireEvent.change(screen.getByLabelText("Message AVA"), { target: { value: "kept for later" } });
       go("New chat");
       await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
-      expect(bar.hasAttribute("data-compact")).toBe(true);
-      expect(within(bar).queryByRole("button", { name: "Send" })).toBeNull();
-      expect(within(bar).queryByRole("button", { name: "Talk to AVA" })).toBeNull();
-      expect(within(bar).queryByRole("textbox")).toBeNull();
+      const mountsBefore = state.chatMounts.length;
+      expect(bar.hasAttribute("data-compact")).toBe(false);
+      const box = within(bar).getByRole("textbox", { name: "Message AVA" });
+      expect(box.getAttribute("placeholder")).toBe("Message AVA…");
+
+      fireEvent.change(box, { target: { value: "into this chat" } });
+      fireEvent.keyDown(box, { key: "Enter" });
+      expect(state.talkSends).toEqual(["into this chat"]);
+      expect((box as HTMLTextAreaElement).value).toBe("");
+      expect(state.chatMounts.length).toBe(mountsBefore);
+      // There is only ever one message box on screen.
+      expect(screen.getAllByRole("textbox", { name: /message/i })).toHaveLength(1);
+    });
+
+    it("turns Send into Stop while AVA replies, and keeps voice one tap away", async () => {
+      render(<App />);
+      go("New chat");
+      await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
+      fireEvent.click(screen.getByRole("button", { name: "mock toggle busy" }));
+      const bar = screen.getByRole("navigation", { name: "AVA" });
+      fireEvent.change(within(bar).getByRole("textbox", { name: "Message AVA" }), { target: { value: "wait for it" } });
+      fireEvent.keyDown(within(bar).getByRole("textbox", { name: "Message AVA" }), { key: "Enter" });
+      expect(state.talkSends).toEqual([]);
+      fireEvent.click(within(bar).getByRole("button", { name: "Stop AVA" }));
+      expect(state.talkStops).toBe(1);
+      fireEvent.click(within(bar).getByRole("button", { name: "Talk to AVA" }));
+      await screen.findByText(/voice-session-internal-chat-17/, undefined, LAZY_ROUTE);
+    });
+
+    it("gives words back into the bar and keeps a draft across Talk, Voice and Home", async () => {
+      render(<App />);
+      const bar = screen.getByRole("navigation", { name: "AVA" });
+      go("New chat");
+      await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
+      fireEvent.click(screen.getByRole("button", { name: "mock give words back" }));
+      const box = within(bar).getByRole("textbox", { name: "Message AVA" }) as HTMLTextAreaElement;
+      expect(box.value).toBe("words given back");
+      expect(document.activeElement).toBe(box);
 
       fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
       await screen.findByText(/voice-session-/, undefined, LAZY_ROUTE);
       expect(screen.getByRole("navigation", { name: "AVA" })).toBe(bar);
       expect(bar.hasAttribute("data-compact")).toBe(true);
+      expect(within(bar).queryByRole("textbox")).toBeNull();
       // Voice keeps the way back: the menu still opens from the compact button.
       go("Home");
       expect(document.querySelector('[data-view="home"]')).toBeTruthy();
       expect(bar.hasAttribute("data-compact")).toBe(false);
-      expect((screen.getByLabelText("Message AVA") as HTMLInputElement).value).toBe("kept for later");
+      expect((screen.getByLabelText("Message AVA") as HTMLTextAreaElement).value).toBe("words given back");
+      // Off Talk, the bar starts a new conversation again.
+      fireEvent.keyDown(screen.getByLabelText("Message AVA"), { key: "Enter" });
+      await screen.findByText("initial-words given back", undefined, LAZY_ROUTE);
+      expect(state.talkSends).toEqual([]);
     });
 
     it("returns focus to the menu button when the menu closes with Escape", () => {

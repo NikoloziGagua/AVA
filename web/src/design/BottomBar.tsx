@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, Mic, X } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowUp, AudioLines, LoaderCircle, Mic, Square, X } from "lucide-react";
 import { cn } from "./cn.js";
+import { insertDictation, useDictation, type Transcribe } from "./dictation.js";
 
 export type Destination = {
   id: string;
@@ -12,6 +13,20 @@ export type Destination = {
 };
 
 export type RecentConversation = { id: string; title: string; meta?: string };
+
+/**
+ * What a screen that owns a conversation (Talk) lends the bar, so the bar
+ * becomes that conversation's message box instead of starting a new one.
+ */
+export type BarConversation = {
+  /** Send into this conversation. */
+  onSend: (text: string) => void;
+  /** AVA is replying: Send becomes Stop, and nothing else can be sent. */
+  busy: boolean;
+  onStop: () => void;
+  /** Continue this conversation by voice. */
+  onVoice: () => void;
+};
 
 export type BottomBarProps = {
   destinations: readonly Destination[];
@@ -28,32 +43,60 @@ export type BottomBarProps = {
   onTalk?: () => void;
   /** True while a send is in flight; blocks a second send. */
   sending?: boolean;
+  /** AVA is replying in this conversation: Send becomes Stop. */
+  busy?: boolean;
+  onStop?: () => void;
+  /** Offers dictation into the draft. Nothing is ever sent by itself. */
+  dictate?: Transcribe;
+  /** Bump to put the cursor in the message box. */
+  focusRequest?: number;
   placeholder?: string;
   /** The mini face: a static image, never a second WebGL canvas. */
   face?: ReactNode;
   /**
-   * On screens that have their own message box (Talk, Voice) the bar shrinks to
-   * the round menu button in the top-left corner. It is the same mounted
-   * component, and its hidden input keeps the draft.
+   * On screens with their own controls (Voice) the bar shrinks to the round
+   * menu button in the top-left corner. It is the same mounted component, and
+   * its hidden input keeps the draft.
    */
   compact?: boolean;
 };
 
+const LINE = 44;
+const MAX_HEIGHT = 150;
+
 /**
  * The only navigation in AVA (contract ui-remodel v2 §4): a conversation bar at
- * the bottom that grows into the menu. The input stays mounted while the menu is
- * open, so a draft is never lost. Ctrl/Cmd+K toggles the menu, Esc closes it,
- * arrow keys move between its items.
+ * the bottom that grows into the menu, and on Talk is the message box itself.
+ * The input stays mounted while the menu is open, so a draft is never lost.
+ * Ctrl/Cmd+K toggles the menu, Esc closes it, arrow keys move between its items.
+ * Enter sends; Shift+Enter starts a new line.
  */
 export function BottomBar({
   destinations, current, onNavigate, recents = [], onOpenRecent, onOpenAllConversations,
-  draft, onDraftChange, onSend, onTalk, sending = false, placeholder = "Ask AVA anything…", face, compact = false,
+  draft, onDraftChange, onSend, onTalk, sending = false, busy = false, onStop, dictate, focusRequest = 0,
+  placeholder = "Ask AVA anything…", face, compact = false,
 }: BottomBarProps) {
   const [open, setOpen] = useState(false);
+  const [multiline, setMultiline] = useState(false);
   const menuId = useId();
+  const statusId = useId();
   const orbRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  const dictation = useDictation({
+    transcribe: dictate,
+    enabled: Boolean(dictate) && !compact,
+    onText: (transcript) => {
+      onDraftChange(insertDictation(draftRef.current, transcript));
+      requestAnimationFrame(() => inputRef.current?.focus());
+    },
+  });
+  const recording = dictation.state === "listening";
+  const dictationActive = dictation.state === "requesting" || recording || dictation.state === "transcribing";
 
   const close = useCallback((returnFocus = true) => {
     setOpen(false);
@@ -83,6 +126,39 @@ export function BottomBar({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
 
+  useEffect(() => {
+    if (focusRequest > 0 && !compact) inputRef.current?.focus();
+  }, [focusRequest, compact]);
+
+  // The box grows with its text, up to about six lines, then scrolls.
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.style.height = "0px";
+    const height = Math.min(Math.max(input.scrollHeight, LINE), MAX_HEIGHT);
+    input.style.height = `${height}px`;
+    setMultiline(height > LINE);
+  }, [draft]);
+
+  // Screens pad their bottom by --ds-bar-space so nothing hides behind the bar,
+  // however tall its draft grows.
+  const formRef = useRef<HTMLFormElement>(null);
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const form = formRef.current;
+    if (compact || !form) {
+      root.style.setProperty("--ds-bar-space", "0px");
+      return;
+    }
+    const publish = () => root.style.setProperty("--ds-bar-space", `${Math.ceil(form.getBoundingClientRect().height) + 12}px`);
+    publish();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(publish);
+    observer.observe(form);
+    return () => observer.disconnect();
+  }, [compact]);
+  useEffect(() => () => { document.documentElement.style.removeProperty("--ds-bar-space"); }, []);
+
   const go = (run: () => void) => { run(); close(false); };
 
   const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -97,17 +173,24 @@ export function BottomBar({
     items[next]?.focus();
   };
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
+  const submit = (event?: FormEvent) => {
+    event?.preventDefault();
     const text = draft.trim();
-    if (!text || sending || compact) return;
+    if (!text || sending || busy || compact) return;
     onSend(text);
+  };
+
+  const onInputKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter sends; Shift+Enter is a new line; an input method mid-word never sends.
+    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    submit();
   };
 
   const primary = destinations.filter((d) => d.group === "primary");
   const system = destinations.filter((d) => d.group === "system");
   const shownRecents = recents.slice(0, 5);
-  const canSend = Boolean(draft.trim()) && !sending;
+  const canSend = Boolean(draft.trim()) && !sending && !busy;
 
   const item = (d: Destination) => (
     <button
@@ -126,6 +209,37 @@ export function BottomBar({
       {d.meta && <span className="text-meta text-ink-3">{d.meta}</span>}
     </button>
   );
+
+  const roundButton = "ds-focus relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full transition-[transform,opacity] duration-150 active:scale-95";
+
+  // While AVA replies, Stop takes the main place and voice stays one quiet tap away.
+  const mainButton = busy && onStop ? (
+    <>
+      {onTalk && (
+        <button type="button" aria-label="Talk to AVA" onClick={onTalk} className={cn(roundButton, "text-ink-2 hover:bg-glass")}>
+          <Mic size={19} aria-hidden="true" />
+        </button>
+      )}
+      <button type="button" aria-label="Stop AVA" onClick={onStop} className={cn(roundButton, "bg-solid text-on-solid")}>
+        <Square size={15} fill="currentColor" aria-hidden="true" />
+      </button>
+    </>
+  ) : canSend || !onTalk ? (
+    <button type="submit" aria-label="Send" disabled={!canSend} className={cn(roundButton, "bg-solid text-on-solid disabled:opacity-40")}>
+      <ArrowUp size={19} aria-hidden="true" />
+    </button>
+  ) : (
+    <button type="button" aria-label="Talk to AVA" onClick={onTalk} className={cn(roundButton, "bg-solid text-on-solid")}>
+      <span aria-hidden="true" className="ds-shimmer" />
+      <Mic size={19} aria-hidden="true" />
+    </button>
+  );
+
+  const dictationStatus = dictation.state === "requesting" ? "Asking for the microphone…"
+    : recording ? "Listening. Tap stop when you're done; nothing sends by itself."
+    : dictation.state === "transcribing" ? "Writing it into your draft…"
+    : dictation.state === "error" ? dictation.error
+    : null;
 
   return (
     <nav
@@ -187,11 +301,26 @@ export function BottomBar({
         </div>
       </div>
 
+      {dictationStatus && !open && !compact && (
+        <p
+          id={statusId}
+          role={dictation.state === "error" ? "alert" : "status"}
+          className={cn(
+            "ds-glass absolute bottom-full left-2 mb-2 max-w-[calc(100%-1rem)] rounded-full px-4 py-2 text-meta shadow-e1",
+            dictation.state === "error" ? "text-danger" : "text-ink-2",
+          )}
+        >
+          {dictationStatus}
+        </p>
+      )}
+
       <form
+        ref={formRef}
         onSubmit={submit}
         className={cn(
-          "ds-bar pointer-events-auto relative flex items-center gap-1.5 rounded-full shadow-e3",
-          compact ? "h-[52px] w-[52px] justify-center p-0" : "h-[58px] px-2",
+          "ds-bar pointer-events-auto relative flex gap-1.5 shadow-e3 transition-[border-radius] duration-150",
+          compact ? "h-[52px] w-[52px] items-center justify-center rounded-full p-0" : "min-h-[58px] items-end px-2 py-[7px]",
+          !compact && (multiline ? "rounded-sheet" : "rounded-full"),
           open ? "bg-raised" : "ds-glass",
         )}
       >
@@ -206,40 +335,48 @@ export function BottomBar({
         >
           {open ? <X size={20} aria-hidden="true" className="text-ink" /> : face ?? <span aria-hidden="true" className="ds-orb h-8 w-8 rounded-full" />}
         </button>
-        <input
+        <textarea
+          ref={inputRef}
           aria-label="Message AVA"
+          aria-describedby={dictationStatus ? statusId : undefined}
+          rows={1}
           value={draft}
           onChange={(event) => onDraftChange(event.target.value)}
+          onKeyDown={onInputKeyDown}
           placeholder={placeholder}
           inert={open || compact ? true : undefined}
           aria-hidden={compact || undefined}
           className={cn(
-            "h-11 min-w-0 flex-1 bg-transparent px-1 text-body text-ink outline-none placeholder:text-ink-3 transition-opacity duration-150",
+            "min-w-0 flex-1 resize-none bg-transparent px-1 py-[11px] text-body leading-[22px] text-ink outline-none placeholder:text-ink-3 transition-opacity duration-150",
             open && "opacity-0",
             compact && "hidden",
           )}
+          style={{ height: LINE }}
         />
-        {open && !compact && <span className="pointer-events-none absolute left-16 text-body text-ink">Menu</span>}
-        {!compact && (canSend || !onTalk ? (
-          <button
-            type="submit"
-            aria-label="Send"
-            disabled={!canSend}
-            className="ds-focus relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-solid text-on-solid transition-[transform,opacity] duration-150 active:scale-95 disabled:opacity-40"
-          >
-            <ArrowUp size={19} aria-hidden="true" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            aria-label="Talk to AVA"
-            onClick={onTalk}
-            className="ds-focus relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-solid text-on-solid transition-transform duration-150 active:scale-95"
-          >
-            <span aria-hidden="true" className="ds-shimmer" />
-            <Mic size={19} aria-hidden="true" />
-          </button>
-        ))}
+        {open && !compact && <span className="pointer-events-none absolute left-16 top-[18px] text-body text-ink">Menu</span>}
+        {!compact && dictate && (
+          <>
+            {dictationActive && (
+              <button type="button" aria-label="Cancel dictation" onClick={dictation.cancel} className={cn(roundButton, "text-ink-2 hover:bg-glass")}>
+                <X size={17} aria-hidden="true" />
+              </button>
+            )}
+            <button
+              type="button"
+              aria-label={recording ? "Stop dictation" : dictation.state === "error" ? "Retry dictation" : "Dictate message"}
+              aria-pressed={recording}
+              title={recording ? "Stop and write it into the draft" : "Speak into this draft"}
+              onClick={recording ? dictation.finish : () => { void dictation.begin(); }}
+              disabled={dictation.state === "requesting" || dictation.state === "transcribing"}
+              className={cn(roundButton, recording ? "bg-glass-strong text-ink" : "text-ink-2 hover:bg-glass", "disabled:cursor-wait")}
+            >
+              {dictation.state === "requesting" || dictation.state === "transcribing"
+                ? <LoaderCircle size={18} aria-hidden="true" className="animate-spin" />
+                : recording ? <Square size={14} fill="currentColor" aria-hidden="true" /> : <AudioLines size={19} aria-hidden="true" />}
+            </button>
+          </>
+        )}
+        {!compact && mainButton}
       </form>
     </nav>
   );

@@ -47,10 +47,10 @@ beforeEach(() => {
   getUserMedia.mockClear();
   Object.defineProperty(globalThis, "MediaRecorder", { configurable: true, value: FakeMediaRecorder });
   Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
-  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
-    callback(0);
-    return 1;
-  }) as typeof requestAnimationFrame;
+  // Frames run on the next task: a synchronous stub recurses forever when a
+  // GSAP ticker from another component is alive in the same worker.
+  globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) =>
+    setTimeout(() => callback(0), 0) as unknown as number) as typeof requestAnimationFrame;
 });
 
 afterEach(() => {

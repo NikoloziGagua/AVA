@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { insertDictation as insertDictationText } from "../design/dictation.js";
 import { fetchSuggestedChips, transcribeAudio, type SuggestedChip } from "../api.js";
+import { useDictation } from "../design/dictation.js";
 import { isCoarsePointer } from "../lib/media.js";
 import { gsap, useGSAP } from "../lib/gsap.js";
 import { D, EASE, SHADOW, press } from "../lib/deckMotion.js";
@@ -19,64 +21,31 @@ export interface ComposerProps {
 const REST_SHADOW =
   "inset 0 1px 0 rgba(255,255,255,0.10), 0 12px 40px -12px rgba(0,0,0,0.7)";
 
-export type DictationState = "idle" | "requesting" | "listening" | "transcribing" | "error";
-
-const MAX_DICTATION_MS = 90_000;
-const DICTATION_MIMES = [
-  "audio/webm;codecs=opus",
-  "audio/webm",
-  "audio/ogg;codecs=opus",
-  "audio/mp4",
-] as const;
-
-export function preferredDictationMime(): string | undefined {
-  if (typeof MediaRecorder === "undefined") return undefined;
-  return DICTATION_MIMES.find((mime) => MediaRecorder.isTypeSupported?.(mime));
-}
-
-export function normalizedAudioMime(mime: string | undefined): string {
-  const base = mime?.split(";", 1)[0]?.trim().toLowerCase();
-  return base && ["audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav"].includes(base)
-    ? base
-    : "audio/webm";
-}
-
-export function insertDictation(draft: string, spoken: string): string {
-  const transcript = spoken.trim();
-  if (!transcript) return draft;
-  if (!draft) return transcript;
-  const separator = /\s$/.test(draft) ? "" : " ";
-  return `${draft}${separator}${transcript}`;
-}
-
-export function describeDictationError(error: unknown): string {
-  const name = error && typeof error === "object" && "name" in error ? String(error.name) : "";
-  if (name === "NotAllowedError" || name === "SecurityError") {
-    return "Microphone permission was denied. Allow it for AVA, then try again.";
-  }
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return "No microphone was found on this device.";
-  }
-  if (name === "NotReadableError" || name === "TrackStartError") {
-    return "The microphone is already in use or unavailable.";
-  }
-  return error instanceof Error ? error.message : "Dictation failed. Try recording again.";
-}
+export {
+  describeDictationError,
+  insertDictation,
+  normalizedAudioMime,
+  preferredDictationMime,
+  type DictationState,
+} from "../design/dictation.js";
 
 export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps) {
   const [text, setText] = useState("");
   const [chips, setChips] = useState<SuggestedChip[]>([]);
-  const [dictationState, setDictationState] = useState<DictationState>("idle");
-  const [dictationError, setDictationError] = useState<string | null>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const abortRef = useRef<AbortController | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelledRef = useRef(false);
-  const mountedRef = useRef(true);
+  const dictation = useDictation({
+    transcribe: transcribeAudio,
+    onText: (transcript) => {
+      setText((current) => insertDictationText(current, transcript));
+      requestAnimationFrame(() => taRef.current?.focus());
+    },
+  });
+  const dictationState = dictation.state;
+  const dictationError = dictation.error;
+  const cancelDictation = dictation.cancel;
+  const beginDictation = dictation.begin;
+  const finishDictation = dictation.finish;
   const reduced = useReducedMotion();
   const { contextSafe } = useGSAP({ scope: boxRef });
 
@@ -98,118 +67,6 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
       taRef.current?.focus();
     }
   }, [seed.version, seed.text]);
-
-  function releaseRecording(): void {
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    timeoutRef.current = null;
-    for (const track of streamRef.current?.getTracks() ?? []) track.stop();
-    streamRef.current = null;
-    recorderRef.current = null;
-  }
-
-  function cancelDictation(): void {
-    cancelledRef.current = true;
-    abortRef.current?.abort();
-    abortRef.current = null;
-    const recorder = recorderRef.current;
-    if (recorder?.state === "recording") recorder.stop();
-    releaseRecording();
-    chunksRef.current = [];
-    if (mountedRef.current) {
-      setDictationState("idle");
-      setDictationError(null);
-    }
-  }
-
-  useEffect(() => () => {
-    mountedRef.current = false;
-    cancelDictation();
-  // The refs are stable; cleanup must run once on unmount, not on each render.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function transcribeRecording(recorder: MediaRecorder): Promise<void> {
-    releaseRecording();
-    if (cancelledRef.current || !mountedRef.current) return;
-    if (chunksRef.current.length === 0) {
-      setDictationState("error");
-      setDictationError("No audio was captured. Try recording again.");
-      return;
-    }
-    setDictationState("transcribing");
-    const controller = new AbortController();
-    abortRef.current = controller;
-    try {
-      const mime = normalizedAudioMime(recorder.mimeType);
-      const audio = new Blob(chunksRef.current, { type: mime });
-      const transcript = await transcribeAudio(audio, controller.signal);
-      if (cancelledRef.current || !mountedRef.current) return;
-      setText((current) => insertDictation(current, transcript));
-      setDictationState("idle");
-      setDictationError(null);
-      requestAnimationFrame(() => taRef.current?.focus());
-    } catch (error) {
-      if (cancelledRef.current || !mountedRef.current) return;
-      setDictationState("error");
-      setDictationError(describeDictationError(error));
-    } finally {
-      abortRef.current = null;
-      chunksRef.current = [];
-    }
-  }
-
-  async function beginDictation(): Promise<void> {
-    if (dictationState === "requesting" || dictationState === "listening" || dictationState === "transcribing") return;
-    setDictationError(null);
-    cancelledRef.current = false;
-    if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setDictationState("error");
-      setDictationError("This browser does not support microphone dictation.");
-      return;
-    }
-    setDictationState("requesting");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-      });
-      if (cancelledRef.current || !mountedRef.current) {
-        for (const track of stream.getTracks()) track.stop();
-        return;
-      }
-      streamRef.current = stream;
-      chunksRef.current = [];
-      const mimeType = preferredDictationMime();
-      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
-      recorderRef.current = recorder;
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
-      };
-      recorder.onerror = () => {
-        releaseRecording();
-        if (!cancelledRef.current && mountedRef.current) {
-          setDictationState("error");
-          setDictationError("The browser could not record the microphone. Try again.");
-        }
-      };
-      recorder.onstop = () => { void transcribeRecording(recorder); };
-      recorder.start(250);
-      setDictationState("listening");
-      timeoutRef.current = setTimeout(() => {
-        if (recorder.state === "recording") recorder.stop();
-      }, MAX_DICTATION_MS);
-    } catch (error) {
-      releaseRecording();
-      if (!cancelledRef.current && mountedRef.current) {
-        setDictationState("error");
-        setDictationError(describeDictationError(error));
-      }
-    }
-  }
-
-  function finishDictation(): void {
-    const recorder = recorderRef.current;
-    if (recorder?.state === "recording") recorder.stop();
-  }
 
   // Text-driven auto-grow (48 → 150px). Composes with the focus-driven minHeight
   // floor below: focus sets the floor, text grows the ceiling above it.

@@ -53,6 +53,7 @@ function LiveBar() {
 }
 
 const FaceStage = lazy(async () => ({ default: (await import("./face/FaceStage.js")).FaceStage }));
+const TalkGallery = lazy(async () => ({ default: (await import("../chat/TalkGallery.js")).TalkGallery }));
 
 function FaceDemo() {
   const [mode, setMode] = useState<FaceMode>("idle");
@@ -142,6 +143,10 @@ function Components() {
     <>
       <GallerySection title="Bottom bar and menu" note="The only navigation. It is live at the bottom of this page: tap the round button (or press Ctrl+K) and it grows into the menu. Type to see the send button.">
         <LiveBar />
+      </GallerySection>
+
+      <GallerySection title="Talk" note="The new conversation screen, with sample content. AVA answers on the page without a bubble; your words sit in soft bubbles. What she is doing shows in the island, and her steps open in a sheet. Only a step that failed shows in the conversation. On Talk the message box is the bar at the bottom.">
+        <Suspense fallback={null}><TalkGallery /></Suspense>
       </GallerySection>
 
       <GallerySection title="AVA's face" note="The one animated face. It shows once the face data from Codex's pipeline is in place; until then you see the still fallback.">

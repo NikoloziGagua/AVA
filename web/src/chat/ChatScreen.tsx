@@ -1,20 +1,21 @@
-import { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "motion/react";
-import { MessagesSquare } from "lucide-react";
-import { api, fetchSession, ApiError, type SessionOrigin } from "../api.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ListChecks } from "lucide-react";
+import { api, fetchSession, fetchSuggestedChips, ApiError, type SessionOrigin, type SuggestedChip } from "../api.js";
 import { isSessionUnavailable, mintBindingRequestId } from "./conversation-binding.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
-import { Composer } from "./Composer.js";
 import { useChatStream } from "./useChatStream.js";
-import { FlowingLines } from "../components/ava/FlowingLines.js";
-import { EdgeFade } from "../components/ava/EdgeFade.js";
-import { ActivityPanel } from "./ActivityPanel.js";
+import { StepsSheet } from "./StepsSheet.js";
 import { deriveSteps, isExecuting, currentTool } from "./activity-steps.js";
-import { isSmallScreen } from "../lib/media.js";
 import { fetchVisualExplanation } from "../visuals/api.js";
 import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
 import type { SavedItem } from "./saved-items.js";
 import { validRoomPosts } from "./room-posts.js";
+import { Chip } from "../design/Chip.js";
+import { Button } from "../design/Button.js";
+import { ErrorState } from "../design/States.js";
+import { StatusIsland, type IslandMode } from "../design/StatusIsland.js";
+import { FaceStill } from "../design/face/FaceStill.js";
+import type { BarConversation } from "../design/BottomBar.js";
 
 export interface ChatScreenProps {
   sessionId: string | null;
@@ -41,6 +42,13 @@ export interface ChatScreenProps {
   onOpenVisual?: (visualId: string) => void;
   /** Open something AVA saved during a reply (a Saved card row). */
   onOpenSaved?: (item: SavedItem) => void;
+  /**
+   * Talk's message box is the app's bottom bar (contract ui-remodel v2 §7). The
+   * screen lends it this conversation's send, stop and voice while it is open.
+   */
+  onComposer?: (bar: BarConversation | null) => void;
+  /** Put text into the bar's draft (a suggestion, or words a failed send gives back). */
+  onDraft?: (text: string) => void;
 }
 
 /**
@@ -76,6 +84,8 @@ export function ChatScreen({
   onNewChat,
   onOpenList,
   onOpenSaved,
+  onComposer,
+  onDraft,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   // Creation provenance of the loaded conversation. Automated runs are shown
@@ -107,18 +117,16 @@ export function ChatScreen({
   // Bumped by the error panel's Retry to re-run the reopen fetch.
   const [reloadNonce, setReloadNonce] = useState(0);
   const { events } = useChatStream(sessionId, runEpoch, taskId);
-  // Bumping the version puts text back into the composer (a rejected send's draft).
-  const [seed, setSeed] = useState<{ text: string; version: number }>({ text: "", version: 0 });
+  const [chips, setChips] = useState<SuggestedChip[]>([]);
+  useEffect(() => {
+    fetchSuggestedChips().then(setChips).catch(() => {});
+  }, []);
   // Synchronous optimistic-send flag: flips true the same frame send() fires,
   // BEFORE the awaited POST resolves — `busy` lags by the full round-trip, so
   // this is what makes the thinking indicator instant.
   const [pending, setPending] = useState(false);
-  // Scroller node tracked BOTH as a ref (MessageList reads `.current`) and as
-  // state (`scrollerNode`). FlowingLines' parallax ScrollTrigger depends on the
-  // node *identity*; if the scroll element is replaced on session switch, the
-  // stable ref object wouldn't trigger a re-init — the state node does.
+  // The conversation's scroll element (MessageList keeps the newest line in view).
   const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const [scrollerNode, setScrollerNode] = useState<HTMLDivElement | null>(null);
   // Last assistant message in the SEEDED history. On reopen the server replays
   // the run's `final` on stream connect; for a finished run that text is already
   // the last persisted assistant message, so rendering/promoting the replay
@@ -349,33 +357,19 @@ export function ChatScreen({
   }, [streamBusy, currentRunFinished]);
   const optimisticThinking = busy && !lastFinalCurrent && !currentRunFinished;
 
-  const [activityCollapsed, setActivityCollapsed] = useState<boolean>(() => {
-    // Small screens default to the collapsed edge tab — the docked panel would
-    // crush the conversation column; the stored pref is a desktop choice.
-    if (isSmallScreen()) return true;
-    try { return localStorage.getItem("ava.activityCollapsed") === "1"; } catch { return false; }
-  });
-  function toggleActivity() {
-    setActivityCollapsed((c) => {
-      const next = !c;
-      try { localStorage.setItem("ava.activityCollapsed", next ? "1" : "0"); } catch { /* ignore */ }
-      return next;
-    });
-  }
-  // Docked-rail flag (xl): when the Activity panel is expanded it sits as a
-  // docked right rail, so (a) the composer indents to stay centered under the
-  // conversation column and (b) MessageList hides the inline tool chips that
-  // would duplicate the rail's step list. Both effects are xl-gated in CSS, so
-  // nothing changes below xl.
-  const railDocked = steps.length > 0 && !activityCollapsed;
-  // Auto-expand the panel the moment a run starts doing things — desktop only;
-  // on small screens the expanded panel overlays the conversation, so popping
-  // it open uninvited would hide the chat mid-task.
-  const wasExecutingRef = useRef(false);
-  useEffect(() => {
-    if (executing && !wasExecutingRef.current && !isSmallScreen()) setActivityCollapsed(false);
-    wasExecutingRef.current = executing;
-  }, [executing]);
+  // What AVA is doing, at the top of Talk (contract ui-remodel v2 §4). A request
+  // waiting for Niko outranks everything; then a running step; then thinking.
+  const [stepsOpen, setStepsOpen] = useState(false);
+  const waitingApproval = liveEvents.some((e) =>
+    e.kind === "approval_required" &&
+    !liveEvents.some((r) => r.kind === "approval_resolved" && r.payload.id === e.payload.id));
+  const island: { mode: IslandMode; text?: string; detail?: string } = waitingApproval
+    ? { mode: "attention", detail: "Approve or decline below" }
+    : executing
+      ? { mode: "working", ...(runningTool ? { detail: runningTool } : {}) }
+      : busy
+        ? headerState === "responding" ? { mode: "thinking", text: "Writing" } : { mode: "thinking" }
+        : { mode: "idle" };
 
   function retryLast() {
     const lastUser = [...history].reverse().find((m) => m.role === "user");
@@ -418,7 +412,7 @@ export function ChatScreen({
         // and let Nika choose where they go.
         setPending(false);
         setHistory((prev) => prev.filter((message) => message.id !== optimisticId));
-        setSeed((prev) => ({ text, version: prev.version + 1 }));
+        onDraft?.(text);
         setUnavailable(true);
         if (current) onSessionUnavailable?.(current);
         return;
@@ -480,165 +474,117 @@ export function ChatScreen({
     await api.killAll(sessionId);
   }
 
-  return (
-    <div className="relative flex h-full flex-col bg-black text-white">
-      <FlowingLines charged={executing} scrollerRef={scrollerRef} scrollerNode={scrollerNode} />
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col pt-28">
-        {/* Empty-state AVA — clears under the floating nav pill via pt-28. */}
-        <AnimatePresence>
-          {isEmpty && (
-            <motion.div
-              key="empty-ava"
-              className="absolute inset-x-0 top-[14%] flex flex-col items-center pointer-events-none z-10"
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.4 }}
-            >
-              <motion.div
-                // Compositor-only reveal (opacity + translateY) — animating
-                // filter:blur here forced a full-quality per-frame raster.
-                initial={{ opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
-                className="text-[10px] tracking-[0.45em] uppercase text-white/40 mb-3"
-              >
-                I AM
-              </motion.div>
-              <motion.div
-                className="font-bold tracking-[0.20em] bg-clip-text text-transparent bg-gradient-to-b from-white via-white/85 to-white/40"
-                style={{ fontSize: 96 }}
-              >
-                AVA
-              </motion.div>
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.6, delay: 0.6 }}
-                className="mt-6 text-sm text-white/45 max-w-xs text-center px-6"
-              >
-                How can I help today? Type a message, tap a chip, or tap the orb to speak.
-              </motion.p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+  // The bar keeps stable callbacks that always reach this screen's latest send,
+  // stop and voice, so it is re-lent only when `busy` changes. Automated runs are
+  // read-only: there the bar keeps starting new conversations.
+  // Reopening a persisted chat hydrates its local state asynchronously. During
+  // that window the requested ID is already canonical; voice must never turn
+  // it into null and accidentally invoke fresh-voice policy.
+  const latestRef = useRef({ send, kill, voice: () => onEnterVoice?.(sessionId ?? requestedSessionId) });
+  latestRef.current = { send, kill, voice: () => onEnterVoice?.(sessionId ?? requestedSessionId) };
+  const composer = useMemo<BarConversation>(() => ({
+    onSend: (text) => { void latestRef.current.send(text); },
+    onStop: () => { void latestRef.current.kill(); },
+    onVoice: () => latestRef.current.voice(),
+    busy,
+  }), [busy]);
+  useEffect(() => {
+    if (readOnly || !onComposer) return;
+    onComposer(composer);
+    return () => onComposer(null);
+  }, [composer, readOnly, onComposer]);
 
-        {/* `relative` so the small-screen Activity overlay (absolute) pins to
-            this row instead of taking layout width from the conversation. */}
-        <div className="relative flex min-h-0 flex-1">
-          <div className="flex min-w-0 flex-1 flex-col">
-            {/* relative wrapper so the EdgeFade strips pin to the VISIBLE scroll
-                edges (the viewport-height column), not the scroller's full
-                content box. They sit OUTSIDE the scroll node as absolute,
-                pointer-events-none siblings over it.
-                lg: widen to a comfortable laptop reading column (860px) — the
-                phone-width 760px read as a narrow strip on desktop. */}
-            <div className="relative mx-auto flex min-h-0 w-full max-w-[760px] flex-1 flex-col lg:max-w-[860px]">
-              {unavailable ? (
-                <div role="alert" className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-                  <div className="text-sm font-medium text-white/85">This conversation is unavailable.</div>
-                  <div className="max-w-sm text-xs leading-relaxed text-white/60">
-                    It may have been deleted. Your message is still in the box below; start a new
-                    conversation or pick one of yours.
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    {onNewChat && (
-                      <button type="button" onClick={onNewChat} className="btn-deck btn-primary">
-                        Start a new conversation
-                      </button>
-                    )}
-                    {onOpenList && (
-                      <button type="button" onClick={onOpenList} className="btn-deck btn-ghost">
-                        Your conversations
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : loadError ? (
-                <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-                  <div className="max-w-sm text-sm leading-relaxed text-white/70">
-                    {loadError instanceof ApiError && loadError.status === 401
-                      ? "Session expired — re-pair this device to continue."
-                      : "Couldn't load this conversation, Sir. Check your connection and try again."}
-                  </div>
-                  {!(loadError instanceof ApiError && loadError.status === 401) && (
-                    <button
-                      onClick={() => setReloadNonce((n) => n + 1)}
-                      className="btn-deck btn-primary"
-                    >
-                      Retry
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <MessageList
-                    history={history}
-                    liveEvents={liveEvents}
-                    onRetry={retryLast}
-                    onOpenSaved={onOpenSaved}
-                    scrollerRef={scrollerRef}
-                    onScrollerMount={setScrollerNode}
-                    optimisticThinking={optimisticThinking}
-                    executing={executing}
-                    runningTool={runningTool}
-                    headerState={headerState}
-                    toolChipsDocked={railDocked}
-                    onVisualSemanticAction={handleVisualSemanticAction}
-                  />
-                  <EdgeFade edge="top" />
-                  <EdgeFade edge="bottom" />
-                </>
-              )}
+  return (
+    <div className="ds-root relative flex h-full flex-col bg-canvas font-ui text-ink">
+      <header
+        className="flex shrink-0 items-center justify-center gap-2 px-4 pb-2"
+        style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
+      >
+        <StatusIsland mode={island.mode} text={island.text} detail={island.detail} />
+        {steps.length > 0 && (
+          <Chip
+            onClick={() => setStepsOpen(true)}
+            aria-haspopup="dialog"
+            aria-label={`Show what AVA did: ${steps.length} step${steps.length === 1 ? "" : "s"}`}
+            leading={<ListChecks size={15} aria-hidden="true" />}
+          >
+            {steps.length}
+          </Chip>
+        )}
+      </header>
+      <StepsSheet open={stepsOpen} onOpenChange={setStepsOpen} steps={steps} executing={executing} />
+
+      <main className="relative flex min-h-0 flex-1 flex-col">
+        {unavailable ? (
+          <div role="alert" className="mx-auto grid max-w-md flex-1 content-center justify-items-center gap-4 px-6 text-center">
+            <p className="text-body-lg text-ink">This conversation is unavailable.</p>
+            <p className="text-body text-ink-2">
+              It may have been deleted. Your message is still in the box below; start a new
+              conversation or pick one of yours.
+            </p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {onNewChat && <Button variant="solid" onClick={onNewChat}>Start a new conversation</Button>}
+              {onOpenList && <Button variant="glass" onClick={onOpenList}>Your conversations</Button>}
             </div>
           </div>
-          {steps.length > 0 && (
-            <ActivityPanel
-              steps={steps}
-              collapsed={activityCollapsed}
-              onToggle={toggleActivity}
-              executing={executing}
+        ) : loadError ? (
+          <div className="mx-auto grid w-full max-w-md flex-1 content-center px-6">
+            <ErrorState
+              title={loadError instanceof ApiError && loadError.status === 401
+                ? "Session expired — re-pair this device to continue."
+                : "Couldn't load this conversation."}
+              body={loadError instanceof ApiError && loadError.status === 401 ? undefined : "Check your connection and try again."}
+              onRetry={loadError instanceof ApiError && loadError.status === 401 ? undefined : () => setReloadNonce((n) => n + 1)}
             />
-          )}
-        </div>
-        {/* xl + docked rail: shift the composer left so it stays centered under
-            the conversation column (the rail occupies ~332px on the right).
-            translateX (compositor-only) instead of animating margin, which would
-            reflow the whole conversation column every frame. Half the rail width
-            (~166px) matches the recentering the old mr-[332px] produced. */}
+          </div>
+        ) : isEmpty ? (
+          <div className="ds-rise mx-auto grid flex-1 content-center justify-items-center gap-4 px-6 text-center">
+            <FaceStill size={112} />
+            <h1 className="text-title text-ink">What's on your mind?</h1>
+            <p className="max-w-xs text-body text-ink-2">Type below, pick a suggestion, or tap the mic to talk.</p>
+          </div>
+        ) : (
+          <MessageList
+            history={history}
+            liveEvents={liveEvents}
+            onRetry={retryLast}
+            onOpenSaved={onOpenSaved}
+            scrollerRef={scrollerRef}
+            optimisticThinking={optimisticThinking}
+            executing={executing}
+            runningTool={runningTool}
+            headerState={headerState}
+            onVisualSemanticAction={handleVisualSemanticAction}
+          />
+        )}
+      </main>
+        {/* The message box is the app's bottom bar; this keeps the last lines,
+            the notes and the suggestions clear of it, however tall it grows. */}
         <div
-          className={`xl:transition-transform xl:duration-300 ${railDocked ? "xl:-translate-x-[166px]" : "xl:translate-x-0"}`}
+          className="mx-auto grid w-full max-w-[720px] gap-2 px-3 pt-2"
+          style={{ paddingBottom: "calc(var(--ds-bar-space, 72px) + env(safe-area-inset-bottom, 0px) + 0.75rem)" }}
         >
           {attachedVisualContext && (
-            <div className="mx-auto mb-2 flex w-[calc(100%-2rem)] max-w-[760px] items-center justify-between gap-3 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.07] px-3 py-2 text-xs text-cyan-50/75 lg:max-w-[860px]" role="status">
+            <div className="flex items-center justify-between gap-3 rounded-card bg-info-soft px-4 py-2.5 text-meta text-ink" role="status">
               <span>Selected visual context attached · revision {attachedVisualContext.revision} · {attachedVisualContext.selectedElementIds.length} element{attachedVisualContext.selectedElementIds.length === 1 ? "" : "s"}</span>
-              <button type="button" onClick={() => setAttachedVisualContext(null)} className="text-white/45 hover:text-white" aria-label="Remove attached visual context">Remove</button>
+              <Button variant="quiet" size="sm" onClick={() => setAttachedVisualContext(null)} aria-label="Remove attached visual context">Remove</Button>
             </div>
           )}
           {readOnly ? (
-            <div
-              role="note"
-              className="mx-auto mb-4 flex w-[calc(100%-2rem)] max-w-[760px] flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-xs leading-5 text-white/65 lg:max-w-[860px]"
-            >
-              <span>This is an automated run AVA did on its own, shown for reference. It never becomes your current chat.</span>
-              {onNewChat && (
-                <button type="button" onClick={onNewChat} className="btn-deck btn-ghost">
-                  Start a new conversation
-                </button>
-              )}
+            <div role="note" className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-glass px-4 py-3 text-meta text-ink-2">
+              <span>This is an automated run AVA did on its own, shown for reference. It never becomes your current chat. Anything you type below starts a new conversation.</span>
+              {onNewChat && <Button variant="glass" size="sm" onClick={onNewChat}>Start a new conversation</Button>}
             </div>
-          ) : (
-            <Composer
-              onSend={(text) => { void send(text); }}
-              onKill={kill}
-              // Reopening a persisted chat hydrates its local state asynchronously.
-              // During that short window the requested ID is already canonical;
-              // never turn it into null and accidentally invoke fresh-voice policy.
-              onMicTap={() => onEnterVoice?.(sessionId ?? requestedSessionId)}
-              busy={busy}
-              seed={seed}
-            />
+          ) : chips.length > 0 && (
+            <div role="group" aria-label="Suggestions" className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1">
+              {chips.map((chip) => (
+                <Chip key={chip.id} title={chip.prompt} onClick={() => onDraft?.(chip.prompt)} className="shrink-0">
+                  {chip.label}
+                </Chip>
+              ))}
+            </div>
           )}
         </div>
-      </div>
     </div>
   );
 }

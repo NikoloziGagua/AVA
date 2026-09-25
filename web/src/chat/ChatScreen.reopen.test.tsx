@@ -33,7 +33,7 @@ vi.mock("../api.js", () => {
   };
 });
 
-import { ChatScreen } from "./ChatScreen.js";
+import { TalkScreen } from "./TalkScreen.test-helper.js";
 import { ApiError } from "../api.js";
 
 // Controllable EventSource stand-in: tests push the server's replayed/live SSE
@@ -103,7 +103,7 @@ describe("ChatScreen reopen", () => {
         msg(4, "assistant", "final answer, Sir."),
       ],
     });
-    render(<ChatScreen sessionId="s1" {...noNav} />);
+    render(<TalkScreen sessionId="s1" {...noNav} />);
 
     // The full transcript renders — not just the last exchange.
     expect(await screen.findByText("first question")).toBeTruthy();
@@ -113,6 +113,7 @@ describe("ChatScreen reopen", () => {
 
     // The server replays a finished run as final (same text as the last
     // persisted assistant message) + done — no duplicate bubble may appear.
+    await waitFor(() => lastES());
     act(() => {
       lastES().emit("final", { text: "final answer, Sir." }, 1);
       lastES().emit("done", {}, 2);
@@ -120,7 +121,7 @@ describe("ChatScreen reopen", () => {
     expect(screen.getAllByText("final answer, Sir.")).toHaveLength(1);
     expect(screen.queryByTestId("final-message")).toBeNull();
     // Finished run → not busy → the composer offers send, not stop.
-    expect(screen.queryByRole("button", { name: "stop" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop AVA" })).toBeNull();
   });
 
   it("shows history + replayed live state + a working Stop when reopened MID-RUN", async () => {
@@ -128,10 +129,11 @@ describe("ChatScreen reopen", () => {
       session,
       messages: [msg(1, "user", "open notepad please")],
     });
-    render(<ChatScreen sessionId="s1" {...noNav} />);
+    render(<TalkScreen sessionId="s1" {...noNav} />);
     expect(await screen.findByText("open notepad please")).toBeTruthy();
 
     // The server replays the in-flight run's events on stream connect.
+    await waitFor(() => lastES());
     act(() => {
       lastES().emit("tool_call", { tool: "shell", args: { command: "notepad" } }, 1);
     });
@@ -139,16 +141,17 @@ describe("ChatScreen reopen", () => {
     // Live state restored: the tool surfaces (chip / activity / caption)…
     expect(screen.getAllByText(/Running notepad/).length).toBeGreaterThan(0);
     // …and busy is stream-derived, so Stop renders and actually kills the run.
-    fireEvent.click(screen.getByRole("button", { name: "stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Stop AVA" }));
     await waitFor(() => expect(kill).toHaveBeenCalledWith("s1"));
 
     // The run finishing flips busy off and promotes the new final exactly once.
+    await waitFor(() => lastES());
     act(() => {
       lastES().emit("final", { text: "Notepad is open, Sir." }, 2);
       lastES().emit("done", {}, 3);
     });
     expect(screen.getAllByText("Notepad is open, Sir.")).toHaveLength(1);
-    await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop AVA" })).toBeNull());
   });
 
   it("does NOT duplicate the final when a trailing `system` recovery row is present", async () => {
@@ -166,7 +169,7 @@ describe("ChatScreen reopen", () => {
         msg(5, "system", "Server restarted; this task may have been interrupted. Send a new message to continue."),
       ],
     });
-    render(<ChatScreen sessionId="s1" {...noNav} />);
+    render(<TalkScreen sessionId="s1" {...noNav} />);
 
     // Full transcript renders, including the real final and the system notice.
     expect(await screen.findByText("a2 the real final")).toBeTruthy();
@@ -174,6 +177,7 @@ describe("ChatScreen reopen", () => {
     expect(screen.getByText(/Server restarted/)).toBeTruthy();
 
     // The server replays the strict latest-assistant-after-last-user as `final`.
+    await waitFor(() => lastES());
     act(() => {
       lastES().emit("final", { text: "a2 the real final" }, 1);
       lastES().emit("done", {}, 2);
@@ -187,14 +191,14 @@ describe("ChatScreen reopen", () => {
 
 describe("ChatScreen send failure", () => {
   async function typeAndSend(text: string) {
-    const ta = await screen.findByPlaceholderText("Message Ava…");
+    const ta = await screen.findByRole("textbox", { name: "Message AVA" });
     fireEvent.change(ta, { target: { value: text } });
     fireEvent.keyDown(ta, { key: "Enter" });
   }
 
   it("recovers from a failed send instead of stranding an infinite spinner", async () => {
     sendMessage.mockRejectedValue(new ApiError(500, "boom"));
-    render(<ChatScreen sessionId={null} {...noNav} />);
+    render(<TalkScreen sessionId={null} {...noNav} />);
 
     await typeAndSend("hello there");
     // Optimistic user bubble appears immediately…
@@ -202,16 +206,16 @@ describe("ChatScreen send failure", () => {
     // …then a visible assistant error bubble replaces the stuck spinner.
     expect(await screen.findByText(/didn't send/i)).toBeTruthy();
     // Pending cleared → composer offers send again, not an inert Stop.
-    await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop AVA" })).toBeNull());
   });
 
   it("special-cases a 401 with a re-pair message", async () => {
     sendMessage.mockRejectedValue(new ApiError(401, "unauthorized"));
-    render(<ChatScreen sessionId={null} {...noNav} />);
+    render(<TalkScreen sessionId={null} {...noNav} />);
 
     await typeAndSend("are you there");
     expect(await screen.findByText(/re-pair this device/i)).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop AVA" })).toBeNull());
   });
 
   it("restores persisted assistant Markdown as semantic content after reload", async () => {
@@ -223,7 +227,7 @@ describe("ChatScreen send failure", () => {
       ],
     });
 
-    render(<ChatScreen sessionId="s1" {...noNav} />);
+    render(<TalkScreen sessionId="s1" {...noNav} />);
 
     expect(await screen.findByRole("heading", { level: 3, name: "Saved result" })).toBeTruthy();
     expect(screen.getByText("Verified").tagName).toBe("STRONG");
@@ -257,9 +261,10 @@ describe("ChatScreen send failure", () => {
         { ...msg(2, "assistant", "Use the flexible two-night plan."), metadata: { memoryContext } },
       ],
     });
-    render(<ChatScreen sessionId="s1" {...noNav} />);
+    render(<TalkScreen sessionId="s1" {...noNav} />);
     expect(await screen.findByText("Memory used · 1 source")).toBeTruthy();
 
+    await waitFor(() => lastES());
     act(() => {
       lastES().emit("memory_context", memoryContext, 1);
       lastES().emit("final", { text: "Use the flexible two-night plan." }, 2);
@@ -279,10 +284,11 @@ describe("ChatScreen send failure", () => {
       ],
     });
     const onOpenSaved = vi.fn();
-    render(<ChatScreen sessionId="s1" {...noNav} onOpenSaved={onOpenSaved} />);
+    render(<TalkScreen sessionId="s1" {...noNav} onOpenSaved={onOpenSaved} />);
     fireEvent.click(await screen.findByRole("button", { name: "Open note: Groceries" }));
     expect(onOpenSaved).toHaveBeenCalledWith(savedItems.items[0]);
 
+    await waitFor(() => lastES());
     act(() => {
       lastES().emit("saved_items", savedItems, 1);
       lastES().emit("final", { text: "Saved to Notes, Sir." }, 2);
@@ -294,11 +300,11 @@ describe("ChatScreen send failure", () => {
   it("passes the server-assigned new-chat session to voice", async () => {
     const onEnterVoice = vi.fn();
     sendMessage.mockResolvedValue({ sessionId: "created-session", taskId: "task-1" });
-    render(<ChatScreen sessionId={null} {...noNav} onEnterVoice={onEnterVoice} />);
+    render(<TalkScreen sessionId={null} {...noNav} onEnterVoice={onEnterVoice} />);
 
     await typeAndSend("remember this brief");
     await waitFor(() => expect(sendMessage).toHaveBeenCalled());
-    fireEvent.click(screen.getByRole("button", { name: "voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Talk to AVA" }));
 
     expect(onEnterVoice).toHaveBeenCalledWith("created-session");
   });
@@ -306,30 +312,30 @@ describe("ChatScreen send failure", () => {
   it("preserves a requested session when voice is re-entered before history hydration", () => {
     const onEnterVoice = vi.fn();
     fetchSession.mockReturnValue(new Promise(() => {}));
-    render(<ChatScreen sessionId="returning-session" {...noNav} onEnterVoice={onEnterVoice} />);
+    render(<TalkScreen sessionId="returning-session" {...noNav} onEnterVoice={onEnterVoice} />);
 
     // Deliberately click in the first render, before fetchSession's promise can
     // populate ChatScreen's local session state.
-    fireEvent.click(screen.getByRole("button", { name: "voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Talk to AVA" }));
 
     expect(onEnterVoice).toHaveBeenCalledWith("returning-session");
   });
 
   it("reports a still-blank New chat as having no canonical session yet", () => {
     const onEnterVoice = vi.fn();
-    render(<ChatScreen sessionId={null} {...noNav} onEnterVoice={onEnterVoice} />);
+    render(<TalkScreen sessionId={null} {...noNav} onEnterVoice={onEnterVoice} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "voice" }));
+    fireEvent.click(screen.getByRole("button", { name: "Talk to AVA" }));
 
     expect(onEnterVoice).toHaveBeenCalledWith(null);
   });
 
   it("explains when the server has no LLM provider configured", async () => {
     sendMessage.mockRejectedValue(new ApiError(503, "no_llm_provider"));
-    render(<ChatScreen sessionId={null} {...noNav} />);
+    render(<TalkScreen sessionId={null} {...noNav} />);
 
     await typeAndSend("are you there");
     expect(await screen.findByText(/no AI provider is configured/i)).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole("button", { name: "stop" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Stop AVA" })).toBeNull());
   });
 });

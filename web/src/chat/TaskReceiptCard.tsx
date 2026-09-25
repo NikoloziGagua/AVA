@@ -1,4 +1,5 @@
 import { Activity, CheckCircle2, ChevronDown, CircleAlert, Clock3, ShieldQuestion } from "lucide-react";
+import { cn } from "../design/cn.js";
 import {
   RECEIPT_LIFECYCLE_LABEL,
   RECEIPT_OUTCOME_LABEL,
@@ -6,39 +7,18 @@ import {
   type TaskReceiptOutcome,
 } from "./task-receipt.js";
 
-const OUTCOME_STYLE: Record<TaskReceiptOutcome, { color: string; surface: string; border: string; Icon: typeof CheckCircle2 }> = {
-  verified: {
-    color: "rgb(110 231 183)",
-    surface: "rgba(52,211,153,0.08)",
-    border: "rgba(110,231,183,0.30)",
-    Icon: CheckCircle2,
-  },
-  partial: {
-    color: "rgb(251 191 36)",
-    surface: "rgba(245,158,11,0.10)",
-    border: "rgba(251,191,36,0.34)",
-    Icon: CircleAlert,
-  },
-  unverified: {
-    color: "rgb(125 211 252)",
-    surface: "rgba(56,189,248,0.08)",
-    border: "rgba(125,211,252,0.30)",
-    Icon: ShieldQuestion,
-  },
-  contradicted: {
-    color: "rgb(253 186 116)",
-    surface: "rgba(249,115,22,0.11)",
-    border: "rgba(253,186,116,0.38)",
-    Icon: CircleAlert,
-  },
-  failed: {
-    color: "rgb(252 165 165)",
-    surface: "rgba(239,68,68,0.10)",
-    border: "rgba(252,165,165,0.34)",
-    Icon: CircleAlert,
-  },
+// Each outcome keeps its own honest colour; only "verified" reads as good news.
+const OUTCOME_STYLE: Record<TaskReceiptOutcome, { tone: string; soft: string; Icon: typeof CheckCircle2 }> = {
+  verified: { tone: "text-success", soft: "bg-success-soft", Icon: CheckCircle2 },
+  partial: { tone: "text-warning", soft: "bg-warning-soft", Icon: CircleAlert },
+  unverified: { tone: "text-info", soft: "bg-info-soft", Icon: ShieldQuestion },
+  contradicted: { tone: "text-warning", soft: "bg-warning-soft", Icon: CircleAlert },
+  failed: { tone: "text-danger", soft: "bg-danger-soft", Icon: CircleAlert },
 };
 
+const LABEL = "font-ui-mono text-label uppercase text-ink-3";
+
+/** What AVA actually did for a task, what was proven, and where the proof stops. */
 export function TaskReceiptCard({ receipt }: { receipt: TaskReceipt }) {
   const style = OUTCOME_STYLE[receipt.outcome];
   const Icon = style.Icon;
@@ -49,51 +29,29 @@ export function TaskReceiptCard({ receipt }: { receipt: TaskReceipt }) {
 
   return (
     <div className="flex justify-start" data-testid="task-receipt">
-      <details
-        className="group/receipt ml-9 w-[min(92%,680px)] overflow-hidden rounded-2xl"
-        style={{
-          border: `1px solid ${concerning ? style.border : "rgba(255,255,255,0.10)"}`,
-          background: `linear-gradient(145deg, ${style.surface}, rgba(8,12,18,0.82))`,
-          boxShadow: "0 16px 50px -28px rgba(0,0,0,0.9), inset 0 1px 0 rgba(255,255,255,0.06)",
-        }}
-      >
-        <summary className="list-none cursor-pointer px-4 py-3.5 marker:content-none">
-          <div className="flex items-start gap-3">
-            <div
-              className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl"
-              style={{ color: style.color, background: style.surface }}
-            >
-              <Icon size={16} strokeWidth={1.9} />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="hud text-[9px] uppercase tracking-[0.18em] text-white/45">Task receipt</span>
-                <span
-                  className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                  style={{ color: style.color, background: style.surface }}
-                >
-                  {outcomeLabel}
-                </span>
-                <span className="text-[10px] text-white/35">{RECEIPT_LIFECYCLE_LABEL[receipt.lifecycle]}</span>
-              </div>
-              <p className="mt-1.5 text-[12.5px] leading-relaxed text-white/78">{receipt.actual}</p>
-              <p className="mt-1 text-[11px] leading-relaxed text-white/44">
-                <span className="text-white/62">Last proven:</span> {receipt.lastVerifiedStage}
-              </p>
-              {concerning && receipt.observationPoint && (
-                <p className="mt-1 text-[11px] leading-relaxed" style={{ color: style.color }}>
-                  Evidence changed here: {receipt.observationPoint}
-                </p>
-              )}
-            </div>
-            <ChevronDown
-              size={15}
-              className="mt-2 shrink-0 text-white/35 transition-transform duration-200 group-open/receipt:rotate-180"
-            />
-          </div>
+      <details className={cn("group/receipt w-full overflow-hidden rounded-card shadow-e1", concerning ? style.soft : "bg-surface")}>
+        <summary className="ds-focus flex cursor-pointer list-none items-start gap-3 rounded-card px-4 py-3.5 [&::-webkit-details-marker]:hidden">
+          <span className={cn("mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-glass", style.tone)}>
+            <Icon size={18} aria-hidden="true" />
+          </span>
+          <span className="grid min-w-0 flex-1 gap-1">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className={LABEL}>Task receipt</span>
+              <span className={cn("rounded-full bg-glass px-2.5 py-0.5 text-label font-medium", style.tone)}>{outcomeLabel}</span>
+              <span className="text-label text-ink-3">{RECEIPT_LIFECYCLE_LABEL[receipt.lifecycle]}</span>
+            </span>
+            <span className="text-body text-ink">{receipt.actual}</span>
+            <span className="text-meta text-ink-2">
+              <span className="text-ink">Last proven:</span> {receipt.lastVerifiedStage}
+            </span>
+            {concerning && receipt.observationPoint && (
+              <span className={cn("text-meta", style.tone)}>Evidence changed here: {receipt.observationPoint}</span>
+            )}
+          </span>
+          <ChevronDown size={17} aria-hidden="true" className="mt-2 shrink-0 text-ink-3 transition-transform duration-200 group-open/receipt:rotate-180" />
         </summary>
 
-        <div className="border-t border-white/[0.07] px-4 pb-4 pt-3.5">
+        <div className="grid gap-4 px-4 pb-4 pt-1">
           <div className="grid gap-3 sm:grid-cols-2">
             <DiagnosticField label="Expected" value={receipt.expected} />
             <DiagnosticField label="Actually observed" value={receipt.actual} />
@@ -104,39 +62,34 @@ export function TaskReceiptCard({ receipt }: { receipt: TaskReceipt }) {
             />
           </div>
 
-          <div className="mt-4">
-            <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-white/40">
-              <Activity size={12} /> Evidence trail
+          <div className="grid gap-2">
+            <div className={cn("flex items-center gap-2", LABEL)}>
+              <Activity size={14} aria-hidden="true" /> Evidence trail
             </div>
-            <div className="space-y-2">
+            <ul className="grid gap-2">
               {receipt.evidence.map((item, index) => (
-                <div key={`${item.kind}-${index}`} className="flex gap-2.5 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-2.5">
-                  <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-300/60" />
-                  <div className="min-w-0">
-                    <div className="text-[11px] text-white/72">{item.label}</div>
-                    <div className="mt-0.5 text-[10.5px] leading-relaxed text-white/38">{item.detail}</div>
-                    <div className="mt-1 text-[9px] uppercase tracking-[0.12em] text-white/25">{item.strength}</div>
-                    {item.method && (
-                      <div className="mt-1 font-mono text-[9px] text-white/25">method: {item.method}</div>
-                    )}
-                  </div>
-                </div>
+                <li key={`${item.kind}-${index}`} className="grid gap-1 rounded-control bg-glass px-3 py-2.5">
+                  <span className="text-meta text-ink">{item.label}</span>
+                  <span className="text-meta text-ink-2">{item.detail}</span>
+                  <span className={LABEL}>{item.strength}</span>
+                  {item.method && <span className="font-ui-mono text-label text-ink-3">method: {item.method}</span>}
+                </li>
               ))}
-            </div>
+            </ul>
           </div>
 
           {receipt.recoveryAction && (
-            <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.035] px-3 py-2.5">
-              <div className="text-[9px] uppercase tracking-[0.16em] text-white/35">Recommended next action</div>
-              <div className="mt-1 text-[11.5px] leading-relaxed text-white/72">{receipt.recoveryAction}</div>
+            <div className="grid gap-1 rounded-control bg-glass px-3 py-2.5">
+              <span className={LABEL}>Recommended next action</span>
+              <span className="text-meta text-ink">{receipt.recoveryAction}</span>
             </div>
           )}
 
-          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-[9.5px] text-white/30">
-            <span className="inline-flex items-center gap-1"><Clock3 size={11} /> {formatDuration(receipt.durationMs)}</span>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-label text-ink-3">
+            <span className="inline-flex items-center gap-1"><Clock3 size={13} aria-hidden="true" /> {formatDuration(receipt.durationMs)}</span>
             <span>Root cause: {receipt.rootCause.replaceAll("_", " ")}</span>
             <span>Tools: {receipt.successfulToolResults} ok · {receipt.uncertainToolResults} uncertain · {receipt.failedToolResults} failed</span>
-            <span className="font-mono">ID {receipt.taskId}</span>
+            <span className="font-ui-mono">ID {receipt.taskId}</span>
           </div>
         </div>
       </details>
@@ -146,9 +99,9 @@ export function TaskReceiptCard({ receipt }: { receipt: TaskReceipt }) {
 
 function DiagnosticField({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <div className="text-[9px] uppercase tracking-[0.16em] text-white/32">{label}</div>
-      <div className="mt-1 text-[11px] leading-relaxed text-white/66">{value}</div>
+    <div className="grid gap-1">
+      <div className={LABEL}>{label}</div>
+      <div className="text-meta text-ink-2">{value}</div>
     </div>
   );
 }

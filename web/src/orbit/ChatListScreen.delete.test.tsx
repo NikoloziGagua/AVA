@@ -52,7 +52,7 @@ describe("ChatListScreen delete queue", () => {
     await flush();
     expect(screen.getByText("Alpha chat")).toBeTruthy();
 
-    const del = () => screen.getAllByRole("button", { name: "delete" });
+    const del = () => screen.getAllByRole("button", { name: /^Delete / });
     // Delete Alpha (first row), then Beta (now first row).
     act(() => { fireEvent.click(del()[0]!); });
     act(() => { fireEvent.click(del()[0]!); });
@@ -64,7 +64,7 @@ describe("ChatListScreen delete queue", () => {
     expect(deleteSession).not.toHaveBeenCalled();
 
     // Undo → restores the most recent (Beta), leaving Alpha still pending.
-    act(() => { fireEvent.click(screen.getByRole("button", { name: "undo" })); });
+    act(() => { fireEvent.click(screen.getByRole("button", { name: "Undo" })); });
     expect(screen.getByText("Beta chat")).toBeTruthy();
 
     // Let the windows elapse: only Alpha commits (Beta was undone).
@@ -77,7 +77,7 @@ describe("ChatListScreen delete queue", () => {
     const { unmount } = render(<ChatListScreen onClose={() => {}} onOpenChat={() => {}} />);
     await flush();
 
-    act(() => { fireEvent.click(screen.getAllByRole("button", { name: "delete" })[0]!); });
+    act(() => { fireEvent.click(screen.getAllByRole("button", { name: /^Delete / })[0]!); });
     expect(deleteSession).not.toHaveBeenCalled();
 
     // Navigating away mid-undo honors the delete instead of dropping it.

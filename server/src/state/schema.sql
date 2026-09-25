@@ -489,6 +489,17 @@ CREATE TABLE IF NOT EXISTS agentroom_pref (
   updated_at INTEGER NOT NULL
 );
 
+-- One authenticated, durable appearance preference shared by AVA's clients.
+-- Browser storage is only a first-paint/offline mirror; this row is authority.
+CREATE TABLE IF NOT EXISTS ui_preferences (
+  scope_id    TEXT PRIMARY KEY,
+  look        TEXT NOT NULL DEFAULT 'ink' CHECK (look IN ('ink', 'paper', 'system')),
+  motion      TEXT NOT NULL DEFAULT 'full' CHECK (motion IN ('full', 'reduced', 'system')),
+  face_enabled INTEGER NOT NULL DEFAULT 1 CHECK (face_enabled IN (0, 1)),
+  version     INTEGER NOT NULL DEFAULT 1,
+  updated_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chip_label_cache (
   device_id    TEXT NOT NULL,
   prompt_hash  TEXT NOT NULL,

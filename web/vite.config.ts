@@ -15,14 +15,17 @@ export default defineConfig({
         // AVA's renderer-rich application shell is deliberately available offline.
         // Keep this bounded rather than accepting Workbox's lower generic default.
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+        // The UI font is part of the installed experience, not a network-only
+        // enhancement. Keep the explicit list aligned with the managed build.
+        globPatterns: ["**/*.{js,css,html,ico,png,svg,webmanifest,woff2}"],
       },
       manifest: {
         name: "Ava",
         short_name: "Ava",
         start_url: "/",
         display: "standalone",
-        background_color: "#0a0a0a",
-        theme_color: "#0a0a0a",
+        background_color: "#050506",
+        theme_color: "#050506",
         icons: [
           { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
           { src: "/icon-512.png", sizes: "512x512", type: "image/png" },

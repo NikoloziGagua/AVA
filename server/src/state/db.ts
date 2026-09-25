@@ -78,6 +78,11 @@ export function openDb(path: string): Db {
     INSERT OR IGNORE INTO agentroom_pref (scope_id, enabled, version, updated_at)
     VALUES ('global', 0, 1, ?)
   `).run(Date.now());
+  db.prepare(`
+    INSERT OR IGNORE INTO ui_preferences (
+      scope_id, look, motion, face_enabled, version, updated_at
+    ) VALUES ('global', 'ink', 'full', 1, 1, ?)
+  `).run(Date.now());
   db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_deleted ON sessions(deleted_at)");
   // Watches v2: one-shot reminders (run_at), daily schedules (daily_at), and
   // the reminder kind (direct push at the due time — no agent run needed).

@@ -4,6 +4,8 @@ import type { VisualMessage, VisualMessageContext } from "./visuals/types.js";
 import type { MemoryContext } from "./chat/memory-context.js";
 import type { SavedItems } from "./chat/saved-items.js";
 import type { RoomPosts } from "./chat/room-posts.js";
+import { mirrorLookPref } from "./design/look.js";
+import { setMotionPref } from "./lib/motionPref.js";
 
 export class ApiError extends Error {
   readonly name = "ApiError";
@@ -416,6 +418,117 @@ export async function putReasoning(level: "fast" | "thorough"): Promise<void> {
     method: "PUT",
     body: JSON.stringify({ level }),
   });
+}
+
+export type UiLook = "ink" | "paper" | "system";
+export type UiMotion = "full" | "reduced" | "system";
+export type UiPreferences = {
+  look: UiLook;
+  motion: UiMotion;
+  faceEnabled: boolean;
+  version: number;
+  updatedAt: number;
+};
+export type UiPreferencesPatch = Partial<Pick<UiPreferences, "look" | "motion" | "faceEnabled">>;
+
+const UI_PREFERENCES_CACHE_KEY = "ava-ui-preferences";
+
+function uiStorage(): Storage | null {
+  if (typeof localStorage === "undefined") return null;
+  try { return localStorage; } catch { return null; }
+}
+
+function isUiPreferences(value: unknown): value is UiPreferences {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<UiPreferences>;
+  return (row.look === "ink" || row.look === "paper" || row.look === "system")
+    && (row.motion === "full" || row.motion === "reduced" || row.motion === "system")
+    && typeof row.faceEnabled === "boolean"
+    && Number.isInteger(row.version) && Number(row.version) > 0
+    && Number.isFinite(row.updatedAt);
+}
+
+/** Last authoritative row mirrored on this browser. It is never server authority. */
+export function readCachedUiPreferences(): UiPreferences | null {
+  const storage = uiStorage();
+  if (!storage) return null;
+  try {
+    const raw = storage.getItem(UI_PREFERENCES_CACHE_KEY);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return isUiPreferences(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function mirrorUiPreferences(preferences: UiPreferences): void {
+  const storage = uiStorage();
+  if (storage) {
+    try { storage.setItem(UI_PREFERENCES_CACHE_KEY, JSON.stringify(preferences)); }
+    catch { /* Storage can be disabled or full; the server write still stands. */ }
+  }
+  // Use the established runtime helpers so the DOM and all subscribers update
+  // immediately, while SQLite remains authoritative after authentication.
+  mirrorLookPref(preferences.look);
+  setMotionPref(preferences.motion);
+}
+
+async function requestUiPreferences(): Promise<UiPreferences> {
+  const response = await request<{ preferences: UiPreferences }>("/api/ui/preferences");
+  return response.preferences;
+}
+
+async function requestUiPreferencesPatch(
+  expectedVersion: number,
+  patch: UiPreferencesPatch,
+): Promise<UiPreferences> {
+  const response = await request<{ preferences: UiPreferences }>("/api/ui/preferences", {
+    method: "PATCH",
+    body: JSON.stringify({ expectedVersion, ...patch }),
+  });
+  return response.preferences;
+}
+
+/**
+ * Reads the authoritative row and imports the pre-remodel `ava-motion` value
+ * exactly once when the server is still untouched at its v1 defaults.
+ */
+export async function fetchUiPreferences(): Promise<UiPreferences> {
+  const hadFullMirror = readCachedUiPreferences() !== null;
+  let preferences = await requestUiPreferences();
+  const storage = uiStorage();
+  const legacyMotion = (() => {
+    try {
+      const value = storage?.getItem("ava-motion");
+      return value === "full" || value === "reduced" || value === "system" ? value : null;
+    } catch { return null; }
+  })();
+  const untouched = preferences.version === 1
+    && preferences.look === "ink"
+    && preferences.motion === "full"
+    && preferences.faceEnabled;
+  if (!hadFullMirror && untouched && legacyMotion && legacyMotion !== preferences.motion) {
+    try {
+      preferences = await requestUiPreferencesPatch(preferences.version, { motion: legacyMotion });
+    } catch (error) {
+      // Another client may win the one-time import. Refetch instead of
+      // overwriting its authoritative choice or treating the race as offline.
+      if (!(error instanceof ApiError) || error.code !== "stale_version") throw error;
+      preferences = await requestUiPreferences();
+    }
+  }
+  mirrorUiPreferences(preferences);
+  return preferences;
+}
+
+export async function patchUiPreferences(
+  expectedVersion: number,
+  patch: UiPreferencesPatch,
+): Promise<UiPreferences> {
+  const preferences = await requestUiPreferencesPatch(expectedVersion, patch);
+  mirrorUiPreferences(preferences);
+  return preferences;
 }
 
 // How Ava's voice is produced:

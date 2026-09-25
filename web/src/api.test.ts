@@ -7,14 +7,75 @@ import {
   fetchExplorerLive,
   fetchExplorerTask,
   fetchMissionExport,
+  fetchUiPreferences,
   fetchSession,
   fetchSessionPage,
   fetchWatchCommunicationEvidence,
+  patchUiPreferences,
+  readCachedUiPreferences,
   saveMissionExport,
   transcribeAudio,
   type MissionEvidenceExport,
 } from "./api.js";
 import { setToken, getToken } from "./auth/tokens.js";
+
+describe("UI preferences API", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setToken("ui-pref-token");
+  });
+
+  it("reads the authenticated authority and mirrors it for first paint/offline use", async () => {
+    globalThis.fetch = vi.fn(async () => new Response(JSON.stringify({
+      preferences: { look: "paper", motion: "system", faceEnabled: false, version: 4, updatedAt: 44 },
+    }), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    await expect(fetchUiPreferences()).resolves.toMatchObject({ look: "paper", motion: "system", version: 4 });
+    expect(readCachedUiPreferences()).toEqual({
+      look: "paper", motion: "system", faceEnabled: false, version: 4, updatedAt: 44,
+    });
+    expect(localStorage.getItem("ava.ui.look")).toBe("paper");
+    expect(localStorage.getItem("ava-motion")).toBe("system");
+    const [, init] = (globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("authorization")).toBe("Bearer ui-pref-token");
+  });
+
+  it("imports the legacy motion choice once with a guarded PATCH", async () => {
+    localStorage.setItem("ava-motion", "reduced");
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        preferences: { look: "ink", motion: "full", faceEnabled: true, version: 1, updatedAt: 1 },
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        preferences: { look: "ink", motion: "reduced", faceEnabled: true, version: 2, updatedAt: 2 },
+      }), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch;
+    await expect(fetchUiPreferences()).resolves.toMatchObject({ motion: "reduced", version: 2 });
+    const mock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    expect(mock).toHaveBeenCalledTimes(2);
+    const [path, init] = mock.mock.calls[1] as [string, RequestInit];
+    expect(path).toBe("/api/ui/preferences");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ expectedVersion: 1, motion: "reduced" });
+  });
+
+  it("patches exact fields and keeps the last mirror available after an offline failure", async () => {
+    globalThis.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        preferences: { look: "ink", motion: "full", faceEnabled: false, version: 2, updatedAt: 20 },
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockRejectedValueOnce(new TypeError("offline")) as unknown as typeof fetch;
+    await expect(patchUiPreferences(1, { faceEnabled: false })).resolves.toMatchObject({ version: 2 });
+    await expect(fetchUiPreferences()).rejects.toMatchObject({ code: "server_unreachable" });
+    expect(readCachedUiPreferences()).toMatchObject({ faceEnabled: false, version: 2 });
+    const mock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const [, init] = mock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ expectedVersion: 1, faceEnabled: false });
+  });
+
+  it("ignores a malformed local mirror", () => {
+    localStorage.setItem("ava-ui-preferences", JSON.stringify({ look: "paper", version: "fake" }));
+    expect(readCachedUiPreferences()).toBeNull();
+  });
+});
 
 describe("api.deleteSession", () => {
   beforeEach(() => {

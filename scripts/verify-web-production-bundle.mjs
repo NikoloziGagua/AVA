@@ -63,6 +63,14 @@ assert(
 
 const indexHtml = await readFile(join(webDist, "index.html"), "utf8");
 const serviceWorker = await readFile(join(webDist, "sw.js"), "utf8");
+const manifest = JSON.parse(await readFile(join(webDist, "manifest.webmanifest"), "utf8"));
+assert(manifest.background_color === "#050506", "PWA background must match the default Ink canvas");
+assert(manifest.theme_color === "#050506", "PWA theme must match the default Ink canvas");
+for (const font of ["Geist-Variable.woff2", "GeistMono-Variable.woff2"]) {
+  const path = join(webDist, "fonts", font);
+  assert((await stat(path)).size > 1_000, `${font} must be emitted as a real local font asset`);
+  assert(serviceWorker.includes(`fonts/${font}`), `${font} is absent from the offline service-worker precache`);
+}
 const eagerNames = new Set(
   [...indexHtml.matchAll(/(?:src|href)="\/assets\/([^"?]+\.js)(?:\?[^"?]*)?"/g)]
     .map((match) => match[1]),

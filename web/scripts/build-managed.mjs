@@ -3,7 +3,7 @@
  * child process. The normal Vite build remains canonical; this path finishes
  * the direct esbuild CLI output with PostCSS and Workbox in-process.
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import postcss from "postcss";
 import tailwindcss from "@tailwindcss/postcss";
@@ -13,6 +13,24 @@ const root = resolve(import.meta.dirname, "..");
 const dist = resolve(root, "dist");
 const assets = resolve(dist, "assets");
 await mkdir(assets, { recursive: true });
+
+// The fallback build must be independently installable. Do not rely on a
+// partially completed Vite build having copied public assets first.
+await cp(resolve(root, "public", "fonts"), resolve(dist, "fonts"), { recursive: true, force: true });
+await copyFile(resolve(root, "public", "icon-192.png"), resolve(dist, "icon-192.png"));
+await copyFile(resolve(root, "public", "icon-512.png"), resolve(dist, "icon-512.png"));
+await writeFile(resolve(dist, "manifest.webmanifest"), JSON.stringify({
+  name: "Ava",
+  short_name: "Ava",
+  start_url: "/",
+  display: "standalone",
+  background_color: "#050506",
+  theme_color: "#050506",
+  icons: [
+    { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+  ],
+}));
 
 const sourceCss = await readFile(resolve(root, "src", "theme.css"), "utf8");
 const css = await postcss([tailwindcss()]).process(sourceCss, {
@@ -47,7 +65,7 @@ await writeFile(resolve(dist, "index.html"), `<!doctype html>
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="theme-color" content="#050506" />
     <title>Ava</title>
     <link rel="icon" href="/icon-192.png" />
     <script type="module" crossorigin src="/assets/index-managed.js"></script>
@@ -74,7 +92,13 @@ await injectManifest({
     "icon-*.png",
     "assets/index-managed.js",
     "assets/index-managed.css",
+    "fonts/*.woff2",
   ],
 });
+
+const managedWorker = await readFile(resolve(dist, "sw.js"), "utf8");
+for (const font of ["fonts/Geist-Variable.woff2", "fonts/GeistMono-Variable.woff2"]) {
+  if (!managedWorker.includes(font)) throw new Error(`managed offline precache is missing ${font}`);
+}
 
 console.log("managed production bundle written to web/dist");

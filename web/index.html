@@ -3,7 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="theme-color" content="#050506" />
+    <script>
+      // Pre-paint look and motion (contract ui-remodel v1). Mirrors web/src/design/look.ts
+      // and lib/motionPref.ts so the first frame never flashes the wrong look.
+      (function () {
+        var root = document.documentElement, look = "ink", motion = "full";
+        try {
+          var l = localStorage.getItem("ava.ui.look");
+          if (l === "paper") look = "paper";
+          else if (l === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) look = "paper";
+          var m = localStorage.getItem("ava-motion");
+          if (m === "reduced") motion = "reduced";
+          else if (m === "system" && window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) motion = "reduced";
+        } catch (e) {}
+        root.setAttribute("data-look", look);
+        root.setAttribute("data-motion", motion);
+      })();
+    </script>
     <title>Ava</title>
     <link rel="icon" href="/icon-192.png" />
   </head>

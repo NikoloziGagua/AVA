@@ -1,0 +1,195 @@
+/*
+ * AVA design tokens (contract ui-remodel v1, docs/design/ui-remodel.md §2-3).
+ * The ONLY place new colours, type, radii, shadows and motion are defined.
+ * Raw values live in --ds-* variables per look; Tailwind utilities map to them
+ * through @theme inline (bg-surface, text-ink-2, text-body, rounded-card,
+ * shadow-e2, ease-out-soft ...). Legacy screens keep theme.css until migrated.
+ */
+
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Ink is the default look; Paper is the option. */
+:root,
+[data-look="ink"] {
+  color-scheme: dark;
+  --ds-canvas: #050506;
+  --ds-raised: #0e0e10;
+  --ds-surface: rgba(255, 255, 255, 0.055);
+  --ds-surface-strong: rgba(255, 255, 255, 0.09);
+  --ds-ink: #f4f4f5;
+  --ds-ink-2: rgba(244, 244, 245, 0.72);
+  --ds-ink-3: rgba(244, 244, 245, 0.56);
+  --ds-solid: #f4f4f5;
+  --ds-on-solid: #050506;
+  --ds-glass: rgba(255, 255, 255, 0.07);
+  --ds-glass-strong: rgba(255, 255, 255, 0.11);
+  --ds-glass-edge: rgba(255, 255, 255, 0.16);
+  --ds-glass-hi: rgba(255, 255, 255, 0.26);
+  --ds-bar: rgba(22, 22, 26, 0.8);
+  --ds-shadow: rgba(0, 0, 0, 0.6);
+  --ds-scrim: rgba(0, 0, 0, 0.55);
+  --ds-glow: rgba(170, 180, 255, 0.22);
+  --ds-shine: rgba(0, 0, 0, 0.18);
+  --ds-focus: #f4f4f5;
+  --ds-success: #5fd39a;
+  --ds-warning: #e8b04b;
+  --ds-danger: #ff7a6b;
+  --ds-info: #7fb2ff;
+  --ds-success-soft: rgba(95, 211, 154, 0.14);
+  --ds-warning-soft: rgba(232, 176, 75, 0.14);
+  --ds-danger-soft: rgba(255, 122, 107, 0.14);
+  --ds-info-soft: rgba(127, 178, 255, 0.14);
+}
+
+[data-look="paper"] {
+  color-scheme: light;
+  --ds-canvas: #f4f4f1;
+  --ds-raised: #ffffff;
+  --ds-surface: rgba(255, 255, 255, 0.78);
+  --ds-surface-strong: #ffffff;
+  --ds-ink: #0b0b0c;
+  --ds-ink-2: rgba(11, 11, 12, 0.68);
+  --ds-ink-3: rgba(11, 11, 12, 0.56);
+  --ds-solid: #0b0b0c;
+  --ds-on-solid: #f4f4f1;
+  --ds-glass: rgba(255, 255, 255, 0.66);
+  --ds-glass-strong: rgba(255, 255, 255, 0.9);
+  --ds-glass-edge: rgba(0, 0, 0, 0.07);
+  --ds-glass-hi: rgba(255, 255, 255, 0.95);
+  --ds-bar: rgba(255, 255, 255, 0.82);
+  --ds-shadow: rgba(25, 25, 45, 0.12);
+  --ds-scrim: rgba(20, 20, 30, 0.28);
+  --ds-glow: rgba(0, 0, 0, 0.08);
+  --ds-shine: rgba(255, 255, 255, 0.32);
+  --ds-focus: #0b0b0c;
+  --ds-success: #1f7a4d;
+  --ds-warning: #9a6700;
+  --ds-danger: #b42318;
+  --ds-info: #1f5fbf;
+  --ds-success-soft: rgba(31, 122, 77, 0.1);
+  --ds-warning-soft: rgba(154, 103, 0, 0.1);
+  --ds-danger-soft: rgba(180, 35, 24, 0.09);
+  --ds-info-soft: rgba(31, 95, 191, 0.09);
+}
+
+:root {
+  --ds-dur-fast: 150ms;
+  --ds-dur-base: 240ms;
+  --ds-dur-slow: 400ms;
+  --ds-dur-screen: 380ms;
+  --ds-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ds-ease-spring: cubic-bezier(0.34, 1.25, 0.5, 1);
+}
+
+@theme inline {
+  --font-ui: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-ui-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+
+  --color-canvas: var(--ds-canvas);
+  --color-raised: var(--ds-raised);
+  --color-surface: var(--ds-surface);
+  --color-surface-strong: var(--ds-surface-strong);
+  --color-ink: var(--ds-ink);
+  --color-ink-2: var(--ds-ink-2);
+  --color-ink-3: var(--ds-ink-3);
+  --color-solid: var(--ds-solid);
+  --color-on-solid: var(--ds-on-solid);
+  --color-glass: var(--ds-glass);
+  --color-glass-strong: var(--ds-glass-strong);
+  --color-glass-edge: var(--ds-glass-edge);
+  --color-bar: var(--ds-bar);
+  --color-scrim: var(--ds-scrim);
+  --color-focus: var(--ds-focus);
+  --color-success: var(--ds-success);
+  --color-warning: var(--ds-warning);
+  --color-danger: var(--ds-danger);
+  --color-info: var(--ds-info);
+  --color-success-soft: var(--ds-success-soft);
+  --color-warning-soft: var(--ds-warning-soft);
+  --color-danger-soft: var(--ds-danger-soft);
+  --color-info-soft: var(--ds-info-soft);
+
+  --text-display: 2.5rem;
+  --text-display--line-height: 1.02;
+  --text-display--letter-spacing: -0.035em;
+  --text-display--font-weight: 600;
+  --text-title: 1.875rem;
+  --text-title--line-height: 1.08;
+  --text-title--letter-spacing: -0.03em;
+  --text-title--font-weight: 600;
+  --text-heading: 1.25rem;
+  --text-heading--line-height: 1.2;
+  --text-heading--letter-spacing: -0.02em;
+  --text-heading--font-weight: 600;
+  --text-body-lg: 1.0625rem;
+  --text-body-lg--line-height: 1.4;
+  --text-body-lg--font-weight: 500;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.55;
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.4;
+  --text-label: 0.75rem;
+  --text-label--line-height: 1;
+  --text-label--letter-spacing: 0.12em;
+
+  --radius-control: 10px;
+  --radius-button: 14px;
+  --radius-card: 22px;
+  --radius-sheet: 30px;
+
+  --shadow-e1: 0 8px 22px -10px var(--ds-shadow), inset 0 1px 0 var(--ds-glass-hi);
+  --shadow-e2: 0 16px 34px -24px var(--ds-shadow), inset 0 1px 0 var(--ds-glass-hi);
+  --shadow-e3: 0 20px 44px -18px var(--ds-shadow), inset 0 1px 0 var(--ds-glass-hi);
+
+  --ease-out-soft: var(--ds-ease);
+  --ease-spring: var(--ds-ease-spring);
+}
+
+/* Focus is always visible and uses the look's own contrast colour. */
+.ds-focus:focus-visible,
+.ds-root :focus-visible {
+  outline: 2px solid var(--ds-focus);
+  outline-offset: 2px;
+}
+
+/* Frosted glass only where the element is at rest; solid fallback when blur is unsupported. */
+.ds-glass {
+  background: var(--ds-glass);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .ds-glass { background: var(--ds-surface-strong); }
+}
+
+/* Forced colours: surfaces fall back to system colours with real borders. */
+@media (forced-colors: active) {
+  .ds-root [data-ds-surface] { border: 1px solid CanvasText; }
+}
+
+/*
+ * Reduced motion follows AVA's own Motion preference (default "full", Niko's explicit choice),
+ * which look.ts mirrors onto <html data-motion>. "system" defers to the OS there, not here.
+ */
+[data-motion="reduced"] .ds-root *,
+[data-motion="reduced"] .ds-root *::before,
+[data-motion="reduced"] .ds-root *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}

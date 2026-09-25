@@ -350,7 +350,10 @@ export function DesignGallery() {
   }
 
   return (
-    <div className="ds-root min-h-screen bg-canvas font-ui text-ink">
+    <div
+      className="ds-root h-full overflow-y-auto overscroll-contain bg-canvas font-ui text-ink"
+      data-testid="design-gallery-scroll"
+    >
       <div className="mx-auto grid max-w-5xl gap-14 px-5 pb-32 pt-10">
         <header className="grid gap-4">
           <span className="font-ui-mono text-label uppercase text-ink-3">AVA design system · live</span>

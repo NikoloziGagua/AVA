@@ -35,6 +35,14 @@ const RULES: Record<keyof Counts, RegExp[]> = {
 };
 
 const EXEMPT = new Set(["design/tokens.css"]);
+// Sandboxed concept labs deliberately explore visual systems before any token
+// decision is made. Keep this exact preview out of the production ratchet;
+// promoted components must move elsewhere and pass the guard normally.
+const EXPERIMENTAL_PREVIEW_PREFIXES = ["design/godui-preview/"] as const;
+
+function exempt(rel: string): boolean {
+  return EXEMPT.has(rel) || EXPERIMENTAL_PREVIEW_PREFIXES.some((prefix) => rel.startsWith(prefix));
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -57,7 +65,7 @@ function scan(): Record<string, Counts> {
   const files: Record<string, Counts> = {};
   for (const full of walk(SRC)) {
     const rel = relative(SRC, full).split(sep).join("/");
-    if (EXEMPT.has(rel)) continue;
+    if (exempt(rel)) continue;
     const counts = count(readFileSync(full, "utf8"));
     if (counts.tinyText || counts.rawColour || counts.backdrop) files[rel] = counts;
   }
@@ -95,6 +103,8 @@ describe("design guard", () => {
   });
 
   it("detects the violations it is meant to catch", () => {
+    expect(exempt("design/godui-preview/GodUiPreview.tsx")).toBe(true);
+    expect(exempt("design/components/Button.tsx")).toBe(false);
     expect(count(`<p className="text-[10px] text-white/30">x</p>`).tinyText).toBe(1);
     expect(count(`<p className="text-[12px]">x</p>`).tinyText).toBe(0);
     expect(count(`const c = "#5cf2ff"; const d = "rgba(0,0,0,.5)";`).rawColour).toBe(2);

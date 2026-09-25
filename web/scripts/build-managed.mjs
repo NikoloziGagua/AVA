@@ -33,7 +33,14 @@ await writeFile(resolve(dist, "manifest.webmanifest"), JSON.stringify({
   ],
 }));
 
-const sourceCss = await readFile(resolve(root, "src", "theme.css"), "utf8");
+const [themeCss, godUiPreviewCss] = await Promise.all([
+  readFile(resolve(root, "src", "theme.css"), "utf8"),
+  readFile(resolve(root, "src", "design", "godui-preview", "godui-preview.css"), "utf8"),
+]);
+// esbuild's managed path intentionally discards CSS imports. Fold the
+// standalone concept lab into its one managed stylesheet so the preview is
+// still usable in that fallback without changing the production app shell.
+const sourceCss = `${themeCss}\n${godUiPreviewCss}`;
 const css = await postcss([tailwindcss()]).process(sourceCss, {
   from: resolve(root, "src", "theme.css"),
   to: resolve(assets, "index-managed.css"),

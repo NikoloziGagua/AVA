@@ -113,7 +113,7 @@
     },
     "components/ava/PanelShell.tsx": {
       "tinyText": 1,
-      "rawColour": 9,
+      "rawColour": 8,
       "backdrop": 0
     },
     "components/ava/SegmentedTabs.tsx": {
@@ -251,11 +251,6 @@
       "rawColour": 0,
       "backdrop": 0
     },
-    "reminders/presenter.ts": {
-      "tinyText": 0,
-      "rawColour": 1,
-      "backdrop": 0
-    },
     "reminders/ReminderStatusChip.tsx": {
       "tinyText": 1,
       "rawColour": 0,
@@ -313,7 +308,7 @@
     },
     "theme.css": {
       "tinyText": 22,
-      "rawColour": 331,
+      "rawColour": 326,
       "backdrop": 15
     },
     "today/TodayScreen.tsx": {

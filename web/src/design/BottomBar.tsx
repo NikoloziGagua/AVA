@@ -347,7 +347,8 @@ export function BottomBar({
           inert={open || compact ? true : undefined}
           aria-hidden={compact || undefined}
           className={cn(
-            "min-w-0 flex-1 resize-none bg-transparent px-1 py-[11px] text-body leading-[22px] text-ink outline-none placeholder:text-ink-3 transition-opacity duration-150",
+            // Rounded so the keyboard focus ring follows the pill instead of drawing a box inside it.
+            "min-w-0 flex-1 resize-none rounded-button bg-transparent px-2 py-[11px] text-body leading-[22px] text-ink outline-none placeholder:text-ink-3 transition-opacity duration-150",
             open && "opacity-0",
             compact && "hidden",
           )}

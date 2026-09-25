@@ -84,6 +84,11 @@ describe("BottomBar as Talk's message box", () => {
     expect(screen.getByRole("button", { name: "Talk to AVA" })).toBeTruthy();
   });
 
+  it("draws its keyboard focus ring rounded, matching the pill", () => {
+    render(<Talk />);
+    expect(box().className).toMatch(/\brounded-button\b/);
+  });
+
   it("puts the cursor in the box when asked", () => {
     const { rerender } = render(<Talk focusRequest={0} />);
     expect(document.activeElement).not.toBe(box());

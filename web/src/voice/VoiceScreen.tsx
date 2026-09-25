@@ -11,6 +11,7 @@ import { Button } from "../design/Button.js";
 import { StatusIsland, type IslandMode } from "../design/StatusIsland.js";
 import { cn } from "../design/cn.js";
 import { LazyFace } from "../design/face/LazyFace.js";
+import { FaceStill } from "../design/face/FaceStill.js";
 import {
   approvalRiskLabel,
   approvalTimeoutLabel,
@@ -74,9 +75,24 @@ export function VoiceScreen(props: VoiceScreenProps) {
       .catch(() => { if (alive) setEngine("openai"); });
     return () => { alive = false; };
   }, []);
-  if (engine === null) return <div className="ds-root h-full bg-canvas" />;
+  if (engine === null) return <VoiceConnecting />;
   if (engine === "live") return <LiveVoiceScreen {...props} onFallback={() => setEngine("fallback")} />;
   return <RealtimeVoiceScreen {...props} engineOverride={engine === "fallback" ? "openai" : undefined} />;
+}
+
+/**
+ * While voice finds out which engine to use: calm and announced, with the
+ * still face (a plain picture, no WebGL). No microphone or connection is
+ * opened until an engine is chosen.
+ */
+function VoiceConnecting() {
+  return (
+    <div aria-busy="true" className="ds-root flex h-full flex-col items-center justify-center gap-5 bg-canvas px-6 font-ui text-ink">
+      <StatusIsland mode="idle" text="Connecting" detail="voice" />
+      <FaceStill size={200} label="AVA" />
+      <p className="text-meta text-ink-2">Connecting to voice…</p>
+    </div>
+  );
 }
 
 function LiveVoiceScreen(props: VoiceScreenProps & { onFallback: () => void }) {

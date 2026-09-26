@@ -15,7 +15,7 @@ starts or finishes work, time moves on. It never plays just to fill a screen.
 
 - **The first screen fits.** Home and Voice never scroll on a phone, a laptop or
   a wide screen. The face scales to the room it has.
-- **Two live graphics at most.** AVA's face is one. The real liquid-metal button
+- **We suggest two live graphics at most** (your call, see choice 1 below). AVA's face is one. The real liquid-metal button
   (the one Niko loves) is the other, used as the single hero control on a screen.
   Other metal buttons use a close imitation. We show both side by side so Niko
   can judge whether the imitation is good enough.
@@ -34,7 +34,7 @@ starts or finishes work, time moves on. It never plays just to fill a screen.
 |---|---|---|---|
 | **Home** | Stars, AVA's large breathing face, "Good evening, Niko.", one liquid-metal **Talk to AVA**, and the slim message bar | WarpStarfield (slow drift), the face, ElasticText on the greeting, **LiquidMetalButton** (real), DynamicIsland | Nothing competes with her. The greeting gives a little when your pointer passes. |
 | Home, one tap | The status island grows into today's one thing (next class, due reminder or pinned note) | DynamicIsland → ProgressiveCardReveal | Home stays empty, but what matters today is one tap away, from the same truthful ranking as now. |
-| **Voice** | The face fills the screen. The island says listening, thinking or speaking, and live captions sit under the face | The face, DynamicIsland, **LiquidMetalButton** (real, as hold-to-talk) | Entering Voice plays a short warp of the stars: you feel yourself going in. |
+| **Voice** | Stars keep drifting towards you behind the face, which fills the screen. The island says listening, thinking or speaking, and live captions sit under the face | WarpStarfield (gentle forward drift), the face, DynamicIsland, **LiquidMetalButton** (real, as hold-to-talk) | The living background stays; entering Voice can also play a brief warp, so you feel yourself going in. |
 | **Today** | A split-flap clock and date, then your day as a timeline you scroll through; tap an item to open its details | SplitFlapDisplay, ScrollTimeline, ProgressiveCardReveal | Time is the subject of this screen, so time gets the character. |
 | **Talk** | A calm conversation: AVA's answers read like a page, your words sit in soft bubbles. "What AVA did" opens her real steps as a flow | AgentFlow (her real tool steps only), Stepper for long tasks | You see her work as it truly happened, not an invented animation. |
 | **Conversations** | Grouped by day, pinned first, with search | CardSwap for pinned only (optional), otherwise rows | Fast to scan. Motion only on the few you pinned. |

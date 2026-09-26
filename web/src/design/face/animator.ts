@@ -4,14 +4,30 @@
  * damped springs so nothing snaps. While speaking, the jaw follows `level`
  * (AVA's real voice energy from voice/faceSignal in phase D) or, without
  * one, a gentle simulated speech rhythm.
+ *
+ * Two profiles. "calm" (the default) is the original behaviour. "lively" adds
+ * an attention cycle (the eyes lead, the head follows, and she comes back to
+ * look at you), tiny eye movements, blinks after big glances, a breath about
+ * every 4-5 seconds, and livelier dots. Lively never invents a state: the mode
+ * and the speaking level still come from outside.
  */
 
 export type FaceMode = "idle" | "listening" | "thinking" | "speaking";
-type Key = "blink" | "open" | "smile" | "brow" | "gx" | "gy" | "yaw" | "pitch" | "roll" | "think" | "energy";
+export type FaceProfile = "calm" | "lively";
+type Key = "blink" | "open" | "smile" | "brow" | "gx" | "gy" | "yaw" | "pitch" | "roll" | "think" | "energy" | "breath" | "drift";
+
+/** A breath: a shorter inhale, a longer exhale, then a short rest. */
+export function breathCurve(phase: number): number {
+  const x = ((phase % 1) + 1) % 1;
+  if (x < 0.38) return Math.sin((x / 0.38) * Math.PI / 2) ** 2;
+  if (x < 0.9) return Math.cos(((x - 0.38) / 0.52) * Math.PI / 2) ** 2;
+  return 0;
+}
 
 export class FaceAnimator {
-  readonly state: Record<Key, number> = { blink: 0, open: 0, smile: 0.12, brow: 0, gx: 0, gy: 0, yaw: 0, pitch: 0, roll: 0, think: 0, energy: 0.1 };
-  private readonly velocity: Record<Key, number> = { blink: 0, open: 0, smile: 0, brow: 0, gx: 0, gy: 0, yaw: 0, pitch: 0, roll: 0, think: 0, energy: 0 };
+  readonly state: Record<Key, number> = { blink: 0, open: 0, smile: 0.12, brow: 0, gx: 0, gy: 0, yaw: 0, pitch: 0, roll: 0, think: 0, energy: 0.1, breath: 0, drift: 0 };
+  private readonly velocity: Record<Key, number> = { blink: 0, open: 0, smile: 0, brow: 0, gx: 0, gy: 0, yaw: 0, pitch: 0, roll: 0, think: 0, energy: 0, breath: 0, drift: 0 };
+  readonly profile: FaceProfile;
   mode: FaceMode = "idle";
   /** Pointer in face-canvas clip space (-1..1), or null when away. */
   pointer: [number, number] | null = null;
@@ -23,8 +39,20 @@ export class FaceAnimator {
   private nextGlance = 0.5;
   private glance: [number, number] = [0, 0];
   private override = { smile: 0, brow: 0, until: 0 };
+  // Lively only.
+  private nextLook = 0.8;
+  private look: [number, number] = [0, 0];
+  private head: [number, number] = [0, 0];
+  private headAt = 0;
+  private awayLast = false;
+  private nextSaccade = 0.3;
+  private saccade: [number, number] = [0, 0];
+  private breathPhase = 0;
+  private breathSeconds = 4.4;
 
-  constructor(private readonly random: () => number = Math.random) {}
+  constructor(private readonly random: () => number = Math.random, options: { profile?: FaceProfile } = {}) {
+    this.profile = options.profile ?? "calm";
+  }
 
   trigger(action: "blink" | "smile" | "brows", now: number): void {
     if (action === "blink") { this.blinkStart = now; this.doubleBlink = false; }
@@ -58,12 +86,18 @@ export class FaceAnimator {
     }
     this.state.blink = Math.min(1, blink);
 
-    if (t > this.nextGlance) {
-      this.glance = [(this.random() - 0.5) * 0.7, (this.random() - 0.5) * 0.4];
-      this.nextGlance = t + 0.6 + this.random() * 1.8;
+    let gx: number, gy: number, yaw: number, pitch: number;
+    if (this.profile === "lively") {
+      ({ gx, gy, yaw, pitch } = this.attend(t, dt));
+    } else {
+      if (t > this.nextGlance) {
+        this.glance = [(this.random() - 0.5) * 0.7, (this.random() - 0.5) * 0.4];
+        this.nextGlance = t + 0.6 + this.random() * 1.8;
+      }
+      gx = this.glance[0] * 0.5; gy = this.glance[1] * 0.5;
+      yaw = Math.sin(t * 0.31) * 0.05; pitch = Math.sin(t * 0.23) * 0.025;
     }
-    let gx = this.glance[0] * 0.5, gy = this.glance[1] * 0.5;
-    let yaw = Math.sin(t * 0.31) * 0.05, pitch = Math.sin(t * 0.23) * 0.025, roll = 0;
+    let roll = 0;
     let smile = 0.12, brow = 0, open = 0, think = 0, energy = 0.1;
     if (this.pointer) { gx = this.pointer[0] * 0.9; gy = this.pointer[1] * 0.8; yaw = this.pointer[0] * 0.22; pitch = -this.pointer[1] * 0.12; }
     if (this.mode === "listening") { brow = 0.35; smile = 0.25; pitch += 0.03; if (!this.pointer) { gx *= 0.4; gy *= 0.4; } energy = 0.25; }
@@ -74,10 +108,50 @@ export class FaceAnimator {
       smile = 0.28 + (env < 0.05 ? 0.12 : 0); brow = 0.15 + env * 0.25; pitch += env * 0.035; yaw += Math.sin(t * 0.8) * 0.05;
     }
     if (t < this.override.until) { smile = Math.max(smile, this.override.smile); brow = Math.max(brow, this.override.brow); }
+    if (this.profile === "lively") {
+      // Breathing lifts the head a touch and swells her glow a little.
+      this.breathPhase += dt / this.breathSeconds;
+      if (this.breathPhase >= 1) { this.breathPhase -= 1; this.breathSeconds = 3.9 + this.random() * 1.1; }
+      this.state.breath = breathCurve(this.breathPhase);
+      pitch -= this.state.breath * 0.012;
+      energy += this.state.breath * 0.05;
+      this.spring("drift", this.mode === "thinking" ? 0.6 : 1, dt, 20, 9);
+    }
 
     this.spring("gx", gx, dt, 160, 22); this.spring("gy", gy, dt, 160, 22);
     this.spring("yaw", yaw, dt, 40, 13); this.spring("pitch", pitch, dt, 40, 13); this.spring("roll", roll, dt, 30, 12);
     this.spring("smile", smile, dt, 50, 14); this.spring("brow", brow, dt, 70, 16);
     this.spring("open", open, dt, 420, 34); this.spring("think", think, dt, 20, 9); this.spring("energy", energy, dt, 60, 16);
+  }
+
+  /**
+   * Where she looks (lively). Every 1-3 s attention moves: half the time back
+   * to you, held a little longer, otherwise somewhere nearby. The eyes go at
+   * once and the head follows about 0.2 s later on its slower spring. Tiny eye
+   * movements continue in between, and a big glance often brings a blink.
+   */
+  private attend(t: number, dt: number): { gx: number; gy: number; yaw: number; pitch: number } {
+    void dt;
+    if (t > this.nextLook) {
+      const toYou = this.awayLast || this.random() < 0.5;
+      const previous = this.look;
+      this.look = toYou ? [0, 0] : [(this.random() - 0.5) * 1.8, (this.random() - 0.5) * 0.8];
+      this.awayLast = !toYou;
+      this.nextLook = t + (toYou ? 1.5 + this.random() * 1.5 : 0.9 + this.random() * 1.4);
+      this.headAt = t + 0.18 + this.random() * 0.07;
+      const jump = Math.hypot(this.look[0] - previous[0], this.look[1] - previous[1]);
+      if (jump > 0.5 && this.blinkStart < 0 && this.random() < 0.6) this.nextBlink = Math.min(this.nextBlink, t + 0.12);
+    }
+    if (t >= this.headAt) this.head = this.look;
+    if (t > this.nextSaccade) {
+      this.saccade = [(this.random() - 0.5) * 0.08, (this.random() - 0.5) * 0.06];
+      this.nextSaccade = t + 0.25 + this.random() * 0.35;
+    }
+    return {
+      gx: this.look[0] * 0.5 + this.saccade[0],
+      gy: this.look[1] * 0.5 + this.saccade[1],
+      yaw: this.head[0] * 0.2 + Math.sin(t * 0.31) * 0.02,
+      pitch: -this.head[1] * 0.1 + Math.sin(t * 0.23) * 0.012,
+    };
   }
 }

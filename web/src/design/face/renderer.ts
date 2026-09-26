@@ -16,6 +16,7 @@ export class FaceRenderer {
   private count = 0;
   private look: Look = "ink";
   private dpr = 1;
+  private presence = 1;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     const gl = canvas.getContext("webgl", { antialias: false, alpha: true, premultipliedAlpha: false, powerPreference: "low-power" });
@@ -74,9 +75,19 @@ export class FaceRenderer {
     gl.uniform3f(this.u.uColor, ...colours.dot);
     gl.uniform3f(this.u.uGlow, ...colours.light);
     gl.uniform1f(this.u.uLightAmt, ink ? 0.8 : 0.4);
-    gl.uniform1f(this.u.uGain, ink ? 1.35 : 1);
+    gl.uniform1f(this.u.uGain, this.gain());
     gl.uniform1f(this.u.uStipple, ink ? 0 : 1);
     gl.uniform1f(this.u.uHard, ink ? 0 : 1);
+  }
+
+  private gain(): number {
+    return (this.look === "ink" ? 1.35 : 1) * this.presence;
+  }
+
+  /** How solid her dots look: 1 is the original, clamped to 0.8-1.4. */
+  setPresence(multiplier: number): void {
+    this.presence = Number.isFinite(multiplier) ? Math.min(1.4, Math.max(0.8, multiplier)) : 1;
+    this.gl.uniform1f(this.u.uGain, this.gain());
   }
 
   resize(): void {
@@ -101,6 +112,8 @@ export class FaceRenderer {
     gl.uniform1f(u.uEnergy, Math.max(0, s.energy));
     gl.uniform2f(u.uGaze, s.gx, s.gy);
     gl.uniform3f(u.uHead, s.yaw, s.pitch, s.roll);
+    gl.uniform1f(u.uBreath, s.breath);
+    gl.uniform1f(u.uDrift, Math.max(0, s.drift));
     const light = anim.pointer ?? [0.45, 0.35];
     gl.uniform2f(u.uPointer, light[0], light[1]);
     gl.uniform1f(u.uAspect, this.canvas.width / this.canvas.height);

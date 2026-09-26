@@ -5,7 +5,7 @@ precision highp float;
 attribute vec3 aPos; attribute float aBright; attribute float aRand; attribute float aBlink;
 attribute float aJaw; attribute float aLip; attribute float aIris; attribute float aBrow;
 attribute vec2 aSmile; attribute float aHead; attribute float aFade;
-uniform float uTime, uBlink, uOpen, uSmile, uBrow, uAspect, uPx, uThink, uEnergy, uGain, uStipple;
+uniform float uTime, uBlink, uOpen, uSmile, uBrow, uAspect, uPx, uThink, uEnergy, uGain, uStipple, uBreath, uDrift;
 uniform vec2 uGaze; uniform vec3 uHead; uniform vec2 uPointer;
 varying float vA; varying float vLight;
 mat2 rot(float a) { return mat2(cos(a), sin(a), -sin(a), cos(a)); }
@@ -17,10 +17,14 @@ void main() {
   p.xy += aSmile * uSmile;
   p.y += aBrow * uBrow * 0.032;
   p.xy += aIris * uGaze * vec2(0.022, 0.014);
-  float loose = 1.0 + uThink * 2.0 * (1.0 - aHead * 0.6);
+  float loose = 1.0 + uThink * 2.0 * (1.0 - aHead * 0.6) + uDrift * 1.2;
   p.x += 0.0035 * sin(t * 1.7 + aRand * 40.0) * loose;
   p.y += 0.0035 * cos(t * 1.5 + aRand * 31.0) * loose;
   p.y += 0.006 * sin(t * 1.1);
+  // A breath lifts the shoulders and chest a little, the head a little less.
+  float body = 1.0 - aHead;
+  p.y += uBreath * (0.010 * body + 0.004 * aHead);
+  p.x *= 1.0 + uBreath * 0.008 * body;
   vec3 pivot = vec3(0.0, -0.45, -0.35);
   vec3 q = p - pivot;
   q.xz = rot(-uHead.x) * q.xz;
@@ -56,5 +60,5 @@ export const ATTRIBUTES: ReadonlyArray<readonly [name: string, size: number, off
 
 export const UNIFORMS = [
   "uTime", "uBlink", "uOpen", "uSmile", "uBrow", "uAspect", "uPx", "uThink", "uEnergy", "uGain", "uStipple",
-  "uGaze", "uHead", "uPointer", "uColor", "uGlow", "uLightAmt", "uHard",
+  "uGaze", "uHead", "uPointer", "uColor", "uGlow", "uLightAmt", "uHard", "uBreath", "uDrift",
 ] as const;

@@ -1,11 +1,12 @@
-// Run from repo root after the canonical build. No AVA API or microphone access.
+// Run from repo root with an isolated build: node this-file.mjs web/dist-preview.
+// No AVA API or microphone access. Never rebuild served web/dist for this check.
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve, extname } from 'node:path';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
-const root=resolve('web/dist');
+const root=resolve(process.argv[2] ?? 'web/dist');
 const mime={'.html':'text/html','.js':'application/javascript','.css':'text/css','.bin':'application/octet-stream','.json':'application/json','.woff2':'font/woff2','.png':'image/png','.webmanifest':'application/manifest+json'};
 const server=createServer(async(req,res)=>{try{const path=resolve(root,'.'+new URL(req.url,'http://localhost').pathname.replace(/\/$/,'/index.html'));if(!path.startsWith(root+'\\')&&!path.startsWith(root+'/'))throw Error('Path');res.setHeader('Content-Type',mime[extname(path)]??'application/octet-stream');res.end(await readFile(path));}catch{res.statusCode=404;res.end('Not found');}});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -23,6 +24,31 @@ try {
   await p.goto(url);
   await p.locator('.am-face canvas').waitFor();
   await p.waitForTimeout(800);
+  // Test actual geometry, not just overflow:hidden or a screenshot of the top.
+  for(const [width,height] of [[1440,900],[1366,650],[390,844],[320,568],[844,390]]) {
+    await p.setViewportSize({width,height});
+    for(const view of ['Home','Voice']) {
+      await p.getByRole('button',{name:view,exact:true}).click();
+      await p.waitForTimeout(400);
+      const fit=await p.locator('.am-root').evaluate(root=>{
+        const selectors=['.am-header','.am-presence','.am-face','.am-intro','.am-home-actions','.am-voice-controls','.am-state-options','.am-composer-wrap'];
+        return {vertical:root.scrollHeight-root.clientHeight,horizontal:root.scrollWidth-root.clientWidth,
+          outside:selectors.flatMap(selector=>{const e=root.querySelector(selector);if(!e)return[];const r=e.getBoundingClientRect();return r.top < -1 || r.bottom > innerHeight+1 || r.left < -1 || r.right > innerWidth+1 ? [selector] : [];}),
+          faceHeight:root.querySelector('.am-face').getBoundingClientRect().height};
+      });
+      assert.ok(fit.vertical<=1,`${view} ${width}x${height} vertical overflow: ${JSON.stringify(fit)}`);
+      assert.ok(fit.horizontal<=1,`${view} ${width}x${height} horizontal overflow`);
+      assert.deepEqual(fit.outside,[],`${view} ${width}x${height} clipped controls`);
+      assert.ok(fit.faceHeight>=64,`${view} ${width}x${height} face still visible`);
+      await p.screenshot({path:resolve(tmpdir(),`ava-metal-fit-${view.toLowerCase()}-${width}x${height}.png`)});
+      await p.getByRole('button',{name:'Expand Ask AVA',exact:true}).click();
+      const composer=await p.locator('.am-composer').boundingBox();
+      assert.ok(composer && composer.y>=0 && composer.y+composer.height<=height+1,'expanded composer fits');
+      await p.getByRole('textbox',{name:'Ask AVA anything'}).press('Escape');
+    }
+  }
+  await p.setViewportSize({width:1440,height:1000});
+  await p.getByRole('button',{name:'Home',exact:true}).click();
   await p.screenshot({path:resolve(tmpdir(),'ava-metal-home-v2.png')});
   const stars=p.locator('.am-atmosphere canvas');
   const starPixels=()=>stars.evaluate(canvas=>canvas.toDataURL());
@@ -75,5 +101,5 @@ try {
   await p.emulateMedia({reducedMotion:'reduce'});await p.reload();await p.waitForTimeout(800);
   const still=await starPixels();await p.waitForTimeout(300);assert.ok((await starPixels())===still,'reduced motion stars static');
   assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);
-  console.log(JSON.stringify({passed:results,workspaces:destinations,localPersistence:true,exports:['SVG','PNG'],historyAndFocus:true,viewports:[1440,390],reducedMotion:true,errors,writes,screenshots:tmpdir()},null,2));
+  console.log(JSON.stringify({passed:results,workspaces:destinations,localPersistence:true,exports:['SVG','PNG'],historyAndFocus:true,viewports:[1440,390],presenceFits:[[1440,900],[1366,650],[390,844],[320,568],[844,390]],reducedMotion:true,errors,writes,screenshots:tmpdir()},null,2));
 } finally {await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}

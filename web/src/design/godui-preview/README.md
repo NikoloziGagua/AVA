@@ -17,6 +17,13 @@ Open **All AVA** in the top-right corner to reach every destination. The launche
 supports search, keyboard focus and Escape. `#demo=<destination>` persists the
 selected screen across reload and supports browser Back. Home/Voice stay sparse.
 
+Home/Voice now allocate the actual viewport height to header, face, controls and
+composer. The face shrinks into the remaining space instead of imposing a 400px+
+minimum that made the page scroll. Short landscape uses a side-by-side composition;
+expanded input reserves space rather than covering the controls. Normal viewport
+fit is browser-tested at 1440×900, 1366×650, 390×844, 320×568 and 844×390. Very
+short/zoomed layouts may scroll for access; content is not clipped to pretend it fits.
+
 | Destination | Demo interaction / production area inspected |
 |---|---|
 | Today | Check off focus items; resume exact sample conversation; open notes/time (`today/`) |
@@ -117,9 +124,9 @@ static fallback. It uses a bounded mesh instead of unbounded window-sized topolo
 ```powershell
 npm test -w web -- src/design/godui-preview/GodUiPreview.test.tsx
 npm test -w web -- --maxWorkers=2 --minWorkers=1
-npm run build -w web
-node web/src/design/godui-preview/verify-browser.mjs
-npm run build:managed -w web
+npx tsc -p web/tsconfig.json --noEmit --incremental false
+npm exec -w web -- vite build --outDir dist-preview
+node web/src/design/godui-preview/verify-browser.mjs web/dist-preview
 ```
 
 The browser verifier serves built assets on a temporary loopback port, checks all
@@ -127,7 +134,10 @@ The browser verifier serves built assets on a temporary loopback port, checks al
 delete/undo, SVG/PNG downloads, history/focus, real shader success/motion, draft handoff,
 scrollability, reduced-motion stars, no API writes and console/page errors. It saves
 screenshots under the OS temp directory and closes its server/browser afterward.
-Do not run a build concurrently with this check: builds replace `web/dist`.
+Do not rebuild the tested output concurrently with this check. Use an isolated
+outDir: the running AVA server serves `web/dist` from disk, so a canonical build
+there would also change the live bundle. The optional verifier argument selects
+the build directory without changing the live server or production configuration.
 
 WebGL appearance depends on the GPU. This preview does not alter face topology,
 real speech, navigation/history or production voice behavior. Review this direction

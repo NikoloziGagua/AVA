@@ -179,29 +179,49 @@
   .am-reference-stage{min-height:360px;padding:12px 0}.am-step-demo [aria-current],.am-step-demo .w-24{width:80px}
   .am-beams{gap:6px}.am-node{padding:8px;font-size:10px}.am-detail{padding:32px 25px}
 }
-/* The quiet revision: the portrait is the page, not a dashboard hero. */
-.am-main {max-width:1400px;padding-top:0;padding-bottom:115px;}
+/* Presence is a viewport composition, not a document with a fixed-height hero.
+ * Header, controls and composer reserve their own space; only the face flexes.
+ * Other workspaces/catalog remain independently scrollable as before. */
+.am-root:is(.am-view-home,.am-view-voice) {display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:100dvh;padding-bottom:max(12px,env(safe-area-inset-bottom));}
+.am-root:is(.am-view-home,.am-view-voice) .am-header {padding:clamp(10px,2dvh,22px) 24px;}
+.am-main {display:grid;grid-template-rows:auto minmax(64px,1fr) auto;gap:8px;min-height:0;width:100%;max-width:1400px;margin:0 auto;padding:0 24px 12px;}
 .am-topline {position:absolute;right:35px;top:0;z-index:2;}
-.am-presence {margin:0 auto 4px;}
-.am-stage {margin-top:0;}
-.am-face,.am-view-voice .am-face {width:min(920px,92vw);height:clamp(440px,65vh,760px);}
+.am-presence {margin:0 auto;}
+.am-stage {display:grid;grid-template-rows:minmax(0,1fr) auto;min-height:0;margin:0;}
+.am-face,.am-view-voice .am-face {width:min(920px,100%);height:100%;min-height:0;}
 .am-living-face {display:block;width:100%;height:100%;touch-action:pan-y;}
-.am-face-halo,.am-view-voice .am-face-halo {width:760px;height:650px;max-width:100%;top:-30px;opacity:.6;}
+.am-face-halo,.am-view-voice .am-face-halo {width:min(760px,100%);height:100%;max-width:100%;top:0;opacity:.6;}
 .am-face-reflection {display:none;}
-.am-intro h1 {font-size:20px;letter-spacing:-.025em;margin:8px 0;color:#aebbd0;background:none;}
-.am-home-actions {margin:20px 0 0;}
-.am-voice-controls {margin-top:20px;}
-.am-state-options {text-align:center;margin:17px auto 0;max-width:360px;}
-.am-state-options summary {cursor:pointer;color:#6f7f96;font-size:10px;letter-spacing:.04em;list-style:none;}
-.am-state-options .am-voice-states {margin-top:10px;}
+.am-intro h1 {font-size:20px;line-height:1.3;letter-spacing:-.025em;margin:4px 0;color:#aebbd0;background:none;}
+.am-home-actions,.am-voice-controls {margin:0;}
+.am-state-options {text-align:center;margin:0 auto;max-width:360px;}
+.am-state-options summary {cursor:pointer;color:#a4b2c6;font-size:12px;letter-spacing:.04em;list-style:none;}
+.am-state-options .am-voice-states {margin-top:4px;}
+.am-root:is(.am-view-home,.am-view-voice) .am-composer-wrap {position:relative;left:auto;bottom:auto;transform:none;margin:0 auto;}
+.am-main .am-local-reply {width:min(600px,100%);max-height:clamp(64px,14dvh,140px);overflow:auto;margin:0 auto;padding:12px 40px 12px 16px;}
+.am-main .am-local-reply p {font-size:15px;margin:6px 0;}
 .am-atmosphere::after {background:radial-gradient(ellipse at 50% 45%,transparent 15%,#080a0f40 80%);}
 @media(max-width:760px) {
- .am-main {padding-left:8px;padding-right:8px;padding-bottom:110px;}
+ .am-root:is(.am-view-home,.am-view-voice) .am-header {padding-left:12px;padding-right:12px;}
+ .am-main {padding-left:8px;padding-right:8px;padding-bottom:10px;}
  .am-topline {right:12px;top:2px;}.am-star-toggle{font-size:0;gap:0;}
- .am-presence {margin:12px auto 0;}
- .am-face,.am-view-voice .am-face {width:100%;height:clamp(400px,61vh,630px);}
+ .am-face,.am-view-voice .am-face {width:100%;height:100%;}
  .am-intro h1 {font-size:18px;margin-top:0;}
- .am-home-actions {margin:18px 0 0;}.am-voice-controls{margin-top:17px;}
+}
+/* Short landscape still shows a substantial face without pushing actions below
+ * the fold. Text zoom/very small windows may reflow; nothing is hidden to fit. */
+@media(max-height:600px) and (min-width:600px) {
+ .am-main {grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);grid-template-rows:auto auto minmax(0,1fr);align-items:center;gap:4px 20px;}
+ .am-stage {grid-column:1;grid-row:1 / span 3;height:100%;}
+ .am-presence {grid-column:2;grid-row:1;}
+ .am-home-actions,.am-voice-controls {grid-column:2;grid-row:2;}
+ .am-state-options {grid-column:2;grid-row:3;align-self:start;}
+ .am-main .am-local-reply {grid-column:1 / -1;}
+ .am-topline {right:18px;top:-2px;}
+ .am-star-toggle {font-size:0;gap:0;}
+}
+@media(max-height:360px) {
+ .am-root:is(.am-view-home,.am-view-voice) {height:auto;min-height:100dvh;grid-template-rows:auto minmax(160px,1fr) auto;}
 }
 @media(prefers-reduced-motion:reduce) {.am-root{scroll-behavior:auto}.am-root *, .am-root *::before,.am-root *::after{animation:none!important;transition-duration:0ms!important;scroll-behavior:auto!important}}
 

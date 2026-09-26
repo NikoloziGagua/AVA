@@ -31,7 +31,7 @@ export function GodUiPreview() {
   const closeComposer=()=>{setExpanded(false);requestAnimationFrame(()=>triggerRef.current?.focus());};
   const submit=(event:FormEvent)=>{event.preventDefault();if(!draft.trim())return;setAnswer(draft.trim());setDraft("");setExpanded(false);setFace("speaking");};
   return <MotionConfig reducedMotion="user"><div ref={scrollRef} className={`gdu-root am-root am-view-${view}`} data-testid="godui-preview">
-    <div className="am-atmosphere" aria-hidden="true"><WarpStarfield color="#c6d5ea" speed={warp?1.6:.72} warp={warp} starCount={1000} depth={1.8} parallax={22}/></div>
+    <div className="am-atmosphere" aria-hidden="true"><WarpStarfield color="#c6d5ea" speed={warp?1.9:1.15} warp={warp} starCount={presence?1600:1000} depth={1.8} parallax={22}/></div>
     <header className="am-header"><button className="am-wordmark" onClick={()=>navigate("home")} aria-label="AVA preview home"><span className="am-logo">A</span><span>AVA</span></button><nav aria-label="Preview destinations">{([{id:"home",label:"Home",icon:Home},{id:"voice",label:"Voice",icon:AudioLines},{id:"components",label:"Components",icon:Layers}] as const).map(({id,label,icon:Icon})=><button key={id} aria-current={view===id?"page":undefined} onClick={()=>navigate(id)}><Icon size={15}/><span>{label}</span></button>)}</nav><button className="dm-menu-trigger" aria-label="All AVA workspaces" aria-haspopup="dialog" onClick={()=>{setMenuQuery("");setMenu(true);}}><Menu size={17}/><span>All AVA</span></button></header>
     {presence?<main className="am-main">
       <div className="am-topline"><span/><button className="am-star-toggle" aria-pressed={warp} onClick={()=>setWarp(value=>!value)}><Sparkles size={13}/>{warp?"Hyperspace":"Gentle motion"}</button></div>

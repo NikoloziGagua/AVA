@@ -59,4 +59,10 @@ describe("joint composition proposal",()=>{
     expect(container.querySelectorAll(".ps-artboard")).toHaveLength(1);
     expect(board.getAttribute("data-study")).toBe("notes");expect(fetch).not.toHaveBeenCalled();
   });
+  it("offers full-screen presence, a minute clock with optional seconds, and a genuine calendar grid",()=>{
+    const navigate=vi.fn();render(<ProposalStudio navigate={navigate}/>);
+    fireEvent.click(screen.getByRole("button",{name:"Open full-screen home"}));expect(navigate).toHaveBeenCalledWith("home");
+    choose("Today");const seconds=screen.getByRole("checkbox",{name:"Show seconds"}) as HTMLInputElement;expect(seconds.checked).toBe(false);fireEvent.click(seconds);expect(seconds.checked).toBe(true);
+    choose("Calendar");expect(screen.getByRole("button",{name:"2026-09-25"})).toBeTruthy();expect(screen.queryByRole("checkbox",{name:"Show seconds"})).toBeNull();
+  });
 });

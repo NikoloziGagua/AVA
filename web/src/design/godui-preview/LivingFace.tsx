@@ -7,7 +7,7 @@ import { FaceRenderer } from "../face/renderer.js";
 import { claimFaceSlot } from "../face/FaceStage.js";
 import { FaceStill } from "../face/FaceStill.js";
 
-/** Preview-only intensity: same portrait/renderer, no production voice changes. */
+/** Opt-in lively preview: same portrait, explicit still mode, no voice changes. */
 export function LivingFace({mode, label}: {mode:FaceMode; label:string}) {
   const canvas=useRef<HTMLCanvasElement>(null), modeRef=useRef(mode);
   modeRef.current=mode;
@@ -21,7 +21,8 @@ export function LivingFace({mode, label}: {mode:FaceMode; label:string}) {
     let alive=true, frame=0, renderer:FaceRenderer|undefined;
     let resize:ResizeObserver|undefined, seen:IntersectionObserver|undefined;
     let visible=true;
-    const anim=new FaceAnimator(), el=canvas.current!;
+    const anim=new FaceAnimator(Math.random,{profile:"lively"}), el=canvas.current!;
+    anim.still=reduced;
     const move=(e:PointerEvent)=>{const r=el.getBoundingClientRect();anim.pointer=[(e.clientX-r.left)/r.width*2-1,1-(e.clientY-r.top)/r.height*2];};
     const leave=()=>{anim.pointer=null;};
     const lost=(e:Event)=>{e.preventDefault();setFailed(true);};
@@ -31,16 +32,12 @@ export function LivingFace({mode, label}: {mode:FaceMode; label:string}) {
       if(!alive)return;
       renderer=new FaceRenderer(el);
       renderer.setPoints(buildPoints(asset,"glow",window.innerWidth<600?26_000:asset.glow.count),"ink");
+      renderer.setPresence(1.12);
       renderer.resize();
       let last=performance.now(), elapsed=0;
       const draw=(dt:number)=>{
-        anim.mode=modeRef.current;anim.step(elapsed*1.25,dt);
-        // uThink widens individual particle drift. Restore simulation state so
-        // presentation amplification cannot feed back into the spring solver.
-        const think=anim.state.think, energy=anim.state.energy;
-        if(!reduced){anim.state.think=Math.max(think,1.8+.45*Math.sin(elapsed*.8));anim.state.energy=Math.max(energy,.4+.14*Math.sin(elapsed*1.4));}
-        renderer!.draw(reduced?0:elapsed*1.6,anim);
-        anim.state.think=think;anim.state.energy=energy;
+        anim.mode=modeRef.current;anim.step(elapsed,dt);
+        renderer!.draw(reduced?0:elapsed,anim);
       };
       draw(0);
       redraw.current=()=>{if(reduced)draw(0);};

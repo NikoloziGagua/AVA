@@ -19,6 +19,28 @@ production behavior. The Paper comparison is a material swatch, not a complete
 light theme. Home/Voice studies can use a face plus one real shader (two WebGL
 contexts when supported); this is a visible trade-off for discussion, not a
 silent change to the live graphics contract. No provider/API action is enabled.
+
+The living refinement adds a single shared wave behind Today/Ideas and Calendar,
+tilting/sheened Today and event cards, and denser/faster forward stars. Today uses
+HH:MM by default; **Show seconds** is optional. Full-screen links are above each
+study, so Home and Voice can be judged in the real viewport-fit composition.
+The two metal comparison buttons have equal pill dimensions.
+`LivingFace` opts into the shared `lively` animator: glances lead into head turns,
+eye contact returns between looks, a roughly 4–5 second breath lifts the portrait,
+and particle drift no longer pretends to be a thinking pose. Presence is 1.12 of
+the usual gain. Reduced motion explicitly holds breath/drift at zero; hidden or
+off-screen frames remain paused. Production `FaceStage` still uses calm defaults.
+
+Calendar uses one `CalendarSurface` in both the proposal and the full local demo.
+Month/day selection, week time slots and Agenda share the same event model. A day
+plus opens a compact inline title/time/duration editor; location/attendance expand
+on demand. Mouse drag drafts a 15-minute-quantized block, while touch and keyboard
+users select a time slot. Only **Save event** writes to the supplied local owner;
+Escape/cancel saves nothing and returns focus. The full demo restores from its
+existing localStorage; the proposal's event changes reset when its study unmounts.
+Week drawing covers 08:00–20:00; other times remain available in Agenda/day details.
+This is not a production calendar, recurrence engine or overlap-layout algorithm.
+
 Home uses AVA's existing face asset/renderer, a forward-moving starfield, metallic
 surfaces and a compact expanding composer. Voice exercises the real face's
 idle/listening/thinking/speaking animation states without opening a microphone.
@@ -78,11 +100,12 @@ and the managed fallback include them. No application route/API/schema changed.
 
 The quieter revision removes life cards, the clock and explanatory captions from
 Home/Voice. The portrait fills most of the viewport; voice state examples are
-collapsed behind Preview states. Stars increase from 460 to 1,000. LivingFace is
-a preview-only adapter over the shared asset, animator, renderer and single-face
-slot: individual dot drift and cadence are amplified, without changing production
-face code. Reduced motion still renders one static frame; hidden/offscreen draws
-pause, observers/buffers are disposed and rendering failures show FaceStill.
+collapsed behind Preview states. The requested star count is 1,600 for full
+Home/Voice and 1,000 elsewhere, scaled down by surface size. LivingFace is a
+preview-only adapter over the shared asset, opt-in animator profile, renderer and
+single-face slot; production face defaults are unchanged. Reduced motion renders
+one static frame; hidden/offscreen draws pause, observers/buffers are disposed and
+rendering failures show FaceStill.
 
 ## All references
 
@@ -150,7 +173,8 @@ The browser verifier serves built assets on a temporary loopback port, checks al
 21 demonstrations, every workspace at desktop/phone widths, local file persistence,
 delete/undo, SVG/PNG downloads, history/focus, real shader success/motion, draft handoff,
 scrollability, all 17 proposal studies at 1440/390/320px, material/Ideas/island
-interactions, reduced-motion stars, no API writes and console/page errors. It saves
+interactions, calendar mouse-drag/explicit save/reload/delete and cancel focus,
+reduced-motion stars, no API reads/writes and console/page errors. It saves
 screenshots under the OS temp directory and closes its server/browser afterward.
 Do not rebuild the tested output concurrently with this check. Use an isolated
 outDir: the running AVA server serves `web/dist` from disk, so a canonical build

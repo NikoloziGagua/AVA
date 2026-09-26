@@ -12,7 +12,8 @@ const server=createServer(async(req,res)=>{try{const path=resolve(root,'.'+new U
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const url=`http://127.0.0.1:${server.address().port}/?godui-preview`;
 const browser=await chromium.launch({channel:'msedge',headless:true});
-const errors=[],writes=[],results=[];
+const errors=[],writes=[],apiCalls=[],results=[];
+let phoneFrameTiming;
 try {
   // Fresh profile/origin; let the real registration execute in both build modes.
   const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:'allow'});
@@ -20,7 +21,7 @@ try {
   p.setDefaultTimeout(10_000);
   p.on('pageerror',e=>{errors.push(e.message);console.error('Browser error at',p.url(),e.stack);});
   p.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
-  p.on('request',r=>{if(r.method()!=='GET')writes.push(r.url());});
+  p.on('request',r=>{if(r.method()!=='GET')writes.push(r.url());if(new URL(r.url()).pathname.startsWith('/api/'))apiCalls.push(r.url());});
   await p.goto(url);
   await p.locator('.am-face canvas').waitFor();
   await p.waitForTimeout(800);
@@ -53,6 +54,13 @@ try {
   const stars=p.locator('.am-atmosphere canvas');
   const starPixels=()=>stars.evaluate(canvas=>canvas.toDataURL());
   const before=await starPixels();await p.waitForTimeout(300);assert.notEqual(await starPixels(),before,'stars must move');
+  await p.setViewportSize({width:390,height:844});
+  phoneFrameTiming=await p.evaluate(()=>new Promise(resolve=>{
+    const times=[];let previous=performance.now();
+    const tick=now=>{times.push(now-previous);previous=now;if(times.length<121){requestAnimationFrame(tick);return;}times.shift();times.sort((a,b)=>a-b);resolve({samples:times.length,medianMs:times[60],p95Ms:times[114],scope:'Headless Edge, phone viewport, local machine; not a physical-phone benchmark'});};
+    requestAnimationFrame(tick);
+  }));
+  await p.setViewportSize({width:1440,height:1000});
   await p.getByRole('button',{name:'Expand Ask AVA',exact:true}).click();
   await p.getByRole('textbox').fill('A precise thought / _username');
   await p.getByRole('textbox').press('Escape');
@@ -86,8 +94,34 @@ try {
   for(const width of [1440,390]) {
     await p.setViewportSize({width,height:width===390?844:1000});
     for(const name of destinations){await open(name);await p.waitForTimeout(100);assert.equal(await p.locator('.am-root').evaluate(e=>e.scrollWidth>e.clientWidth+1),false,`${name} ${width} overflow`);console.log('Verified workspace:',name,width);}
-    for(const name of ['Today','Notes','Calendar','Talk','Memory','Activity']){await open(name);await p.screenshot({path:resolve(tmpdir(),`ava-metal-full-${name.toLowerCase()}-${width}.png`)});}
+    for(const name of ['Today','Notes','Calendar','Talk','Memory','Activity']){await open(name);await p.waitForTimeout(600);await p.screenshot({path:resolve(tmpdir(),`ava-metal-full-${name.toLowerCase()}-${width}.png`)});}
+    await open('Calendar');
+    const headerOverlap=await p.locator('.lc-header').evaluate(header=>{
+      const boxes=[...header.children].map(e=>e.getBoundingClientRect());
+      return boxes.some((a,i)=>boxes.slice(i+1).some(b=>a.left<b.right-1&&a.right>b.left+1&&a.top<b.bottom-1&&a.bottom>b.top+1));
+    });
+    assert.equal(headerOverlap,false,`calendar ${width} header controls overlap`);
   }
+  await p.setViewportSize({width:1440,height:1000});await open('Calendar');
+  await p.getByRole('button',{name:'Week',exact:true}).click();
+  const timeSlot=p.getByRole('button',{name:'Add block on 2026-09-25 at 10:00',exact:true});await timeSlot.scrollIntoViewIfNeeded();
+  const slotBox=await timeSlot.boundingBox();assert.ok(slotBox);
+  await p.mouse.move(slotBox.x+20,slotBox.y+3);await p.mouse.down();await p.mouse.move(slotBox.x+20,slotBox.y+33,{steps:6});await p.mouse.up();
+  await p.getByRole('form',{name:'Time block editor'}).waitFor();
+  assert.equal(await p.getByLabel('Time · Europe/Dublin',{exact:true}).inputValue(),'10:00');
+  assert.equal(await p.getByLabel('Duration in minutes',{exact:true}).inputValue(),'45');
+  await p.getByLabel('Event title',{exact:true}).fill('Browser drawn block');
+  await p.getByRole('button',{name:'Save event',exact:true}).click();
+  await p.reload();await p.getByRole('heading',{level:1,name:'Calendar',exact:true}).waitFor();
+  await p.getByRole('button',{name:'Agenda',exact:true}).click();
+  await p.getByRole('button',{name:/2026-09-25 · 10:00 Browser drawn block/}).click();
+  await p.getByRole('button',{name:'Delete event',exact:true}).click();
+  await p.setViewportSize({width:390,height:844});await p.getByRole('button',{name:'Month',exact:true}).click();
+  await p.getByRole('button',{name:'Add block on 2026-09-26',exact:true}).click();
+  await p.getByLabel('Event title',{exact:true}).fill('Never submitted');
+  await p.getByLabel('Event title',{exact:true}).press('Escape');
+  assert.equal(await p.getByRole('form',{name:'Time block editor'}).count(),0);
+  assert.equal(await p.getByRole('button',{name:'Add block on 2026-09-26',exact:true}).evaluate(e=>e===document.activeElement),true);
   await open('Notes');await p.getByRole('button',{name:'New file',exact:true}).click();await p.getByLabel('Title',{exact:true}).fill('Browser persistence check');await p.getByLabel('Content · Markdown supported',{exact:true}).fill('A local fixture. No live AVA writes.');await p.getByRole('button',{name:'Save file',exact:true}).click();
   await p.reload();await p.getByRole('heading',{level:1,name:'Notes',exact:true}).waitFor();await p.getByText('Browser persistence check',{exact:true}).click();await p.getByRole('heading',{name:'Browser persistence check',exact:true}).waitFor();
   await p.getByRole('button',{name:'Delete file',exact:true}).click();await p.getByRole('button',{name:'Undo',exact:true}).click();
@@ -139,6 +173,6 @@ try {
   assert.ok(await p.locator('.am-root').evaluate(e=>e.scrollTop)>0,'scrollable');
   await p.emulateMedia({reducedMotion:'reduce'});await p.reload();await p.waitForTimeout(800);
   const still=await starPixels();await p.waitForTimeout(300);assert.ok((await starPixels())===still,'reduced motion stars static');
-  assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);
-  console.log(JSON.stringify({passed:results,workspaces:destinations,proposalStudies:proposalNames,proposalWidths:[1440,390,320],localPersistence:true,exports:['SVG','PNG'],historyAndFocus:true,viewports:[1440,390],presenceFits:[[1440,900],[1366,650],[390,844],[320,568],[844,390]],reducedMotion:true,errors,writes,screenshots:tmpdir()},null,2));
+  assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);assert.deepEqual(apiCalls,[]);
+  console.log(JSON.stringify({passed:results,workspaces:destinations,proposalStudies:proposalNames,proposalWidths:[1440,390,320],calendar:{drag45Minutes:true,inlineCreateReloadDelete:true,cancelFocus:true},localPersistence:true,exports:['SVG','PNG'],historyAndFocus:true,viewports:[1440,390],presenceFits:[[1440,900],[1366,650],[390,844],[320,568],[844,390]],phoneFrameTiming,reducedMotion:true,errors,writes,apiCalls,screenshots:tmpdir()},null,2));
 } finally {await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}

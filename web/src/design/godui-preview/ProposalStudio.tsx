@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { ArrowUpRight, BookOpen, CalendarDays, Lightbulb, Mic, Plus, Sparkles } from "lucide-react";
 import { LiquidMetalButton } from "./LiquidMetalButton.js";
-import { FlapClock } from "./ReferenceCatalog.js";
+import { SplitFlapDisplay } from "./vendor/split-flap-display/split-flap-display.js";
+import { CalendarSurface } from "./LivingCalendar.js";
+import { freshDemo } from "./demo-model.js";
 import { DynamicIsland } from "./vendor/dynamic-island/dynamic-island.js";
 import { ElasticText } from "./vendor/elastic-text/elastic-text.js";
 import { ProgressiveCardReveal } from "./vendor/progressive-card-reveal/progressive-card-reveal.js";
@@ -30,7 +32,7 @@ export const STUDIES = [
   {id:"chat",name:"Talk",parts:"Quiet text · AgentFlow on demand",why:"Read the answer first. Reveal an illustrative sequence of steps only when you ask.",route:"chat"},
   {id:"chats",name:"Conversations",parts:"Day groups · pinned cards",why:"Pinned conversations feel close; the rest remain quick to scan.",route:"chats"},
   {id:"notes",name:"Notes",parts:"Breadcrumbs · TiltCard · contextual capture",why:"Folders, files, then the page. A little depth on pinned files, no motion across the reading surface.",route:"notes"},
-  {id:"calendar",name:"Calendar",parts:"Day timeline · progressive event details",why:"The calendar grid stays structural; selected-day detail becomes a readable timeline.",route:"calendar"},
+  {id:"calendar",name:"Calendar",parts:"Month / week · inline blocks · flowing wave",why:"See your time, draw a block, and name it right there. Calendar changes here are samples only.",route:"calendar"},
   {id:"ideas",name:"Ideas",parts:"CoverFlow / CardSwap / list · JellyButton",why:"Ideas can be playful to browse without losing the fast list alternative.",route:"ideas"},
   {id:"memory",name:"Memory",parts:"Selected relationship · AnimatedBeam",why:"Show where a memory came from. These are illustrative links; live links must come from actual evidence.",route:"memory"},
   {id:"watches",name:"Reminders & watches",parts:"ProgressiveCardReveal",why:"Keep the next reminder visible and receipt details one tap away. No pretend deliveries.",route:"watches"},
@@ -50,12 +52,13 @@ const day = [
 ];
 const ideas=["An assistant that feels present","A pocket-sized morning brief","Turn a lecture into a conversation"];
 
-function Reveal({items=day}:{items?:{title:string;detail:string}[]}) {
+function Reveal({items=day,alive=false}:{items?:{title:string;detail:string}[];alive?:boolean}) {
   const [active,setActive]=useState(0);
+  const Surface=alive?TiltCard:"div";
   return <ProgressiveCardReveal activeIndex={active} onActiveChange={setActive} className="ps-reveal">
     {items.map(item=><ProgressiveCardReveal.Card key={item.title}>
       <ProgressiveCardReveal.CardCollapsed><span>{item.title}</span></ProgressiveCardReveal.CardCollapsed>
-      <ProgressiveCardReveal.CardExpanded><div className="ps-reveal-content"><h3>{item.title}</h3><p>{item.detail}</p></div></ProgressiveCardReveal.CardExpanded>
+      <ProgressiveCardReveal.CardExpanded><Surface className={`ps-reveal-content ${alive?"ps-living-card":""}`}><h3>{item.title}</h3><p>{item.detail}</p></Surface></ProgressiveCardReveal.CardExpanded>
     </ProgressiveCardReveal.Card>)}
   </ProgressiveCardReveal>;
 }
@@ -63,7 +66,7 @@ function Reveal({items=day}:{items?:{title:string;detail:string}[]}) {
 function Presence({voice}:{voice:boolean}) {
   const [open,setOpen]=useState(false),[mode,setMode]=useState<FaceMode>(voice?"listening":"idle");
   return <div className="ps-presence">
-    <div className="ps-local-stars" aria-hidden="true"><WarpStarfield starCount={320} speed={.6}/></div>
+    <div className="ps-local-stars" aria-hidden="true"><WarpStarfield starCount={650} speed={1.15}/></div>
     <button className="ps-island-trigger" aria-expanded={open} onClick={()=>setOpen(v=>!v)} aria-label="Reveal today's one thing">
       <DynamicIsland size={open?"default":"compact"} presenceKey={`${mode}-${open}`}><span>{open?"Today's one thing":voice?`${mode} · preview`:"Here with you"}</span></DynamicIsland>
     </button>
@@ -76,17 +79,31 @@ function Presence({voice}:{voice:boolean}) {
   </div>;
 }
 
+const CLOCK_CHARS=["012","0123456789",":","012345","0123456789",":","012345","0123456789"];
+function ProposalClock() {
+  const [seconds,setSeconds]=useState(false),[time,setTime]=useState("");
+  useEffect(()=>{
+    const format=new Intl.DateTimeFormat("en-GB",{timeZone:"Europe/Dublin",hour:"2-digit",minute:"2-digit",...(seconds?{second:"2-digit"} as const:{}),hourCycle:"h23"});
+    const tick=()=>setTime(format.format(new Date()));tick();
+    const timer=window.setInterval(tick,1000);return()=>clearInterval(timer);
+  },[seconds]);
+  return <div className="ps-clock"><SplitFlapDisplay value={time} align="center" size="sm" charset={seconds?CLOCK_CHARS:CLOCK_CHARS.slice(0,5)}/><label><input type="checkbox" checked={seconds} onChange={e=>setSeconds(e.target.checked)}/> Show seconds</label></div>;
+}
+function CalendarStudy() {
+  const [events,setEvents]=useState(()=>freshDemo().events);
+  return <CalendarSurface events={events} onSave={event=>setEvents(all=>all.some(e=>e.id===event.id)?all.map(e=>e.id===event.id?event:e):[...all,event])} onDelete={id=>setEvents(all=>all.filter(e=>e.id!==id))}/>;
+}
 function TimeStudy({journal=false}:{journal?:boolean}) {
   const scroll=useRef<HTMLDivElement>(null);
   const [ready,setReady]=useState(false);
   // The vendor's layout-time useScroll must receive an already-attached container.
   useEffect(()=>setReady(true),[]);
   return <div ref={scroll} className="ps-time">
-    {!journal&&<><p className="ps-eyebrow">EUROPE / DUBLIN · LIVE CLOCK, SAMPLE AGENDA</p><FlapClock/></>}
+    {!journal&&<><p className="ps-eyebrow">EUROPE / DUBLIN · LIVE CLOCK, SAMPLE AGENDA</p><ProposalClock/></>}
     {ready&&<ScrollTimeline container={scroll} data={(journal?[
-      {date:"01",title:"A calmer home",content:<p>Illustrative change: more room for AVA, fewer competing controls.</p>},
-      {date:"02",title:"A living material",content:<p>Compare the real liquid shader with the lighter CSS finish.</p>},
-    ]:day.map((d,i)=>({date:["09:00","14:00","18:00"][i]!,title:d.title,content:<Reveal items={[d]}/>})))}/>}
+      {date:"01",title:"",content:<><h3>A calmer home</h3><p>Illustrative change: more room for AVA, fewer competing controls.</p></>},
+      {date:"02",title:"",content:<><h3>A living material</h3><p>Compare the real liquid shader with the lighter CSS finish.</p></>},
+    ]:day.map((d,i)=>({date:["09:00","14:00","18:00"][i]!,title:"",content:<Reveal items={[d]} alive/>})))}/>}
   </div>;
 }
 
@@ -128,7 +145,7 @@ function Materials() {
   const [paper,setPaper]=useState(false),[feedback,setFeedback]=useState("");
   return <div className="ps-materials"><div className="ps-options" role="group" aria-label="Material look">{[false,true].map(v=><button key={String(v)} aria-pressed={v===paper} onClick={()=>setPaper(v)}>{v?"Paper study":"Ink study"}</button>)}</div>
     <div className="ps-material-samples" data-paper={paper}><article><h3>Liquid metal</h3><LiquidMetalButton label="Try real liquid metal" onClick={()=>setFeedback("Real shader pressed.")}>Talk to AVA</LiquidMetalButton><p>Actual Paper shader.<br/>1 WebGL context when supported.</p></article>
-    <article><h3>CSS metal</h3><button className="dm-button primary" onClick={()=>setFeedback("CSS material pressed.")}>Talk to AVA</button><p>Gradients and reflections.<br/>0 WebGL contexts.</p></article></div>
+    <article><h3>CSS metal</h3><button className="dm-button primary ps-css-metal" onClick={()=>setFeedback("CSS material pressed.")}>Talk to AVA</button><p>Gradients and reflections.<br/>0 WebGL contexts.</p></article></div>
     <p role="status">{feedback||"Hover, press and compare. These finishes are intentionally shown side by side."}</p><p className="ps-caption">Paper is a material sample, not a claim that every screen has been themed.</p></div>;
 }
 
@@ -141,7 +158,8 @@ const visualPanels=["The request path","A week of ideas","Connections that matte
 
 function Study({id}:{id:string}) {
   if(id==="home"||id==="voice")return <Presence voice={id==="voice"}/>;
-  if(id==="today"||id==="calendar"||id==="self")return <TimeStudy journal={id==="self"}/>;
+  if(id==="today"||id==="self")return <TimeStudy journal={id==="self"}/>;
+  if(id==="calendar")return <CalendarStudy/>;
   if(id==="ideas")return <IdeasStudy/>;
   if(id==="notes")return <NotesStudy/>;
   if(id==="activity"||id==="memory")return <Connections memory={id==="memory"}/>;
@@ -160,8 +178,8 @@ export default function ProposalStudio({navigate}:{navigate:(route:DemoRoute)=>v
   const current=STUDIES.find(s=>s.id===selected)!;
   return <main className="ps-root"><header className="ps-heading"><p className="ps-eyebrow">CODEX + CLAUDE · A PROPOSAL TO REACT TO</p><h1>AVA, with a little more life.</h1><p>Choose a screen. Try its movement. Then tell us what feels like her.</p><p className="ps-caption">Sample content only. No live tasks, messages, microphone or data changes.</p></header>
     <div className="ps-layout"><nav className="ps-nav" aria-label="Proposed screens">{STUDIES.map((s,i)=><button key={s.id} aria-current={s.id===selected?"page":undefined} onClick={()=>setSelected(s.id)}><span>{String(i+1).padStart(2,"0")}</span>{s.name}</button>)}</nav>
-      <section className="ps-selected" aria-label="Selected design proposal"><div className="ps-study-heading"><div><h2>{current.name}</h2><p>{current.parts}</p></div><label><input type="checkbox" checked={lines} onChange={e=>setLines(e.target.checked)}/> Quiet structural lines</label></div>
-        <div className="ps-artboard" data-lines={lines} data-study={current.id}><Study key={current.id} id={current.id}/></div>
+      <section className="ps-selected" aria-label="Selected design proposal"><div className="ps-study-heading"><div><h2>{current.name}</h2><p>{current.parts}</p></div><div className="ps-study-actions"><button className="am-control" onClick={()=>navigate(current.route)}>Open full-screen {current.name.toLowerCase()} <ArrowUpRight size={15}/></button><label><input type="checkbox" checked={lines} onChange={e=>setLines(e.target.checked)}/> Quiet structural lines</label></div></div>
+        <div className="ps-artboard" data-lines={lines} data-study={current.id}>{["today","ideas"].includes(current.id)&&<div className="ps-study-wave" aria-hidden="true"><GradientWave colors={["#a6b5ca","#242f43","#d8e0ee","#7185a4"]}/></div>}<Study key={current.id} id={current.id}/></div>
         <div className="ps-rationale"><p>{current.why}</p><button className="am-control" onClick={()=>navigate(current.route)}>Open full {current.name.toLowerCase()} layout <ArrowUpRight size={15}/></button></div>
         <details className="ps-notes"><summary>What is proposed, and what is not?</summary><p>This is a composition study. Full workspace behavior remains in the existing demo. The complete 21-component catalog is retained. Nothing here changes the production graphics budget, theme, navigation or approval policy.</p><p>Suggested choices: genuine liquid metal on hero actions; quiet structural lines where useful; keep Paper; split-flap on Today; optional playful Ideas browsing alongside a list.</p><button className="am-control" onClick={()=>navigate("components")}>Open all 21 original references</button></details>
       </section></div>

@@ -7,6 +7,7 @@ import { DEMO_KEY, DESTINATIONS, freshDemo, useDemoState, type WorkspaceRoute } 
 vi.mock("./LivingFace.js",()=>({LivingFace:()=> <div/>}));
 vi.mock("./vendor/warp-starfield/warp-starfield.js",()=>({WarpStarfield:()=>null}));
 vi.mock("@paper-design/shaders",()=>({ShaderMount:class {dispose(){} setSpeed(){}},liquidMetalFragmentShader:""}));
+vi.mock("./GradientWave.js",()=>({GradientWave:()=>null}));
 function Harness({route}:{route:WorkspaceRoute}){const demo=useDemoState();return <DemoWorkspace route={route} demo={demo} navigate={navigate}/>;}
 const navigate=vi.fn();
 beforeEach(()=>{localStorage.clear();history.replaceState(null,"","/");navigate.mockClear();vi.stubGlobal("matchMedia",vi.fn(()=>({matches:false,addEventListener:vi.fn(),removeEventListener:vi.fn(),addListener:vi.fn(),removeListener:vi.fn()})));vi.stubGlobal("ResizeObserver",class {observe(){}disconnect(){}unobserve(){}});Element.prototype.scrollTo=vi.fn();HTMLDialogElement.prototype.showModal=function(){this.setAttribute("open","");};});

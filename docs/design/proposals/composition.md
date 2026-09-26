@@ -66,6 +66,8 @@ with what each one does, is in `docs/design/ui-reference-inventory.md`.
 
 ## What stays true underneath
 
-Nothing about how AVA works changes: the same conversations, notes, reminders,
-approvals (always an explicit Approve or Cancel), and the same honest statuses.
+Nothing about how AVA works changes: the same conversations, notes, reminders
+and honest statuses. Approvals stay on the page and can't be swiped away. Their
+existing risk-aware countdowns are unchanged, so a low-risk request may still
+approve itself, and a high-risk one decline itself, if you don't answer in time.
 This is how she looks and moves, not what she does.

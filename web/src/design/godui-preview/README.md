@@ -2,6 +2,23 @@
 
 Open `http://127.0.0.1:5174/?godui-preview` with the AVA Vite server running.
 This is an isolated, interactive design preview, not a production screen replacement.
+
+## Joint proposal — start here
+
+Open `?godui-preview#demo=proposal` (or **All AVA → Proposed design**). Codex and
+Claude's composition is a single page of 17 selectable live studies: Home, Voice,
+Today, Talk, Conversations, Notes, Calendar, Ideas, Memory, watches, Explore,
+visuals, Activity, improvements, Settings, first hello, and a metal comparison.
+Only the selected study mounts. Try the island's one-thing reveal, Ideas'
+cover-flow/card-swap/list options, genuine shader versus CSS, the Paper material
+sample, structural lines, and the sample task flow. The full layouts and all
+original 21 component references remain a button away.
+
+These are proposed compositions with clearly labelled samples, not implemented
+production behavior. The Paper comparison is a material swatch, not a complete
+light theme. Home/Voice studies can use a face plus one real shader (two WebGL
+contexts when supported); this is a visible trade-off for discussion, not a
+silent change to the live graphics contract. No provider/API action is enabled.
 Home uses AVA's existing face asset/renderer, a forward-moving starfield, metallic
 surfaces and a compact expanding composer. Voice exercises the real face's
 idle/listening/thinking/speaking animation states without opening a microphone.
@@ -122,17 +139,18 @@ static fallback. It uses a bounded mesh instead of unbounded window-sized topolo
 ## Verification
 
 ```powershell
-npm test -w web -- src/design/godui-preview/GodUiPreview.test.tsx
+npm test -w web -- src/design/godui-preview
 npm test -w web -- --maxWorkers=2 --minWorkers=1
 npx tsc -p web/tsconfig.json --noEmit --incremental false
-npm exec -w web -- vite build --outDir dist-preview
-node web/src/design/godui-preview/verify-browser.mjs web/dist-preview
+npm exec -w web -- vite build --outDir ../data/builds/metal-proposal
+node web/src/design/godui-preview/verify-browser.mjs data/builds/metal-proposal
 ```
 
 The browser verifier serves built assets on a temporary loopback port, checks all
 21 demonstrations, every workspace at desktop/phone widths, local file persistence,
 delete/undo, SVG/PNG downloads, history/focus, real shader success/motion, draft handoff,
-scrollability, reduced-motion stars, no API writes and console/page errors. It saves
+scrollability, all 17 proposal studies at 1440/390/320px, material/Ideas/island
+interactions, reduced-motion stars, no API writes and console/page errors. It saves
 screenshots under the OS temp directory and closes its server/browser afterward.
 Do not rebuild the tested output concurrently with this check. Use an isolated
 outDir: the running AVA server serves `web/dist` from disk, so a canonical build

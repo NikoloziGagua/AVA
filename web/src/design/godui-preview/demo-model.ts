@@ -11,9 +11,10 @@ export const DESTINATIONS = [
   ["settings","Settings","Make AVA yours"], ["strategy","Strategy Room","Think together"],
   ["pairing","Pair a device","Connection preview"], ["intro","Welcome","First-run experience"],
   ["components","Components","All 21 references"],
+  ["proposal","Proposed design","Our screen-by-screen motion proposal"],
 ] as const;
 export type DemoRoute = typeof DESTINATIONS[number][0];
-export type WorkspaceRoute = Exclude<DemoRoute,"home"|"voice"|"components">;
+export type WorkspaceRoute = Exclude<DemoRoute,"home"|"voice"|"components"|"proposal">;
 export type Note = {id:string; folder:string; title:string; body:string; kind:"note"|"idea"; stage:string; pinned:boolean};
 export type DemoEvent = {id:string; title:string; date:string; time:string; duration:number; location:string; attendance:string};
 export type Chat = {id:string; title:string; pinned:boolean; messages:{role:"user"|"assistant";text:string}[]};

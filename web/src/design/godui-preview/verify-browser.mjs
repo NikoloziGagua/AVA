@@ -1,4 +1,4 @@
-// Run from repo root with an isolated build: node this-file.mjs web/dist-preview.
+// Run from repo root with an isolated build: node this-file.mjs data/builds/metal-proposal.
 // No AVA API or microphone access. Never rebuild served web/dist for this check.
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
@@ -94,6 +94,45 @@ try {
   await open('Settings');await p.goBack();await p.getByRole('heading',{level:1,name:'Notes',exact:true}).waitFor();
   await p.getByRole('button',{name:'All AVA workspaces',exact:true}).click();await p.getByRole('textbox',{name:'Find a workspace'}).press('Escape');assert.equal(await p.getByRole('dialog').count(),0);assert.equal(await p.getByRole('button',{name:'All AVA workspaces',exact:true}).evaluate(e=>e===document.activeElement),true,'menu focus returned');
   await open('Visual explanations');for(const format of ['SVG','PNG']){const download=p.waitForEvent('download');await p.getByRole('button',{name:`Export ${format}`,exact:true}).click();assert.equal((await download).suggestedFilename(),`ava-demo-visual.${format.toLowerCase()}`);}
+  // Joint proposal is a separate local composition, not a live screen redesign.
+  await p.getByRole('button',{name:'All AVA workspaces',exact:true}).click();
+  await p.getByRole('navigation',{name:'All workspaces'}).getByRole('button',{name:/^Proposed design /}).click();
+  await p.getByRole('heading',{name:'AVA, with a little more life.'}).waitFor();
+  const proposalNav=p.getByRole('navigation',{name:'Proposed screens'});
+  const proposalNames=await proposalNav.locator('button').allTextContents();
+  assert.equal(proposalNames.length,17);
+  const selectStudy=async name=>{await proposalNav.getByRole('button',{name:new RegExp(name+'$')}).click();await p.waitForTimeout(250);};
+  for(const width of [1440,390,320]) {
+    await p.setViewportSize({width,height:width===1440?1000:844});
+    for(let i=0;i<proposalNames.length;i++) {
+      await proposalNav.locator('button').nth(i).click();await p.waitForTimeout(250);
+      const fit=await p.locator('.ps-artboard').evaluate(e=>({scroll:e.scrollWidth-e.clientWidth,right:e.getBoundingClientRect().right}));
+      assert.ok(fit.scroll<=1 && fit.right<=width+1,`${proposalNames[i]} ${width} proposal overflow: ${JSON.stringify(fit)}`);
+      assert.equal(await p.locator('.ps-artboard').count(),1,'only one study mounted');
+      console.log('Verified proposal:',proposalNames[i],width);
+    }
+    for(const name of ['Home','Today','Notes','Metal comparison']) {
+      await selectStudy(name);await p.locator('.ps-artboard').scrollIntoViewIfNeeded();
+      await p.screenshot({path:resolve(tmpdir(),`ava-metal-proposal-${name.toLowerCase().replaceAll(' ','-')}-${width}.png`)});
+    }
+  }
+  await selectStudy('Metal comparison');
+  assert.equal(await p.locator('.ps-artboard [data-shader="paper-liquid-metal"]').count(),1);
+  await p.getByRole('button',{name:'Try real liquid metal',exact:true}).click();
+  await p.getByRole('status').filter({hasText:'Real shader pressed.'}).waitFor();
+  await p.getByRole('button',{name:'Paper study',exact:true}).click();
+  assert.equal(await p.locator('.ps-material-samples').getAttribute('data-paper'),'true');
+  await selectStudy('Ideas');
+  for(const style of ['Card-swap','List','Cover-flow']) await p.getByRole('button',{name:style,exact:true}).click();
+  await selectStudy('Home');
+  await p.getByRole('button',{name:"Reveal today's one thing"}).press('Enter');
+  await p.getByText(/Live AVA would use the existing verified ranking/).waitFor();
+  await selectStudy('Talk');await p.getByRole('button',{name:'What AVA did · sample'}).click();
+  await p.locator('.ps-flow').waitFor();
+  await selectStudy('Notes');await p.getByRole('button',{name:'Open full notes layout'}).click();
+  await p.getByRole('heading',{level:1,name:'Notes',exact:true}).waitFor();
+  await p.goBack();await p.getByRole('heading',{name:'AVA, with a little more life.'}).waitFor();
+  await p.reload();await p.getByRole('heading',{name:'AVA, with a little more life.'}).waitFor();
   await p.getByRole('button',{name:'Components',exact:true}).click();
   await p.getByRole('navigation',{name:'Component references'}).getByRole('button',{name:/ScrollTimeline/}).click();
   await p.locator('.am-root').evaluate(e=>e.scrollTo({top:e.scrollHeight,behavior:'instant'}));
@@ -101,5 +140,5 @@ try {
   await p.emulateMedia({reducedMotion:'reduce'});await p.reload();await p.waitForTimeout(800);
   const still=await starPixels();await p.waitForTimeout(300);assert.ok((await starPixels())===still,'reduced motion stars static');
   assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);
-  console.log(JSON.stringify({passed:results,workspaces:destinations,localPersistence:true,exports:['SVG','PNG'],historyAndFocus:true,viewports:[1440,390],presenceFits:[[1440,900],[1366,650],[390,844],[320,568],[844,390]],reducedMotion:true,errors,writes,screenshots:tmpdir()},null,2));
+  console.log(JSON.stringify({passed:results,workspaces:destinations,proposalStudies:proposalNames,proposalWidths:[1440,390,320],localPersistence:true,exports:['SVG','PNG'],historyAndFocus:true,viewports:[1440,390],presenceFits:[[1440,900],[1366,650],[390,844],[320,568],[844,390]],reducedMotion:true,errors,writes,screenshots:tmpdir()},null,2));
 } finally {await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}

@@ -13,13 +13,13 @@ beforeEach(()=>{localStorage.clear();history.replaceState(null,"","/");navigate.
 afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();});
 const stored=()=>JSON.parse(localStorage.getItem(DEMO_KEY)!);
 describe("complete metal demo",()=>{
-  for(const [route,title] of DESTINATIONS.filter(d=>!["home","voice","components"].includes(d[0])))it(`renders ${title} without a live call`,()=>{
+  for(const [route,title] of DESTINATIONS.filter(d=>!["home","voice","components","proposal"].includes(d[0])))it(`renders ${title} without a live call`,()=>{
     const fetch=vi.spyOn(globalThis,"fetch");render(<Harness route={route as WorkspaceRoute}/>);
     expect(screen.getByRole("heading",{level:1,name:title})).toBeTruthy();expect(screen.getByText("LOCAL DEMO · SAMPLE DATA")).toBeTruthy();expect(fetch).not.toHaveBeenCalled();
   });
   it("navigates via keyboard-friendly menu, restores route and responds to Back",async()=>{
     render(<GodUiPreview/>);fireEvent.click(screen.getByRole("button",{name:"All AVA workspaces"}));
-    const dialog=screen.getByRole("dialog",{name:"Your AVA"});expect(within(dialog).getAllByRole("button")).toHaveLength(20);
+    const dialog=screen.getByRole("dialog",{name:"Your AVA"});expect(within(dialog).getAllByRole("button")).toHaveLength(DESTINATIONS.length+1);
     fireEvent.change(screen.getByRole("textbox",{name:"Find a workspace"}),{target:{value:"calendar"}});fireEvent.click(within(dialog).getByRole("button",{name:/Calendar/}));
     await screen.findByRole("heading",{level:1,name:"Calendar"});expect(location.hash).toBe("#demo=calendar");expect(screen.queryByRole("dialog")).toBeNull();cleanup();render(<GodUiPreview/>);await screen.findByRole("heading",{level:1,name:"Calendar"});
     history.replaceState(null,"","#demo=notes");fireEvent(window,new PopStateEvent("popstate"));await screen.findByRole("heading",{level:1,name:"Notes"});

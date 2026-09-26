@@ -95,6 +95,20 @@ describe("FaceAnimator lively profile", () => {
     expect(checked).toBe(true);
   });
 
+  it("holds exactly still once reduced motion is on, even mid-breath", () => {
+    const anim = new FaceAnimator(lcg(9), { profile: "lively" });
+    run(anim, 5.6);
+    expect(anim.state.breath).toBeGreaterThan(0.05);
+    expect(anim.state.drift).toBeGreaterThan(0.5);
+    anim.still = true;
+    anim.step(5.7, 1 / 60);
+    expect(anim.state.breath).toBe(0);
+    expect(anim.state.drift).toBe(0);
+    for (let i = 0; i < 120; i++) anim.step(6 + i / 60, 1 / 60);
+    expect(anim.state.breath).toBe(0);
+    expect(anim.state.drift).toBe(0);
+  });
+
   it("draws a still frame with no breath and no drift, and never changes its mode", () => {
     const anim = new FaceAnimator(lcg(5), { profile: "lively" });
     anim.step(0, 0);

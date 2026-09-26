@@ -28,6 +28,11 @@ export class FaceAnimator {
   readonly state: Record<Key, number> = { blink: 0, open: 0, smile: 0.12, brow: 0, gx: 0, gy: 0, yaw: 0, pitch: 0, roll: 0, think: 0, energy: 0.1, breath: 0, drift: 0 };
   private readonly velocity: Record<Key, number> = { blink: 0, open: 0, smile: 0, brow: 0, gx: 0, gy: 0, yaw: 0, pitch: 0, roll: 0, think: 0, energy: 0, breath: 0, drift: 0 };
   readonly profile: FaceProfile;
+  /**
+   * Reduced motion: hold one still frame. Breath and drift are exactly zero,
+   * even if motion was switched off in the middle of a breath.
+   */
+  still = false;
   mode: FaceMode = "idle";
   /** Pointer in face-canvas clip space (-1..1), or null when away. */
   pointer: [number, number] | null = null;
@@ -108,7 +113,10 @@ export class FaceAnimator {
       smile = 0.28 + (env < 0.05 ? 0.12 : 0); brow = 0.15 + env * 0.25; pitch += env * 0.035; yaw += Math.sin(t * 0.8) * 0.05;
     }
     if (t < this.override.until) { smile = Math.max(smile, this.override.smile); brow = Math.max(brow, this.override.brow); }
-    if (this.profile === "lively") {
+    if (this.profile === "lively" && this.still) {
+      this.state.breath = 0; this.velocity.breath = 0;
+      this.state.drift = 0; this.velocity.drift = 0;
+    } else if (this.profile === "lively") {
       // Breathing lifts the head a touch and swells her glow a little.
       this.breathPhase += dt / this.breathSeconds;
       if (this.breathPhase >= 1) { this.breathPhase -= 1; this.breathSeconds = 3.9 + this.random() * 1.1; }

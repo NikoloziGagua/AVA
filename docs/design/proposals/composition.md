@@ -41,13 +41,19 @@ starts or finishes work, time moves on. It never plays just to fill a screen.
 | **Notes** | Folder path at the top, files, then the page you're reading | Breadcrumbs, TiltCard for pinned files | Readable first. The tilt is a small reward, not in the way. |
 | **Ideas** | A board or list, plus an optional browse mode | CoverFlow or CardSwap (browse mode), JellyButton for "new idea" | Ideas are for playing with; browsing them can be playful. |
 | **Calendar** | Month and week, with quiet grid lines | ScrollTimeline in day view | Lines help reading a calendar. Everything else stays line-free. |
-| **Memory** | What AVA remembers, people and projects | ImageAccordion for people and projects, BeamDraw for how things connect | Memory is about connections, so show them. |
-| **Explore AVA** | What AVA can do | BentoGrid | Capabilities at a glance, bigger tiles for the important ones. |
+| **Memory** | What AVA remembers, people and projects | BeamDraw for how remembered things connect, drawn only from real links | Memory is about connections, so show the real ones. |
+| **Explore AVA** | What AVA can do | BentoGrid; BeamDraw inside a capability's detail | Capabilities at a glance, bigger tiles for the important ones. |
+| **Visual explanations** | AVA's explainer visuals | ImageAccordion (only where real images exist) | Browsing pictures is what the accordion is for. |
+| **Self development** | AVA's improvement journal | ScrollTimeline | Her growth reads as a story you scroll through. |
 | **Activity** | Runs, messages and evidence | AnimatedBeam dotted pipeline, driven by real run events | Watching a real task move through its stages is genuinely useful. |
 | **Reminders & watches** | Upcoming stack and watches | ProgressiveCardReveal for receipt details | The honest delivery status stays readable. |
 | **Settings** | Grouped settings on metal surfaces | JellyButton toggles (optional) | Quiet. |
 | **Pairing / first run** | A calm welcome and a few steps | Stepper, GradientWave backdrop | The one place a colourful wave fits: the first hello. |
 | Phone quick capture | A small plus that expands into note, idea, reminder | GooeyFab on Notes and Ideas only | Capture fast without leaving the page. It never covers the bar. |
+
+Earlier motion-lab ideas (Signal, Choreography, Atlas, Time, Material) stay
+available if you want any of them back. Codex's full list of every reference,
+with what each one does, is in `docs/design/ui-reference-inventory.md`.
 
 ## Choices only Niko can make (shown side by side in the preview)
 

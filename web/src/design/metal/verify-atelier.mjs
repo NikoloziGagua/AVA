@@ -287,7 +287,7 @@ try {
     await page.emulateMedia({ forcedColors: 'active' });
     // Starfield clears from its async matchMedia change listener, so a fixed sleep raced
     // under load. Wait at most 2s for the forced flag AND a fully transparent star canvas.
-    // A canvas that stays painted times out here and then fails the explicit check below.
+    // Missing the deadline fails the check even if the canvas clears later; a painted canvas fails too.
     const settled = await page.waitForFunction(() => {
       if (!matchMedia('(forced-colors: active)').matches) return false;
       const el = document.querySelector('[data-metal-stars]');
@@ -302,7 +302,7 @@ try {
       for (let i=3; i<data.length; i+=4) if (data[i] !== 0) opaque += 1;
       return { forced: matchMedia('(forced-colors: active)').matches, opaque };
     });
-    check(`${look}/${width} forced colours omit decorative stars: ${JSON.stringify({ ...forcedStars, settled })}`, forcedStars.forced && forcedStars.opaque === 0);
+    check(`${look}/${width} forced colours omit decorative stars: ${JSON.stringify({ ...forcedStars, settled })}`, settled && forcedStars.forced && forcedStars.opaque === 0);
     check(`${look}/${width} forced colours retain keyboard control`, await page.getByRole('button', { name: 'keyboard', exact: true }).isVisible());
     await page.emulateMedia({ forcedColors: 'none' });
     await page.setViewportSize({ width: 844, height: 390 });

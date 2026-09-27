@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from "express";
+import { clockLine } from "../time/clock.js";
 import { z } from "zod";
 import { nanoid } from "nanoid";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -579,6 +580,7 @@ export function chatRoutes(
       + (resolvedVisualContext ? `${resolvedVisualContext.prompt}\n\n` : "")
       + (memoryRetrieval.prompt ? `${memoryRetrieval.prompt}\n\n` : "")
       + (roomContext ? `${roomContext}\n\n` : "")
+      + clockLine() + "\n\n"
       + latestUserText;
     const reasoningEffort = agentDeps.provider!.name === "openai"
       ? (parsed.data.voice ? "none" : mapReasoning(getReasoningLevel(db), mode))

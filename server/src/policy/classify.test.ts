@@ -7,9 +7,13 @@ describe("classifyRisk", () => {
     for (const recurrence_kind of ["none", "weekly"]) {
       expect(classifyRisk("calendar_add", { recurrence_kind }).tier).toBe("low");
     }
-    for (const tool of ["calendar_update", "calendar_set_attendance", "calendar_remind", "unknown_calendar_tool"]) {
+    for (const tool of ["calendar_update", "calendar_set_attendance"]) {
+      expect(classifyRisk(tool, {}).tier).toBe("low");
+    }
+    for (const tool of ["calendar_remind", "unknown_calendar_tool"]) {
       expect(classifyRisk(tool, {}).tier).toBe("medium");
     }
+    expect(classifyRisk("calendar_update", { title: ".env" }).tier).toBe("blocked");
     expect(classifyRisk("calendar_add", { title: ".env" }).tier).toBe("blocked");
   });
   it("read-only: chrome.read_page", () => {

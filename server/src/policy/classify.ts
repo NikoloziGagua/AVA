@@ -65,6 +65,9 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   // One validated, reversible local calendar definition, including a bounded
   // weekly series. This tool sends no invitations and dispatches no reminders.
   if (tool === "calendar_add") return { tier: "low", reason: "validated local calendar creation" };
+  // v3: versioned, validated local edits with stale-write guards. Update may cancel an
+  // occurrence or split a series locally; nothing is hard-deleted, sent or dispatched.
+  if (tool === "calendar_update" || tool === "calendar_set_attendance") return { tier: "low", reason: "versioned local calendar edit" };
 
   if (
     tool === "chrome_open" ||

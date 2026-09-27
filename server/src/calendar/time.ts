@@ -7,13 +7,22 @@ const TIME_RE = /^(\d{2}):(\d{2}):(\d{2})$/;
 export type LocalDateParts = { year: number; month: number; day: number };
 export type LocalTimeParts = { hour: number; minute: number; second: number };
 
+// Building an Intl.DateTimeFormat is expensive (~0.1-1ms); a year-long weekly
+// expansion makes hundreds, so formatters are cached per zone. They are pure.
+const zoneNames = new Map<string, string>();
+const zonedFormatters = new Map<string, Intl.DateTimeFormat>();
+
 export function normalizeTimeZone(value: unknown): string {
   if (
     typeof value !== "string" || value.length === 0 || value.length > 100 ||
     (value !== "UTC" && !/^[A-Za-z_]+(?:\/[A-Za-z0-9_+.-]+)+$/.test(value))
   ) throw new CalendarError("invalid_timezone");
+  const known = zoneNames.get(value);
+  if (known) return known;
   try {
-    return new Intl.DateTimeFormat("en-GB", { timeZone: value }).resolvedOptions().timeZone;
+    const resolved = new Intl.DateTimeFormat("en-GB", { timeZone: value }).resolvedOptions().timeZone;
+    zoneNames.set(value, resolved);
+    return resolved;
   } catch {
     throw new CalendarError("invalid_timezone");
   }
@@ -64,7 +73,9 @@ export function localDateDistance(from: string, to: string): number {
 }
 
 function zonedParts(epoch: number, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-GB", {
+  let formatter = zonedFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone,
     calendar: "iso8601",
     numberingSystem: "latn",
@@ -75,7 +86,10 @@ function zonedParts(epoch: number, timeZone: string) {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  }).formatToParts(epoch);
+    });
+    zonedFormatters.set(timeZone, formatter);
+  }
+  const parts = formatter.formatToParts(epoch);
   const number = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((entry) => entry.type === type)?.value);
   return {
     year: number("year"), month: number("month"), day: number("day"),

@@ -191,6 +191,12 @@ describe("untrustworthy receipts (#385)", () => {
       expect(`${view.detail} ${view.due}`).not.toContain("reminder:");
     }
   });
+  it("describes a known expired pause in the past tense, not as an offline guess", () => {
+    const view = presentReminder(reminder({ reminder_status: status({ state: "expired", reasonCode: "paused" }) }))!;
+    expect(view.label).toBe("Expired");
+    expect(view.detail).toBe("The delivery window ended without a send. It was paused when AVA last checked.");
+    expect(view.detail).not.toMatch(/offline|will be sent/);
+  });
 
   it("tells the two London 01:30s on 25 October apart", () => {
     const first = Date.UTC(2026, 9, 25, 0, 30);

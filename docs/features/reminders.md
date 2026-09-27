@@ -52,6 +52,13 @@ Schedule supports explicit deletion; pause/resume remains in Watches. Deleting
 or pausing cannot recall a notification already handed to the service. A terminal
 occurrence is not rearmed by resuming its watch.
 
+A zero-attempt expiry preserves a known pause as its last recorded blocker,
+instead of guessing AVA was offline. The UI describes that historical check;
+it does not claim the reminder was paused continuously for the whole window.
+Resuming a still-pending reminder removes obsolete pause wording from its current
+receipt without rewriting stored history. Expiry after a transmission attempt
+still reports `delivery_window_expired`, never “nothing was sent”.
+
 If creation loses its response, the UI explains that saving is unconfirmed and
 refreshes the list for inspection. It does not retry the POST automatically or
 claim a similar-looking row proves that particular request succeeded.

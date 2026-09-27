@@ -20,6 +20,54 @@ function setup() {
 const accepted = { subscriptions: { total: 1, accepted: 1, rejectedTransient: 0, rejectedPermanent: 0, unknown: 0 }, reasonCode: null } as const;
 
 describe("durable reminder occurrences", () => {
+  it("retains a known pause at zero-attempt expiry and never rearms the terminal receipt", () => {
+    const { db, watch } = setup();
+    setWatchEnabled(db, watch.id, false);
+    expect(claimDueReminders(db, 100_000)).toEqual([]);
+    expect(claimDueReminders(db, 100_000 + REMINDER_WINDOW_MS)).toEqual([]);
+    const receipt = getReminderStatus(db, getWatch(db, watch.id)!);
+    expect(receipt).toMatchObject({ state: "expired", attempts: 0, reasonCode: "paused", nextAttemptAt: null });
+    setWatchEnabled(db, watch.id, true);
+    claimDueReminders(db, 200_000 + REMINDER_WINDOW_MS);
+    expect(getReminderStatus(db, getWatch(db, watch.id)!)).toEqual(receipt);
+  });
+  it("does not project a historical pause as a current blocker after resume", () => {
+    const { db, watch } = setup();
+    const [claim] = claimDueReminders(db, 100_000);
+    setWatchEnabled(db, watch.id, false);
+    deferReminder(db, claim!, "paused", 100_001);
+    expect(getReminderStatus(db, getWatch(db, watch.id)!)).toMatchObject({ state: "paused", reasonCode: "paused" });
+    setWatchEnabled(db, watch.id, true);
+    expect(getReminderStatus(db, getWatch(db, watch.id)!)).toMatchObject({ state: "scheduled", reasonCode: null, attempts: 0 });
+    expect(getReminderOccurrence(db, claim!.id)?.reason_code).toBe("paused");
+    expect(claimDueReminders(db, 115_000)).toEqual([]);
+    const [next] = claimDueReminders(db, 115_001);
+    expect(beginReminderSend(db, next!, 115_001)).not.toBeNull();
+  });
+  it.each(["push_not_configured", "no_subscriptions"] as const)("retains %s when no pause or send supersedes it", reason => {
+    const { db, watch } = setup(); const [claim] = claimDueReminders(db, 100_000);
+    deferReminder(db, claim!, reason, 100_001);
+    claimDueReminders(db, 100_000 + REMINDER_WINDOW_MS);
+    expect(getReminderStatus(db, getWatch(db, watch.id)!)).toMatchObject({ state: "expired", reasonCode: reason, attempts: 0 });
+  });
+  it("an attempted retry expiring while paused keeps delivery-window evidence", () => {
+    const { db, watch } = setup(); const [claim] = claimDueReminders(db, 100_000);
+    finishReminder(db, beginReminderSend(db, claim!, 100_000)!, {
+      subscriptions: { total: 1, accepted: 0, rejectedTransient: 1, rejectedPermanent: 0, unknown: 0 }, reasonCode: "transient_rejection",
+    }, 100_001);
+    setWatchEnabled(db, watch.id, false); claimDueReminders(db, 100_000 + REMINDER_WINDOW_MS);
+    expect(getReminderStatus(db, getWatch(db, watch.id)!)).toMatchObject({ state: "expired", reasonCode: "delivery_window_expired", attempts: 1 });
+  });
+  it("recovers the last recorded pause across restart even if resumed before the expiry pass", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ava-pause-")); dirs.push(dir);
+    const path = join(dir, "fixture.sqlite"); let db = openDb(path); dbs.push(db);
+    const watch = createWatch(db, { prompt: "fixture", kind: "reminder", runAt: 100_000, timeZone: "Europe/Dublin" });
+    const [claim] = claimDueReminders(db, 100_000); deferReminder(db, claim!, "paused", 100_001);
+    db.close(); db = openDb(path); dbs.push(db);
+    expect(getReminderStatus(db, getWatch(db, watch.id)!)).toMatchObject({ state: "scheduled", reasonCode: null });
+    claimDueReminders(db, 100_000 + REMINDER_WINDOW_MS);
+    expect(getReminderStatus(db, getWatch(db, watch.id)!)).toMatchObject({ state: "expired", reasonCode: "paused", attempts: 0 });
+  });
   it("watch and occurrence creation rolls back as one transaction", () => {
     const db = openInMemoryDb(); dbs.push(db);
     db.exec("CREATE TRIGGER fixture_abort BEFORE INSERT ON reminder_occurrences BEGIN SELECT RAISE(ABORT,'fixture'); END");

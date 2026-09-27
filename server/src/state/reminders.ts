@@ -51,7 +51,9 @@ export function getReminderStatus(db: Db, watch: Watch): ReminderStatus | undefi
     dueAt: row.due_at, timeZone: row.time_zone, expiresAt: row.expires_at, attempts: row.attempts,
     attemptedAt: row.last_attempt_at, nextAttemptAt: paused ? null : row.next_attempt_at, acceptedAt: row.accepted_at,
     subscriptions: { total: row.total, accepted: row.accepted, rejectedTransient: row.rejected_transient, rejectedPermanent: row.rejected_permanent, unknown: row.unknown },
-    reasonCode: paused ? "paused" : safeReason(row.reason_code), phoneReceipt: "unconfirmed",
+    // A resumed pending row may still retain its last pre-send pause in history.
+    // It is not a current blocker. Terminal evidence must remain unchanged.
+    reasonCode: paused ? "paused" : row.reason_code === "paused" && !TERMINAL.has(row.phase) ? null : safeReason(row.reason_code), phoneReceipt: "unconfirmed",
   };
 }
 
@@ -72,6 +74,7 @@ export function claimDueReminders(db: Db, now: number, limit = 8): ReminderOccur
     db.prepare(`UPDATE reminder_occurrences SET phase='expired',revision=revision+1,
       next_attempt_at=NULL,lease_token=NULL,lease_until=NULL,
       reason_code=CASE WHEN attempts>0 THEN 'delivery_window_expired'
+        WHEN (SELECT enabled FROM watches w WHERE w.id=watch_id)=0 OR reason_code='paused' THEN 'paused'
         WHEN reason_code IN ('push_not_configured','no_subscriptions') THEN reason_code ELSE 'missed_window' END
       WHERE phase IN ('scheduled','retry_scheduled','claimed') AND expires_at <= ?`).run(now);
     const due = db.prepare(`SELECT r.* FROM reminder_occurrences r JOIN watches w ON w.id=r.watch_id

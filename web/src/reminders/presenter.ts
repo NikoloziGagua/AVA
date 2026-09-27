@@ -1,6 +1,6 @@
 /**
  * One honest description of a direct one-off reminder (contract
- * i4-one-off-reminders v1), shared by Schedule, Today and the Watches views.
+ * i4-one-off-reminders v2), shared by Schedule, Today and the Watches views.
  *
  * The evidence ends at the notification service. "Accepted" means the service
  * took the message, never that a phone showed it, so no copy here may claim
@@ -211,7 +211,9 @@ export function presentReminder(watch: WatchRow, now: number = Date.now()): Remi
     case "failed":
       return { label: "Could not send", detail: reason ?? "The notification service did not accept it.", tone: "bad", due };
     case "expired":
-      return { label: "Expired", detail: reason ?? "The delivery window passed.", tone: "bad", due };
+      return { label: "Expired", detail: status.reasonCode === "paused"
+        ? "The delivery window ended without a send. It was paused when AVA last checked."
+        : reason ?? "The delivery window passed.", tone: "bad", due };
     case "acceptance_unknown":
       return {
         label: "Acceptance unknown",

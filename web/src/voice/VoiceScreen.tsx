@@ -12,6 +12,8 @@ import { StatusIsland, type IslandMode } from "../design/StatusIsland.js";
 import { cn } from "../design/cn.js";
 import { LazyFace } from "../design/face/LazyFace.js";
 import { FaceStill } from "../design/face/FaceStill.js";
+import { Atmosphere } from "../design/metal/Atmosphere.js";
+import { LazyStarfield } from "../design/metal/LazyStarfield.js";
 import {
   approvalRiskLabel,
   approvalTimeoutLabel,
@@ -221,7 +223,9 @@ export function VoiceScreenBody({
   const faceMode = v.actionPending && signalMode !== "speaking" ? "thinking" : signalMode;
 
   return (
-    <div className="ds-root relative flex h-full w-full flex-col overflow-hidden bg-canvas font-ui text-ink">
+    <div className="ds-root ds-atelier-voice relative flex h-full w-full flex-col bg-canvas font-ui text-ink">
+      <Atmosphere kind="nocturne" still />
+      <LazyStarfield />
       {/* Top: the compact menu button sits top-left (the app's bar); voice's own
           actions sit top-right; the island is centred under them. */}
       <div
@@ -278,15 +282,15 @@ export function VoiceScreenBody({
 
       {/* One calm, full-height stage: her face, then the current turn in words.
           Voice has no transcript scroller; the full history is in Talk. */}
-      <main className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center gap-5 px-6 pb-2">
-        <div className="ds-backlight relative h-[min(50dvh,520px)] w-full max-w-2xl">
-          <LazyFace mode={faceMode} sampleLevel={measuredVoiceLevel} label="AVA" stillSize={240} className="relative" />
+      <main className="ds-voice-composition relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4 pb-2">
+        <div className="ds-voice-face ds-backlight relative w-full max-w-3xl">
+          <LazyFace mode={faceMode} sampleLevel={measuredVoiceLevel} label="AVA" stillSize={280} className="relative" />
         </div>
 
         <p className="text-meta text-ink-2">{statusLabel}</p>
 
         {/* ONE live line for the current turn, updated in place as it streams. */}
-        <div className="min-h-[5.5rem] w-full max-w-2xl text-center" aria-live="polite" aria-label="Current voice turn">
+        <div className="ds-voice-caption w-full max-w-2xl text-center" aria-live="polite" aria-label="Current voice turn">
           {v.interim && (
             <div key={`interim-${v.interim.who}`} className="ds-rise grid gap-1.5">
               <span className="font-ui-mono text-label uppercase text-ink-3">
@@ -361,7 +365,7 @@ export function VoiceScreenBody({
         </div>
 
         {/* mute · (talk / stop) · exact text · keyboard */}
-        <div className="ds-glass flex items-center gap-2 rounded-full p-2 shadow-e3">
+        <div className="ds-metal-bar flex items-center gap-2 rounded-full p-2 shadow-e3">
           <button aria-label={v.muted ? "unmute" : "mute"} onClick={() => v.setMuted(!v.muted)} className={roundQuiet}>
             {v.muted ? <MicOff size={20} aria-hidden="true" /> : <Mic size={20} aria-hidden="true" />}
           </button>

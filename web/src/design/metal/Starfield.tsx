@@ -5,7 +5,7 @@ import { advanceStars, createStars, projectStar } from "./particles.js";
 
 /**
  * Decorative Canvas2D only. Does not take the face's WebGL slot or read audio.
- * Candidate production layer: intentionally unmounted until presentation review.
+ * Lazy Home/Voice layer. Static under reduced motion; no paint in forced colours.
  */
 export function Starfield() {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -14,16 +14,18 @@ export function Starfield() {
 
   useEffect(() => {
     const canvas = ref.current;
-    if (!canvas) return;
+    if (!canvas || typeof CanvasRenderingContext2D === "undefined") return;
     let ctx: CanvasRenderingContext2D | null;
     try { ctx = canvas.getContext("2d", { alpha: true }); } catch { return; }
     if (!ctx) return;
     const context = ctx;
-    const stars = createStars();
+    let stars = createStars(480);
     let width = 1, height = 1, raf = 0, visible = true, last = 0, disposed = false;
+    const forced = window.matchMedia("(forced-colors: active)");
 
     const draw = () => {
       context.clearRect(0, 0, width, height);
+      if (forced.matches) return;
       for (const star of stars) {
         const point = projectStar(star, width, height);
         if (!point.visible) continue;
@@ -36,10 +38,12 @@ export function Starfield() {
     };
     const tick = (now: number) => {
       raf = 0;
-      if (disposed || reduced || document.hidden || !visible) return;
-      advanceStars(stars, last ? (now - last) / 1000 : 0);
-      last = now;
-      draw();
+      if (disposed || reduced || document.hidden || !visible || forced.matches) return;
+      if (!last || now - last >= 1000 / 30) {
+        advanceStars(stars, last ? (now - last) / 1000 : 0);
+        last = now;
+        draw();
+      }
       raf = requestAnimationFrame(tick);
     };
     const sync = () => {
@@ -48,13 +52,16 @@ export function Starfield() {
       last = 0;
       if (!disposed && !document.hidden && visible) {
         draw();
-        if (!reduced) raf = requestAnimationFrame(tick);
+        if (!reduced && !forced.matches) raf = requestAnimationFrame(tick);
       }
     };
     const resize = () => {
       const bounds = canvas.getBoundingClientRect();
-      width = Math.max(1, Math.min(3840, bounds.width));
-      height = Math.max(1, Math.min(2160, bounds.height));
+      width = Math.max(1, Math.min(2560, bounds.width));
+      height = Math.max(1, Math.min(1600, bounds.height));
+      const count = width < 600 ? 240 : 480;
+      if (stars.length !== count) stars = createStars(count);
+      canvas.dataset.starCount = String(count);
       const ratio = Math.min(1.5, Math.max(1, window.devicePixelRatio || 1));
       canvas.width = Math.round(width * ratio);
       canvas.height = Math.round(height * ratio);
@@ -71,6 +78,7 @@ export function Starfield() {
     intersection?.observe(canvas);
     window.addEventListener("resize", resize);
     document.addEventListener("visibilitychange", sync);
+    forced.addEventListener("change", sync);
     resize();
 
     return () => {
@@ -80,6 +88,7 @@ export function Starfield() {
       intersection?.disconnect();
       window.removeEventListener("resize", resize);
       document.removeEventListener("visibilitychange", sync);
+      forced.removeEventListener("change", sync);
     };
   }, [reduced, look]);
 

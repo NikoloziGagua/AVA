@@ -270,11 +270,13 @@
 .ds-menu {
   clip-path: inset(calc(100% - 58px) 0 0 0 round 29px);
   pointer-events: none;
+  opacity: 0;
   transition: clip-path 480ms var(--ds-ease-spring);
 }
 .ds-menu[data-open="true"] {
   clip-path: inset(0 0 0 0 round 30px);
   pointer-events: auto;
+  opacity: 1;
 }
 /* Compact bar (Talk, Voice): the round button sits top-left and the menu drops down from it. */
 nav[data-compact] .ds-menu { clip-path: inset(0 calc(100% - 52px) calc(100% - 52px) 0 round 26px); }
@@ -368,6 +370,14 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
 .ds-atelier-home { overflow: hidden; }
 .ds-home-composition { height: 100%; grid-template-rows: auto minmax(60px, 1fr) auto auto auto; padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: calc(var(--ds-bar-space, 118px) + 20px + env(safe-area-inset-bottom, 0px)); }
 .ds-home-face { min-height: 0; height: 100%; max-height: 560px; }
+.ds-composer-grow { width: 100%; max-width: 480px; margin-inline: auto; transition: max-width 240ms ease, border-radius 150ms ease; }
+.ds-composer-grow[data-expanded="true"] { max-width: 720px; }
+.ds-draft-kept { position: absolute; top: 58px; left: 0; white-space: nowrap; padding: 3px 8px; border-radius: 999px; background: var(--ds-canvas); }
+.ds-atelier-voice { overflow-x: hidden; overflow-y: auto; }
+.ds-voice-face { flex: 1 1 360px; min-height: 120px; max-height: 620px; }
+.ds-voice-caption { flex-shrink: 0; min-height: 2rem; }
+.ds-voice-composition { min-height: 210px; }
+@media (max-height: 620px) { .ds-voice-composition { flex: 0 0 auto; min-height: 260px; } .ds-voice-face { height: 160px; flex: none; } }
 .ds-home-suggestions { position: relative; }
 .ds-home-suggestions[open] { max-height: 150px; overflow-y: auto; }
 .ds-quiet-conversation { background: radial-gradient(ellipse at 50% 0, var(--ds-atmosphere-halo), transparent 65%), var(--ds-canvas); }

@@ -73,6 +73,12 @@ describe("Light trace", () => {
 });
 
 describe("production atmospheres", () => {
+  it("can hold the Nocturne ground still behind stars even in Full motion", () => {
+    const { container } = render(<Atmosphere kind="nocturne" still />);
+    expect(container.querySelector("canvas")?.getAttribute("data-motion")).toBe("static");
+    expect(draw.stroke).toHaveBeenCalledTimes(36);
+    expect(frames.size).toBe(0);
+  });
   it.each(["nocturne", "silk"] as const)("%s draws bounded lines; takes only a 2D context", (kind) => {
     const { container } = render(<Atmosphere kind={kind} />);
     expect(HTMLCanvasElement.prototype.getContext).toHaveBeenCalledWith("2d");

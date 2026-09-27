@@ -6,7 +6,7 @@ import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 
 const root = resolve(process.argv[2] ?? 'data/builds/atelier-m1-web');
-const evidence = resolve('data/builds/atelier-m1-browser');
+const evidence = resolve(process.argv[3] ?? 'data/builds/atelier-presence-browser');
 await mkdir(evidence, { recursive: true });
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.bin': 'application/octet-stream', '.webmanifest': 'application/manifest+json' };
 const server = createServer(async (req, res) => {
@@ -20,6 +20,8 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const results = [];
+const frameEvidence = [];
+const soakSeconds = Math.max(0, Math.min(300, Number(process.argv[4]) || 0));
 const check = (test, condition) => { assert.ok(condition, test); results.push(test); };
 try {
   for (const look of ['ink', 'paper']) for (const width of [1440, 390, 320]) {
@@ -40,6 +42,15 @@ try {
       localStorage.setItem('ava-motion', 'full');
       localStorage.setItem('ava:last-chat-session', 'atelier-fixture-chat');
       sessionStorage.setItem('ava:splash-seen', '1');
+      // No physical microphone, audio, provider or socket: render the real failure state.
+      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { configurable: true,
+        value: async () => { throw new DOMException('Fixture microphone disabled', 'NotAllowedError'); } });
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function(type, ...args) {
+        const context = getContext.call(this, type, ...args);
+        if (context && /webgl/.test(type)) this.dataset.qaContext = type;
+        return context;
+      };
     }, { look });
     await context.route('**/api/**', async route => {
       const request = route.request(), path = new URL(request.url()).pathname;
@@ -68,18 +79,61 @@ try {
     check(`${look}/${width} Home fits`, home.scroll <= home.client + 1 && home.width <= width);
     const face = page.locator('.ds-home-face');
     check(`${look}/${width} face has room`, (await face.boundingBox()).height >= 200);
+    const form = page.locator('form.ds-composer-grow');
+    check(`${look}/${width} bar rests narrow`, (await form.boundingBox()).width <= 480);
+    check(`${look}/${width} closed menu leaves no wide backing`, await page.locator('.ds-menu').evaluate(el => getComputedStyle(el).opacity === '0' && el.inert));
+    const stars = page.locator('[data-metal-stars]');
+    await stars.waitFor();
+    const beforeStars = await stars.evaluate(el => el.toDataURL());
+    await page.waitForTimeout(250);
+    check(`${look}/${width} stars advance`, await stars.evaluate(el => el.toDataURL()) !== beforeStars);
+    check(`${look}/${width} bounded stars`, await stars.getAttribute('data-star-count') === (width < 600 ? '240' : '480'));
+    check(`${look}/${width} one WebGL face`, await page.locator('[data-qa-context]').count() === 1);
+    if (width === 390) {
+      const timing = await page.evaluate(() => new Promise(resolve => {
+        const frames = []; let last = performance.now();
+        const start = last;
+        function tick(now) { frames.push(now-last); last=now; if(now-start < 1500) requestAnimationFrame(tick);
+          else { frames.sort((a,b)=>a-b); resolve({ samples: frames.length, median: frames[Math.floor(frames.length*.5)], p95: frames[Math.floor(frames.length*.95)] }); } }
+        requestAnimationFrame(tick);
+      }));
+      frameEvidence.push({ look, width, timing, note: 'Desktop Edge phone viewport, not physical phone performance' });
+      if (look === 'ink' && soakSeconds > 0) {
+        const cdp = await context.newCDPSession(page);
+        await cdp.send('HeapProfiler.collectGarbage');
+        const before = await cdp.send('Runtime.getHeapUsage');
+        for (let waited = 0; waited < soakSeconds; waited += 30) {
+          await page.waitForTimeout(Math.min(30, soakSeconds - waited) * 1000);
+          console.log(`Home motion soak: ${Math.min(waited + 30, soakSeconds)}/${soakSeconds}s`);
+        }
+        await cdp.send('HeapProfiler.collectGarbage');
+        const after = await cdp.send('Runtime.getHeapUsage');
+        const growth = after.usedSize - before.usedSize;
+        check('Home soak heap growth under 30MB', growth < 30_000_000);
+        check('Home soak retains one WebGL face', await page.locator('[data-qa-context]').count() === 1);
+        frameEvidence.push({ soakSeconds, before: before.usedSize, after: after.usedSize, growth,
+          note: 'Garbage-collected JavaScript heap on desktop Edge, not total GPU/process memory' });
+        await cdp.detach();
+      }
+    }
     const atmosphere = page.locator('.ds-atmosphere canvas');
     const first = await atmosphere.evaluate(el => el.toDataURL());
     await page.waitForTimeout(250);
-    check(`${look}/${width} animated pixels`, await atmosphere.evaluate(el => el.toDataURL()) !== first);
+    check(`${look}/${width} Nocturne ground stays still behind moving stars`, await atmosphere.evaluate(el => el.toDataURL()) === first);
     await page.evaluate(() => { localStorage.setItem('ava-motion', 'reduced'); window.dispatchEvent(new Event('ava-motion-change')); });
     await page.locator('.ds-atmosphere canvas[data-motion="static"]').waitFor();
     const still = await atmosphere.evaluate(el => el.toDataURL());
     await page.waitForTimeout(150);
     check(`${look}/${width} reduced frame stable`, await atmosphere.evaluate(el => el.toDataURL()) === still);
+    const starStill = await stars.evaluate(el => el.toDataURL());
+    await page.waitForTimeout(120);
+    check(`${look}/${width} reduced stars stable`, await stars.evaluate(el => el.toDataURL()) === starStill);
     await page.screenshot({ path: resolve(evidence, `home-${look}-${width}.png`) });
     const input = page.getByRole('textbox', { name: 'Message AVA' });
+    const sameInput = await input.elementHandle();
     await input.fill('Keep this unsent draft');
+    await page.waitForTimeout(300);
+    check(`${look}/${width} bar expands with draft`, await form.getAttribute('data-expanded') === 'true');
     await page.getByRole('group', { name: 'Quick navigation' }).getByRole('button', { name: 'Today', exact: true }).click();
     await page.getByRole('region', { name: 'Recent notes' }).waitFor();
     check(`${look}/${width} draft survives`, await input.inputValue() === 'Keep this unsent draft');
@@ -95,6 +149,7 @@ try {
     await page.keyboard.press('Control+k');
     const menu = page.getByRole('dialog', { name: 'Menu' });
     await menu.getByRole('button', { name: 'Home', exact: true }).waitFor();
+    check(`${look}/${width} menu receives keyboard focus`, await menu.evaluate(el => el.contains(document.activeElement)));
     await page.keyboard.press('Escape');
     check(`${look}/${width} menu focus returns`, await page.getByRole('button', { name: 'Open menu' }).evaluate(el => el === document.activeElement));
     // App's existing in-memory workspace navigation does not push browser-history
@@ -102,10 +157,39 @@ try {
     await page.getByRole('group', { name: 'Quick navigation' }).getByRole('button', { name: 'Today', exact: true }).click();
     await page.getByRole('region', { name: 'Recent notes' }).waitFor();
     check(`${look}/${width} return navigation preserves draft`, await input.inputValue() === 'Keep this unsent draft');
+    // Voice uses the real engine wrapper, but microphone rejection is fixture-owned.
+    await input.fill('');
+    await page.getByRole('navigation', { name: 'AVA', exact: true }).getByRole('button', { name: 'Talk to AVA', exact: true }).click();
+    await page.locator('.ds-atelier-voice').waitFor();
+    await page.locator('.ds-voice-face [data-face="live"]').waitFor();
+    await page.locator('.ds-atelier-voice [data-metal-stars]').waitFor();
+    check(`${look}/${width} voice has one WebGL face`, await page.locator('[data-qa-context]').count() === 1);
+    const voiceHeight = (await page.locator('.ds-voice-face').boundingBox()).height;
+    check(`${look}/${width} voice face has room`, voiceHeight >= 200);
+    check(`${look}/${width} voice controls fit`, await page.getByRole('button', { name: 'keyboard', exact: true }).evaluate(el => {
+      const r=el.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight;
+    }));
+    await page.screenshot({ path: resolve(evidence, `voice-${look}-${width}.png`) });
+    await page.emulateMedia({ forcedColors: 'active' });
+    await page.waitForTimeout(80);
+    check(`${look}/${width} forced colours omit decorative stars`, await page.locator('[data-metal-stars]').evaluate(el => {
+      const data = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      for (let i=3; i<data.length; i+=4) if (data[i] !== 0) return false;
+      return true;
+    }));
+    check(`${look}/${width} forced colours retain keyboard control`, await page.getByRole('button', { name: 'keyboard', exact: true }).isVisible());
+    await page.emulateMedia({ forcedColors: 'none' });
+    await page.setViewportSize({ width: 844, height: 390 });
+    await page.getByRole('button', { name: 'keyboard', exact: true }).scrollIntoViewIfNeeded();
+    check(`${look}/${width} short voice controls reachable`, await page.getByRole('button', { name: 'keyboard', exact: true }).isVisible());
+    await page.getByRole('button', { name: 'keyboard', exact: true }).click();
+    await page.locator('.ds-quiet-conversation').waitFor();
+    check(`${look}/${width} same mounted composer after Voice`, await sameInput.evaluate(el => el.isConnected && el === document.querySelector('textarea[aria-label="Message AVA"]')));
+    check(`${look}/${width} no stars outside Home/Voice`, await page.locator('[data-metal-stars]').count() === 0);
     check(`${look}/${width} no writes`, writes.length === 0);
     check(`${look}/${width} no errors: ${errors.join(';')}`, errors.length === 0);
     await context.close();
   }
-  await writeFile(resolve(evidence, 'results.json'), JSON.stringify({ checks: results.length, results }, null, 2));
-  console.log(JSON.stringify({ checks: results.length, evidence }));
+  await writeFile(resolve(evidence, 'results.json'), JSON.stringify({ checks: results.length, results, frameEvidence }, null, 2));
+  console.log(JSON.stringify({ checks: results.length, evidence, frameEvidence }));
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

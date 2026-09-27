@@ -83,22 +83,28 @@ voice, messaging, scheduling or automation.
 
 Proposal38 was accepted as `ui-remodel` v4, assigning production presentation to
 Codex. Task58 supersedes the stale task53 waiting note for this first increment.
-The new explicit user selections are recorded in proposal39; peer acceptance of
-that amendment is not claimed. Claude is unavailable (room798); Niko explicitly
-requests Codex continue. Existing data models/endpoints remain unchanged.
+The explicit user selections are now accepted as `ui-remodel` v5 (proposal39,
+room811). Niko authorised solo progress while Claude was unavailable; Claude is
+now independently reviewing the exact commits. Contract acceptance is not
+product acceptance. Existing data models/endpoints remain unchanged.
 
-Status: plan written; isolated production-candidate `design/metal/Starfield.tsx`
-and deterministic `particles.ts` implemented with unit tests. The component is
-not imported by App/Home/Voice, so the production bundle and screens are
-unchanged. Motion uses existing preferences, has no WebGL allocation, caps the
-particle count/pixel ratio, and stops its frame loop when hidden/unmounted.
-The original star candidate remains unmounted. The newer approved Nocturne/Silk
-atmospheres and selected cards are integrated separately as described above.
+Status: materials, Home/Today/Quiet Talk, real Calendar C2 and dark Notes have
+landed in separate source commits. Task61 mounts the star layer lazily on Home
+and Voice, enlarges Voice's existing portrait, and narrows the resting bar while
+preserving its draft and controls. Stars are capped at 240/480 points, DPR1.5,
+2560×1600 logical pixels and 30 paints/sec; no WebGL allocation. They pause when
+hidden/offscreen, are static under Reduced and omitted in forced colours.
+Nocturne/Silk remain the selected background family. Home/Voice freeze the
+Nocturne line ground so stars are their only animated background layer.
+No new face expression
+algorithm or invented measured speech was introduced. Advanced workspaces and
+runtime promotion remain separate gates; see the board for exact completion.
 The 19-destination demo remains independently usable at `?godui-preview` and is
 not evidence that every production destination has been migrated.
 
-Candidate checks: `npm test -w web -- src/design/metal src/design/design-guard.test.ts`,
-`npx tsc -b web`, `npm run build -w web`. With the local Vite server running,
-`node web/src/design/metal/verify-starfield.mjs` mounts the candidate only inside
-an ephemeral browser test profile: real moving pixels, reduced static pixels,
-unmount, zero page errors/non-GET requests. It does not edit production routing.
+Checks: `npm test -w web -- src/design/metal src/design/design-guard.test.ts`,
+TypeScript, full suites, canonical/managed builds and exact-commit boot. The
+built-App `verify-atelier.mjs` now checks production Home/Voice with disposable
+API fixtures, no physical microphone or provider calls. The earlier
+`verify-starfield.mjs` remains a candidate-only historical helper, not release
+evidence. Screenshots, actual frame timings and limits are recorded in the board.

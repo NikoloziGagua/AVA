@@ -8,6 +8,7 @@ import { Skeleton, StatusIsland, SuggestionChips } from "../design/index.js";
 import { LazyFace } from "../design/face/LazyFace.js";
 import { Atmosphere } from "../design/metal/Atmosphere.js";
 import { MetalObject } from "../design/metal/MetalObject.js";
+import { LazyStarfield } from "../design/metal/LazyStarfield.js";
 import { pickOneThing, suggestionsFor, type NoteInput, type OneThing, type ReminderInput, type Source } from "./oneThing.js";
 
 
@@ -110,7 +111,8 @@ export function HomeScreen({ onStartChat, onOpenNote, onOpenCalendar, onOpenRemi
 
   return (
     <div className="ds-root ds-atelier-home absolute inset-0 bg-canvas font-ui text-ink">
-      <Atmosphere kind="nocturne" />
+      <Atmosphere kind="nocturne" still />
+      <LazyStarfield />
       <main
         className="ds-home-composition relative mx-auto grid w-full max-w-xl grid-cols-[minmax(0,1fr)] justify-items-center gap-3 px-4 text-center"
       >

@@ -64,8 +64,26 @@ No sample events, preview localStorage, demo responses, schemas or API writes
 are imported from the preview. The rejected boxed event form is not
 being reused. The old standalone previews remain design references only.
 
-Voice's portrait/composition, compact-at-rest bar and the remaining advanced
-workspaces are separate rollout steps, not claimed complete by this increment.
+Home and Voice now share a lazy forward-moving star layer over a static Nocturne
+line ground. Only stars animate in the background; the line canvas repaints on
+size/look changes, with no frame loop. Other pages keep the slow Silk field. Voice
+has a larger flexible portrait and metal control pill. The existing measured
+audio/face signals, microphone, provider, exact text, approval and session logic
+are unchanged. Short screens can scroll to every control rather than clip them.
+The dots' expression/drift is the existing face animation, not new audio evidence.
+
+The bottom message bar rests at up to 480px and expands to 720px on focus, menu,
+Talk, dictation, a pending reply or any non-empty draft. It is the same mounted
+textarea. Voice's compact menu shows “Draft kept” when unsent words exist; this
+means kept in this mounted App, not persisted to disk. Menu/keyboard focus and
+explicit-send/IME rules remain. A closed menu no longer leaves a wide backing
+behind the narrower pill. Remaining advanced workspaces are not all migrated.
+
+Stars use Canvas2D (240 points below 600px, 480 otherwise), at most 30 paints/sec,
+DPR 1.5 and 2560×1600 logical pixels. They stop hidden/offscreen/unmounted, draw
+a static frame under Reduced and omit artwork in forced colours. Failed lazy
+loading/canvas leaves the static background and controls. Face remains the sole
+WebGL renderer; star/atmosphere canvases do not acquire its context.
 
 Existing App workspace navigation is in-memory, not a browser-history router.
 Browser Back does not traverse those workspace changes, and reload opens Home;
@@ -83,10 +101,19 @@ Today, bar, chat and full web tests cover the preserved data/session behaviours.
 the built production App in Edge at 1440/390/320, Ink and Paper. All API responses
 are disposable browser fixtures; it rejects writes, checks moving/static pixels,
 layout, retained draft, remembered chat, keyboard menu/focus and console errors.
-It saves ignored screenshots/results under `data/builds/atelier-m1-browser`.
-This is not a real account/provider, microphone or physical-device test.
+It saves ignored screenshots/results under `data/builds/atelier-presence-browser`
+(or the optional second argument). It also checks actual moving/static stars,
+bounded counts, one WebGL face, bar width/expansion, no closed-menu backing,
+Voice controls at short heights, the same textarea after Voice and no stars on
+other screens. A fixture-rejected microphone exercises the real Voice failure
+screen without audio/provider access. Desktop Edge phone-viewport frame samples
+are recorded, not presented as physical-phone performance. This is not a real
+account/provider, microphone or physical-device test.
+An optional final numeric argument (bounded to 300 seconds) runs a Home motion
+soak: JavaScript heap after explicit garbage collection and the live context
+count. It does not measure total GPU/process memory.
 
 Production build budgets and offline precache remain mandatory. Runtime
 promotion is separate from a source commit. Consult the board for exact build,
-commit, browser and release evidence; no Claude acceptance is implied while he
-is unavailable.
+commit, browser and release evidence. Claude has returned for independent exact
+reviews; acceptance is recorded separately for each commit, never implied.

@@ -6,9 +6,11 @@ export type AtmosphereKind = "nocturne" | "silk";
 
 /** Original Canvas2D line fields. Decorative only, no WebGL/provider/data reads.
  * A token-based static gradient remains if canvas is unavailable. */
-export function Atmosphere({ kind }: { kind: AtmosphereKind }) {
+export function Atmosphere({ kind, still = false }: { kind: AtmosphereKind; still?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  const reduced = useReducedMotion();
+  const motionReduced = useReducedMotion();
+  // A static line ground can sit under the single moving star background.
+  const reduced = motionReduced || still;
   const look = useDocumentLook();
   useEffect(() => {
     const canvas = ref.current;

@@ -79,8 +79,10 @@ export function BottomBar({
 }: BottomBarProps) {
   const [open, setOpen] = useState(false);
   const [multiline, setMultiline] = useState(false);
+  const [focused, setFocused] = useState(false);
   const menuId = useId();
   const statusId = useId();
+  const draftStatusId = useId();
   const orbRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
@@ -192,6 +194,8 @@ export function BottomBar({
   const system = destinations.filter((d) => d.group === "system");
   const shownRecents = recents.slice(0, 5);
   const canSend = Boolean(draft.trim()) && !sending && !busy;
+  // Never collapse a conversation, active operation, focused field or unsent words.
+  const expanded = open || focused || current === "talk" || draft.length > 0 || busy || sending || dictationActive;
 
   const item = (d: Destination) => (
     <button
@@ -322,11 +326,17 @@ export function BottomBar({
       <form
         ref={formRef}
         onSubmit={submit}
+        data-expanded={expanded}
+        onFocusCapture={() => setFocused(true)}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
+        }}
         className={cn(
           "ds-bar pointer-events-auto relative flex gap-1.5 shadow-e3 transition-[border-radius] duration-150",
           compact ? "h-[52px] w-[52px] items-center justify-center rounded-full p-0" : "min-h-[58px] items-end px-2 py-[7px]",
           !compact && (multiline ? "rounded-sheet" : "rounded-full"),
           open ? "bg-raised" : "ds-metal-bar",
+          !compact && "ds-composer-grow",
         )}
       >
         <button
@@ -335,6 +345,7 @@ export function BottomBar({
           aria-expanded={open}
           aria-controls={menuId}
           aria-label={open ? "Close menu" : "Open menu"}
+          aria-describedby={compact && draft.length > 0 ? draftStatusId : undefined}
           onClick={() => (open ? close() : setOpen(true))}
           className="ds-focus grid h-11 w-11 shrink-0 place-items-center rounded-full transition-transform duration-240 ease-spring active:scale-95"
         >
@@ -384,6 +395,7 @@ export function BottomBar({
         )}
         {!compact && mainButton}
       </form>
+      {compact && draft.length > 0 && !open && <span id={draftStatusId} className="ds-draft-kept text-meta text-ink-2">Draft kept</span>}
     </nav>
   );
 }

@@ -3,7 +3,7 @@
 // one animated surface, loaded lazily so the controls never wait for it, with
 // the still face if it fails. It and the island follow the shared face signal,
 // and only a measured voice level ever drives her mouth.
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { FaceStageProps } from "../design/face/FaceStage.js";
 
@@ -121,6 +121,9 @@ describe("VoiceScreen face", () => {
     await flush();
     expect(screen.getAllByTestId("live-face")).toHaveLength(1);
     expect(screen.queryByTestId("still-face")).toBeNull();
+    expect(document.querySelector(".ds-voice-face")).toBeTruthy();
+    expect(document.querySelector('[data-atmosphere="nocturne"]')).toBeTruthy();
+    await waitFor(() => expect(document.querySelector('[data-metal-stars]')?.getAttribute("aria-hidden")).toBe("true"));
   });
 
   it("follows the shared face signal: island and face pose change with what AVA is audibly doing", async () => {

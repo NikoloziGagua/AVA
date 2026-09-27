@@ -61,6 +61,31 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); track.stop.mockClear(); FakeRecorder.last = null; });
 
 describe("BottomBar as Talk's message box", () => {
+  it("expands on focus or draft, never remounts the textarea, and keeps Voice's draft visible as a hint", () => {
+    const props = { destinations: [], current: "home", onNavigate: vi.fn(), draft: "", onDraftChange: vi.fn(), onSend: vi.fn() };
+    const { rerender } = render(<BottomBar {...props} />);
+    const input = box();
+    const form = input.closest("form")!;
+    expect(form.dataset.expanded).toBe("false");
+    fireEvent.focus(input);
+    expect(form.dataset.expanded).toBe("true");
+    fireEvent.blur(input, { relatedTarget: null });
+    expect(form.dataset.expanded).toBe("false");
+    rerender(<BottomBar {...props} draft="not sent" />);
+    expect(box()).toBe(input);
+    expect(form.dataset.expanded).toBe("true");
+    rerender(<BottomBar {...props} draft="not sent" compact />);
+    expect(screen.getByText("Draft kept")).toBeTruthy();
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(document.querySelector("textarea")).toBe(input);
+    rerender(<BottomBar {...props} current="talk" />);
+    expect(box()).toBe(input);
+    expect(form.dataset.expanded).toBe("true");
+    rerender(<BottomBar {...props} busy onStop={vi.fn()} />);
+    expect(form.dataset.expanded).toBe("true");
+    expect(screen.getByRole("button", { name: "Stop AVA" })).toBeTruthy();
+    expect(props.onSend).not.toHaveBeenCalled();
+  });
   it("sends on Enter, starts a new line on Shift+Enter, and never mid-word in an input method", () => {
     const onSend = vi.fn();
     render(<Talk conversation={{ onSend }} />);

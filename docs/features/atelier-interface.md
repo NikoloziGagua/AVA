@@ -72,6 +72,19 @@ audio/face signals, microphone, provider, exact text, approval and session logic
 are unchanged. Short screens can scroll to every control rather than clip them.
 The dots' expression/drift is the existing face animation, not new audio evidence.
 
+The production face (Home and Voice, `FaceStage`) now uses the lively profile
+Niko asked for in room #773/#775. It had previously been wired only into the
+preview (`LivingFace`). About every 1–3 s her attention moves: half the time
+she looks back at you, and otherwise glances nearby, eyes first and the head
+following. She breathes roughly every 4–5 s, and her dots are drawn slightly
+more solid, at presence 1.12. The algorithms are the existing, reviewed
+`FaceAnimator`/renderer ones; nothing new was invented. Her state and speaking
+level still come only from AVA's real voice state and measured level; the
+lively profile never fakes speaking. Under Reduced she is exactly still: no
+breath, drift or pointer. Switching the motion preference restarts her looking
+ahead. The calm profile remains the animator default and its recorded replay
+is unchanged.
+
 The bottom message bar rests at up to 480px and expands to 720px on focus, menu,
 Talk, dictation, a pending reply or any non-empty draft. It is the same mounted
 textarea. Voice's compact menu shows “Draft kept” when unsent words exist; this

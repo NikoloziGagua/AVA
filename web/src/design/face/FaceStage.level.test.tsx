@@ -11,6 +11,7 @@ vi.mock("./asset.js", async (importOriginal) => ({
 vi.mock("./renderer.js", () => ({
   FaceRenderer: class {
     setPoints() {}
+    setPresence() {}
     resize() {}
     draw(_t: number, anim: { level: number | null }) { fake.levels.push(anim.level); }
     dispose() {}

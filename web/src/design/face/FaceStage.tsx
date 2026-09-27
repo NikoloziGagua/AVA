@@ -18,6 +18,9 @@ export function claimFaceSlot(): (() => void) | null {
   return () => { if (!released) { released = true; liveStages -= 1; } };
 }
 
+/** A little more solid than the original dots: Niko found her "a little too transparent" (room message 775). */
+export const FACE_PRESENCE = 1.12;
+
 function isSmallScreen(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 600px)").matches;
 }
@@ -40,8 +43,10 @@ export type FaceStageProps = {
 
 /**
  * AVA's moving face: the dots of Niko's portrait on the one WebGL canvas, glowing
- * in Ink and engraved in Paper. It blinks, glances, follows the pointer and takes
- * a pose for each state. It pauses off-screen and in hidden tabs, holds still
+ * in Ink and engraved in Paper. It uses the lively profile Niko asked for (room
+ * message 773): she looks around and back at you, breathes, blinks, follows the pointer
+ * and takes a pose for each state. The state and the speaking level still come
+ * only from outside. It pauses off-screen and in hidden tabs, holds exactly still
  * under reduced motion, and falls back to a still picture if anything fails.
  */
 export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "AVA's face", stillSize = 220, className }: FaceStageProps) {
@@ -51,14 +56,16 @@ export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "A
   const [asset, setAsset] = useState<FaceAsset | null>(null);
   const [fallback, setFallback] = useState(false);
   const [slotted, setSlotted] = useState(false);
-  const animator = useRef(new FaceAnimator());
+  const animatorRef = useRef<FaceAnimator | null>(null);
+  if (!animatorRef.current) animatorRef.current = new FaceAnimator(Math.random, { profile: "lively" });
+  const animator = animatorRef.current;
   const frame = useRef<{ redraw: () => void } | null>(null);
 
   const sampleRef = useRef(sampleLevel);
   sampleRef.current = sampleLevel;
 
-  animator.current.mode = mode;
-  if (!sampleLevel) animator.current.level = level;
+  animator.mode = mode;
+  if (!sampleLevel) animator.level = level;
 
   // Claim the single face slot for this mount; a second stage shows the still picture.
   useEffect(() => {
@@ -92,6 +99,7 @@ export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "A
         ? buildPoints(asset, "stipple", small ? 42_000 : asset.stipple.count)
         : buildPoints(asset, "glow", small ? 20_000 : asset.glow.count);
       r.setPoints(points, look);
+      r.setPresence(FACE_PRESENCE);
       r.resize();
     } catch (error) {
       console.warn("[ava] face renderer unavailable, showing the still face:", error instanceof Error ? error.message : error);
@@ -99,7 +107,7 @@ export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "A
       return;
     }
     const active = r;
-    const anim = animator.current;
+    const anim = animator;
     let visible = true;
     let raf = 0;
     let last = performance.now();
@@ -120,6 +128,9 @@ export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "A
       raf = requestAnimationFrame(tick);
     };
     const still = reduced || computeReduced();
+    // Each motion policy starts looking ahead; still also zeroes breath and drift.
+    anim.still = still;
+    anim.pointer = null;
     if (still) drawOnce(); else raf = requestAnimationFrame(tick);
     frame.current = { redraw: () => { if (still) drawOnce(); } };
 
@@ -149,7 +160,7 @@ export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "A
       frame.current = null;
       active.dispose();
     };
-  }, [asset, look, reduced, fallback]);
+  }, [asset, look, reduced, fallback, animator]);
 
   // A still face still reacts to a new state.
   useEffect(() => { frame.current?.redraw(); }, [mode, level]);

@@ -1,9 +1,11 @@
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseFaceAsset } from "./asset.js";
 import { buildFaceAsset } from "./fixture.test-helper.js";
+import { setMotionPref } from "../../lib/motionPref.js";
 
-const fake = vi.hoisted(() => ({ draws: 0, pointers: [] as unknown[], resized: [] as Array<() => void> }));
+type Drawn = { pointer: unknown; still: boolean; profile: string; breath: number };
+const fake = vi.hoisted(() => ({ draws: 0, pointers: [] as unknown[], frames: [] as Drawn[], presence: [] as number[], resized: [] as Array<() => void> }));
 vi.mock("./asset.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./asset.js")>()),
   sharedFaceAsset: vi.fn(),
@@ -11,18 +13,25 @@ vi.mock("./asset.js", async (importOriginal) => ({
 vi.mock("./renderer.js", () => ({
   FaceRenderer: class {
     setPoints() {}
+    setPresence(value: number) { fake.presence.push(value); }
     resize() {}
-    draw(_t: number, anim: { pointer: unknown }) { fake.draws += 1; fake.pointers.push(anim.pointer); }
+    draw(_t: number, anim: { pointer: unknown; still: boolean; profile: string; state: { breath: number } }) {
+      fake.draws += 1;
+      fake.pointers.push(anim.pointer);
+      fake.frames.push({ pointer: anim.pointer, still: anim.still, profile: anim.profile, breath: anim.state.breath });
+    }
     dispose() {}
   },
 }));
 
 import * as asset from "./asset.js";
-import { FaceStage } from "./FaceStage.js";
+import { FACE_PRESENCE, FaceStage } from "./FaceStage.js";
 
 beforeEach(() => {
   fake.draws = 0;
   fake.pointers = [];
+  fake.frames = [];
+  fake.presence = [];
   fake.resized = [];
   vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { fake.resized.push(callback); } observe() {} disconnect() {} });
   vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} });
@@ -46,5 +55,47 @@ describe("FaceStage under reduced motion", () => {
     fake.resized.forEach((callback) => callback());
     expect(fake.draws).toBeGreaterThan(before);
     expect(fake.pointers.every((pointer) => pointer === null)).toBe(true);
+  });
+});
+
+describe("FaceStage lively profile (Niko's room messages 773 and 775)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 4) as unknown as number);
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+  });
+
+  it("uses the approved lively profile at a slightly more solid presence", async () => {
+    localStorage.setItem("ava-motion", "full");
+    render(<FaceStage label="AVA" />);
+    await waitFor(() => expect(fake.draws).toBeGreaterThan(3));
+    expect(FACE_PRESENCE).toBe(1.12);
+    expect(fake.presence).toEqual([1.12]);
+    expect(fake.frames.every((frame) => frame.profile === "lively" && frame.still === false)).toBe(true);
+  });
+
+  it("goes exactly still under reduced motion and comes back alive, looking ahead each time", async () => {
+    localStorage.setItem("ava-motion", "full");
+    const { container } = render(<FaceStage label="AVA" />);
+    await waitFor(() => expect(fake.draws).toBeGreaterThan(2));
+    const canvas = container.querySelector("canvas")!;
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({ left: 0, top: 0, width: 100, height: 100 } as DOMRect);
+    fireEvent.pointerMove(canvas, { clientX: 90, clientY: 10 });
+    await waitFor(() => expect(fake.frames.at(-1)?.pointer).not.toBeNull());
+
+    act(() => setMotionPref("reduced"));
+    await waitFor(() => expect(fake.frames.at(-1)?.still).toBe(true));
+    const reducedAt = fake.frames.length;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(fake.frames.length).toBe(reducedAt);
+    expect(fake.frames.at(-1)).toMatchObject({ still: true, pointer: null, breath: 0 });
+    fireEvent.pointerMove(canvas, { clientX: 90, clientY: 10 });
+    fake.resized.at(-1)?.();
+    expect(fake.frames.at(-1)).toMatchObject({ still: true, pointer: null, breath: 0 });
+
+    act(() => setMotionPref("full"));
+    await waitFor(() => expect(fake.frames.length).toBeGreaterThan(reducedAt + 3));
+    const resumed = fake.frames.slice(reducedAt + 1);
+    expect(resumed.every((frame) => frame.still === false && frame.profile === "lively")).toBe(true);
+    expect(resumed[0]!.pointer).toBeNull();
   });
 });

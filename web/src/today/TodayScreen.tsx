@@ -286,7 +286,7 @@ function ReminderLine({ watch }: { watch: WatchRow }) {
   return (
     <li className="grid gap-3">
       <MetalObject variant="cut" title={watch.prompt} eyebrow="Reminder" detail={view.due} />
-      <ReminderStatusChip presentation={view} />
+      <ReminderStatusChip presentation={view} appearance="atelier" />
     </li>
   );
 }

@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { BellRing, LoaderCircle, MessageSquareText, Plus, Trash2 } from "lucide-react";
-import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
+import { Atmosphere } from "../design/metal/Atmosphere.js";
 import { createReminderApi, deleteWatchApi, type WatchRow } from "../api.js";
 import { createErrorMessage, createOutcomeUnknown, unconfirmedCreateMessage } from "../reminders/createErrors.js";
 import { fetchedAtLabel, useReminderFeed } from "../reminders/useReminderFeed.js";
@@ -17,7 +17,7 @@ function defaultWhen(zone: string): string {
 }
 
 /**
- * Schedule: dependable one-off reminders (contract i4-one-off-reminders v1).
+ * Schedule: dependable one-off reminders (contract i4-one-off-reminders v2).
  * A reminder shows in the list only after the server has stored it, and its
  * status never goes beyond what the notification service confirmed.
  */
@@ -30,29 +30,39 @@ export function ScheduleScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
   );
 
   return (
-    <PanelShell title="Schedule">
-      <PanelSection title="New reminder">
+    <section aria-label="Reminders" className="ds-root ds-schedule h-full overflow-y-auto bg-canvas text-ink">
+      <Atmosphere kind="nocturne" still />
+      <div className="ds-schedule-content">
+      <header className="ds-schedule-header">
+        <p>REMINDERS</p>
+        <h1>A little less to remember.</h1>
+        <p>Choose a moment. Keep a clear record of what happened.</p>
+      </header>
+      <div className="ds-schedule-columns">
+      <section aria-label="New reminder" className="ds-schedule-create">
+        <h2>For later.</h2>
         <ReminderForm refresh={refresh} />
-      </PanelSection>
+      </section>
 
-      <PanelSection title="Reminders">
-        {feed.status === "loading" && <p role="status" className="text-xs text-white/55">Loading reminders…</p>}
+      <section aria-label="Saved reminders" className="ds-schedule-library">
+        <h2>Your reminders</h2>
+        {feed.status === "loading" && <p role="status" className="text-body text-ink-2">Loading reminders…</p>}
         {feed.status === "error" && (
-          <div role="alert" className="flex flex-col items-start gap-3 text-sm text-white/70">
+          <div role="alert" className="flex flex-col items-start gap-3 text-body text-ink-2">
             <span>{feed.message}</span>
-            <button type="button" className="btn-deck btn-ghost" onClick={() => void refresh()}>
+            <button type="button" className="ds-schedule-button ds-focus" onClick={() => void refresh()}>
               Retry
             </button>
           </div>
         )}
         {feed.status === "ok" && feed.stale && (
-          <div role="status" className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200/20 bg-amber-300/[0.05] px-3 py-2 text-xs text-amber-50/80">
+          <div role="status" className="mb-6 flex flex-wrap items-center gap-3 text-meta text-warning">
             <span>Couldn't refresh. Showing reminders as of {fetchedAtLabel(feed.fetchedAt)}; their status may have changed since.</span>
-            <button type="button" className="btn-deck btn-ghost" onClick={() => void refresh()}>Retry</button>
+            <button type="button" className="ds-schedule-button ds-focus" onClick={() => void refresh()}>Retry</button>
           </div>
         )}
         {lists && lists.upcoming.length === 0 && lists.earlier.length === 0 && (
-          <p className="text-sm text-white/60">No reminders yet. Add one above, or ask AVA in Talk.</p>
+          <p className="text-body text-ink-2">No reminders yet. Add one, or ask AVA in Talk.</p>
         )}
         {lists && lists.upcoming.length > 0 && (
           <ReminderList title="Upcoming" watches={lists.upcoming} now={now} refresh={refresh} forget={forget} />
@@ -60,30 +70,34 @@ export function ScheduleScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
         {lists && lists.earlier.length > 0 && (
           <ReminderList title="Earlier" watches={lists.earlier} now={now} refresh={refresh} forget={forget} />
         )}
-      </PanelSection>
+      </section>
+      </div>
 
-      <PanelSection title="How reminders reach you">
-        <div className="flex max-w-xl flex-col gap-3 text-sm leading-6 text-white/70">
+      <details className="ds-schedule-explainer">
+        <summary className="ds-focus">How reminders reach you</summary>
+        <section aria-label="How reminders reach you" className="flex max-w-xl flex-col gap-3 pt-4 text-body text-ink-2">
           <p>
             When a reminder is due, AVA hands it to the notification service for the devices registered
             with it. AVA can see whether the service accepted it. It can't see whether your phone showed it.
           </p>
-          <p className="text-white/60">
+          <p>
             If no device is registered for notifications yet, the reminder says so instead of pretending.
           </p>
           <div>
-            <button type="button" onClick={onOpenTalk} className="btn-deck btn-ghost">
+            <button type="button" onClick={onOpenTalk} className="ds-schedule-button ds-focus">
               <MessageSquareText size={14} aria-hidden />
               <span>Go to Talk</span>
             </button>
           </div>
-        </div>
-      </PanelSection>
-    </PanelShell>
+        </section>
+      </details>
+      </div>
+    </section>
   );
 }
 
 function ReminderForm({ refresh }: { refresh: () => Promise<WatchRow[] | null> }) {
+  const promptLabelId = useId();
   const zone = useMemo(() => browserTimeZone(), []);
   const [prompt, setPrompt] = useState("");
   const [when, setWhen] = useState(() => defaultWhen(zone));
@@ -130,20 +144,22 @@ function ReminderForm({ refresh }: { refresh: () => Promise<WatchRow[] | null> }
   };
 
   return (
-    <form className="flex flex-col gap-4" onSubmit={(event) => { event.preventDefault(); void save(); }} noValidate>
-      <label className="flex flex-col gap-2 text-xs text-white/60">
-        <span>What should AVA remind you about?</span>
+    <form className="ds-schedule-form" onSubmit={(event) => { event.preventDefault(); void save(); }} noValidate>
+      <label className="ds-schedule-field">
+        <span id={promptLabelId}>What should AVA remind you about?</span>
         <textarea
+          aria-labelledby={promptLabelId}
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
           readOnly={saving}
           maxLength={2000}
           rows={2}
-          className="min-h-16 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/90 outline-none focus-visible:border-[var(--ac)]/50"
+          className="ds-schedule-input"
           placeholder="Submit the algorithms coursework"
         />
       </label>
       <WhenField
+        appearance="atelier"
         label="When"
         value={when}
         onChange={setWhen}
@@ -153,10 +169,10 @@ function ReminderForm({ refresh }: { refresh: () => Promise<WatchRow[] | null> }
         disabled={saving}
         showErrors={attempted}
       />
-      {error && <p role="alert" className="text-xs text-red-200">{error}</p>}
-      {notice && <p role="status" className="text-xs text-white/70">{notice}</p>}
+      {error && <p role="alert" className="text-meta text-danger">{error}</p>}
+      {notice && <p role="status" className="text-meta text-ink-2">{notice}</p>}
       <div>
-        <button type="submit" className="btn-deck btn-primary" disabled={saving || !prompt.trim()}>
+        <button type="submit" className="ds-schedule-button ds-schedule-save ds-focus" disabled={saving || !prompt.trim()}>
           {saving ? <LoaderCircle size={14} className="animate-spin" aria-hidden /> : <Plus size={14} aria-hidden />}
           <span>{saving ? "Saving…" : "Save reminder"}</span>
         </button>
@@ -173,9 +189,9 @@ function ReminderList({ title, watches, now, refresh, forget }: {
   forget: (id: string) => void;
 }) {
   return (
-    <section aria-label={title} className="mb-5 last:mb-0">
-      <h3 className="hud mb-2 text-[10px] text-white/50">{title}</h3>
-      <ul className="flex flex-col gap-2">
+    <section aria-label={title} className="ds-schedule-group">
+      <h3>{title}</h3>
+      <ul className="flex flex-col gap-7">
         {watches.map((watch) => <ReminderItem key={watch.id} watch={watch} now={now} refresh={refresh} forget={forget} />)}
       </ul>
     </section>
@@ -210,30 +226,30 @@ function ReminderItem({ watch, now, refresh, forget }: {
   };
 
   return (
-    <li className="flex flex-col gap-2 rounded-xl border border-white/[0.07] bg-white/[0.03] px-4 py-3">
+    <li className="ds-schedule-item">
       {/* On a phone a long status moves under the text instead of overflowing. */}
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
-        <BellRing size={16} className="mt-0.5 shrink-0 text-[var(--ac-exec)]" aria-hidden />
-        <div className="flex min-w-[10rem] flex-1 flex-col gap-1">
-          <span className="text-sm text-white/90 [overflow-wrap:anywhere]">{watch.prompt}</span>
-          <span className="text-[11px] text-white/50">{view.due}</span>
+        <BellRing size={16} className="mt-0.5 shrink-0 text-ink-2" aria-hidden />
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <span className="text-body-lg text-ink [overflow-wrap:anywhere]">{watch.prompt}</span>
+          <span className="text-meta text-ink-2">{view.due}</span>
         </div>
-        <ReminderStatusChip presentation={view} />
+        <ReminderStatusChip presentation={view} appearance="atelier" />
       </div>
-      <p className="text-xs leading-5 text-white/60">{view.detail}</p>
-      {error && <p role="alert" className="text-xs text-red-200">{error}</p>}
+      <p className="text-meta text-ink-2">{view.detail}</p>
+      {error && <p role="alert" className="text-meta text-danger">{error}</p>}
       <div className="flex flex-wrap gap-2">
         {!confirming ? (
-          <button type="button" className="btn-deck btn-ghost" onClick={() => setConfirming(true)} aria-label={`Delete reminder: ${watch.prompt}`}>
+          <button type="button" className="ds-schedule-button ds-focus" onClick={() => setConfirming(true)} aria-label={`Delete reminder: ${watch.prompt}`}>
             <Trash2 size={13} aria-hidden />
             <span>Delete</span>
           </button>
         ) : (
           <>
-            <button type="button" className="btn-deck btn-danger" disabled={deleting} onClick={() => void remove()}>
+            <button type="button" className="ds-schedule-button text-danger ds-focus" disabled={deleting} onClick={() => void remove()}>
               {deleting ? "Deleting…" : "Delete it"}
             </button>
-            <button type="button" className="btn-deck btn-ghost" disabled={deleting} onClick={() => setConfirming(false)}>
+            <button type="button" className="ds-schedule-button ds-focus" disabled={deleting} onClick={() => setConfirming(false)}>
               Keep it
             </button>
           </>

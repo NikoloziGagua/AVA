@@ -9,11 +9,12 @@ const TONE_CHIP: Record<ReminderTone, string> = {
   bad: "chip-stop",
 };
 
-/** The receipt label as a deck chip; the colour only repeats what the words say. */
-export function ReminderStatusChip({ presentation }: { presentation: ReminderPresentation }) {
+/** Existing dark hosts keep their readable deck variant, even under Paper. */
+export function ReminderStatusChip({ presentation, appearance = "legacy" }: { presentation: ReminderPresentation; appearance?: "legacy" | "atelier" }) {
   return (
     <span
-      className={`chip max-w-full shrink-0 whitespace-normal text-left text-[11px] ${TONE_CHIP[presentation.tone]}`}
+      className={appearance === "atelier" ? "ds-reminder-status" : `chip max-w-full shrink-0 whitespace-normal text-left text-xs ${TONE_CHIP[presentation.tone]}`}
+      data-reminder-appearance={appearance}
       data-reminder-tone={presentation.tone}
     >
       {presentation.label}

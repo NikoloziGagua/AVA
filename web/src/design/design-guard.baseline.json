@@ -22,6 +22,9 @@
     "notes/FolderTree.tsx",
     "notes/NoteFileList.tsx",
     "notes/NotePager.tsx",
+    "schedule/ScheduleScreen.tsx",
+    "reminders/ReminderStatusChip.tsx",
+    "reminders/WhenField.tsx",
     "today/TodayScreen.tsx",
     "orbit/ChatListScreen.tsx",
     "voice/HoldToTalkButton.tsx",
@@ -209,16 +212,6 @@
       "rawColour": 1,
       "backdrop": 0
     },
-    "reminders/ReminderStatusChip.tsx": {
-      "tinyText": 1,
-      "rawColour": 0,
-      "backdrop": 0
-    },
-    "reminders/WhenField.tsx": {
-      "tinyText": 2,
-      "rawColour": 0,
-      "backdrop": 0
-    },
     "rules/DevRoomSection.tsx": {
       "tinyText": 2,
       "rawColour": 0,
@@ -227,11 +220,6 @@
     "rules/RulesScreen.tsx": {
       "tinyText": 6,
       "rawColour": 3,
-      "backdrop": 0
-    },
-    "schedule/ScheduleScreen.tsx": {
-      "tinyText": 2,
-      "rawColour": 0,
       "backdrop": 0
     },
     "self/SelfScreen.tsx": {

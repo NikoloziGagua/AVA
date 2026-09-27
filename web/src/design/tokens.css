@@ -425,6 +425,47 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
 @media (max-width: 850px) { .ds-ideas-grid { grid-template-columns: minmax(0,1fr); gap: 24px; } }
 @media (max-width: 600px) { .ds-ideas-content { padding: 28px 20px calc(var(--ds-bar-space, 118px) + 50px); } .ds-ideas-capture { margin-bottom: 42px; } .ds-ideas-grid .ds-object-story { padding: 18px 12px; } }
 @media (forced-colors: active) { .ds-ideas-save, .ds-ideas-retry { background: ButtonFace; color: ButtonText; border: 1px solid ButtonText; } .ds-ideas-field textarea:focus-visible { border-bottom: 2px solid Highlight; } }
+/* Reminders: open writing and chronological receipts, not nested form cards. */
+.ds-schedule { position: relative; isolation: isolate; }
+.ds-schedule > .ds-atmosphere { opacity: .45; }
+.ds-schedule-content { position: relative; max-width: 1280px; margin: auto; padding: 48px 44px calc(var(--ds-bar-space, 118px) + 60px); }
+.ds-schedule-header { max-width: 840px; margin-bottom: 56px; }
+.ds-schedule-header > p:first-child { font-size: 12px; letter-spacing: .13em; color: var(--ds-ink-2); margin-bottom: 14px; }
+.ds-schedule-header h1 { font-size: clamp(34px, 4vw, 52px); font-weight: 350; letter-spacing: -.05em; line-height: 1.12; margin-bottom: 18px; }
+.ds-schedule-header > p:last-child { font-size: 15px; color: var(--ds-ink-2); }
+.ds-schedule-columns { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.2fr); gap: clamp(36px, 6vw, 88px); }
+.ds-schedule-columns h2 { font-size: 22px; font-weight: 400; letter-spacing: -.025em; margin-bottom: 28px; }
+.ds-schedule-create, .ds-schedule-library { min-width: 0; }
+.ds-schedule-form { display: grid; gap: 28px; }
+.ds-schedule-field { display: grid; gap: 12px; color: var(--ds-ink-2); font-size: 13px; }
+.ds-schedule-input { width: 100%; min-width: 0; max-width: 100%; padding: 10px 0 14px; border: 0; border-bottom: 1px solid var(--ds-metal-edge); border-radius: 0; color: var(--ds-ink); background: transparent; font-size: 17px; line-height: 1.55; }
+textarea.ds-schedule-input { min-height: 108px; max-height: 360px; resize: vertical; font-size: 20px; }
+.ds-schedule-input::placeholder { color: var(--ds-ink-3); }
+.ds-root .ds-schedule-input:focus-visible { outline: none; box-shadow: 0 2px var(--ds-focus); }
+.ds-schedule-input:disabled { opacity: .6; }
+.ds-reminder-when { display: grid; gap: 10px; min-width: 0; }
+.ds-reminder-when p { overflow-wrap: anywhere; }
+.ds-reminder-occurrence { padding: 12px 0; border: 0; color: var(--ds-warning); font-size: 13px; }
+.ds-reminder-occurrence label { min-height: 44px; }
+.ds-reminder-occurrence input { accent-color: var(--ds-ink); }
+.ds-schedule-button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 12px; border-radius: 6px; font-size: 13px; }
+.ds-schedule-button:hover { background-color: var(--ds-glass); }
+.ds-schedule-button:disabled { cursor: not-allowed; opacity: .55; }
+.ds-schedule-save { background: linear-gradient(135deg, var(--ds-alloy-a), var(--ds-alloy-c), var(--ds-alloy-b)); color: var(--ds-alloy-text); box-shadow: inset 0 1px var(--ds-alloy-hi); padding-inline: 18px; }
+.ds-schedule-group { margin-bottom: 40px; }
+.ds-schedule-group h3 { font-size: 12px; font-weight: 400; letter-spacing: .1em; text-transform: uppercase; color: var(--ds-ink-2); margin-bottom: 20px; }
+.ds-schedule-item { min-width: 0; display: grid; gap: 12px; padding: 0; }
+.ds-reminder-status { display: inline-flex; justify-self: start; align-items: center; flex-shrink: 0; max-width: 100%; padding: 6px 10px; border-radius: 6px; background: var(--ds-glass); color: var(--ds-ink-2); font-size: 12px; line-height: 1.5; text-align: left; overflow-wrap: anywhere; }
+.chip[data-reminder-appearance="legacy"] { font-size: 12px; line-height: 1.5; }
+.ds-reminder-status[data-reminder-tone="active"] { color: var(--ds-info); background: var(--ds-info-soft); }
+.ds-reminder-status[data-reminder-tone="good"] { color: var(--ds-success); background: var(--ds-success-soft); }
+.ds-reminder-status[data-reminder-tone="warn"] { color: var(--ds-warning); background: var(--ds-warning-soft); }
+.ds-reminder-status[data-reminder-tone="bad"] { color: var(--ds-danger); background: var(--ds-danger-soft); }
+.ds-schedule-explainer { max-width: 760px; margin-top: 40px; font-size: 13px; color: var(--ds-ink-2); }
+.ds-schedule-explainer summary { cursor: pointer; padding-block: 14px; }
+@media (max-width: 850px) { .ds-schedule-columns { grid-template-columns: minmax(0,1fr); gap: 52px; } }
+@media (max-width: 600px) { .ds-schedule-content { padding: 28px 20px calc(var(--ds-bar-space, 118px) + 50px); } .ds-schedule-header { margin-bottom: 40px; } .ds-schedule-item .ds-reminder-status { margin-left: 28px; } }
+@media (forced-colors: active) { .ds-schedule-button { border: 1px solid ButtonText; background: ButtonFace; color: ButtonText; } .ds-root .ds-schedule-input:focus-visible { border-bottom: 2px solid Highlight; } .ds-reminder-status { border: 1px solid CanvasText; color: CanvasText; } }
 /* Calendar: typography and open planes; form fields are not nested cards. */
 .ds-calendar { position: relative; isolation: isolate; }
 .ds-calendar-content { position: relative; max-width: 1520px; margin: auto; padding: 42px 44px calc(var(--ds-bar-space, 118px) + 60px); }

@@ -152,6 +152,34 @@ restart/reload persistence, Ink/Paper at 1440/390/320, long words, keyboard focu
 Reduced/forced-colours and zero unexpected browser errors. Other endpoints are
 fixtures, no provider or user data is accessed, and fixture note rows are cleaned.
 
+### Reminders
+
+Open Calendar, then Reminders. The existing Schedule destination is an open
+Nocturne Reminders workspace: a
+static line ground, essential writing/date fields, chronological receipt rows
+and an expandable delivery explanation. There are no nested form cards. The
+screen uses the existing one-off create/delete endpoints, exact wall-time
+resolver, refresh hook and status presenter unchanged. The browser's named zone
+is displayed explicitly; spring gaps are rejected and repeated autumn times
+require a choice. Errors are associated with their date input for screen readers.
+Unknown saves keep their words and are never automatically replayed. Delete still
+requires its separate explicit confirmation. Service acceptance does not become
+phone receipt, and historical/stale states keep their existing wording.
+
+Schedule and Today explicitly select the token-based 12px-minimum receipt style.
+Shared WhenField/ReminderStatusChip default to their readable dark legacy variant
+for Watches and Memory, including when the app's global preference is Paper.
+No Watch control, notification policy, recurrence or Calendar model was changed.
+This is presentation over real data, not proof of physical phone delivery.
+
+`node web/src/schedule/verify-reminders.mjs <built-web> <built-server> <evidence-directory>`
+uses real authenticated watch routes and disposable SQLite, with no scheduler or
+push transport. It checks explicit create/confirmed delete, a lost create receipt,
+database reopen/reload, stale and failed reads, empty state, responsive Ink/Paper,
+keyboard/disclosure/forced-colours and legacy Watches/Memory hosts. Its acceptance
+receipt is explicitly seeded test evidence, not a real notification. The existing
+`reminders/verify-pause.mjs` separately checks persisted pause/expiry/resume copy.
+
 Focused `design/metal/Atelier.test.tsx` covers variants, inert text, exact actions,
 navigation focus/selection, capped Canvas2D, StrictMode cleanup, hidden/offscreen,
 reduced-motion, forced-colours and unavailable-canvas behaviour. Existing Home,

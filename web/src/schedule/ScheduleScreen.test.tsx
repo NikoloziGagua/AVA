@@ -79,6 +79,19 @@ const whenBox = () => screen.getByLabelText("When");
 const saveButton = () => screen.getByRole("button", { name: /Save reminder|Saving/ });
 
 describe("Schedule", () => {
+  it("uses an open static Nocturne surface and only explicit Atelier receipt controls", async () => {
+    const { container } = render(<ScheduleScreen onOpenTalk={vi.fn()} />);
+    await screen.findByText("Pay rent");
+    expect(container.querySelector('[data-atmosphere="nocturne"] canvas')?.getAttribute("data-motion")).toBe("static");
+    expect(container.querySelector(".ds-schedule-columns")).toBeTruthy();
+    expect(container.querySelector("[data-panel-stage]")).toBeNull();
+    expect(container.querySelectorAll('[data-reminder-appearance="legacy"]')).toHaveLength(0);
+    fireEvent.change(promptBox(), { target: { value: "A draft, not a command" } });
+    expect(screen.getByRole("textbox", { name: "What should AVA remind you about?" })).toBe(promptBox());
+    expect(document.getElementById(promptBox().getAttribute("aria-labelledby")!)?.textContent).toBe("What should AVA remind you about?");
+    fireEvent.keyDown(promptBox(), { key: "Enter" });
+    expect(api.createReminderApi).not.toHaveBeenCalled();
+  });
   it("lists only direct one-off reminders: upcoming soonest first, then earlier", async () => {
     render(<ScheduleScreen onOpenTalk={vi.fn()} />);
     const upcoming = await screen.findByRole("region", { name: "Upcoming" });
@@ -243,6 +256,9 @@ describe("Schedule", () => {
   it("explains what AVA can and cannot confirm, and links to Talk", async () => {
     const onOpenTalk = vi.fn();
     render(<ScheduleScreen onOpenTalk={onOpenTalk} />);
+    const summary = screen.getByText("How reminders reach you", { selector: "summary" });
+    expect(summary.closest("details")!.open).toBe(false);
+    fireEvent.click(summary);
     const how = screen.getByRole("region", { name: "How reminders reach you" });
     expect(how.textContent).toContain("It can't see whether your phone showed it.");
     fireEvent.click(within(how).getByRole("button", { name: "Go to Talk" }));

@@ -91,8 +91,8 @@ product acceptance. Existing data models/endpoints remain unchanged.
 Status: materials, Home/Today/Quiet Talk, real Calendar C2 and dark Notes have
 landed in separate source commits. Task61 mounts the star layer lazily on Home
 and Voice, enlarges Voice's existing portrait, and narrows the resting bar while
-preserving its draft and controls. Stars are capped at 240/480 points, DPR1.5,
-2560×1600 logical pixels and 30 paints/sec; no WebGL allocation. They pause when
+preserving its draft and controls. Stars are capped at 500/900 points, DPR1.5,
+2560×1600 logical pixels and 60 paints/sec; no WebGL allocation. They pause when
 hidden/offscreen, are static under Reduced and omitted in forced colours.
 Nocturne/Silk remain the selected background family. Home/Voice freeze the
 Nocturne line ground so stars are their only animated background layer.

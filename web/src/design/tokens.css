@@ -61,6 +61,15 @@
   --ds-metal-bottom: #10151d;
   --ds-metal-edge: #b8cad32e;
   --ds-trace: #d7e8fc;
+  --ds-panel: #0d1016;
+  --ds-panel-2: #11151c;
+  --ds-panel-line: #ffffff12;
+  --ds-kind-lecture: #9c8cff;
+  --ds-kind-lecture-bg: #2a2440;
+  --ds-kind-event: #6fd3a0;
+  --ds-kind-event-bg: #1c3129;
+  --ds-kind-block: #e8c26b;
+  --ds-kind-block-bg: #3a3122;
   --ds-alloy-text: #19222e;
   --ds-alloy-meta: #344357;
   --ds-alloy-a: #ecedf0;
@@ -107,6 +116,15 @@
   --ds-metal-bottom: #e8ebee;
   --ds-metal-edge: #39485a36;
   --ds-trace: #263c56;
+  --ds-panel: #ffffff;
+  --ds-panel-2: #f7f7f5;
+  --ds-panel-line: #0000000f;
+  --ds-kind-lecture: #5b45d6;
+  --ds-kind-lecture-bg: #ece8ff;
+  --ds-kind-event: #1f7a4d;
+  --ds-kind-event-bg: #e2f3ea;
+  --ds-kind-block: #8a5a00;
+  --ds-kind-block-bg: #f8edd2;
 }
 
 :root {
@@ -535,6 +553,65 @@ textarea.ds-schedule-input { min-height: 108px; max-height: 360px; resize: verti
 .ds-calendar-week-list summary { min-height: 44px; padding: 12px 0; }
 .ds-calendar-week-list h3 { font-weight: 450; margin-top: 18px; }
 .ds-calendar-list-event { display: block; min-height: 44px; padding: 10px 0; text-align: left; }
+/* Calendar v6: one contained workspace (rail, time grid, agenda), like the approved Atelier. */
+.ds-calendar-header { align-items: flex-end; margin-bottom: 28px; }
+.ds-calendar-header h1 { margin-bottom: 0; }
+.ds-calendar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.ds-calendar-actions .ds-calendar-feedback { min-height: 0; padding: 0 8px 0 0; }
+.ds-calendar-panel { display: grid; grid-template-columns: 232px minmax(0, 1fr) 300px; min-height: 640px; border-radius: 22px; background: var(--ds-panel); box-shadow: 0 30px 90px var(--ds-shadow), inset 0 0 0 1px var(--ds-panel-line); overflow: hidden; }
+.ds-calendar-rail { display: flex; flex-direction: column; gap: 14px; padding: 24px 18px; background: var(--ds-panel-2); box-shadow: inset -1px 0 var(--ds-panel-line); min-width: 0; }
+.ds-calendar-rail-head { display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 500; }
+.ds-calendar-rail-head .ds-calendar-icon { min-height: 32px; padding: 6px; }
+.ds-calendar-mini { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; text-align: center; }
+.ds-calendar-mini > span { font-size: 12px; color: var(--ds-ink-2); padding: 4px 0; }
+.ds-calendar-mini > button { position: relative; min-height: 30px; font-size: 12px; border-radius: 8px; color: var(--ds-ink); background: none; }
+.ds-calendar-mini > button:hover { background: var(--ds-glass); }
+.ds-calendar-mini > button[data-outside="true"] { color: var(--ds-ink-3); }
+.ds-calendar-mini > button[data-today="true"] { font-weight: 700; color: var(--ds-trace); }
+.ds-calendar-mini > button[aria-pressed="true"] { background: var(--ds-alloy-a); color: var(--ds-alloy-text); }
+.ds-calendar-mini > button[data-busy="true"]::after { content: ""; position: absolute; left: 50%; bottom: 3px; width: 3px; height: 3px; margin-left: -1.5px; border-radius: 50%; background: currentColor; opacity: .7; }
+.ds-calendar-rail-label { margin-top: 14px; font-size: 12px; letter-spacing: .14em; color: var(--ds-ink-2); }
+.ds-calendar-kinds { display: grid; gap: 4px; }
+.ds-calendar-kinds li { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px; border-radius: 8px; font-size: 14px; }
+.ds-calendar-kinds li::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--kind); }
+.ds-calendar-rail-note { margin-top: auto; font-size: 13px; line-height: 1.6; color: var(--ds-ink-2); }
+[data-kind="lecture"] { --kind: var(--ds-kind-lecture); --kind-bg: var(--ds-kind-lecture-bg); }
+[data-kind="event"] { --kind: var(--ds-kind-event); --kind-bg: var(--ds-kind-event-bg); }
+[data-kind="block"] { --kind: var(--ds-kind-block); --kind-bg: var(--ds-kind-block-bg); }
+.ds-calendar-panel .ds-calendar-main { display: flex; flex-direction: column; min-width: 0; padding: 18px 0 0; }
+.ds-calendar-panel .ds-calendar-toolbar { padding: 0 20px 14px; box-shadow: inset 0 -1px var(--ds-panel-line); }
+.ds-calendar-link { min-height: 36px; padding: 6px 10px; border-radius: 8px; font-size: 13px; color: var(--ds-ink-2); background: none; }
+.ds-calendar-link:hover { color: var(--ds-ink); background: var(--ds-glass); }
+.ds-calendar-panel .ds-calendar-modes { padding: 3px; border-radius: 10px; background: var(--ds-glass); }
+.ds-calendar-panel .ds-calendar-modes button { min-height: 34px; padding: 6px 14px; border-radius: 8px; }
+.ds-calendar-panel .ds-calendar-time-scroll { flex: 1; max-height: 640px; border-radius: 0; }
+.ds-calendar-panel .ds-calendar-hours span:not(.ds-calendar-zone) { right: 10px; transform: translateY(-50%); font-variant-numeric: tabular-nums; }
+.ds-calendar-zone { position: sticky !important; top: 0; z-index: 3; display: flex; align-items: flex-end; padding: 0 0 10px 12px; font-size: 12px; color: var(--ds-ink-2); background: var(--ds-panel); width: 100%; }
+.ds-calendar-time-day { min-width: 0; box-shadow: inset 1px 0 var(--ds-panel-line); }
+.ds-calendar-panel .ds-calendar-day-heading { display: grid; justify-items: center; align-content: center; gap: 2px; min-height: 0; padding: 8px 4px; background: var(--ds-panel); box-shadow: inset 0 -1px var(--ds-panel-line); font-size: 12px; color: var(--ds-ink-2); }
+.ds-calendar-day-heading strong { font-size: 22px; font-weight: 400; color: var(--ds-ink); line-height: 1.2; min-width: 34px; min-height: 34px; display: grid; place-items: center; border-radius: 50%; }
+.ds-calendar-time-day[data-today="true"] .ds-calendar-day-heading strong { background: var(--ds-alloy-a); color: var(--ds-alloy-text); }
+.ds-calendar-panel .ds-calendar-day-heading[aria-pressed="true"] { box-shadow: inset 0 -2px var(--ds-trace); color: var(--ds-ink); }
+.ds-calendar-panel .ds-calendar-time-track { background: repeating-linear-gradient(to bottom, var(--ds-panel-line) 0 1px, transparent 1px 64px); }
+.ds-calendar-panel .ds-calendar-time-event { display: grid; align-content: start; gap: 2px; padding: 6px 8px; border: 0; border-left: 3px solid var(--kind, var(--ds-trace)); border-radius: 8px; background: var(--kind-bg, var(--ds-raised)); box-shadow: none; font-size: 12px; line-height: 1.35; }
+.ds-calendar-panel .ds-calendar-time-event > span { color: var(--ds-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-calendar-panel .ds-calendar-time-event strong { font-size: 13px; font-weight: 550; }
+.ds-calendar-panel .ds-calendar-time-event[aria-pressed="true"] { outline: 2px solid var(--kind); outline-offset: 1px; }
+.ds-calendar-panel .ds-calendar-week-list { padding: 0 20px 16px; }
+.ds-calendar-panel .ds-calendar-weekdays { padding: 12px 20px 8px; }
+.ds-calendar-panel .ds-calendar-month { padding: 0 12px 16px; gap: 4px; }
+.ds-calendar-cell-events > span[data-kind] { padding-left: 6px; border-left: 2px solid var(--kind); }
+.ds-calendar-panel .ds-calendar-agenda { display: flex; flex-direction: column; gap: 18px; padding: 24px 22px; background: var(--ds-panel-2); box-shadow: inset 1px 0 var(--ds-panel-line); }
+.ds-calendar-agenda-head { display: flex; align-items: flex-end; justify-content: space-between; }
+.ds-calendar-agenda-head p { font-size: 13px; letter-spacing: .08em; color: var(--ds-ink-2); }
+.ds-calendar-agenda-head h2 { display: grid; justify-items: end; font-size: 52px; line-height: 1; font-weight: 300; letter-spacing: -.05em; }
+.ds-calendar-agenda-head h2 span { font-size: 14px; letter-spacing: 0; color: var(--ds-ink-2); }
+.ds-calendar-summary { display: grid; gap: 4px; padding-bottom: 16px; box-shadow: inset 0 -1px var(--ds-panel-line); }
+.ds-calendar-summary strong { font-size: 18px; font-weight: 500; }
+.ds-calendar-summary span { font-size: 13px; color: var(--ds-ink-2); }
+.ds-calendar-panel .ds-calendar-agenda-event { grid-template-columns: 52px minmax(0, 1fr); padding: 10px 8px; border-radius: 10px; }
+.ds-calendar-panel .ds-calendar-agenda-time { color: var(--kind, var(--ds-ink)); font-weight: 600; }
+.ds-calendar-make { justify-content: flex-start; gap: 8px; }
 .ds-calendar-editor { max-width: 640px; gap: 26px; background: var(--ds-canvas); box-shadow: 0 24px 100px var(--ds-shadow); border-radius: 12px; }
 .ds-calendar-form { display: grid; gap: 24px; }
 .ds-calendar-field { display: grid; gap: 8px; min-width: 0; }
@@ -546,7 +623,8 @@ textarea.ds-schedule-input { min-height: 108px; max-height: 360px; resize: verti
 .ds-calendar-field .ds-calendar-title-input { font-size: 26px; font-weight: 350; letter-spacing: -.035em; }
 .ds-calendar-field-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 28px; }
 @media (min-width: 640px) { .ds-calendar-editor { max-width: 640px; padding: 32px; } }
-@media (max-width: 1000px) { .ds-calendar-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; } .ds-calendar-agenda { max-width: 600px; } }
+@media (max-width: 1180px) { .ds-calendar-panel { grid-template-columns: minmax(0, 1fr) 280px; } .ds-calendar-rail { display: none; } }
+@media (max-width: 860px) { .ds-calendar-panel { grid-template-columns: minmax(0, 1fr); border-radius: 16px; } .ds-calendar-panel .ds-calendar-agenda { box-shadow: inset 0 1px var(--ds-panel-line); } }
 @media (max-width: 600px) {
   .ds-calendar-content { padding: 26px 18px calc(var(--ds-bar-space, 118px) + 42px); }
   .ds-calendar-header { gap: 20px; margin-bottom: 22px; }

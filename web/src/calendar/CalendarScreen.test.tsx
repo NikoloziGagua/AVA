@@ -20,8 +20,9 @@ describe("Calendar workspace", () => {
   it("renders real month events and selected-day details, not fabricated sample data", async () => {
     render(<CalendarScreen onOpenTalk={vi.fn()} />);
     await screen.findByText("Updated 08:00 · Dublin time");
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
     expect(screen.getByRole("group", { name: "Choose a date" }).querySelectorAll("button")).toHaveLength(42);
-    fireEvent.click(within(screen.getByRole("complementary", { name: "Selected day" })).getByRole("button", { name: /Lecture fixture/ }));
+    fireEvent.click(await within(screen.getByRole("complementary", { name: "Selected day" })).findByRole("button", { name: /Lecture fixture/ }));
     expect(screen.getByRole("region", { name: "Event details" }).textContent).toContain("Attendance not recorded");
     expect(screen.getByRole("button", { name: "Edit event series" })).toBeTruthy();
     expect(api.save).not.toHaveBeenCalled();
@@ -37,6 +38,7 @@ describe("Calendar workspace", () => {
   });
   it("moves date selection with arrow keys and returns focus after cancelling editor", async () => {
     render(<CalendarScreen onOpenTalk={vi.fn()} />); await screen.findByText("Updated 08:00 · Dublin time");
+    fireEvent.click(screen.getByRole("button", { name: "Month" }));
     const day = document.querySelector<HTMLButtonElement>('[data-date="2030-09-27"]')!;
     day.focus(); fireEvent.keyDown(day, { key: "ArrowLeft" });
     await waitFor(() => expect(document.activeElement?.getAttribute("data-date")).toBe("2030-09-26"));
@@ -100,7 +102,7 @@ describe("Calendar workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reminders" }));
     await screen.findByRole("heading", { name: "Standalone reminders" });
     fireEvent.click(screen.getByRole("button", { name: "Back to Calendar" }));
-    await screen.findByRole("heading", { name: "Room for what matters." });
+    await screen.findByRole("heading", { name: "Make space." });
     expect(api.save).not.toHaveBeenCalled();
   });
 });

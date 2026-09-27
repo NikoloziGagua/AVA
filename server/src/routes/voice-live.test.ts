@@ -70,6 +70,9 @@ describe("GPT-Live delegated work continuity", () => {
     const first = deferred<{ sessionId: null; text: string }>();
     const f = await fixture(async () => first.promise);
     f.input("Save this."); f.delegate("a"); f.delegate("a");
+    f.delegate("empty-while-running");
+    expect(f.client.frames.filter(e => e.type === "ava.result")).toHaveLength(0);
+    expect(f.client.frames.at(-1)).toMatchObject({ type: "error", error: { message: expect.stringContaining("no new user words") } });
     first.resolve({ sessionId: null, text: "Saved." }); await tick();
     f.delegate("a"); f.delegate("b"); await tick();
     expect(f.calls).toHaveBeenCalledTimes(1);
@@ -148,6 +151,8 @@ describe("GPT-Live delegated work continuity", () => {
     const f = await fixture(async () => ++count === 1 ? first.promise : { sessionId: null, text: "Done." });
     for (let i = 0; i <= LIVE_MAX_PENDING_JOBS; i++) { f.input(`Request${i}`); f.delegate(`d${i}`); }
     expect(f.upstream.frames.at(-1)?.content).toContain("not queued");
+    expect(f.client.frames.filter(e => e.type === "ava.result")).toHaveLength(0);
+    expect(f.client.frames.at(-1)?.type).toBe("error");
     first.resolve({ sessionId: null, text: "Done." }); await tick();
     expect(f.calls).toHaveBeenCalledTimes(LIVE_MAX_PENDING_JOBS);
     f.delegate(`d${LIVE_MAX_PENDING_JOBS}`); await tick();

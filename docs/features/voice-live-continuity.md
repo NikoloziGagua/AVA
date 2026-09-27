@@ -55,6 +55,8 @@ and execute nothing. Empty delegations do not repeat an earlier command.
 At most **32 jobs** are admitted including active work. Overflow is reported as
 not queued, not silently dropped or executed later. This limit also applies to
 exact typed input. A new explicit request may be submitted when capacity returns.
+Refusal/empty-request notices use the existing browser error/hint frame, not an
+action-result frame, so they cannot mark a different running job as finished.
 
 Stop advances a cancellation generation, clears waiting jobs, consumes old
 unsubmitted speech and aborts active work. Late steps/results from the old

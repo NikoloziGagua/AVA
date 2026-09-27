@@ -394,10 +394,14 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
     reports.push({ request: safeReportText(job.label, 400), result: safeReportText(text, LIVE_RESULT_CHARS) });
     if (reports.length > LIVE_RESULT_HISTORY) reports.shift();
   };
-  const reply = (delegationId: string | null, text: string) => {
+  const reply = (delegationId: string | null, text: string, actionResult = false) => {
     if (closed) return;
     const safe = safeReportText(text, LIVE_APPEND_CHARS);
-    sendClient(JSON.stringify({ type: "ava.result", text: safe }));
+    // A refused/empty delegation is not completion of another active job.
+    // The existing hint frame leaves the browser's actionPending state intact.
+    sendClient(JSON.stringify(actionResult
+      ? { type: "ava.result", text: safe }
+      : { type: "error", error: { message: safe } }));
     sendUpstream({ type: "session.commentary.append", event_id: `res_${nanoid(8)}`, delegation_id: delegationId, content: safe });
   };
 
@@ -429,14 +433,14 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
           pendingRoomPosts = mergeRoomPosts(pendingRoomPosts, result.roomPosts);
           const text = result.text?.trim() || "The action finished without a verifiable result.";
           report(job, text);
-          reply(delegationId, text);
+          reply(delegationId, text, true);
           record({ producerId: "ava:voice", type: "agent.delegation.completed", status: "success", title: "AVA returned a result to GPT-Live" });
         } catch (err) {
           if (!current()) continue;
           const message = err instanceof Error ? err.message : String(err);
           const failure = `That didn't finish: ${message}. Completion is unverified; earlier steps may have taken effect.`;
           report(job, failure);
-          reply(delegationId, failure);
+          reply(delegationId, failure, true);
           record({ producerId: "ava:voice", type: "agent.delegation.failed", status: "error", title: "Delegated AVA action failed", error: message });
         } finally {
           actions.delete(controller);

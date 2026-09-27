@@ -26,7 +26,7 @@ describe("readMemoryView", () => {
     const v = readMemoryView(dir);
     expect(v.personality).toBe("I am Ava.\n");
     expect(v.personaProfile).toMatchObject({
-      version: "3.0",
+      version: "3.1",
       architecture: "identity + collaboration + context registers",
       lab: { kind: "deterministic_contract", scenarioCount: 50, valid: true },
     });

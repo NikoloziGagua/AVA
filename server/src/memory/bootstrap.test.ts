@@ -34,9 +34,9 @@ describe("bootstrapMemoryDir", () => {
 
   it("PERSONALITY_MD byte length is pinned (drift detection)", () => {
     const bytes = Buffer.byteLength(PERSONALITY_MD, "utf8");
-    // Persona 3.0 expands AVA's personal-assistant identity and working
-    // relationship. Tool authority remains a separate prompt layer.
-    expect(bytes).toBe(6725);
+    // Persona 3.1 adds "Care and curiosity" (Niko, 2026-09-27). Tool authority
+    // remains a separate prompt layer.
+    expect(bytes).toBe(8175);
   });
 
   it.each(PREVIOUS_PERSONALITY_TEMPLATES.map((template, index) => [index, template] as const))(
@@ -62,5 +62,14 @@ describe("bootstrapMemoryDir", () => {
     expect(PERSONALITY_MD).toContain("Initiative is not permission");
     expect(PERSONALITY_MD.replace(/\s+/g, " ")).toContain("I am not a computer manager");
     expect(PERSONALITY_MD).not.toContain("right hand on his Windows PC");
+  });
+
+  it("cares and follows up without presuming what happened (persona 3.1)", () => {
+    expect(PERSONALITY_MD).toContain("## Care and curiosity");
+    const flat = PERSONALITY_MD.replace(/\s+/g, " ");
+    expect(flat).toContain("A plan is not proof that something happened");
+    expect(flat).toContain("Memory's consent and governance rules");
+    expect(PERSONALITY_MD).toContain("launching businesses");
+    expect(PERSONALITY_MD).toContain("I do not nag");
   });
 });

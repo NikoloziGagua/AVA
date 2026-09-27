@@ -592,7 +592,7 @@ textarea.ds-schedule-input { min-height: 108px; max-height: 360px; resize: verti
 .ds-calendar-day-heading strong { font-size: 22px; font-weight: 400; color: var(--ds-ink); line-height: 1.2; min-width: 34px; min-height: 34px; display: grid; place-items: center; border-radius: 50%; }
 .ds-calendar-time-day[data-today="true"] .ds-calendar-day-heading strong { background: var(--ds-alloy-a); color: var(--ds-alloy-text); }
 .ds-calendar-panel .ds-calendar-day-heading[aria-pressed="true"] { box-shadow: inset 0 -2px var(--ds-trace); color: var(--ds-ink); }
-.ds-calendar-panel .ds-calendar-time-track { background: repeating-linear-gradient(to bottom, var(--ds-panel-line) 0 1px, transparent 1px 64px); }
+.ds-calendar-panel .ds-calendar-time-track { background: repeating-linear-gradient(to bottom, var(--ds-panel-line) 0 1px, transparent 1px 80px); }
 .ds-calendar-panel .ds-calendar-time-event { display: grid; align-content: start; gap: 2px; padding: 6px 8px; border: 0; border-left: 3px solid var(--kind, var(--ds-trace)); border-radius: 8px; background: var(--kind-bg, var(--ds-raised)); box-shadow: none; font-size: 12px; line-height: 1.35; }
 .ds-calendar-panel .ds-calendar-time-event > span { color: var(--ds-ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ds-calendar-panel .ds-calendar-time-event strong { font-size: 13px; font-weight: 550; }
@@ -611,7 +611,7 @@ textarea.ds-schedule-input { min-height: 108px; max-height: 360px; resize: verti
 .ds-calendar-summary span { font-size: 13px; color: var(--ds-ink-2); }
 .ds-calendar-panel .ds-calendar-agenda-event { grid-template-columns: 52px minmax(0, 1fr); padding: 10px 8px; border-radius: 10px; }
 .ds-calendar-panel .ds-calendar-agenda-time { color: var(--kind, var(--ds-ink)); font-weight: 600; }
-.ds-calendar-make { justify-content: flex-start; gap: 8px; }
+.ds-calendar-make { display: inline-flex; align-items: center; align-self: flex-start; gap: 8px; }
 .ds-calendar-editor { max-width: 640px; gap: 26px; background: var(--ds-canvas); box-shadow: 0 24px 100px var(--ds-shadow); border-radius: 12px; }
 .ds-calendar-form { display: grid; gap: 24px; }
 .ds-calendar-field { display: grid; gap: 8px; min-width: 0; }
@@ -692,6 +692,28 @@ textarea.ds-schedule-input { min-height: 108px; max-height: 360px; resize: verti
 .ds-notes-editor label { min-width: 0; }
 .ds-notes-editor footer { background: var(--ds-canvas); border: 0; }
 @media (min-width: 768px) { .ds-notes-editor > .grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+/* Notes v6: one divided workspace, like the approved Atelier (library, files, reader). */
+.ds-notes-layout { gap: 0; border-radius: 22px; background: var(--ds-panel); box-shadow: 0 30px 90px var(--ds-shadow), inset 0 0 0 1px var(--ds-panel-line); overflow: hidden; }
+.ds-notes-layout > .ds-notes-wide { padding: 18px 24px; box-shadow: inset 0 -1px var(--ds-panel-line); }
+.ds-notes-layout > .ds-notes-capture { padding: 20px 24px 14px; background: var(--ds-panel-2); }
+.ds-notes-folders { background: var(--ds-panel-2); box-shadow: inset -1px 0 var(--ds-panel-line); padding: 18px 12px; min-width: 0; }
+.ds-notes-folders .ds-notes-plane { padding: 0; }
+.ds-notes-main { padding: 22px 24px 28px; min-width: 0; }
+.ds-notes-folder-heading { padding: 0 0 18px; margin-bottom: 18px; box-shadow: inset 0 -1px var(--ds-panel-line); }
+.ds-notes-files-reader { gap: 0; }
+.ds-note-files { padding: 0 16px 0 0; box-shadow: inset -1px 0 var(--ds-panel-line); }
+.ds-note-file-row { padding: 14px 12px; margin-bottom: 4px; border-radius: 12px; box-shadow: inset 0 0 0 1px transparent; }
+.ds-note-file-row:hover { background: var(--ds-glass); }
+.ds-note-file-selected { background: var(--ds-glass-strong); box-shadow: inset 3px 0 var(--ds-trace); }
+.ds-note-reader { padding-left: 28px; }
+.ds-note-paper { background: none; box-shadow: none; padding: 8px 0 40px; }
+.ds-note-paper-heading { padding-bottom: 20px; box-shadow: inset 0 -1px var(--ds-panel-line); }
+@media (max-width: 850px) {
+  .ds-notes-layout { border-radius: 16px; }
+  .ds-notes-folders { box-shadow: none; }
+  .ds-note-files { padding: 0; box-shadow: none; }
+  .ds-note-reader { padding-left: 0; }
+}
 @media (max-width: 1150px) { .ds-notes-layout { grid-template-columns: 190px minmax(0,1fr); gap: 20px; } .ds-notes-files-reader { grid-template-columns: 175px minmax(0,1fr); gap: 18px; } .ds-note-paper { padding: 24px 20px 40px; } }
 @media (max-width: 850px) {
   .ds-notes-content { padding: 26px 18px calc(var(--ds-bar-space, 118px) + 50px); }

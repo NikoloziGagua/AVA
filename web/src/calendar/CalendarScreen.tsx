@@ -20,7 +20,7 @@ function canEditSeries(event: EventDefinition): boolean {
   return !event.archivedAt && `${event.anchorLocalDate}T${event.startLocalTime}` > `${today}T${time}`;
 }
 /** Pixel height of one hour in Week and Day; the time grid is 24 of these. */
-const HOUR = 64;
+const HOUR = 80;
 const HEAD = 72;
 const KINDS = [["lecture", "Lecture"], ["event", "Event"], ["block", "Time block"]] as const;
 const weekday = (date: string) => new Intl.DateTimeFormat("en-IE", { timeZone: "UTC", weekday: "short" }).format(new Date(`${date}T12:00:00Z`));
@@ -50,7 +50,7 @@ export function CalendarScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
   const dates = useMemo(() => visibleDates(date, mode), [date, mode]);
   const range = queryWindow(dates);
   useEffect(() => {
-    if (mode !== "month" && timeGrid.current) timeGrid.current.scrollTop = 7 * HOUR;
+    if (mode !== "month" && timeGrid.current) timeGrid.current.scrollTop = 7 * HOUR - 20;
   }, [mode, range.from, range.to]);
   const refresh = useCallback(async () => {
     const current = ++generation.current;

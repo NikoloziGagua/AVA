@@ -101,6 +101,28 @@ does not claim to add history restoration or persistent unsent drafts.
 
 ## Verification and release
 
+Ideas uses an open Silver Silk capture and Twin-plane cards backed by the existing
+Notes API. Only non-archived `kind: idea` records appear, newest update first;
+the displayed Dublin timestamp is the recorded update time, not priority or
+progress. Enter in the textarea is a newline. Only Save idea writes; a synchronous
+in-flight guard prevents double submission. The 30,000-character limit matches
+the existing endpoint. A successful write clears only the submitted draft and
+announces “Idea saved.” independently of list refresh. Read failures can be retried
+without re-sending the capture. Failed writes keep the draft visible. Older read
+responses cannot replace a newer snapshot, and unmounted completions do not
+refresh another screen. Cards open the exact note in Notes; editing remains there.
+This is not a new Ideas store, background indexing job or automatic send. Drafts
+are still screen-local and are not promised across navigation/reload. Network
+failure after server acceptance remains uncertain under the existing create API;
+there is no new cross-request idempotency contract or automatic write retry.
+
+`node web/src/ideas/verify-ideas.mjs <built-web> <built-server> <evidence-directory>`
+uses actual authenticated Notes routes and disposable SQLite with the built App.
+It checks explicit capture, duplicate-submit suppression, exact Notes handoff,
+restart/reload persistence, Ink/Paper at 1440/390/320, long words, keyboard focus,
+Reduced/forced-colours and zero unexpected browser errors. Other endpoints are
+fixtures, no provider or user data is accessed, and fixture note rows are cleaned.
+
 Focused `design/metal/Atelier.test.tsx` covers variants, inert text, exact actions,
 navigation focus/selection, capped Canvas2D, StrictMode cleanup, hidden/offscreen,
 reduced-motion, forced-colours and unavailable-canvas behaviour. Existing Home,

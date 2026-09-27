@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import type { Note } from "../notes/api.js";
 
 const fetchNotes = vi.fn();
@@ -9,10 +10,7 @@ vi.mock("../notes/api.js", () => ({
   fetchNotes: () => fetchNotes(),
   createNote: (input: unknown) => createNote(input),
 }));
-vi.mock("../components/ava/PanelShell.js", () => ({
-  PanelShell: ({ title, children }: { title: string; children: React.ReactNode }) => <main><h1>{title}</h1>{children}</main>,
-  PanelSection: ({ title, children }: { title: string; children: React.ReactNode }) => <section aria-label={title}>{children}</section>,
-}));
+vi.mock("../design/metal/Atmosphere.js", () => ({ Atmosphere: ({ kind }: { kind: string }) => <div data-atmosphere={kind} aria-hidden="true" /> }));
 
 import { IdeasScreen, ideasFrom } from "./IdeasScreen.js";
 
@@ -119,6 +117,85 @@ describe("Ideas", () => {
     expect(await screen.findByText("Notes are unreachable.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByText("Split-the-bills app")).toBeTruthy();
+  });
+
+  it("uses Silk and native Twin-plane buttons, with real Dublin update labels", async () => {
+    fetchNotes.mockResolvedValue({ notes: [note({ title: "An idea", updatedAt: Date.UTC(2026, 8, 27, 15, 20) })] });
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    const card = await screen.findByRole("button", { name: "Open An idea in Notes" });
+    expect(card.classList.contains("ds-object-twin")).toBe(true);
+    expect(document.querySelector('[data-atmosphere="silk"]')).toBeTruthy();
+    expect(card.querySelector("time")?.textContent).toContain("16:20");
+    expect(card.querySelector("time")?.getAttribute("datetime")).toBe("2026-09-27T15:20:00.000Z");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Keep the spark.");
+    expect((screen.getByLabelText("What's the idea?") as HTMLTextAreaElement).maxLength).toBe(30_000);
+  });
+
+  it("locks synchronous duplicate submits and never treats Enter in the draft as submit", async () => {
+    let finish!: () => void;
+    createNote.mockReturnValue(new Promise(resolve => { finish = () => resolve(note({})); }));
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    const box = screen.getByLabelText("What's the idea?");
+    fireEvent.change(box, { target: { value: "One thought\nTwo lines" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(createNote).not.toHaveBeenCalled();
+    const form = box.closest("form")!;
+    act(() => { fireEvent.submit(form); fireEvent.submit(form); });
+    expect(createNote).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+    expect(await screen.findByText("Idea saved.")).toBeTruthy();
+  });
+
+  it("ignores an old initial read arriving after the post-save snapshot", async () => {
+    let old!: (value: unknown) => void;
+    fetchNotes.mockReturnValueOnce(new Promise(resolve => { old = resolve; }));
+    fetchNotes.mockResolvedValueOnce({ notes: [note({ title: "Just saved" })] });
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("What's the idea?"), { target: { value: "Just saved" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save idea" }));
+    await screen.findByRole("button", { name: "Open Just saved in Notes" });
+    await act(async () => old({ notes: [note({ title: "Stale snapshot" })] }));
+    expect(screen.queryByText("Stale snapshot")).toBeNull();
+    expect(screen.getByText("Just saved")).toBeTruthy();
+  });
+
+  it("does not mistake a refresh failure for a failed write or resend it on retry", async () => {
+    fetchNotes.mockResolvedValueOnce({ notes: [] }).mockRejectedValueOnce(new Error("List unavailable"));
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    await screen.findByText(/No ideas yet/);
+    fireEvent.change(screen.getByLabelText("What's the idea?"), { target: { value: "Durable idea" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save idea" }));
+    await screen.findByText("List unavailable");
+    expect(screen.getByText("Idea saved.")).toBeTruthy();
+    expect((screen.getByLabelText("What's the idea?") as HTMLTextAreaElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByText("Split-the-bills app");
+    expect(createNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fetch or update after an unmounted save completes", async () => {
+    let finish!: () => void;
+    createNote.mockReturnValue(new Promise(resolve => { finish = () => resolve(note({})); }));
+    const { unmount } = render(<IdeasScreen onOpenNote={vi.fn()} />);
+    await screen.findByText("Split-the-bills app");
+    fireEvent.change(screen.getByLabelText("What's the idea?"), { target: { value: "Leaving" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save idea" }));
+    unmount();
+    await act(async () => finish());
+    expect(fetchNotes).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects stale StrictMode reads and renders content as inert text", async () => {
+    let old!: (value: unknown) => void;
+    fetchNotes.mockReturnValueOnce(new Promise(resolve => { old = resolve; }));
+    fetchNotes.mockResolvedValueOnce({ notes: [note({ title: "Safe", content: '<img src=x onerror="alert(1)">', updatedAt: 1 })] });
+    const { container } = render(<StrictMode><IdeasScreen onOpenNote={vi.fn()} /></StrictMode>);
+    await screen.findByText("Safe");
+    await act(async () => old({ notes: [] }));
+    expect(screen.getByText("Safe")).toBeTruthy();
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText('<img src=x onerror="alert(1)">')).toBeTruthy();
+    expect(createNote).not.toHaveBeenCalled();
   });
 });
 

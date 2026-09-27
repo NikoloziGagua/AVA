@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
-import { Lightbulb, Plus } from "lucide-react";
-import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
+import { useEffect, useRef, useState } from "react";
+import { Plus } from "lucide-react";
+import { Atmosphere } from "../design/metal/Atmosphere.js";
+import { MetalObject } from "../design/metal/MetalObject.js";
 import { createNote, fetchNotes, type Note } from "../notes/api.js";
 
 /** Nika's ideas: notes with kind "idea", newest first. */
@@ -11,8 +12,7 @@ export function ideasFrom(notes: Note[]): Note[] {
 }
 
 function formatWhen(value: number): string {
-  const d = new Date(value);
-  return `${d.toLocaleDateString()} · ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  return new Intl.DateTimeFormat("en-IE", { timeZone: "Europe/Dublin", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(value);
 }
 
 function excerpt(content: string): string {
@@ -31,104 +31,121 @@ export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => vo
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const mounted = useRef(false);
+  const requestVersion = useRef(0);
+  const savePending = useRef(false);
 
   const refresh = async () => {
+    const version = ++requestVersion.current;
     try {
       const snapshot = await fetchNotes();
-      setLoad({ status: "ok", ideas: ideasFrom(snapshot.notes) });
+      if (mounted.current && version === requestVersion.current) setLoad({ status: "ok", ideas: ideasFrom(snapshot.notes) });
     } catch (error) {
-      setLoad({ status: "error", message: error instanceof Error ? error.message : "Ideas could not be loaded." });
+      if (mounted.current && version === requestVersion.current) setLoad({ status: "error", message: error instanceof Error ? error.message : "Ideas could not be loaded." });
     }
   };
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    mounted.current = true;
+    void refresh();
+    return () => { mounted.current = false; requestVersion.current++; };
+  }, []);
 
   const save = async () => {
     const submitted = draft;
     const content = submitted.trim();
-    if (!content || saving) return;
+    // React may not have committed disabled yet on two synchronous submissions.
+    if (!content || content.length > 30_000 || savePending.current) return;
+    savePending.current = true;
     setSaving(true);
     setSaveError(null);
+    setSaved(false);
     try {
       await createNote({ content, kind: "idea", section: "capture", projectId: null });
+      if (!mounted.current) return;
       // Clear only the words that were saved, never anything newer.
       setDraft((current) => (current === submitted ? "" : current));
+      setSaved(true);
       await refresh();
     } catch (error) {
       // Keep the words; say what went wrong.
-      setSaveError(error instanceof Error ? error.message : "That idea could not be saved.");
+      if (mounted.current) setSaveError(error instanceof Error ? error.message : "That idea could not be saved.");
     } finally {
-      setSaving(false);
+      savePending.current = false;
+      if (mounted.current) setSaving(false);
     }
   };
 
   return (
-    <PanelShell title="Ideas">
-      <PanelSection title="New idea">
+    <section aria-label="Ideas" className="ds-root ds-ideas h-full overflow-y-auto bg-canvas text-ink">
+      <Atmosphere kind="silk" />
+      <div className="ds-ideas-content">
+      <header className="ds-ideas-header">
+        <p className="ds-ideas-eyebrow">IDEAS</p>
+        <h1>Keep the spark.</h1>
+        <p>A thought now. Something worth returning to later.</p>
+      </header>
+      <section aria-label="New idea" className="ds-ideas-capture">
         <form
-          className="flex flex-col gap-3"
           onSubmit={(event) => { event.preventDefault(); void save(); }}
         >
-          <label className="flex flex-col gap-2 text-xs text-white/60">
+          <label className="ds-ideas-field">
             <span>What's the idea?</span>
             <textarea
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => { setDraft(event.target.value); setSaved(false); setSaveError(null); }}
               // Held still while saving, so no new words can be lost.
               readOnly={saving}
               aria-busy={saving || undefined}
               rows={3}
-              className="min-h-20 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/90 outline-none focus-visible:border-[var(--ac)]/50"
+              maxLength={30_000}
               placeholder="A thought worth keeping…"
             />
           </label>
-          {saveError && <p role="alert" className="text-xs text-red-300">{saveError}</p>}
-          <div>
-            <button type="submit" className="btn-deck btn-primary" disabled={!draft.trim() || saving}>
+          {saveError && <p role="alert" className="text-body text-danger">{saveError}</p>}
+          <div className="ds-ideas-capture-footer">
+            <p role="status">{saved ? "Idea saved." : "Saved ideas open in Notes for editing."}</p>
+            <button type="submit" className="ds-ideas-save ds-focus" disabled={!draft.trim() || saving} aria-busy={saving || undefined}>
               <Plus size={14} aria-hidden />
               <span>{saving ? "Saving…" : "Save idea"}</span>
             </button>
           </div>
         </form>
-      </PanelSection>
+      </section>
 
-      <PanelSection title="Your ideas">
-        {load.status === "loading" && <p role="status" className="text-xs text-white/55">Loading ideas…</p>}
+      <section aria-label="Your ideas" className="ds-ideas-library">
+        <header><h2>Your ideas</h2><p>Most recently updated first</p></header>
+        {load.status === "loading" && <p role="status" className="text-body text-ink-2">Loading ideas…</p>}
         {load.status === "error" && (
-          <div role="alert" className="flex flex-col items-start gap-3 text-sm text-white/70">
+          <div role="alert" className="flex flex-col items-start gap-3 text-body text-ink-2">
             <span>{load.message}</span>
-            <button type="button" className="btn-deck btn-ghost" onClick={() => { setLoad({ status: "loading" }); void refresh(); }}>
+            <button type="button" className="ds-ideas-retry ds-focus" onClick={() => { setLoad({ status: "loading" }); void refresh(); }}>
               Retry
             </button>
           </div>
         )}
         {load.status === "ok" && load.ideas.length === 0 && (
-          <p className="text-sm text-white/60">No ideas yet. Write one above, or tell AVA in Talk.</p>
+          <p className="text-body text-ink-2">No ideas yet. Write one above, or tell AVA in Talk.</p>
         )}
         {load.status === "ok" && load.ideas.length > 0 && (
-          <ul className="flex flex-col gap-2">
+          <ul className="ds-ideas-grid">
             {load.ideas.map((idea) => (
               <li key={idea.id}>
-                <button
-                  type="button"
+                <MetalObject
+                  variant="twin"
+                  eyebrow="IDEA"
+                  title={idea.title || "Untitled idea"}
+                  label={`Open ${idea.title || "Untitled idea"} in Notes`}
+                  detail={<>{idea.content && <span>{excerpt(idea.content)}</span>}<time dateTime={new Date(idea.updatedAt).toISOString()}>Updated {formatWhen(idea.updatedAt)} · Dublin</time></>}
                   onClick={() => onOpenNote(idea.id)}
-                  className="flex w-full items-start gap-3 rounded-xl border border-white/[0.07] bg-white/[0.03] px-4 py-3 text-left transition-colors hover:border-[var(--ac)]/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ac)]"
-                >
-                  <Lightbulb size={16} className="mt-0.5 shrink-0 text-[var(--ac-exec)]" aria-hidden />
-                  <span className="flex min-w-0 flex-1 flex-col gap-1">
-                    <span className="truncate text-sm text-white/90">{idea.title || "Untitled idea"}</span>
-                    {/* Long unbroken text (a pasted URL) wraps inside the card. */}
-                    {idea.content && <span className="text-xs leading-5 text-white/55 [overflow-wrap:anywhere]">{excerpt(idea.content)}</span>}
-                    {/* On a phone the date sits under the text instead of taking its width. */}
-                    <span className="text-[11px] text-white/45 sm:hidden">{formatWhen(idea.updatedAt)}</span>
-                  </span>
-                  <span className="hidden shrink-0 text-[11px] text-white/45 sm:inline">{formatWhen(idea.updatedAt)}</span>
-                </button>
+                />
               </li>
             ))}
           </ul>
         )}
-      </PanelSection>
-    </PanelShell>
+      </section>
+      </div>
+    </section>
   );
 }

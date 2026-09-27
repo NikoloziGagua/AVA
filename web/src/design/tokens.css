@@ -397,6 +397,34 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
   .ds-object-title { font-size: 18px; }
   .ds-quiet-thread { gap: 30px; }
 }
+/* Ideas: an open capture surface and genuine saved-note Twin planes. */
+.ds-ideas { position: relative; isolation: isolate; }
+.ds-ideas-content { position: relative; max-width: 1180px; margin: auto; padding: 48px 44px calc(var(--ds-bar-space, 118px) + 60px); }
+.ds-ideas-header { margin-bottom: 44px; }
+.ds-ideas-eyebrow { font-size: 12px; letter-spacing: .13em; color: var(--ds-ink-2); margin-bottom: 14px; }
+.ds-ideas-header h1 { font-size: clamp(34px, 4vw, 52px); line-height: 1.12; letter-spacing: -.05em; font-weight: 350; margin-bottom: 16px; }
+.ds-ideas-header > p:last-child { font-size: 15px; color: var(--ds-ink-2); }
+.ds-ideas-capture { max-width: 760px; margin-bottom: 58px; }
+.ds-ideas-field { display: grid; gap: 14px; font-size: 14px; color: var(--ds-ink-2); }
+.ds-ideas-field textarea { display: block; width: 100%; min-height: 100px; max-height: 350px; resize: vertical; padding: 8px 0 14px; background: transparent; border: 0; border-radius: 0; color: var(--ds-ink); font-size: 19px; line-height: 1.6; }
+.ds-ideas-field textarea::placeholder { color: var(--ds-ink-3); }
+.ds-root .ds-ideas-field textarea:focus-visible { outline: none; box-shadow: 0 2px var(--ds-focus); }
+.ds-ideas-capture-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }
+.ds-ideas-capture-footer p { font-size: 13px; color: var(--ds-ink-2); }
+.ds-ideas-save, .ds-ideas-retry { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; border-radius: 6px; padding: 10px 16px; font-size: 14px; }
+.ds-ideas-save { background: linear-gradient(135deg, var(--ds-alloy-a), var(--ds-alloy-c), var(--ds-alloy-b)); color: var(--ds-alloy-text); box-shadow: inset 0 1px var(--ds-alloy-hi); }
+.ds-ideas-save:disabled { opacity: .5; cursor: not-allowed; }
+.ds-ideas-retry { color: var(--ds-ink); background: var(--ds-glass); }
+.ds-ideas-library > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 26px; }
+.ds-ideas-library h2 { font-size: 22px; font-weight: 400; letter-spacing: -.025em; }
+.ds-ideas-library > header p { font-size: 13px; color: var(--ds-ink-2); }
+.ds-ideas-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 32px; }
+.ds-ideas-grid li { min-width: 0; }
+.ds-ideas-grid .ds-object-detail { display: grid; gap: 12px; }
+.ds-ideas-grid time { font-size: 12px; }
+@media (max-width: 850px) { .ds-ideas-grid { grid-template-columns: minmax(0,1fr); gap: 24px; } }
+@media (max-width: 600px) { .ds-ideas-content { padding: 28px 20px calc(var(--ds-bar-space, 118px) + 50px); } .ds-ideas-capture { margin-bottom: 42px; } .ds-ideas-grid .ds-object-story { padding: 18px 12px; } }
+@media (forced-colors: active) { .ds-ideas-save, .ds-ideas-retry { background: ButtonFace; color: ButtonText; border: 1px solid ButtonText; } .ds-ideas-field textarea:focus-visible { border-bottom: 2px solid Highlight; } }
 /* Calendar: typography and open planes; form fields are not nested cards. */
 .ds-calendar { position: relative; isolation: isolate; }
 .ds-calendar-content { position: relative; max-width: 1520px; margin: auto; padding: 42px 44px calc(var(--ds-bar-space, 118px) + 60px); }

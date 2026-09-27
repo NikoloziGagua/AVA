@@ -16,6 +16,7 @@
     "chat/ToolCallChip.tsx",
     "home/HomeScreen.tsx",
     "home/oneThing.ts",
+    "ideas/IdeasScreen.tsx",
     "notes/NotesScreen.tsx",
     "notes/NotesPrimitives.tsx",
     "notes/FolderTree.tsx",
@@ -156,11 +157,6 @@
     "explorer/WorkflowMap.tsx": {
       "tinyText": 2,
       "rawColour": 22,
-      "backdrop": 0
-    },
-    "ideas/IdeasScreen.tsx": {
-      "tinyText": 2,
-      "rawColour": 0,
       "backdrop": 0
     },
     "lib/deckMotion.ts": {

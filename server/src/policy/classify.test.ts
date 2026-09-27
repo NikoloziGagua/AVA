@@ -2,6 +2,16 @@ import { describe, it, expect } from "vitest";
 import { classifyRisk } from "./classify.js";
 
 describe("classifyRisk", () => {
+  it("classifies local calendar reads and creates without broadening other operations", () => {
+    expect(classifyRisk("calendar_query", {}).tier).toBe("read-only");
+    for (const recurrence_kind of ["none", "weekly"]) {
+      expect(classifyRisk("calendar_add", { recurrence_kind }).tier).toBe("low");
+    }
+    for (const tool of ["calendar_update", "calendar_set_attendance", "calendar_remind", "unknown_calendar_tool"]) {
+      expect(classifyRisk(tool, {}).tier).toBe("medium");
+    }
+    expect(classifyRisk("calendar_add", { title: ".env" }).tier).toBe("blocked");
+  });
   it("read-only: chrome.read_page", () => {
     expect(classifyRisk("chrome_read_page", {}).tier).toBe("read-only");
   });

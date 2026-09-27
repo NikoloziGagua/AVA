@@ -44,6 +44,10 @@ This overview links out to nine companion docs. Each is the authoritative, code-
 
 ### Legend (used in every diagram)
 
+GPT-Live's bounded delegation queue, result continuity, replay/Stop semantics,
+and local Calendar policy are documented in
+[`features/voice-live-continuity.md`](features/voice-live-continuity.md).
+
 ```mermaid
 flowchart LR
   pc[Browser on your PC]:::client

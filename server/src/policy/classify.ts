@@ -16,6 +16,7 @@ const READ_ONLY_TOOLS = new Set([
   "read_logs", "read_claude_updates", "read_discussion", "self_improve_status",
   "find_places", "shopify_list_products", "shopify_get_product",
   "watch_list", "person_list",
+  "calendar_query",
   "notes_search",
   "visual_explanation_list",
   "ufo_experiment_status",
@@ -60,6 +61,10 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   if (tool === "fs_delete") return { tier: "high", reason: "delete is always high-risk" };
 
   if (tool === "fs_write") return { tier: "low", reason: "filesystem write within allowlist" };
+
+  // One validated, reversible local calendar definition, including a bounded
+  // weekly series. This tool sends no invitations and dispatches no reminders.
+  if (tool === "calendar_add") return { tier: "low", reason: "validated local calendar creation" };
 
   if (
     tool === "chrome_open" ||

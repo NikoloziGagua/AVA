@@ -587,6 +587,12 @@ describe("Notes board view", () => {
 });
 
 describe("Notes exact-note handoff", () => {
+  it("wraps rendered Markdown in the actual bounded prose surface", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="file-2" />);
+    await screen.findByText("PAGE 1 / 1");
+    const document = screen.getByRole("region", { name: "Note document" });
+    expect(document.querySelector(".ds-note-prose > div")).toBeTruthy();
+  });
   it("opens an exact handoff directly in the phone reader pane", async () => {
     render(<NotesScreen onStartTask={vi.fn()} initialNoteId="file-2" />);
     await screen.findByText("PAGE 1 / 1");

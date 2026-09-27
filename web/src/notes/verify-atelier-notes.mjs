@@ -59,6 +59,10 @@ try {
     check(`${look}/${width} turns inside one file`, (await counter.textContent()).startsWith('PAGE 2 /'));
     await page.getByRole('button', { name: 'Show as one page', exact: true }).click();
     await page.getByRole('article', { name: 'Lecture one, full document' }).waitFor();
+    check(`${look}/${width} actual Markdown has bounded readable measure`, await page.locator('.ds-note-prose').evaluate(el => {
+      const child = el.firstElementChild, style = getComputedStyle(child);
+      return el.getBoundingClientRect().width <= 720 && style.fontSize === '16px' && parseFloat(style.lineHeight) >= 30;
+    }));
     check(`${look}/${width} complete canonical Markdown available`, await page.getByRole('heading', { name: 'Topic 7', exact: true }).count() === 1);
     check(`${look}/${width} no viewport overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: resolve(evidence, `notes-${look}-${width}.png`) });

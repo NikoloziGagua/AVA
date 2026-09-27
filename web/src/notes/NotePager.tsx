@@ -191,7 +191,7 @@ export function NotePager({ note, folderName, folders, busy, onEdit, onMove, onA
           {!fullDocument && total > 1 && <p className="mt-1 text-xs text-ink-2">{current.title}</p>}
           <p className="mt-2 flex items-center gap-1.5 text-meta text-ink-2"><Clock3 size={10} />Updated {shortDate(note.updatedAt)} · v{note.version}</p>
         </header>
-        <AssistantMarkdown text={shownMarkdown} />
+        <div className="ds-note-prose"><AssistantMarkdown text={shownMarkdown} /></div>
       </article>
 
       <div className="mt-3 flex flex-wrap items-center gap-2">

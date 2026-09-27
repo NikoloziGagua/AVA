@@ -14,6 +14,7 @@
     "chat/ToolCallChip.tsx",
     "home/HomeScreen.tsx",
     "home/oneThing.ts",
+    "today/TodayScreen.tsx",
     "orbit/ChatListScreen.tsx",
     "voice/HoldToTalkButton.tsx",
     "voice/VoiceExactTextDialog.tsx",
@@ -284,11 +285,6 @@
       "tinyText": 22,
       "rawColour": 331,
       "backdrop": 15
-    },
-    "today/TodayScreen.tsx": {
-      "tinyText": 4,
-      "rawColour": 0,
-      "backdrop": 0
     },
     "visuals/render.ts": {
       "tinyText": 0,

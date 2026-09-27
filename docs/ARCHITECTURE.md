@@ -429,7 +429,7 @@ flowchart LR
 
 ## 9. Web / PWA frontend
 
-**What it is:** the React app you actually use. No router library — a hand-rolled **view state machine** in `App.tsx` switches between Today (the home), Talk (chat and voice), Schedule, Notes, Ideas and the System tools. **→ Full detail (every screen, the SSE client, the PWA): [09](architecture/09-web-frontend.md).**
+**What it is:** the React app you actually use. No router library — a hand-rolled **view state machine** in `App.tsx` switches between Home, Today, Talk (chat and voice), Schedule, Notes, Ideas and the System tools. The first [Atelier production increment](features/atelier-interface.md) adds Light trace to the existing persistent composer and real-data metal cards/atmospheres without changing persistence or action contracts. Workspace navigation remains in-memory, not browser-history routing. **→ Full detail (every screen, the SSE client, the PWA): [09](architecture/09-web-frontend.md).**
 
 **Highlights:**
 - **Chat** (`chat/ChatScreen.tsx`): the Composer sends a message; `useChatStream` consumes the SSE stream via `EventSource`; the **Activity panel** renders live tool steps; the final answer arrives as one `final` event and is revealed word-by-word (the streaming *look* is a visual effect — Ava's answer is not token-streamed; the *tool steps* are what stream live).

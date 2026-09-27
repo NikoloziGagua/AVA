@@ -495,7 +495,7 @@ export function ChatScreen({
   }, [composer, readOnly, onComposer]);
 
   return (
-    <div className="ds-root relative flex h-full flex-col bg-canvas font-ui text-ink">
+    <div className="ds-root ds-quiet-conversation relative flex h-full flex-col bg-canvas font-ui text-ink">
       <header
         className="flex shrink-0 items-center justify-center gap-2 px-4 pb-2"
         style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}

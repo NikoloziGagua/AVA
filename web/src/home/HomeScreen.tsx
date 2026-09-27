@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CalendarDays, BellRing, NotebookPen, RotateCw } from "lucide-react";
+import { RotateCw } from "lucide-react";
 import { fetchWatches } from "../api.js";
 import { DEFAULT_TIME_ZONE, fetchCalendarRange } from "../calendar/api.js";
 import { fetchNotes } from "../notes/api.js";
 import { orderReminders } from "../reminders/presenter.js";
 import { Skeleton, StatusIsland, SuggestionChips } from "../design/index.js";
 import { LazyFace } from "../design/face/LazyFace.js";
+import { Atmosphere } from "../design/metal/Atmosphere.js";
+import { MetalObject } from "../design/metal/MetalObject.js";
 import { pickOneThing, suggestionsFor, type NoteInput, type OneThing, type ReminderInput, type Source } from "./oneThing.js";
 
 
@@ -107,14 +109,14 @@ export function HomeScreen({ onStartChat, onOpenNote, onOpenCalendar, onOpenRemi
   const thing = load.status === "ready" ? load.thing : { kind: "none" as const };
 
   return (
-    <div className="ds-root absolute inset-0 overflow-y-auto bg-canvas font-ui text-ink">
+    <div className="ds-root ds-atelier-home absolute inset-0 bg-canvas font-ui text-ink">
+      <Atmosphere kind="nocturne" />
       <main
-        className="mx-auto grid w-full max-w-xl grid-cols-[minmax(0,1fr)] justify-items-center gap-5 px-4 pt-4 text-center"
-        style={{ paddingBottom: "calc(120px + env(safe-area-inset-bottom, 0px))", paddingTop: "calc(1rem + env(safe-area-inset-top, 0px))" }}
+        className="ds-home-composition relative mx-auto grid w-full max-w-xl grid-cols-[minmax(0,1fr)] justify-items-center gap-3 px-4 text-center"
       >
         <StatusIsland mode="idle" time={clock(now, timeZone)} />
 
-        <div className="ds-backlight relative h-[min(46dvh,440px)] w-full">
+        <div className="ds-home-face ds-backlight relative w-full">
           <LazyFace label="AVA" className="relative" />
         </div>
 
@@ -133,7 +135,10 @@ export function HomeScreen({ onStartChat, onOpenNote, onOpenCalendar, onOpenRemi
         )}
         {load.status === "ready" && <OneThingCard thing={thing} timeZone={timeZone} onOpenNote={onOpenNote} onOpenCalendar={onOpenCalendar} onOpenReminders={onOpenReminders} />}
 
-        <SuggestionChips suggestions={suggestionsFor(thing)} onPick={onStartChat} label="Suggestions" className="w-full" />
+        <details className="ds-home-suggestions w-full">
+          <summary className="ds-focus cursor-pointer rounded-full py-2 text-meta text-ink-2">A few starting points</summary>
+          <SuggestionChips suggestions={suggestionsFor(thing)} onPick={onStartChat} label="Suggestions" className="w-full py-3" />
+        </details>
       </main>
     </div>
   );
@@ -148,26 +153,17 @@ function OneThingCard({ thing, timeZone, onOpenNote, onOpenCalendar, onOpenRemin
 }) {
   if (thing.kind === "unknown") return null;
   if (thing.kind === "none") {
-    return <p className="rounded-full bg-surface px-5 py-3 text-body text-ink-2 shadow-e1">Nothing planned for today.</p>;
+    return <p className="px-5 py-2 text-body text-ink-2">Nothing planned for today.</p>;
   }
   const time = thing.kind === "event" ? clock(thing.startsAt, timeZone) : thing.kind === "reminder" ? clock(thing.dueAt, timeZone) : null;
-  const Icon = thing.kind === "event" ? CalendarDays : thing.kind === "reminder" ? BellRing : NotebookPen;
   const detail = thing.kind === "event"
     ? thing.attendanceIntent === "attend" ? " You planned to attend." : thing.attendanceIntent === "skip" ? " You planned to skip it." : ""
     : "";
   const open = thing.kind === "event" ? onOpenCalendar : thing.kind === "reminder" ? onOpenReminders : () => onOpenNote(thing.id);
   const action = thing.kind === "event" ? "Open calendar" : thing.kind === "reminder" ? "Open reminders" : "Open note";
   return (
-    <button
-      type="button"
-      onClick={open}
-      aria-label={`${thing.title}.${detail} ${action}.`}
-      className="ds-focus flex max-w-full items-center gap-3 rounded-full bg-surface py-2 pl-2 pr-5 text-left shadow-e2 transition-transform duration-150 hover:-translate-y-0.5 active:scale-[0.98]"
-    >
-      <span className="flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-solid px-3 font-ui-mono text-meta text-on-solid tabular-nums">
-        <Icon size={14} aria-hidden="true" />{time ?? "Pinned"}
-      </span>
-      <span className="min-w-0 truncate text-body text-ink">{thing.title}.<span className="text-ink-2">{detail}</span></span>
-    </button>
+    <MetalObject compact variant={thing.kind === "event" ? "time" : thing.kind === "reminder" ? "cut" : "twin"}
+      title={thing.title} eyebrow={thing.kind === "event" ? "Starts" : thing.kind === "reminder" ? "Due" : "Pinned"}
+      value={time ?? undefined} detail={detail || action} onClick={open} label={`${thing.title}.${detail} ${action}.`} />
   );
 }

@@ -19,6 +19,18 @@ authoritative server data is promoted.
 
 ## Architecture and rollout
 
+### 2026-09-27 selected direction
+
+Niko has selected the later Atelier /03 designs: Cut /03, Time object and Twin
+plane cards; Light trace navigation; Nocturne and Silver Silk; the Calendar and
+dark Notes compositions. Codex chooses Quiet voice for Talk. Heavy nested event
+form boxes are rejected. These supersede the earlier general-purpose slabs.
+
+Production migration is now in progress under task58: first the shared visual
+language and real-data Home/Today/Talk; then a genuine Calendar workspace and
+unboxed editor against the existing calendar-events contract; then Notes layout.
+See [implemented behaviour and limits](../features/atelier-interface.md).
+
 | Increment | Implementation | Preserved boundary | Acceptance |
 |---|---|---|---|
 | 1. Materials | Extend `design/tokens.css`; use graphite/silver for Ink, light metal for Paper. Keep existing preference values. Resting surfaces use layered CSS; shared buttons keep their handlers. | Preferences API/versioning; severity colours; contrast and focus | Token/guard/component tests; both looks; forced colours; build budgets |
@@ -69,20 +81,21 @@ voice, messaging, scheduling or automation.
 
 ## Coordination and current status
 
-Room task53 claims the production presentation paths. Proposal38 amends the prior
-`ui-remodel` visual/ownership contract, which currently specifies static
-backgrounds and assigns shared components to Claude. No backend/model contract
-change is proposed. Until that review is recorded, preparation may add isolated,
-unmounted tested components and this plan, but cannot silently replace contracted
-production screens. No independent review or deployment is claimed by this plan.
+Proposal38 was accepted as `ui-remodel` v4, assigning production presentation to
+Codex. Task58 supersedes the stale task53 waiting note for this first increment.
+The new explicit user selections are recorded in proposal39; peer acceptance of
+that amendment is not claimed. Claude is unavailable (room798); Niko explicitly
+requests Codex continue. Existing data models/endpoints remain unchanged.
 
 Status: plan written; isolated production-candidate `design/metal/Starfield.tsx`
 and deterministic `particles.ts` implemented with unit tests. The component is
 not imported by App/Home/Voice, so the production bundle and screens are
 unchanged. Motion uses existing preferences, has no WebGL allocation, caps the
 particle count/pixel ratio, and stops its frame loop when hidden/unmounted.
-Integration has not shipped. The completed 19-destination demo remains
-independently usable at `?godui-preview`.
+The original star candidate remains unmounted. The newer approved Nocturne/Silk
+atmospheres and selected cards are integrated separately as described above.
+The 19-destination demo remains independently usable at `?godui-preview` and is
+not evidence that every production destination has been migrated.
 
 Candidate checks: `npm test -w web -- src/design/metal src/design/design-guard.test.ts`,
 `npx tsc -b web`, `npm run build -w web`. With the local Vite server running,

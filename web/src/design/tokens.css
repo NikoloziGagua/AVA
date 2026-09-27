@@ -26,8 +26,8 @@
 :root,
 [data-look="ink"] {
   color-scheme: dark;
-  --ds-canvas: #050506;
-  --ds-raised: #0e0e10;
+  --ds-canvas: #080a0e;
+  --ds-raised: #14181f;
   --ds-surface: rgba(255, 255, 255, 0.055);
   --ds-surface-strong: rgba(255, 255, 255, 0.09);
   --ds-ink: #f4f4f5;
@@ -55,6 +55,19 @@
   --ds-info-soft: rgba(127, 178, 255, 0.14);
   --ds-face-dot: #d6dbf5;
   --ds-face-light: #ffffff;
+  --ds-atmosphere-line: #b8c9df;
+  --ds-atmosphere-halo: #657d9c14;
+  --ds-metal-top: #242b35;
+  --ds-metal-bottom: #10151d;
+  --ds-metal-edge: #b8cad32e;
+  --ds-trace: #d7e8fc;
+  --ds-alloy-text: #19222e;
+  --ds-alloy-meta: #344357;
+  --ds-alloy-a: #ecedf0;
+  --ds-alloy-b: #b6bdc9;
+  --ds-alloy-c: #9ba5b5;
+  --ds-alloy-hi: #ffffffb3;
+  --ds-alloy-grain: #19222e09;
 }
 
 [data-look="paper"] {
@@ -88,6 +101,12 @@
   --ds-info-soft: rgba(31, 95, 191, 0.09);
   --ds-face-dot: #0d0d12;
   --ds-face-light: #383d57;
+  --ds-atmosphere-line: #364961;
+  --ds-atmosphere-halo: #5265800d;
+  --ds-metal-top: #ffffff;
+  --ds-metal-bottom: #e8ebee;
+  --ds-metal-edge: #39485a36;
+  --ds-trace: #263c56;
 }
 
 :root {
@@ -303,9 +322,77 @@ nav[data-compact] .ds-menu[data-open="true"] { clip-path: inset(0 0 0 0 round 30
   pointer-events: none;
 }
 
+/* Atelier /03: chosen structures, not an indiscriminate skin of nested panels. */
+.ds-atmosphere { position: absolute; inset: 0; overflow: hidden; pointer-events: none; background: radial-gradient(ellipse at 68% 70%, var(--ds-atmosphere-halo), transparent 70%); }
+.ds-atmosphere canvas { width: 100%; height: 100%; display: block; }
+.ds-atmosphere[data-atmosphere="silk"] { background: radial-gradient(ellipse at 20% 20%, var(--ds-atmosphere-halo), transparent 75%); }
+.ds-metal-bar { background: linear-gradient(135deg, var(--ds-metal-top), var(--ds-metal-bottom) 65%); box-shadow: inset 0 1px var(--ds-metal-edge), 0 12px 35px var(--ds-shadow); }
+.ds-navigation-host { isolation: isolate; }
+.ds-navigation-host:not([data-compact])::before { content: ""; position: absolute; z-index: -1; inset: -22px -14px -24px; background: linear-gradient(transparent, var(--ds-canvas) 30%); pointer-events: none; }
+.ds-light-trace { pointer-events: auto; position: relative; display: grid; grid-template-columns: repeat(var(--trace-count), minmax(0, 1fr)); margin: 0 auto 9px; max-width: 480px; }
+.ds-light-trace button { min-width: 0; min-height: 44px; padding: 6px 2px; font-size: 12px; color: var(--ds-ink-2); border-radius: 6px; background: transparent; }
+.ds-light-trace button:hover, .ds-light-trace button[aria-current="page"] { color: var(--ds-ink); }
+.ds-light-trace-mark { position: absolute; bottom: 0; left: 0; height: 1px; width: calc(100% / var(--trace-count)); transform: translateX(calc(var(--trace-index) * 100%)); background: linear-gradient(90deg, transparent, var(--ds-trace), transparent); box-shadow: 0 2px 8px var(--ds-metal-edge); transition: transform 400ms var(--ds-ease); pointer-events: none; }
+.ds-metal-object { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: center; width: 100%; min-width: 0; padding: 26px; border: 0; text-align: left; border-radius: 5px; color: var(--ds-ink); background: none; }
+button.ds-metal-object { cursor: pointer; transition: transform 240ms var(--ds-ease); }
+button.ds-metal-object:hover { transform: translateY(-2px); }
+.ds-object-value { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; }
+.ds-object-eyebrow { font-size: 12px; font-weight: 450; letter-spacing: .06em; color: var(--ds-ink-2); }
+.ds-object-value strong { font-size: 40px; font-weight: 350; line-height: 1; letter-spacing: -.05em; font-variant-numeric: tabular-nums; }
+.ds-object-story { display: grid; gap: 8px; min-width: 0; }
+.ds-object-title { font-size: 20px; font-weight: 430; letter-spacing: -.025em; line-height: 1.35; overflow-wrap: anywhere; }
+.ds-object-detail { font-size: 13px; line-height: 1.65; color: var(--ds-ink-2); overflow-wrap: anywhere; }
+.ds-object-arrow { justify-self: end; }
+.ds-object-cut { color: var(--ds-alloy-text); isolation: isolate; }
+.ds-object-cut::before { content: ""; position: absolute; inset: 0; z-index: -1; clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 20px 100%, 0 calc(100% - 20px)); background: repeating-linear-gradient(0deg, var(--ds-alloy-grain) 0 1px, transparent 1px 3px), linear-gradient(128deg, var(--ds-alloy-a), var(--ds-alloy-b) 26%, var(--ds-alloy-a) 53%, var(--ds-alloy-c) 78%, var(--ds-alloy-b)); box-shadow: inset 0 1px var(--ds-alloy-hi); }
+.ds-object-cut .ds-object-eyebrow, .ds-object-cut .ds-object-detail { color: var(--ds-alloy-meta); }
+.ds-object-cut .ds-object-story { grid-row: 2; }
+.ds-object-cut .ds-object-arrow { grid-column: 2; grid-row: 1 / 3; }
+.ds-object-time { grid-template-columns: auto minmax(0, 1fr) auto; padding: 12px 0; }
+.ds-object-time .ds-object-value { justify-content: center; align-items: center; width: 124px; aspect-ratio: 1; border: 5px solid var(--ds-metal-edge); border-radius: 50%; background: radial-gradient(ellipse at 35% 20%, var(--ds-metal-top), var(--ds-metal-bottom)); box-shadow: 0 8px 22px var(--ds-shadow), inset 0 1px var(--ds-metal-edge); }
+.ds-object-time .ds-object-value strong { font-size: 28px; }
+.ds-object-twin { grid-template-columns: auto minmax(0, 1fr) auto; gap: 16px; padding: 0; }
+.ds-object-twin .ds-object-value { align-self: stretch; justify-content: center; padding: 18px 14px; border-radius: 4px; background: linear-gradient(148deg, var(--ds-alloy-a), var(--ds-alloy-c) 65%, var(--ds-alloy-b)); transform: rotate(-2deg); color: var(--ds-alloy-text); box-shadow: inset 0 1px var(--ds-alloy-hi); }
+.ds-object-twin .ds-object-eyebrow { color: var(--ds-alloy-meta); }
+.ds-object-twin .ds-object-value strong { font-size: 20px; }
+.ds-object-twin .ds-object-story { padding: 22px 18px; background: linear-gradient(135deg, var(--ds-metal-top), var(--ds-metal-bottom)); border-radius: 4px; box-shadow: inset 0 1px var(--ds-metal-edge); }
+.ds-object-compact { max-width: 420px; gap: 12px; padding: 12px 16px; }
+.ds-object-compact .ds-object-title { font-size: 15px; }
+.ds-object-compact .ds-object-detail { font-size: 12px; }
+.ds-object-compact .ds-object-value strong { font-size: 22px; }
+.ds-object-compact.ds-object-cut { grid-template-columns: auto minmax(0,1fr) auto; }
+.ds-object-compact.ds-object-cut .ds-object-story, .ds-object-compact.ds-object-cut .ds-object-arrow { grid-row: auto; grid-column: auto; }
+.ds-object-compact.ds-object-time .ds-object-value { width: 78px; border-width: 3px; gap: 6px; }
+.ds-object-compact.ds-object-twin .ds-object-value { padding: 14px 10px; }
+.ds-object-compact.ds-object-twin .ds-object-story { padding: 12px; }
+.ds-atelier-home { overflow: hidden; }
+.ds-home-composition { height: 100%; grid-template-rows: auto minmax(60px, 1fr) auto auto auto; padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: calc(var(--ds-bar-space, 118px) + 20px + env(safe-area-inset-bottom, 0px)); }
+.ds-home-face { min-height: 0; height: 100%; max-height: 560px; }
+.ds-home-suggestions { position: relative; }
+.ds-home-suggestions[open] { max-height: 150px; overflow-y: auto; }
+.ds-quiet-conversation { background: radial-gradient(ellipse at 50% 0, var(--ds-atmosphere-halo), transparent 65%), var(--ds-canvas); }
+.ds-quiet-thread { gap: 40px; padding-top: 20px; }
+.ds-quiet-thread .ds-prose { line-height: 1.85; }
+.ds-today-workspace { position: relative; isolation: isolate; }
+.ds-today-content { position: relative; padding-bottom: calc(var(--ds-bar-space, 118px) + 40px + env(safe-area-inset-bottom, 0px)); }
+.ds-today-section { min-width: 0; padding: 22px 0; }
+.ds-today-section > div:first-child { margin-bottom: 20px; }
+.ds-today-section ul { gap: 16px; }
+@media (max-width: 420px) {
+  .ds-object-twin { gap: 10px; }
+  .ds-object-twin .ds-object-value { padding: 14px 10px; }
+  .ds-object-title { font-size: 18px; }
+  .ds-quiet-thread { gap: 30px; }
+}
+/* Small landscape / zoom: permit scrolling rather than hide meaningful content. */
+@media (max-height: 620px) { .ds-atelier-home { overflow-y: auto; } .ds-home-composition { min-height: 560px; } }
 /* Forced colours: surfaces fall back to system colours with real borders. */
 @media (forced-colors: active) {
   .ds-root [data-ds-surface] { border: 1px solid CanvasText; }
+  .ds-atmosphere { display: none; }
+  .ds-metal-object, .ds-metal-bar { color: CanvasText; background: Canvas; border: 1px solid CanvasText; }
+  .ds-object-cut::before { display: none; }
+  .ds-light-trace button[aria-current="page"] { outline: 2px solid Highlight; }
 }
 
 /*

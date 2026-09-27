@@ -34,6 +34,16 @@ function Harness(props: { sending?: boolean; onSend?: (t: string) => void; onNav
 const menu = () => document.querySelector<HTMLElement>('[role="dialog"][aria-label="Menu"]')!;
 
 describe("BottomBar", () => {
+  it("offers Light trace navigation without opening the menu or losing a draft", () => {
+    const onNavigate = vi.fn();
+    render(<Harness onNavigate={onNavigate} />);
+    fireEvent.change(screen.getByLabelText("Message AVA"), { target: { value: "Unsent words" } });
+    fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith("notes");
+    expect((screen.getByLabelText("Message AVA") as HTMLTextAreaElement).value).toBe("Unsent words");
+    expect(menu().getAttribute("data-open")).toBe("false");
+  });
   it("starts closed, with the menu hidden from assistive tech", () => {
     render(<Harness />);
     expect(screen.getByRole("button", { name: "Open menu" }).getAttribute("aria-expanded")).toBe("false");

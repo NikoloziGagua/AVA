@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import { ArrowUp, AudioLines, LoaderCircle, Mic, Square, X } from "lucide-react";
 import { cn } from "./cn.js";
 import { insertDictation, useDictation, type Transcribe } from "./dictation.js";
+import { LightTrace } from "./metal/LightTrace.js";
 
 export type Destination = {
   id: string;
@@ -145,16 +146,16 @@ export function BottomBar({
   const formRef = useRef<HTMLFormElement>(null);
   useLayoutEffect(() => {
     const root = document.documentElement;
-    const form = formRef.current;
-    if (compact || !form) {
+    const bar = navRef.current;
+    if (compact || !bar) {
       root.style.setProperty("--ds-bar-space", "0px");
       return;
     }
-    const publish = () => root.style.setProperty("--ds-bar-space", `${Math.ceil(form.getBoundingClientRect().height) + 12}px`);
+    const publish = () => root.style.setProperty("--ds-bar-space", `${Math.ceil(bar.getBoundingClientRect().height) + 12}px`);
     publish();
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(publish);
-    observer.observe(form);
+    observer.observe(bar);
     return () => observer.disconnect();
   }, [compact]);
   useEffect(() => () => { document.documentElement.style.removeProperty("--ds-bar-space"); }, []);
@@ -247,7 +248,7 @@ export function BottomBar({
       aria-label="AVA"
       data-compact={compact || undefined}
       className={cn(
-        "ds-root pointer-events-none fixed z-40 font-ui",
+        "ds-root ds-navigation-host pointer-events-none fixed z-40 font-ui",
         compact ? "w-[min(420px,calc(100%-1.5rem))]" : "left-1/2 w-[calc(100%-1.5rem)] max-w-[720px] -translate-x-1/2",
       )}
       style={compact
@@ -314,6 +315,10 @@ export function BottomBar({
         </p>
       )}
 
+      {!compact && <div aria-hidden={open || undefined} inert={open ? true : undefined} style={{ visibility: open ? "hidden" : undefined }}>
+        <LightTrace items={primary.filter((item) => item.id !== "new")} current={current} onNavigate={onNavigate} />
+      </div>}
+
       <form
         ref={formRef}
         onSubmit={submit}
@@ -321,7 +326,7 @@ export function BottomBar({
           "ds-bar pointer-events-auto relative flex gap-1.5 shadow-e3 transition-[border-radius] duration-150",
           compact ? "h-[52px] w-[52px] items-center justify-center rounded-full p-0" : "min-h-[58px] items-end px-2 py-[7px]",
           !compact && (multiline ? "rounded-sheet" : "rounded-full"),
-          open ? "bg-raised" : "ds-glass",
+          open ? "bg-raised" : "ds-metal-bar",
         )}
       >
         <button

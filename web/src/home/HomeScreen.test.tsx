@@ -44,6 +44,9 @@ describe("HomeScreen", () => {
     expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/^Good (night|morning|afternoon|evening), Niko\.$/);
     expect(document.querySelector(".ds-island")?.textContent).toContain("AVA");
     expect(await screen.findByText("Nothing planned for today.")).toBeTruthy();
+    const choices = screen.getByText("A few starting points");
+    expect(choices.closest("details")?.open).toBe(false);
+    fireEvent.click(choices);
     expect(screen.getAllByRole("button", { name: /Plan my day|What's due this week\?|Start a study session/ })).toHaveLength(3);
   });
 
@@ -60,6 +63,7 @@ describe("HomeScreen", () => {
     render(<HomeScreen {...handlers} />);
     if (!sameDay) return;
     const card = await screen.findByRole("button", { name: /Agile Development · Lecture\. You planned to attend\. Open calendar\./ });
+    expect(card.classList.contains("ds-object-time")).toBe(true);
     fireEvent.click(card);
     expect(handlers.onOpenCalendar).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Get me ready for Agile Development · Lecture" })).toBeTruthy();
@@ -77,6 +81,7 @@ describe("HomeScreen", () => {
     const handlers = props();
     render(<HomeScreen {...handlers} />);
     await screen.findByText("Nothing planned for today.");
+    fireEvent.click(screen.getByText("A few starting points"));
     fireEvent.click(screen.getByRole("button", { name: "Plan my day" }));
     expect(handlers.onStartChat).toHaveBeenCalledWith("Plan my day");
   });

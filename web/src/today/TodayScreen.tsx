@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { CalendarClock, ChevronRight, FileText, Lightbulb, MessageSquareText, Mic } from "lucide-react";
-import { Orb } from "../components/ava/Orb.js";
+import { FaceStill } from "../design/face/FaceStill.js";
+import { Atmosphere } from "../design/metal/Atmosphere.js";
+import { MetalObject } from "../design/metal/MetalObject.js";
 import { CommandBar } from "../chat/CommandBar.js";
 import { fetchSessionPage, lastHumanActivity, type SessionRow, type WatchRow } from "../api.js";
 import { fetchNotes, type Note } from "../notes/api.js";
@@ -111,19 +113,20 @@ export function TodayScreen(props: TodayScreenProps) {
   if (firstRun) return <FirstRun {...props} dateLine={dateLine} />;
 
   return (
-    <div className="ava-today h-full w-full overflow-y-auto bg-black text-white">
-      <div className="mx-auto flex w-full max-w-[1080px] flex-col gap-5 px-4 pb-16 pt-8 sm:px-8 lg:px-12">
+    <div className="ava-today ds-root ds-today-workspace h-full w-full overflow-y-auto bg-canvas font-ui text-ink">
+      <Atmosphere kind="silk" />
+      <div className="ds-today-content mx-auto flex w-full max-w-[1080px] flex-col gap-6 px-4 pt-8 sm:px-8 lg:px-12">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="flex flex-col gap-1">
-            <p className="text-sm text-white/60">{dateLine}</p>
-            <h1 className="text-3xl font-semibold tracking-tight text-white/95">{greeting(now)}</h1>
+            <p className="text-meta text-ink-2">{dateLine}</p>
+            <h1 className="text-display tracking-tight text-ink">{greeting(now)}</h1>
           </div>
           <button
             type="button"
             onClick={props.onEnterVoice}
-            className="flex h-12 items-center gap-3 rounded-full border border-[var(--ac)]/30 bg-[var(--ac)]/[0.07] pl-1.5 pr-4 text-sm text-[var(--ac-text)] transition-colors hover:border-[var(--ac)]/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ac)]"
+            className="ds-focus ds-metal-bar flex h-12 items-center gap-3 rounded-full pl-1.5 pr-4 text-body text-ink"
           >
-            <Orb size={36} state="idle" flipId="ava-orb" />
+            <FaceStill size={36} />
             <span>Talk to AVA</span>
             <Mic size={14} aria-hidden className="opacity-60" />
           </button>
@@ -134,7 +137,7 @@ export function TodayScreen(props: TodayScreenProps) {
           placeholder="Add a task, note or idea, or just tell AVA what's on your mind…"
         />
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:gap-16">
           <TodayCard title="Continue talking" icon={<MessageSquareText size={15} aria-hidden />} action={{ label: "All conversations", onClick: props.onOpenTalk }}>
             <SectionBody
               section={talks}
@@ -187,7 +190,7 @@ export function TodayScreen(props: TodayScreenProps) {
                 render={(rows) => rows.map((watch) => <ReminderLine key={watch.id} watch={watch} />)}
               />
               {feed.status === "ok" && feed.stale && (
-                <p role="status" className="text-[11px] text-amber-100/70">
+                <p role="status" className="text-meta text-warning">
                   Couldn't refresh. Showing reminders as of {fetchedAtLabel(feed.fetchedAt)}; their status may have changed since.
                 </p>
               )}
@@ -201,15 +204,16 @@ export function TodayScreen(props: TodayScreenProps) {
 
 function FirstRun(props: TodayScreenProps & { dateLine: string }) {
   return (
-    <div className="ava-today h-full w-full overflow-y-auto bg-black text-white">
-      <div className="mx-auto flex w-full max-w-[820px] flex-col items-center gap-6 px-4 pb-16 pt-10 text-center sm:px-8">
-        <button type="button" onClick={props.onEnterVoice} aria-label="Talk to AVA" className="rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ac)]">
-          <Orb size={104} state="idle" flipId="ava-orb" />
+    <div className="ava-today ds-root ds-today-workspace h-full w-full overflow-y-auto bg-canvas font-ui text-ink">
+      <Atmosphere kind="silk" />
+      <div className="ds-today-content mx-auto flex w-full max-w-[820px] flex-col items-center gap-6 px-4 pt-10 text-center sm:px-8">
+        <button type="button" onClick={props.onEnterVoice} aria-label="Talk to AVA" className="ds-focus rounded-full">
+          <FaceStill size={104} />
         </button>
         <div className="flex flex-col gap-3">
-          <p className="text-sm text-white/55">{props.dateLine}</p>
-          <h1 className="text-3xl font-semibold tracking-tight text-white/95">Let's set AVA up to run your week.</h1>
-          <p className="mx-auto max-w-[600px] text-base leading-7 text-white/70">
+          <p className="text-meta text-ink-2">{props.dateLine}</p>
+          <h1 className="text-title tracking-tight text-ink">Let's set AVA up to run your week.</h1>
+          <p className="mx-auto max-w-[600px] text-body leading-7 text-ink-2">
             Nothing is on Today yet. Tell AVA about your courses, deadlines and plans in your own words,
             typing or talking. Your conversations, ideas and notes appear here as you add them.
           </p>
@@ -219,27 +223,20 @@ function FirstRun(props: TodayScreenProps & { dateLine: string }) {
         </div>
         <div className="grid w-full grid-cols-1 gap-3 text-left sm:grid-cols-3">
           {STARTERS.map((starter) => (
-            <button
-              key={starter.title}
-              type="button"
-              onClick={() => props.onStartChat(starter.prompt)}
-              className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors hover:border-[var(--ac)]/35 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ac)]"
-            >
-              <span className="text-sm font-semibold text-white/90">{starter.title}</span>
-              <span className="text-xs leading-5 text-white/60">{starter.detail}</span>
-            </button>
+            <MetalObject key={starter.title} variant="cut" title={starter.title} eyebrow="Start here"
+              detail={starter.detail} onClick={() => props.onStartChat(starter.prompt)} />
           ))}
         </div>
-        <section aria-labelledby="today-setup" className="w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4 text-left">
-          <h2 id="today-setup" className="hud mb-2 text-[10px] text-white/55">Getting set up</h2>
-          <ol className="flex flex-col divide-y divide-white/[0.06] text-sm">
+        <section aria-labelledby="today-setup" className="w-full py-4 text-left">
+          <h2 id="today-setup" className="mb-2 text-label text-ink-2">Getting set up</h2>
+          <ol className="flex flex-col text-body">
             <li className="flex items-center justify-between gap-3 py-3">
-              <span className="text-white/85">Tell AVA about your courses and plans</span>
-              <button type="button" className="btn-deck btn-ghost" onClick={() => props.onStartChat(STARTERS[0].prompt)}>Start</button>
+              <span className="text-ink">Tell AVA about your courses and plans</span>
+              <button type="button" className="ds-focus rounded-full px-4 py-3 text-meta" onClick={() => props.onStartChat(STARTERS[0].prompt)}>Start</button>
             </li>
             <li className="flex items-center justify-between gap-3 py-3">
-              <span className="text-white/85">Phone notifications for reminders</span>
-              <span className="text-xs text-white/55">Not available yet</span>
+              <span className="text-ink">Phone notifications for reminders</span>
+              <span className="text-meta text-ink-2">Not available yet</span>
             </li>
           </ol>
         </section>
@@ -255,14 +252,14 @@ function TodayCard({ title, icon, action, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <section aria-label={title} className="lg-slab flex flex-col gap-2 px-4 py-4 sm:px-5">
+    <section aria-label={title} className="ds-today-section flex flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="hud flex items-center gap-2 text-[10px] text-white/60">
-          <span className="text-[var(--ac)]">{icon}</span>
+        <h2 className="flex items-center gap-2 text-meta text-ink-2">
+          <span>{icon}</span>
           {title}
         </h2>
         {action && (
-          <button type="button" onClick={action.onClick} className="flex items-center gap-1 text-xs text-white/55 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ac)]">
+          <button type="button" onClick={action.onClick} className="ds-focus flex min-h-11 items-center gap-1 rounded-control text-meta text-ink-2 hover:text-ink">
             {action.label}
             <ChevronRight size={12} aria-hidden />
           </button>
@@ -280,9 +277,9 @@ function SectionBody<T>({ section, loadingText, errorText, emptyText, render }: 
   emptyText: string;
   render: (rows: T[]) => React.ReactNode;
 }) {
-  if (section.status === "loading") return <p role="status" className="py-2 text-xs text-white/50">{loadingText}</p>;
-  if (section.status === "error") return <p role="alert" className="py-2 text-xs text-red-300/90">{errorText}</p>;
-  if (section.value.length === 0) return <p className="py-2 text-sm text-white/55">{emptyText}</p>;
+  if (section.status === "loading") return <p role="status" className="py-2 text-meta text-ink-2">{loadingText}</p>;
+  if (section.status === "error") return <p role="alert" className="py-2 text-meta text-danger">{errorText}</p>;
+  if (section.value.length === 0) return <p className="py-2 text-body text-ink-2">{emptyText}</p>;
   return <ul className="flex flex-col">{render(section.value)}</ul>;
 }
 
@@ -290,11 +287,8 @@ function ReminderLine({ watch }: { watch: WatchRow }) {
   const view = presentReminder(watch);
   if (!view) return null;
   return (
-    <li className="flex items-center gap-3 px-2 py-2.5">
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm text-white/90">{watch.prompt}</span>
-        <span className="truncate text-[11px] text-white/50">{view.due}</span>
-      </span>
+    <li className="grid gap-3">
+      <MetalObject variant="cut" title={watch.prompt} eyebrow="Reminder" detail={view.due} />
       <ReminderStatusChip presentation={view} />
     </li>
   );
@@ -303,14 +297,7 @@ function ReminderLine({ watch }: { watch: WatchRow }) {
 function ItemButton({ title, meta, onClick }: { title: string; meta: string; onClick: () => void }) {
   return (
     <li>
-      <button
-        type="button"
-        onClick={onClick}
-        className="flex w-full items-center gap-3 rounded-lg px-2 py-2.5 text-left transition-colors hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--ac)]"
-      >
-        <span className="min-w-0 flex-1 truncate text-sm text-white/90">{title}</span>
-        <span className="shrink-0 text-xs text-white/50">{meta}</span>
-      </button>
+      <MetalObject variant="twin" title={title} eyebrow="Updated" value={meta} onClick={onClick} />
     </li>
   );
 }

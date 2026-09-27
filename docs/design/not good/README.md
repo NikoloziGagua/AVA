@@ -21,6 +21,12 @@ These are observations to validate with Niko, not claims that he rejected every 
 
 ## New comparison
 
+### Niko's follow-up: accepted and rejected separately
+
+Niko likes the new **Calendar and Notes layouts**, and the **Nocturne and Silver Silk backgrounds**. He explicitly wants Notes dark like the rest of AVA. He **does not like any of the first four cards**; they are not approved for production.
+
+The next comparison therefore preserves those two layouts, applies dark Notes/editor styling, assigns the two chosen atmospheres across pages, and introduces six new card structures, four animated navigation proposals and three text-chat compositions. These are alternatives for Niko to judge, not an authorization to replace live navigation. Earlier screenshots and rejection history remain untouched.
+
 Open [Design Atelier](http://127.0.0.1:5176/) while its local server is running. Source and instructions: [preview README](../previews/ava-atelier-2026-09-27/README.md). Research and recommendations: [design study](../ava-atelier-research-2026-09-27.md).
 
 The new comparison is an isolated design study. It does **not** replace live AVA, alter real notes/calendar data, or imply acceptance of a new design. The comparison catalogue scrolls intentionally; it is not the proposed production Home screen.

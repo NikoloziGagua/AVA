@@ -3,6 +3,8 @@ import { icon } from './icons.mjs';
 import { mountBackdrop } from './backdrop.mjs';
 import { calendarView, bindCalendar } from './calendar.mjs';
 import { notesView, bindNotes } from './notes.mjs';
+import { studiesView, bindStudies } from './studies.mjs';
+import { sceneForPage } from './studies-model.mjs';
 const content=document.querySelector('#content');
 let initial;try{initial=localStorage.getItem(STORAGE_KEY);}catch{}
 let state=loadState(initial),paused=false,route='',toastTimer=0,cleanup=()=>{},focusSearch=false;
@@ -30,9 +32,15 @@ function materials(){
   <section class="design-console" aria-label="Compare design directions"><div class="console-section"><div class="section-label"><span>01 / ATMOSPHERE</span><p>Give AVA a sense of place.</p></div><div class="scene-options">${SCENES.map(s=>`<button class="scene-option ${s.id===state.scene?'selected':''}" data-scene-choice="${s.id}" aria-pressed="${s.id===state.scene}"><span class="scene-swatch swatch-${s.id}"><i></i><b>${s.number}</b></span><span>${s.name}</span><small>${s.subtitle}</small></button>`).join('')}</div><p class="selection-explanation"><b>${scene.use}.</b> ${scene.detail}</p></div>
   <div class="console-section"><div class="section-label"><span>02 / MATERIAL</span><p>Four ideas of what a card can be.</p></div><div class="material-options">${MATERIALS.map(m=>`<button class="material-option ${m.id===state.material?'selected':''}" data-material-choice="${m.id}" aria-pressed="${m.id===state.material}"><span>${m.number}</span><div><b>${m.name}</b><small>${m.subtitle}</small></div>${icon(m.id==='alloy'?'layers':m.id==='glass'?'globe':m.id==='editorial'?'type':'book',22)}</button>`).join('')}</div><p class="selection-explanation"><b>${material.use}.</b> ${material.detail}</p></div></section>
   <section class="card-comparison"><div class="section-title"><div><span class="eyebrow">THE SAME CONTENT. FOUR DIFFERENT PERSONALITIES.</span><h2>See them side by side.</h2></div><span class="sample-caption">Illustrative schedule · not live data</span></div><div class="comparison-grid">${MATERIALS.map(m=>`<div class="comparison-item"><div class="comparison-label">${m.number} / ${m.name}</div>${renderCard(m.id,true)}<button class="text-button" data-use-material="${m.id}">Try ${m.name.toLowerCase()} ${icon('up',15)}</button></div>`).join('')}</div></section>
-  <footer class="concept-footer"><p>My recommendation: <b>Nocturne + Milled alloy</b> for the assistant.<br><b>Daybreak + The editorial</b> for long-form thinking.</p><a href="#calendar">Now see the Calendar ${icon('arrow',18)}</a><span>Concept only · local sample data · zero AVA API calls</span></footer>`;
+  <footer class="concept-footer"><p>Previous round: these four cards were rejected.<br>Nocturne and Silver Silk remain the chosen atmospheres; Notes is now dark.</p><a href="#cards">See the new card directions ${icon('arrow',18)}</a><span>Archive only · local sample data · zero AVA API calls</span></footer>`;
 }
 const references=[
+ ['Rauno','Interfaces with physical intuition','https://rauno.me/craft','Toolbar morphs, spatial controls and dock studies. Our navigation uses stable targets with moving selection and bounded icon lift; no source code copied.'],
+ ['Magic UI Dock','Motion around the pointer','https://magicui.design/docs/components/dock','A dock can feel alive without moving the target itself. Our original proximity study also responds to keyboard focus.'],
+ ['Aceternity','Reveal more, only when asked','https://ui.aceternity.com/components/expandable-card','Expandable composition informed the living index and command capsule. Native details and buttons keep this preview dependency-free.'],
+ ['React Bits','A wider shape vocabulary','https://www.reactbits.dev/get-started/index','Dock, pill navigation and reflective card references encouraged genuinely different silhouettes rather than recoloring the same rectangle.'],
+ ['Vercel Geist','Selection should stay legible','https://vercel.com/geist/tabs','Clear labels and selection semantics inform the preview switchers. Motion supplements the current state; it never replaces it.'],
+ ['assistant-ui','Conversation is a working surface','https://www.assistant-ui.com/','Reviewed for conversational composition. Our three original chat studies keep sources near the answer and drafts intact; no assistant-ui runtime is installed.'],
  ['Linear','Structure without clutter','https://linear.app/now/behind-the-latest-design-refresh','Quiet navigation, consistent actions, deliberate hierarchy. Borrow the discipline, not the entire app.'],
  ['Notion Calendar','Time is the interface','https://www.notion.com/product/calendar','A readable time canvas, quick navigation and documents connected to events. No oversized cards around every hour.'],
  ['Craft','Notes deserve a beautiful page','https://www.craft.do/','A document-first canvas with folders behind it. Give writing room; move metadata out of the way.'],
@@ -42,7 +50,7 @@ const references=[
  ['Magic UI','Pointer light','https://v3.magicui.design/docs/components/magic-card','A soft spotlight can make a surface feel physical. Here it is restrained and never distorts text.'],
  ['21st','A broad interaction palette','https://21st.dev/','Component catalogue reviewed for possibilities. No catalogue dependency or unreviewed generated code is installed.'],
 ];
-function referenceView(){return `<section class="references-page"><span class="eyebrow">RESEARCH / SEPTEMBER 2026</span><h1>Not a moodboard.<br><em>A point of view.</em></h1><p class="lede">The common thread is not more effects. It is better hierarchy, tactile detail, and motion with a purpose.</p><div class="reference-grid">${references.map(([name,title,url,body])=>`<a class="reference" href="${url}" target="_blank" rel="noopener noreferrer"><span>${name}${icon('up',17)}</span><h2>${title}</h2><p>${body}</p></a>`).join('')}</div><div class="research-note"><h2>What changes from the rejected version</h2><p>No blue slab behind every object. No rectangle inside a rectangle inside a card. Inputs start with your words, not a heavy form. Calendar has a real time axis. Notes has a real reading surface.</p><p>Four original animated backgrounds, four different card structures, sample-only calendar and notes. No website assets, private data or brand designs copied.</p><p>One Canvas2D backdrop. Zero WebGL contexts. Motion can be paused; reduced motion is automatic. No physical-phone performance claim.</p></div></section>`;}
+function referenceView(){return `<section class="references-page"><span class="eyebrow">RESEARCH / SEPTEMBER 2026 / ROUND 03</span><h1>Something you feel.<br><em>Every time you use it.</em></h1><p class="lede">Niko's direction: keep Nocturne and Silver Silk, keep the Calendar and Notes layouts, make Notes dark, rethink the cards. Then make navigation and conversation feel alive.</p><div class="reference-grid">${references.map(([name,title,url,body])=>`<a class="reference" href="${url}" target="_blank" rel="noopener noreferrer"><span>${name}${icon('up',17)}</span><h2>${title}</h2><p>${body}</p></a>`).join('')}</div><div class="research-note"><h2>What this round explores</h2><p>Six card structures, four animated navigation alternatives and three text-chat compositions. The previous cards are archived, not endorsed. Calendar stays on Nocturne; Notes and navigation studies use Silver Silk. No automatic atmosphere switching while you read.</p><p>All code and visual studies are original. No component library, copied website assets or new dependency installed. A local draft is not an AVA message. Sample context is not a tool trace or hidden reasoning.</p><p>One Canvas2D backdrop. Zero WebGL contexts. Motion can be paused; reduced motion is automatic. No physical-phone performance claim.</p><a class="text-button" href="#materials">Previous round / rejected card archive ${icon('arrow',18)}</a></div></section>`;}
 function bindMaterials(){
   for(const key of ['scene','material'])document.querySelector(`#quick-${key}`).onchange=e=>{api.update(s=>({...s,[key]:e.target.value}));render(false);document.querySelector(`#quick-${key}`)?.focus({preventScroll:true});};
   document.querySelectorAll('[data-scene-choice]').forEach(b=>b.addEventListener('click',()=>{const top=scrollY;api.update(s=>({...s,scene:b.dataset.sceneChoice}));render(false);scrollTo(0,top);document.querySelector(`[data-scene-choice="${state.scene}"]`)?.focus({preventScroll:true});}));
@@ -58,19 +66,20 @@ function bindMaterials(){
 }
 function render(scroll=true){
   cleanup();cleanup=()=>{};
-  const next=location.hash.slice(1);route=['materials','calendar','notes','references'].includes(next)?next:'materials';
-  document.body.dataset.page=route;document.body.dataset.scene=state.scene;document.body.dataset.material=state.material;
+  const next=location.hash.slice(1);route=['cards','navigation','talk','materials','calendar','notes','references'].includes(next)?next:'cards';
+  document.body.dataset.page=route;document.body.dataset.scene=sceneForPage(route,state.scene);document.body.dataset.material=state.material;
   // Workspaces choose a deliberate quieter atmosphere; comparison preferences stay intact.
-  backdrop.setScene(route==='notes'?'dawn':route==='calendar'?'nocturne':state.scene);
+  backdrop.setScene(sceneForPage(route,state.scene));
   document.querySelectorAll('[data-tab]').forEach(a=>{if(a.dataset.tab===route)a.setAttribute('aria-current','page');else a.removeAttribute('aria-current');});
-  content.innerHTML=route==='materials'?materials():route==='calendar'?calendarView(api):route==='notes'?notesView(api):referenceView();
-  if(route==='materials')bindMaterials();else if(route==='calendar')cleanup=bindCalendar(api);else if(route==='notes')cleanup=bindNotes(api);
+  content.innerHTML=['cards','navigation','talk'].includes(route)?studiesView(route):route==='materials'?materials():route==='calendar'?calendarView(api):route==='notes'?notesView(api):referenceView();
+  if(['cards','navigation','talk'].includes(route))cleanup=bindStudies(api,route);else if(route==='materials')bindMaterials();else if(route==='calendar')cleanup=bindCalendar(api);else if(route==='notes')cleanup=bindNotes(api);
   if(scroll){window.scrollTo(0,0);content.focus({preventScroll:true});}
   if(focusSearch){focusSearch=false;document.querySelector('#note-search')?.focus();}
 }
 const motion=document.querySelector('#motion-toggle');
 function motionLabel(){motion.innerHTML=icon(paused||backdrop.reduced?'play':'pause',17);motion.setAttribute('aria-label',backdrop.reduced?'Reduced motion is active':paused?'Resume motion':'Pause motion');motion.title=motion.getAttribute('aria-label');motion.disabled=backdrop.reduced;document.body.dataset.paused=String(paused||backdrop.reduced);}
 motion.onclick=()=>{paused=!paused;backdrop.setPaused(paused);motionLabel();};
+document.querySelector('.skip-link').onclick=e=>{e.preventDefault();content.focus();content.scrollIntoView({block:'start',behavior:'instant'});};
 matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change',motionLabel);
 window.addEventListener('hashchange',()=>{dialog.close();choices.close();render();});
 window.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key==='k'&&!dialog.open&&!choices.open){e.preventDefault();ui.focus=false;ui.notePane='list';focusSearch=true;if(route!=='notes')location.hash='notes';else render(false);}});

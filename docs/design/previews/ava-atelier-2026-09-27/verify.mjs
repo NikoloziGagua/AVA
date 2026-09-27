@@ -12,7 +12,7 @@ async function open(width=1440,reducedMotion='no-preference'){
  const ctx=await browser.newContext({viewport:{width,height:1000},reducedMotion});const page=await ctx.newPage();
  page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
  page.on('request',r=>{if(!r.url().startsWith(base)&&!r.url().startsWith('data:'))external.push(r.url());});
- await page.goto(base);await page.evaluate(()=>document.fonts.ready);return page;
+ await page.goto(base+'/#materials');await page.evaluate(()=>document.fonts.ready);return page;
 }
 async function layout(page,label){const measure=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,small:[...document.querySelectorAll('main *')].filter(e=>e.getClientRects().length&&[...e.childNodes].some(n=>n.nodeType===3&&n.textContent.trim())&&parseFloat(getComputedStyle(e).fontSize)<12).map(e=>e.className)}));check(`${label}: no horizontal page overflow`,measure.scroll<=measure.width);check(`${label}: 12px text floor`,!measure.small.length);}
 async function stored(page){return page.evaluate(key=>JSON.parse(localStorage.getItem(key)),STORAGE_KEY);}

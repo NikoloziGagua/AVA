@@ -5,7 +5,7 @@ import {dirname,resolve,extname,sep} from 'node:path';
 const root=dirname(fileURLToPath(import.meta.url));
 const fonts=resolve(root,'../../../..','web/public/fonts');
 const types={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.woff2':'font/woff2'};
-const assets=new Set(['index.html','styles.css','app.mjs','backdrop.mjs','calendar.mjs','notes.mjs','model.mjs','icons.mjs']);
+const assets=new Set(['index.html','styles.css','studies.css','app.mjs','backdrop.mjs','calendar.mjs','notes.mjs','model.mjs','icons.mjs','studies.mjs','studies-model.mjs']);
 const fontNames=new Set(['Geist-Variable.woff2','GeistMono-Variable.woff2']);
 export function createPreviewServer(){return createServer(async(req,res)=>{
   try{

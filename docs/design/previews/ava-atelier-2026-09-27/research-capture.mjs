@@ -7,6 +7,10 @@ const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   for (const [name, url] of [
+    ['rauno-craft', 'https://rauno.me/craft'],
+    ['magic-dock', 'https://magicui.design/docs/components/dock'],
+    ['aceternity-expand', 'https://ui.aceternity.com/components/expandable-card'],
+    ['assistant-ui', 'https://www.assistant-ui.com/'],
     ['linear', 'https://linear.app/now/behind-the-latest-design-refresh'],
     ['calendar', 'https://www.notion.com/product/calendar'],
     ['craft', 'https://www.craft.do/'],

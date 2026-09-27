@@ -87,7 +87,7 @@ try {
     const beforeStars = await stars.evaluate(el => el.toDataURL());
     await page.waitForTimeout(250);
     check(`${look}/${width} stars advance`, await stars.evaluate(el => el.toDataURL()) !== beforeStars);
-    check(`${look}/${width} bounded stars`, await stars.getAttribute('data-star-count') === (width < 600 ? '240' : '480'));
+    check(`${look}/${width} bounded stars`, await stars.getAttribute('data-star-count') === (width < 600 ? '500' : '900'));
     check(`${look}/${width} one WebGL face`, await page.locator('[data-qa-context]').count() === 1);
     if (width === 390) {
       const timing = await page.evaluate(() => new Promise(resolve => {
@@ -132,10 +132,15 @@ try {
     const input = page.getByRole('textbox', { name: 'Message AVA' });
     const sameInput = await input.elementHandle();
     await input.fill('Keep this unsent draft');
+    check(`${look}/${width} composer focus belongs to the pill`, await input.evaluate(el => {
+      const pill = el.closest('.ds-bar'); return getComputedStyle(el).outlineStyle === 'none' && getComputedStyle(pill).outlineStyle !== 'none';
+    }));
+    check(`${look}/${width} navigation labels have an opaque ground`, await page.locator('.ds-light-trace').evaluate(el => !getComputedStyle(el).backgroundColor.startsWith('rgba')));
     await page.waitForTimeout(300);
     check(`${look}/${width} bar expands with draft`, await form.getAttribute('data-expanded') === 'true');
     await page.getByRole('group', { name: 'Quick navigation' }).getByRole('button', { name: 'Today', exact: true }).click();
     await page.getByRole('region', { name: 'Recent notes' }).waitFor();
+    check(`${look}/${width} Today has only the persistent composer`, await page.locator('textarea').count() === 1);
     check(`${look}/${width} draft survives`, await input.inputValue() === 'Keep this unsent draft');
     check(`${look}/${width} Silk destination`, await page.locator('[data-atmosphere="silk"]').count() === 1);
     check(`${look}/${width} no page overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));

@@ -265,7 +265,8 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     try { await action(); await load(true); }
     catch (cause) {
       setError(cause instanceof ApiError && cause.code === "stale_version"
-        ? "That changed in another window or through AVA. Close this editor and reopen the latest version before making your change."
+        ? key === "editor" ? "That changed in another window or through AVA. Close this editor and reopen the latest version before making your change."
+          : "That changed in another window or through AVA. Refreshing the latest version; review it before making your change again."
         : cause instanceof Error ? cause.message : "The Notes action failed.");
       await load(true);
     } finally { mutation.current = false; setBusy(null); }
@@ -664,10 +665,10 @@ function NoteCard({ note, busy, onOpen, onMove, onPin }: {
       className="group rounded-xl border border-glass-strong bg-transparent px-3.5 py-3 shadow-none transition hover:-translate-y-0.5 hover:border-glass-strong hover:bg-transparent">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-meta uppercase tracking-[0.12em] text-ink-2"><GripVertical size={11} className="cursor-grab" /><SectionIcon size={11} style={{ color: section.color }} />{note.kind}</span>
-        <button type="button" aria-label={note.pinned ? "Unpin note" : "Pin note"} onClick={onPin} className={note.pinned ? "text-ink-2" : "text-ink-2 hover:text-ink-2"}><Pin size={12} fill={note.pinned ? "currentColor" : "none"} /></button>
+        <button type="button" aria-label={note.pinned ? "Unpin note" : "Pin note"} aria-pressed={note.pinned} onClick={onPin} className={note.pinned ? "text-ink" : "text-ink-2 hover:text-ink"}><Pin size={12} fill={note.pinned ? "currentColor" : "none"} /></button>
       </div>
       <button type="button" onClick={onOpen} className="block w-full text-left">
-        <h3 className="line-clamp-2 text-[13px] font-semibold leading-5 text-ink-2 group-hover:text-ink">{note.title}</h3>
+        <h3 className="line-clamp-2 text-[13px] font-semibold leading-5 text-ink">{note.title}</h3>
         <p className="mt-1.5 line-clamp-3 whitespace-pre-wrap text-meta leading-4 text-ink-2">{note.content}</p>
       </button>
       {note.tags.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1">{note.tags.slice(0, 3).map((tag) => <span key={tag} className="rounded bg-glass px-1.5 py-0.5 text-meta text-ink-2">#{tag}</span>)}</div>}
@@ -754,6 +755,8 @@ function NoteEditor({ open, target, folders, busy, error, onOpenChange, onSave, 
           {error && <p role="alert" className="md:col-span-2 text-body text-danger">{error}</p>}
           <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span>Title</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} className="h-10 w-full rounded-lg border border-glass-strong bg-transparent px-3 text-sm text-ink ds-focus focus:border-glass-strong" placeholder={documentType === "study" ? "e.g. Lecture 4: Scrum roles" : "A clear, useful title"} /></label>
           <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span>Document</span><textarea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-56 w-full resize-y rounded-lg border border-glass-strong bg-transparent px-3 py-3 text-sm leading-6 text-ink ds-focus focus:border-glass-strong" placeholder="Write the file. Markdown headings and lists work." /></label>
+          <details className="md:col-span-2"><summary className="ds-focus cursor-pointer py-3 text-meta text-ink-2">Details · folder, type, tags and history</summary>
+          <div className="grid gap-5 pt-3 md:grid-cols-2">
           <FieldSelect label="Folder" value={folderId} onChange={setFolderId} options={folders.map(({ folder, depth }) => ({ value: folder.id, label: `${"  ".repeat(depth)}${folder.name}` }))} />
           <FieldSelect label="File type" value={documentType} onChange={(value) => changeType(value as NoteDocumentType)} options={[{ value: "general", label: "General file" }, { value: "study", label: "Study notes" }]} />
           <FieldSelect label="Template section" value={section} onChange={(value) => setSection(value as NoteSection)} options={NOTE_SECTIONS.map((value) => ({ value, label: SECTION[value].label }))} />
@@ -763,12 +766,13 @@ function NoteEditor({ open, target, folders, busy, error, onOpenChange, onSave, 
           <label className="flex items-end md:col-span-2">
             <button
               type="button"
+              aria-pressed={pinned}
               onClick={() => {
                 setPinned((value) => !value);
                 if (!pinned) setSection("priorities");
               }}
               className={
-                "flex h-10 w-full items-center justify-center gap-2 rounded-lg border text-xs transition " +
+                "flex min-h-11 items-center gap-2 rounded-button px-2 text-meta transition " +
                 (pinned
                   ? "border-glass-strong bg-canvas text-ink-2"
                   : "border-glass-strong bg-transparent text-ink-2 hover:text-ink-2")
@@ -786,6 +790,7 @@ function NoteEditor({ open, target, folders, busy, error, onOpenChange, onSave, 
               <div className="space-y-2">{note.changeLog.slice().reverse().slice(0, 8).map((entry) => <div key={entry.id} className="flex gap-3 text-meta"><span className="w-28 shrink-0 text-ink-2">{shortDate(entry.at)}</span><span className="w-16 shrink-0 uppercase text-ink">{entry.action}</span><span className="text-ink-2">{entry.detail}</span></div>)}</div>
             </section>
           )}
+          </div></details>
         </div>
         <footer className="sticky bottom-0 flex flex-col gap-3 border-t border-glass-strong bg-canvas px-6 py-4  sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">

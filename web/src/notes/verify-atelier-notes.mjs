@@ -64,6 +64,12 @@ try {
     await page.screenshot({ path: resolve(evidence, `notes-${look}-${width}.png`) });
     await page.getByRole('button', { name: 'Edit file', exact: true }).click();
     await page.getByRole('dialog').waitFor();
+    const documentInput = page.getByRole('dialog').getByRole('textbox', { name: 'Document', exact: true });
+    await documentInput.focus();
+    check(`${look}/${width} document focus is underlined not boxed`, await documentInput.evaluate(el => {
+      const style = getComputedStyle(el); return style.outlineStyle === 'none' && style.boxShadow !== 'none';
+    }));
+    check(`${look}/${width} optional details start closed`, await page.getByText('Details · folder, type, tags and history').evaluate(el => !el.closest('details').open));
     await page.screenshot({ path: resolve(evidence, `notes-editor-${look}-${width}.png`) });
     check(`${look}/${width} editor fits`, await page.getByRole('dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1));
     if (look === 'ink' && width === 1440) {

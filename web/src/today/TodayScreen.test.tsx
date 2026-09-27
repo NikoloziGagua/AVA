@@ -13,11 +13,6 @@ vi.mock("../api.js", () => ({
 }));
 vi.mock("../notes/api.js", () => ({ fetchNotes: () => fetchNotes() }));
 vi.mock("../components/ava/Orb.js", () => ({ Orb: () => <span data-testid="orb" /> }));
-vi.mock("../chat/CommandBar.js", () => ({
-  CommandBar: ({ onSubmit, placeholder }: { onSubmit: (text: string) => void; placeholder?: string }) => (
-    <button type="button" onClick={() => onSubmit("typed capture")}>{placeholder}</button>
-  ),
-}));
 
 import { STARTERS, TodayScreen, splitNotes, type TodayScreenProps } from "./TodayScreen.js";
 
@@ -116,13 +111,14 @@ describe("Today", () => {
     expect(await screen.findByText("Planning this week")).toBeTruthy();
   });
 
-  it("starts talking by voice and sends a capture to a new chat", async () => {
+  it("starts talking by voice and leaves typing to the one shared App composer", async () => {
     const input = props();
     render(<TodayScreen {...input} />);
     fireEvent.click(await screen.findByRole("button", { name: /Talk to AVA/ }));
     expect(input.onEnterVoice).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: /Add a task, note or idea/ }));
-    expect(input.onStartChat).toHaveBeenCalledWith("typed capture");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Add a task, note or idea/ })).toBeNull();
+    expect(input.onStartChat).not.toHaveBeenCalled();
   });
 
   it("shows loading first, then each section on its own", async () => {

@@ -1,6 +1,6 @@
 /** Bounded, deterministic particle field. No browser or rendering dependencies. */
 export type Star = { x: number; y: number; z: number; size: number };
-export const STAR_COUNT = 720;
+export const STAR_COUNT = 900;
 
 export function createStars(count = STAR_COUNT): Star[] {
   let seed = 27391;
@@ -20,7 +20,7 @@ export function createStars(count = STAR_COUNT): Star[] {
 export function advanceStars(stars: Star[], deltaSeconds: number): void {
   const dt = Number.isFinite(deltaSeconds) ? Math.max(0, Math.min(0.05, deltaSeconds)) : 0;
   for (const star of stars) {
-    star.z -= dt * 0.13;
+    star.z -= dt * 0.5;
     if (star.z < 0.1) star.z += 1.9;
   }
 }
@@ -32,7 +32,7 @@ export function projectStar(star: Star, width: number, height: number) {
   return {
     x, y,
     radius: Math.min(2.1, star.size / star.z),
-    opacity: Math.min(0.65, (2.1 - star.z) * 0.32),
+    opacity: Math.min(0.75, 0.16 + (2.1 - star.z) * 0.32),
     visible: x >= -3 && y >= -3 && x <= width + 3 && y <= height + 3,
   };
 }

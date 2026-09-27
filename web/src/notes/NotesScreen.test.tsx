@@ -470,6 +470,25 @@ describe("Notes board view", () => {
     await openFolder(folderName);
     fireEvent.click(screen.getByRole("button", { name: /^Board$/ }));
   }
+  it("explains a stale pin without referring to a nonexistent editor", async () => {
+    vi.mocked(notesApi.updateNote).mockRejectedValueOnce(new appApi.ApiError(409, "stale", "stale_version", null, ""));
+    render(<NotesScreen onStartTask={vi.fn()} />); await openBoard();
+    fireEvent.click(screen.getByRole("button", { name: "Unpin note" }));
+    expect(await screen.findByText(/Refreshing the latest version; review it/)).toBeTruthy();
+    expect(screen.queryByText(/Close this editor/)).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(notesApi.updateNote).toHaveBeenCalledTimes(1);
+  });
+  it("puts optional metadata behind Details and exposes pin state accessibly", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} />); await openBoard();
+    expect(screen.getByRole("button", { name: "Unpin note" }).getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Edit note" }));
+    const details = screen.getByText("Details · folder, type, tags and history").closest("details")!;
+    expect(details.open).toBe(false);
+    expect(screen.getByRole("textbox", { name: "Document" }).closest("details")).toBeNull();
+    fireEvent.click(screen.getByText("Details · folder, type, tags and history"));
+    expect(details.open).toBe(true);
+  });
 
   it("keeps the four-stage board as an optional per-folder view", async () => {
     render(<NotesScreen onStartTask={vi.fn()} />);

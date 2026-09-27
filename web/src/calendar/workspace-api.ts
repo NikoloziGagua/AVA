@@ -15,12 +15,13 @@ export type EventInput = {
 export type EventDefinition = EventInput & { id: string; version: number; archivedAt: number | null; reminderMinutesBefore: number | null };
 export type CalendarWorkspace = { fetchedAt: number; complete: true; events: EventDefinition[]; occurrences: CalendarOccurrence[] };
 export type OccurrencePatch = {
-  attendanceIntentOverride?: CalendarOccurrence["attendanceIntent"];
+  /** null explicitly restores inheritance; omission preserves the existing override. */
+  attendanceIntentOverride?: CalendarOccurrence["attendanceIntent"] | null;
   attendanceOutcome?: CalendarOccurrence["attendanceOutcome"];
   cancelled?: boolean;
 };
 const errors: Record<string, string> = {
-  stale_version: "This event changed elsewhere. Close the editor and refresh before trying again.",
+  stale_version: "This event changed elsewhere. Close the editor to load its latest version before trying again.",
   not_found: "This event is no longer available. Refresh the calendar.",
   occurrence_not_found: "This occurrence no longer belongs to the series. Refresh the calendar.",
   invalid_range: "There are too many events in this range. Try Day or Week.",

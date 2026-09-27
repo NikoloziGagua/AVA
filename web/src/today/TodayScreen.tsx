@@ -3,7 +3,6 @@ import { CalendarClock, ChevronRight, FileText, Lightbulb, MessageSquareText, Mi
 import { FaceStill } from "../design/face/FaceStill.js";
 import { Atmosphere } from "../design/metal/Atmosphere.js";
 import { MetalObject } from "../design/metal/MetalObject.js";
-import { CommandBar } from "../chat/CommandBar.js";
 import { fetchSessionPage, lastHumanActivity, type SessionRow, type WatchRow } from "../api.js";
 import { fetchNotes, type Note } from "../notes/api.js";
 import { isDirectReminder, orderReminders, presentReminder } from "../reminders/presenter.js";
@@ -62,7 +61,7 @@ function formatWhen(value: number): string {
   const date = new Date(value);
   const now = new Date();
   if (date.toDateString() === now.toDateString()) {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
   }
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 }
@@ -132,10 +131,6 @@ export function TodayScreen(props: TodayScreenProps) {
           </button>
         </header>
 
-        <CommandBar
-          onSubmit={props.onStartChat}
-          placeholder="Add a task, note or idea, or just tell AVA what's on your mind…"
-        />
 
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] lg:gap-16">
           <TodayCard title="Continue talking" icon={<MessageSquareText size={15} aria-hidden />} action={{ label: "All conversations", onClick: props.onOpenTalk }}>
@@ -218,9 +213,7 @@ function FirstRun(props: TodayScreenProps & { dateLine: string }) {
             typing or talking. Your conversations, ideas and notes appear here as you add them.
           </p>
         </div>
-        <div className="w-full">
-          <CommandBar onSubmit={props.onStartChat} placeholder="For example: I study computer science, my courses this term are…" />
-        </div>
+        <p className="text-body text-ink-2">Use the message bar below to tell AVA about your week.</p>
         <div className="grid w-full grid-cols-1 gap-3 text-left sm:grid-cols-3">
           {STARTERS.map((starter) => (
             <MetalObject key={starter.title} variant="cut" title={starter.title} eyebrow="Start here"

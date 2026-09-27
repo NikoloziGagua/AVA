@@ -54,6 +54,8 @@ try {
   await page.getByRole('button', { name: 'New event' }).click();
   await page.getByLabel('Title', { exact: true }).fill('Disposable lecture');
   await page.getByLabel('Starts', { exact: true }).fill('10:00');
+  check('event opens with only essential fields', !await page.getByLabel('Location', { exact: true }).isVisible());
+  await page.getByText(/More details/).click();
   await page.getByLabel('Location', { exact: true }).fill('Fixture room');
   await page.getByRole('button', { name: 'Save event', exact: true }).click();
   const agenda = page.getByRole('complementary', { name: 'Selected day' });
@@ -74,6 +76,17 @@ try {
   await page.reload(); await navigate();
   await agenda.getByRole('button', { name: /Disposable lecture revised/ }).click();
   check('reload + database restart retains event and plan', await agenda.getByText('Plan to study independently / skip').count() === 1);
+  await page.getByRole('button', { name: 'Attendance / this occurrence' }).click();
+  await page.getByLabel('My plan').selectOption('inherit');
+  await page.getByRole('button', { name: 'Save occurrence' }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  check('explicit inheritance reset persisted', db.prepare('SELECT attendance_intent_override FROM calendar_event_exceptions').get().attendance_intent_override === null);
+  await page.getByRole('button', { name: 'Attendance / this occurrence' }).click();
+  await page.getByLabel('What happened').selectOption('attended');
+  await page.getByRole('button', { name: 'Save occurrence' }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  const attendance = db.prepare('SELECT attendance_intent_override, attendance_outcome FROM calendar_event_exceptions').get();
+  check('outcome-only edit does not pin inherited plan', attendance.attendance_intent_override === null && attendance.attendance_outcome === 'attended');
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     for (const mode of ['Month', 'Week', 'Day']) {
@@ -85,6 +98,10 @@ try {
     await page.getByRole('button', { name: 'New event' }).click();
     await page.getByRole('dialog').waitFor();
     await page.waitForTimeout(650); // inspect settled motion, not the entering sheet
+    await page.getByLabel('Title', { exact: true }).focus();
+    check(`${width} open field uses an underline not a nested focus box`, await page.getByLabel('Title', { exact: true }).evaluate(el => {
+      const style = getComputedStyle(el); return style.outlineStyle === 'none' && style.boxShadow !== 'none';
+    }));
     check(`${width} editor fits`, await page.getByRole('dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1));
     const bounds = await page.getByRole('dialog').boundingBox();
     check(`${width} editor stays inside viewport`, bounds.y >= -1 && bounds.y + bounds.height <= 901);
@@ -100,6 +117,14 @@ try {
   await page.getByRole('button', { name: 'Save event', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'changed elsewhere' }).waitFor();
   check('stale edit locked with no overwrite', await page.getByRole('button', { name: 'Save event', exact: true }).isDisabled() && db.prepare('SELECT version FROM calendar_events').get().version === 3);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit event series' }).click();
+  await page.getByText(/More details/).click();
+  check('closing a conflict reads the authoritative new version', await page.getByLabel('Location', { exact: true }).inputValue() === 'Changed elsewhere');
+  await page.getByLabel('Location', { exact: true }).fill('Reviewed latest location');
+  await page.getByRole('button', { name: 'Save event', exact: true }).click();
+  await page.getByRole('dialog').waitFor({ state: 'hidden' });
+  check('reopened edit saves once with latest version', db.prepare('SELECT version FROM calendar_events').get().version === 4);
   // HTTP 409 is the expected stale-write test, not a JavaScript/runtime error.
   check(`no unexpected browser errors: ${errors.join(';')}`, errors.every(e => String(e).includes('409')));
   await writeFile(resolve(evidence, 'results.json'), JSON.stringify({ checks: results.length, results, fixtureDatabase: database, liveDataTouched: false }, null, 2));

@@ -271,12 +271,13 @@
   clip-path: inset(calc(100% - 58px) 0 0 0 round 29px);
   pointer-events: none;
   opacity: 0;
-  transition: clip-path 480ms var(--ds-ease-spring);
+  transition: clip-path 480ms var(--ds-ease-spring), opacity 0s linear 480ms;
 }
 .ds-menu[data-open="true"] {
   clip-path: inset(0 0 0 0 round 30px);
   pointer-events: auto;
   opacity: 1;
+  transition-delay: 0s;
 }
 /* Compact bar (Talk, Voice): the round button sits top-left and the menu drops down from it. */
 nav[data-compact] .ds-menu { clip-path: inset(0 calc(100% - 52px) calc(100% - 52px) 0 round 26px); }
@@ -330,8 +331,8 @@ nav[data-compact] .ds-menu[data-open="true"] { clip-path: inset(0 0 0 0 round 30
 .ds-atmosphere[data-atmosphere="silk"] { background: radial-gradient(ellipse at 20% 20%, var(--ds-atmosphere-halo), transparent 75%); }
 .ds-metal-bar { background: linear-gradient(135deg, var(--ds-metal-top), var(--ds-metal-bottom) 65%); box-shadow: inset 0 1px var(--ds-metal-edge), 0 12px 35px var(--ds-shadow); }
 .ds-navigation-host { isolation: isolate; }
-.ds-navigation-host:not([data-compact])::before { content: ""; position: absolute; z-index: -1; inset: -22px -14px -24px; background: linear-gradient(transparent, var(--ds-canvas) 30%); pointer-events: none; }
-.ds-light-trace { pointer-events: auto; position: relative; display: grid; grid-template-columns: repeat(var(--trace-count), minmax(0, 1fr)); margin: 0 auto 9px; max-width: 480px; }
+.ds-navigation-host:not([data-compact])::before { content: ""; position: absolute; z-index: -1; inset: -22px -60px -24px; background: radial-gradient(ellipse at 50% 85%, var(--ds-canvas) 25%, transparent 72%); pointer-events: none; }
+.ds-light-trace { pointer-events: auto; position: relative; display: grid; grid-template-columns: repeat(var(--trace-count), minmax(0, 1fr)); margin: 0 auto 9px; max-width: 480px; background: var(--ds-canvas); border-radius: 10px; }
 .ds-light-trace button { min-width: 0; min-height: 44px; padding: 6px 2px; font-size: 12px; color: var(--ds-ink-2); border-radius: 6px; background: transparent; }
 .ds-light-trace button:hover, .ds-light-trace button[aria-current="page"] { color: var(--ds-ink); }
 .ds-light-trace-mark { position: absolute; bottom: 0; left: 0; height: 1px; width: calc(100% / var(--trace-count)); transform: translateX(calc(var(--trace-index) * 100%)); background: linear-gradient(90deg, transparent, var(--ds-trace), transparent); box-shadow: 0 2px 8px var(--ds-metal-edge); transition: transform 400ms var(--ds-ease); pointer-events: none; }
@@ -372,6 +373,8 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
 .ds-home-face { min-height: 0; height: 100%; max-height: 560px; }
 .ds-composer-grow { width: 100%; max-width: 480px; margin-inline: auto; transition: max-width 240ms ease, border-radius 150ms ease; }
 .ds-composer-grow[data-expanded="true"] { max-width: 720px; }
+.ds-bar:has(textarea:focus-visible) { outline: 2px solid var(--ds-focus); outline-offset: 3px; }
+.ds-root .ds-bar textarea:focus-visible { outline: none; }
 .ds-draft-kept { position: absolute; top: 58px; left: 0; white-space: nowrap; padding: 3px 8px; border-radius: 999px; background: var(--ds-canvas); }
 .ds-atelier-voice { overflow-x: hidden; overflow-y: auto; }
 .ds-voice-face { flex: 1 1 360px; min-height: 120px; max-height: 620px; }
@@ -461,7 +464,7 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
 .ds-calendar-field input, .ds-calendar-field textarea, .ds-calendar-field select { min-width: 0; width: 100%; min-height: 44px; padding: 10px 0; color: var(--ds-ink); background: transparent; border: 0; border-radius: 0; box-shadow: 0 1px var(--ds-metal-edge); font-size: 15px; color-scheme: dark; }
 [data-look="paper"] .ds-calendar-field input, [data-look="paper"] .ds-calendar-field textarea, [data-look="paper"] .ds-calendar-field select { color-scheme: light; }
 .ds-calendar-field select option { background: var(--ds-canvas); color: var(--ds-ink); }
-.ds-calendar-field input:focus-visible, .ds-calendar-field textarea:focus-visible, .ds-calendar-field select:focus-visible { outline: 2px solid var(--ds-trace); outline-offset: 4px; border-radius: 2px; }
+.ds-calendar-field input:focus-visible, .ds-calendar-field textarea:focus-visible, .ds-calendar-field select:focus-visible { outline: none; box-shadow: 0 2px var(--ds-trace); }
 .ds-calendar-field .ds-calendar-title-input { font-size: 26px; font-weight: 350; letter-spacing: -.035em; }
 .ds-calendar-field-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 28px; }
 @media (min-width: 640px) { .ds-calendar-editor { max-width: 640px; padding: 32px; } }
@@ -515,7 +518,7 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
 .ds-note-paper { padding: 32px 30px 50px; background: var(--ds-canvas); border-radius: 4px; box-shadow: 0 20px 80px var(--ds-shadow), inset 0 1px var(--ds-metal-edge); overflow-wrap: anywhere; }
 .ds-note-paper-heading { margin-bottom: 32px; }
 .ds-note-paper-heading h2 { font-size: clamp(24px, 2.5vw, 34px); font-weight: 400; line-height: 1.25; letter-spacing: -.035em; margin: 22px 0 18px; }
-.ds-note-paper .ds-prose { font-size: 16px; line-height: 1.9; }
+.ds-note-paper .ds-prose { font-size: 16px; line-height: 1.9; max-width: 70ch; }
 .ds-notes-phone-path { display: none; }
 .ds-notes-editor { color: var(--ds-ink); background: var(--ds-canvas); border: 0; backdrop-filter: none; border-radius: 10px; box-shadow: 0 30px 100px var(--ds-shadow); }
 .ds-notes-editor > button[aria-label="Close dialog"] { color: var(--ds-ink); }
@@ -526,7 +529,8 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
 .ds-note-history > div > div { min-width: 0; display: grid; grid-template-columns: 100px minmax(0,1fr); gap: 6px 12px; }
 .ds-note-history > div > div > span { width: auto; min-width: 0; overflow-wrap: anywhere; }
 .ds-note-history > div > div > span:last-child { grid-column: 1 / -1; }
-.ds-notes-editor input:focus-visible, .ds-notes-editor textarea:focus-visible, .ds-notes-editor select:focus-visible, .ds-notes button:focus-visible, .ds-notes select:focus-visible { outline: 2px solid var(--ds-trace); outline-offset: 3px; }
+.ds-notes button:focus-visible, .ds-notes select:focus-visible { outline: 2px solid var(--ds-trace); outline-offset: 3px; }
+.ds-notes-editor input:not([type="checkbox"]):focus-visible, .ds-notes-editor textarea:focus-visible, .ds-notes-editor select:focus-visible { outline: none; box-shadow: 0 2px var(--ds-trace); }
 .ds-notes-editor select option, .ds-notes select option { background: var(--ds-canvas); color: var(--ds-ink); }
 .ds-notes-editor label { min-width: 0; }
 .ds-notes-editor footer { background: var(--ds-canvas); border: 0; }
@@ -548,6 +552,10 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
   .ds-notes-editor { max-width: calc(100vw - 20px); }
 }
 @media (forced-colors: active) { .ds-note-paper, .ds-note-file-selected, .ds-notes-button, .ds-notes-editor input, .ds-notes-editor select, .ds-notes-editor textarea { border: 1px solid CanvasText; } }
+@media (forced-colors: active) {
+  .ds-calendar-field :is(input, textarea, select):focus-visible,
+  .ds-notes-editor :is(input, textarea, select):focus-visible { border-bottom: 2px solid Highlight; }
+}
 /* Small landscape / zoom: permit scrolling rather than hide meaningful content. */
 @media (max-height: 620px) { .ds-atelier-home { overflow-y: auto; } .ds-home-composition { min-height: 560px; } }
 /* Forced colours: surfaces fall back to system colours with real borders. */
@@ -569,5 +577,6 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
   animation-duration: 0.01ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
   scroll-behavior: auto !important;
 }

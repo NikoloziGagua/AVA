@@ -5,10 +5,10 @@ import { ApiError } from "../api.js";
 import { AttendanceEditor, EventEditor } from "./EventEditor.js";
 import { fetchCalendarWorkspace, type CalendarWorkspace, type EventDefinition } from "./workspace-api.js";
 import { addDays, eventsOnDay, localDate, placeDay, queryWindow, visibleDates } from "./layout.js";
-import type { CalendarOccurrence } from "./api.js";
+import { DEFAULT_TIME_ZONE, type CalendarOccurrence } from "./api.js";
 
 const Reminders = lazy(async () => ({ default: (await import("../schedule/ScheduleScreen.js")).ScheduleScreen }));
-const ZONE = "Europe/Dublin";
+const ZONE = DEFAULT_TIME_ZONE;
 type Mode = "month" | "week" | "day";
 const dayTitle = (date: string, long = false) => new Intl.DateTimeFormat("en-IE", {
   timeZone: "UTC", weekday: long ? "long" : "short", day: "numeric", month: long ? "long" : "short",
@@ -32,16 +32,23 @@ export function CalendarScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
   const [editor, setEditor] = useState<{ date: string; base?: EventDefinition } | null>(null);
   const [attendance, setAttendance] = useState<CalendarOccurrence | null>(null);
   const generation = useRef(0), restoreFocus = useRef<HTMLElement | null>(null);
+  const loadedRange = useRef<string | null>(null);
+  const timeGrid = useRef<HTMLDivElement>(null);
   const dates = useMemo(() => visibleDates(date, mode), [date, mode]);
   const range = queryWindow(dates);
+  useEffect(() => {
+    if (mode !== "month" && timeGrid.current) timeGrid.current.scrollTop = 7 * 42;
+  }, [mode, range.from, range.to]);
   const refresh = useCallback(async () => {
     const current = ++generation.current;
-    setLoading(true); setError(null); setData(null);
+    const key = `${range.from}:${range.to}`;
+    setLoading(true); setError(null); setNotice("");
+    if (loadedRange.current !== key) setData(null);
     try {
       const result = await fetchCalendarWorkspace(range.from, range.to, ZONE);
-      if (current === generation.current) setData(result);
+      if (current === generation.current) { loadedRange.current = key; setData(result); }
     } catch (failure) {
-      if (current === generation.current) setError(failure instanceof ApiError ? failure.message : "The calendar could not be loaded. Please refresh.");
+      if (current === generation.current) { setData(null); loadedRange.current = null; setError(failure instanceof ApiError ? failure.message : "The calendar could not be loaded. Please refresh."); }
     } finally { if (current === generation.current) setLoading(false); }
   }, [range.from, range.to]);
   useEffect(() => { void refresh(); return () => { ++generation.current; }; }, [refresh]);
@@ -57,12 +64,13 @@ export function CalendarScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
   const open = (action: () => void) => { restoreFocus.current = document.activeElement as HTMLElement; action(); };
   const close = () => {
     setEditor(null); setAttendance(null);
-    requestAnimationFrame(() => restoreFocus.current?.isConnected && restoreFocus.current.focus());
+    // Also revalidate after stale or uncertain writes; Cancel never replays a write.
+    const target = restoreFocus.current;
+    void refresh().finally(() => requestAnimationFrame(() => target?.isConnected && target.focus()));
   };
   const saved = (nextDate?: string) => {
     close(); setNotice("Saved to your calendar.");
     if (nextDate && nextDate !== date) setDate(nextDate);
-    void refresh();
   };
   const move = (direction: number) => {
     if (mode === "month") {
@@ -94,7 +102,7 @@ export function CalendarScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
           <div className="ds-calendar-modes" role="group" aria-label="Calendar view">{(["month", "week", "day"] as const).map(value => <button key={value} aria-pressed={mode === value} className="ds-focus" onClick={() => setMode(value)}>{value[0]!.toUpperCase() + value.slice(1)}</button>)}</div>
         </div>
       </div>
-      <div className="ds-calendar-feedback" aria-live="polite">{loading ? "Loading your calendar…" : notice || (data && `Updated ${clock(data.fetchedAt)} · Dublin time`)}</div>
+      <div className="ds-calendar-feedback" aria-live="polite">{loading ? data ? "Refreshing your calendar…" : "Loading your calendar…" : <>{notice && `${notice} `}{data && `Updated ${clock(data.fetchedAt)} · Dublin time`}</>}</div>
       {error && <div role="alert" className="flex flex-wrap items-center gap-3 py-5"><p>{error}</p><button className="ds-focus ds-calendar-quiet" onClick={() => void refresh()}>Refresh calendar</button></div>}
       <div className="ds-calendar-layout" aria-busy={loading}>
         <div className="ds-calendar-main">
@@ -120,7 +128,7 @@ export function CalendarScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
               })}
             </div>
           </> : <>
-            <div className="ds-calendar-time-scroll" tabIndex={0} role="region" aria-label={`${mode === "week" ? "Week" : "Day"} time grid; also listed chronologically below`}>
+            <div ref={timeGrid} className="ds-calendar-time-scroll" tabIndex={0} role="region" aria-label={`${mode === "week" ? "Week" : "Day"} time grid; also listed chronologically below`}>
               <div className="ds-calendar-time-grid" style={{ gridTemplateColumns: `48px repeat(${dates.length}, minmax(${mode === "week" ? "92px" : "180px"}, 1fr))` }}>
                 <div className="ds-calendar-hours" aria-hidden>{Array.from({ length: 24 }, (_, hour) => <span key={hour} style={{ top: 38 + hour * 42 }}>{String(hour).padStart(2, "0")}:00</span>)}</div>
                 {dates.map(day => <div key={day} className="ds-calendar-time-day"><button className="ds-focus ds-calendar-day-heading" aria-pressed={date === day} onClick={() => { setDate(day); setSelected(null); }}>{dayTitle(day)}</button>
@@ -154,8 +162,8 @@ export function CalendarScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
             {chosen.description && <p className="whitespace-pre-wrap">{chosen.description}</p>}
             <p>{outcomeLabel[chosen.attendanceOutcome]}</p>
             {chosen.cancelled && <p className="text-danger">This occurrence is cancelled.</p>}
-            <div className="flex flex-wrap gap-2"><button className="ds-focus ds-calendar-quiet" onClick={() => open(() => setAttendance(chosen))}>Attendance / this occurrence</button>
-              {canEditSeries(definition) && <button className="ds-focus ds-calendar-quiet" onClick={() => open(() => setEditor({ date, base: definition }))}>Edit event series</button>}
+            <div className="flex flex-wrap gap-2"><button disabled={loading} className="ds-focus ds-calendar-quiet" onClick={() => open(() => setAttendance(chosen))}>Attendance / this occurrence</button>
+              {canEditSeries(definition) && <button disabled={loading} className="ds-focus ds-calendar-quiet" onClick={() => open(() => setEditor({ date, base: definition }))}>Edit event series</button>}
             </div>
             {!canEditSeries(definition) && <p className="text-meta text-ink-2">This series has started. Whole-series editing is unavailable here to preserve past history; attendance remains editable.</p>}
           </section>}

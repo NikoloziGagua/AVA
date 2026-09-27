@@ -34,21 +34,21 @@ describe("production metal starfield", () => {
     vi.mocked(HTMLCanvasElement.prototype.getBoundingClientRect).mockReturnValue({ width: 390, height: 844 } as DOMRect);
     const { container, unmount } = render(<Starfield />);
     const phone = container.querySelector("canvas")!;
-    expect(phone.dataset.starCount).toBe("240");
+    expect(phone.dataset.starCount).toBe("500");
     expect(phone.width).toBe(585);
     unmount();
     vi.mocked(HTMLCanvasElement.prototype.getBoundingClientRect).mockReturnValue({ width: 8000, height: 8000 } as DOMRect);
     const desktop = render(<Starfield />).container.querySelector("canvas")!;
-    expect(desktop.dataset.starCount).toBe("480");
+    expect(desktop.dataset.starCount).toBe("900");
     expect(desktop.width).toBe(3840);
     expect(desktop.height).toBe(2400);
   });
-  it("keeps one loop in StrictMode, stops offscreen/forced colours and caps painting to 30fps", () => {
+  it("keeps one loop in StrictMode, stops offscreen/forced colours and caps painting to 60fps", () => {
     const { unmount } = render(<StrictMode><Starfield /></StrictMode>);
     expect(frames.size).toBe(1);
     const run = (time: number) => { const [id, cb] = [...frames][0]!; frames.delete(id); act(() => cb(time)); };
-    draw.clearRect.mockClear(); run(100); run(116); run(133); run(150);
-    expect(draw.clearRect).toHaveBeenCalledTimes(2);
+    draw.clearRect.mockClear(); run(100); run(108); run(117); run(125); run(134);
+    expect(draw.clearRect).toHaveBeenCalledTimes(3);
     act(() => intersect([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver));
     expect(frames.size).toBe(0);
     act(() => intersect([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver));

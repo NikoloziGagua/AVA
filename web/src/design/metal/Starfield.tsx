@@ -19,7 +19,7 @@ export function Starfield() {
     try { ctx = canvas.getContext("2d", { alpha: true }); } catch { return; }
     if (!ctx) return;
     const context = ctx;
-    let stars = createStars(480);
+    let stars = createStars(900);
     let width = 1, height = 1, raf = 0, visible = true, last = 0, disposed = false;
     const forced = window.matchMedia("(forced-colors: active)");
 
@@ -39,7 +39,7 @@ export function Starfield() {
     const tick = (now: number) => {
       raf = 0;
       if (disposed || reduced || document.hidden || !visible || forced.matches) return;
-      if (!last || now - last >= 1000 / 30) {
+      if (!last || now - last >= 1000 / 60) {
         advanceStars(stars, last ? (now - last) / 1000 : 0);
         last = now;
         draw();
@@ -59,7 +59,7 @@ export function Starfield() {
       const bounds = canvas.getBoundingClientRect();
       width = Math.max(1, Math.min(2560, bounds.width));
       height = Math.max(1, Math.min(1600, bounds.height));
-      const count = width < 600 ? 240 : 480;
+      const count = width < 600 ? 500 : 900;
       if (stars.length !== count) stars = createStars(count);
       canvas.dataset.starCount = String(count);
       const ratio = Math.min(1.5, Math.max(1, window.devicePixelRatio || 1));

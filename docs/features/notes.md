@@ -161,11 +161,15 @@ Files retain identity/history. Responsive changes never change source data.
 Reload still starts at the default folder unless an exact handoff is supplied;
 per-file reading anchors remain local.
 
-The editor uses simple underline fields, not nested boxes. Save errors appear
+The editor shows Title and Document first, with optional folder/type/tags/history
+under Details. Reader text is capped at 70ch. Fields use underline keyboard focus,
+not nested boxes; forced colours retain a system-colour underline. Save errors appear
 inside the dialog. Request-generation guards prevent older refreshes replacing
 newer snapshots. Synchronous mutation locking prevents rapid duplicate actions.
 Stale versions require reopening the authoritative file; no automatic retry or
 invented success. The existing polling cadence and backend APIs are unchanged.
+Stale board/pin operations refresh and explain that state without telling the
+user to close a nonexistent editor. Pin buttons expose their pressed state.
 
 The five migrated Notes files are strict in the design guard: no sub-12px text,
 raw colours or per-component blur. Optional Project Brief remains a legacy

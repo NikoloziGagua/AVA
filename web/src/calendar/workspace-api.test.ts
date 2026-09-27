@@ -49,6 +49,11 @@ describe("Existing authenticated calendar contract", () => {
     await expect(saveCalendarEvent(event)).rejects.toMatchObject({ status: 0, message: expect.stringContaining("unconfirmed") });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+  it("passes an explicit null inheritance reset through the existing contract", async () => {
+    fetcher.mockResolvedValue(response({ exception: { eventId: event.id, occurrenceLocalDate: occurrence.originalLocalDate, version: 1 } }));
+    await updateOccurrence(occurrence, { attendanceIntentOverride: null });
+    expect(JSON.parse(fetcher.mock.calls[0]![1].body)).toEqual({ attendanceIntentOverride: null, expectedEventVersion: 1, expectedExceptionVersion: null });
+  });
   it("does not issue a mutation for malformed identity", async () => {
     await expect(saveCalendarEvent(event, { ...event, id: "../secret" })).rejects.toThrow("identity");
     expect(fetcher).not.toHaveBeenCalled();

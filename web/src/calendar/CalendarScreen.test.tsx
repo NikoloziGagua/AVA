@@ -51,6 +51,40 @@ describe("Calendar workspace", () => {
     await screen.findByRole("alert"); expect(screen.queryByRole("button", { name: "Edit event series" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Refresh calendar" })); await screen.findByText("Updated 08:00 · Dublin time");
   });
+  it("keeps the same-range snapshot visible but locks edits until refresh finishes", async () => {
+    render(<CalendarScreen onOpenTalk={vi.fn()} />); await screen.findByText("Updated 08:00 · Dublin time");
+    fireEvent.click(within(screen.getByRole("complementary")).getByRole("button", { name: /Lecture fixture/ }));
+    let finish!: (value: typeof workspace) => void;
+    api.fetch.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    fireEvent(window, new Event("focus"));
+    expect(screen.getByText("Refreshing your calendar…")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Event details" })).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Edit event series" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Attendance / this occurrence" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => finish(workspace));
+    expect((screen.getByRole("button", { name: "Edit event series" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+  it.each(["series", "occurrence"])("closing a stale %s editor reads the latest version before reopening", async kind => {
+    render(<CalendarScreen onOpenTalk={vi.fn()} />); await screen.findByText("Updated 08:00 · Dublin time");
+    fireEvent.click(within(screen.getByRole("complementary")).getByRole("button", { name: /Lecture fixture/ }));
+    const openName = kind === "series" ? "Edit event series" : "Attendance / this occurrence";
+    const saveName = kind === "series" ? "Save event" : "Save occurrence";
+    const writer = kind === "series" ? api.save : api.update;
+    writer.mockRejectedValueOnce(new ApiError(409, "Changed elsewhere", "stale_version", null, ""));
+    fireEvent.click(screen.getByRole("button", { name: openName }));
+    fireEvent.click(screen.getByRole("button", { name: saveName })); await screen.findByRole("alert");
+    api.fetch.mockResolvedValue({ ...workspace, events: [{ ...event, version: 2 }], occurrences: [{ ...occurrence, eventVersion: 2, exceptionVersion: 3 }] });
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect((screen.getByRole("button", { name: openName }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: openName }));
+    fireEvent.click(screen.getByRole("button", { name: saveName }));
+    await waitFor(() => expect(writer).toHaveBeenCalledTimes(2));
+    expect(writer.mock.calls[1]![kind === "series" ? 1 : 0]).toMatchObject(kind === "series" ? { version: 2 } : { eventVersion: 2, exceptionVersion: 3 });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await screen.findByText(/Saved to your calendar.*Updated/);
+    fireEvent(window, new Event("focus")); await screen.findByText("Updated 08:00 · Dublin time");
+    expect(screen.queryByText(/Saved to your calendar/)).toBeNull();
+  });
   it("ignores an older range response after navigation", async () => {
     let resolveOld!: (value: typeof workspace) => void;
     api.fetch.mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve; }));
@@ -112,5 +146,29 @@ describe("Open event editor", () => {
     fireEvent.change(screen.getByLabelText("My plan"), { target: { value: "skip" } });
     fireEvent.click(screen.getByRole("button", { name: "Save occurrence" }));
     await waitFor(() => expect(api.update).toHaveBeenCalledWith(occurrence, { attendanceIntentOverride: "skip", attendanceOutcome: "unknown" }));
+  });
+  it("keeps advanced fields collapsed and opens them for invalid weekly input", () => {
+    render(<EventEditor date="2030-09-27" onClose={vi.fn()} onSaved={vi.fn()} />);
+    const details = screen.getByLabelText("Time zone").closest("details")!;
+    expect(details.open).toBe(false);
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Lecture" } });
+    fireEvent.change(screen.getByLabelText("Repeats"), { target: { value: "weekly" } });
+    fireEvent.invalid(screen.getByLabelText("Last date"));
+    expect(details.open).toBe(true);
+    expect(api.save).not.toHaveBeenCalled();
+  });
+  it.each(["outcome", "cancel"])("does not pin the inherited plan when only changing %s", async change => {
+    render(<AttendanceEditor occurrence={occurrence} onClose={vi.fn()} onSaved={vi.fn()} />);
+    if (change === "outcome") fireEvent.change(screen.getByLabelText("What happened"), { target: { value: "attended" } });
+    else fireEvent.click(screen.getByLabelText("Cancel only this occurrence"));
+    fireEvent.click(screen.getByRole("button", { name: "Save occurrence" }));
+    await waitFor(() => expect(api.update).toHaveBeenCalledOnce());
+    expect(api.update.mock.calls[0]![1]).not.toHaveProperty("attendanceIntentOverride");
+  });
+  it("allows an explicit return to series inheritance without inventing an outcome", async () => {
+    render(<AttendanceEditor occurrence={{ ...occurrence, attendanceIntent: "skip" }} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("My plan"), { target: { value: "inherit" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save occurrence" }));
+    await waitFor(() => expect(api.update).toHaveBeenCalledWith(expect.anything(), { attendanceIntentOverride: null, attendanceOutcome: "unknown" }));
   });
 });

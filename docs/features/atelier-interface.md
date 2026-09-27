@@ -79,11 +79,20 @@ means kept in this mounted App, not persisted to disk. Menu/keyboard focus and
 explicit-send/IME rules remain. A closed menu no longer leaves a wide backing
 behind the narrower pill. Remaining advanced workspaces are not all migrated.
 
-Stars use Canvas2D (240 points below 600px, 480 otherwise), at most 30 paints/sec,
+Stars use Canvas2D (500 points below 600px, 900 otherwise), at most 60 paints/sec,
 DPR 1.5 and 2560×1600 logical pixels. They stop hidden/offscreen/unmounted, draw
 a static frame under Reduced and omit artwork in forced colours. Failed lazy
 loading/canvas leaves the static background and controls. Face remains the sole
 WebGL renderer; star/atmosphere canvases do not acquire its context.
+
+After independent review, forward speed is 0.5 depth units/second (previously
+0.13), with a 0.16 opacity floor before depth modulation. The scene is noticeably
+alive without adding another WebGL context. The composer's 240ms max-width
+transition is a deliberate small layout-animation exception; Reduced disables
+it and all transition delays. Menu closing remains clip-animated while becoming
+inert immediately. Light trace has an opaque label ground with a radial outer
+scrim, and composer keyboard focus outlines the pill, not a second inner box.
+Today has no second legacy composer: capture uses the same persistent bar.
 
 Existing App workspace navigation is in-memory, not a browser-history router.
 Browser Back does not traverse those workspace changes, and reload opens Home;

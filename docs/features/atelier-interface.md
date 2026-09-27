@@ -78,12 +78,14 @@ preview (`LivingFace`). About every 1–3 s her attention moves: half the time
 she looks back at you, and otherwise glances nearby, eyes first and the head
 following. She breathes roughly every 4–5 s, and her dots are drawn slightly
 more solid, at presence 1.12. The algorithms are the existing, reviewed
-`FaceAnimator`/renderer ones; nothing new was invented. Her state and speaking
-level still come only from AVA's real voice state and measured level; the
-lively profile never fakes speaking. Under Reduced she is exactly still: no
-breath, drift or pointer. Switching the motion preference restarts her looking
-ahead. The calm profile remains the animator default and its recorded replay
-is unchanged.
+`FaceAnimator`/renderer ones; nothing new was invented. Her state comes only
+from AVA's real voice state, and the lively profile never invents a speaking
+state. While speaking, the mouth follows the measured voice level when one is
+available; otherwise the existing gentle speech rhythm is used, as before.
+Under Reduced she is exactly still: no breath, drift or pointer tracking, and
+she holds the pose she had. Switching the motion preference clears pointer
+tracking but does not reset her gaze. The calm profile remains the animator
+default, and its recorded replay is unchanged.
 
 The bottom message bar rests at up to 480px and expands to 720px on focus, menu,
 Talk, dictation, a pending reply or any non-empty draft. It is the same mounted

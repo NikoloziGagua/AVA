@@ -45,8 +45,9 @@ export type FaceStageProps = {
  * AVA's moving face: the dots of Niko's portrait on the one WebGL canvas, glowing
  * in Ink and engraved in Paper. It uses the lively profile Niko asked for (room
  * message 773): she looks around and back at you, breathes, blinks, follows the pointer
- * and takes a pose for each state. The state and the speaking level still come
- * only from outside. It pauses off-screen and in hidden tabs, holds exactly still
+ * and takes a pose for each state. The state comes only from outside; while
+ * speaking it uses the measured level when there is one and otherwise the
+ * existing gentle speech rhythm. It pauses off-screen and in hidden tabs, holds exactly still
  * under reduced motion, and falls back to a still picture if anything fails.
  */
 export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "AVA's face", stillSize = 220, className }: FaceStageProps) {
@@ -128,7 +129,8 @@ export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "A
       raf = requestAnimationFrame(tick);
     };
     const still = reduced || computeReduced();
-    // Each motion policy starts looking ahead; still also zeroes breath and drift.
+    // Each motion policy clears pointer tracking. Still zeroes breath and drift
+    // and holds the current pose (a zero-length step moves no spring).
     anim.still = still;
     anim.pointer = null;
     if (still) drawOnce(); else raf = requestAnimationFrame(tick);

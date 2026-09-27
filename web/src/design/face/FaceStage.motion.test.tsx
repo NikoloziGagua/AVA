@@ -73,7 +73,7 @@ describe("FaceStage lively profile (Niko's room messages 773 and 775)", () => {
     expect(fake.frames.every((frame) => frame.profile === "lively" && frame.still === false)).toBe(true);
   });
 
-  it("goes exactly still under reduced motion and comes back alive, looking ahead each time", async () => {
+  it("goes exactly still under reduced motion and comes back alive, clearing pointer tracking each time", async () => {
     localStorage.setItem("ava-motion", "full");
     const { container } = render(<FaceStage label="AVA" />);
     await waitFor(() => expect(fake.draws).toBeGreaterThan(2));

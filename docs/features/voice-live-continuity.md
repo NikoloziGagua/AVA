@@ -73,9 +73,27 @@ series within the existing recurrence bounds. It sends no external invitations
 and does not dispatch linked reminders. Both use the existing policy hook;
 standing deny rules and hard blocks still win. Service validation is unchanged.
 
-`calendar_update`, `calendar_set_attendance`, `calendar_remind`, unknown tools,
-and all global approval timeouts remain unchanged. `watch_list` and
-`notes_search` were already read-only. This is not a general permission bypass.
+Since contract v3, `calendar_update` and `calendar_set_attendance` are also low
+risk. Both are versioned, validated local edits with stale-write guards.
+`calendar_update` can cancel an occurrence or split a series locally, but it
+never hard-deletes and sends nothing. Attendance is only ever an explicit fact
+or intent. `calendar_remind`, unknown tools and every global approval timeout
+are unchanged. `watch_list` and `notes_search` were already read-only. This is
+not a general permission bypass: deny rules and hard blocks still win.
+
+## Clock and query speed (v3)
+
+Every agent prompt, chat or delegated voice job, carries one `[NOW]` line from
+`server/src/time/clock.ts`. It gives the weekday, the local date and time,
+Europe/Dublin and the UTC offset. It is computed when the request executes, not
+when it was queued, so midnight and DST stay right, and the model no longer
+spends a tool turn looking up the date.
+
+Calendar queries cache only their `Intl.DateTimeFormat` objects per zone. Every
+date and instant is still computed fresh, so the results are identical. On a
+copy of the live DB, a Dublin day query went from about 1.5s to about 70ms.
+These are measured numbers, not a guarantee; the user-visible gain still
+needs a live voice measurement.
 
 ## Tests and limitations
 

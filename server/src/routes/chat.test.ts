@@ -140,4 +140,25 @@ describe("authoritative chat conversation binding", () => {
     expect(getSession(db, transient.body.sessionId)?.last_human_activity_at).toBeNull();
     expect(listMessages(db, transient.body.sessionId)).toEqual([]);
   });
+
+  it("stamps one fresh clock into each voice-action prompt at execution time (v3)", async () => {
+    const session = createSession(db, { origin: "human" });
+    const prompts: string[] = [];
+    runAgentImpl.mockImplementation(async (opts: { prompt?: string; userText?: string; emit: (event: unknown) => void } & Record<string, unknown>) => {
+      prompts.push(String(opts.prompt ?? opts.userText ?? JSON.stringify(opts)));
+      opts.emit({ kind: "final", payload: { text: "Fixture response." } });
+    });
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.parse("2026-09-27T22:59:00Z"));
+      await send({ sessionId: session.id, voice: true, persist: false, text: "What is on today?" }, "voice_action");
+      vi.setSystemTime(Date.parse("2026-09-27T23:01:00Z"));
+      await send({ sessionId: session.id, voice: true, persist: false, text: "And now?" }, "voice_action");
+    } finally { vi.useRealTimers(); }
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]!.match(/\[NOW\]/g)).toHaveLength(1);
+    expect(prompts[0]).toContain("[NOW] Sunday 2026-09-27 23:59 Europe/Dublin (UTC+01:00)");
+    expect(prompts[1]).toContain("[NOW] Monday 2026-09-28 00:01 Europe/Dublin (UTC+01:00)");
+    expect(listMessages(db, session.id)).toEqual([]);
+  });
 });

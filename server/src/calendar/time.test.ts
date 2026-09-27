@@ -45,3 +45,17 @@ describe("calendar wall-clock resolution", () => {
     expect(formatZonedDateTime(window.from, "Europe/Dublin")).toBe("2026-03-29T00:00:00");
   });
 });
+
+describe("cached zone formatters (v3)", () => {
+  it("reuse formatters but never results: every instant is computed fresh", async () => {
+    const { resolveLocalDateTime, normalizeTimeZone } = await import("./time.js");
+    expect(normalizeTimeZone("Europe/Dublin")).toBe("Europe/Dublin");
+    expect(normalizeTimeZone("Europe/Dublin")).toBe("Europe/Dublin");
+    const summer = resolveLocalDateTime("2027-07-01", "09:00:00", "Europe/Dublin");
+    const winter = resolveLocalDateTime("2027-01-11", "09:00:00", "Europe/Dublin");
+    expect(summer).toBe(Date.parse("2027-07-01T08:00:00Z"));
+    expect(winter).toBe(Date.parse("2027-01-11T09:00:00Z"));
+    expect(resolveLocalDateTime("2027-01-11", "09:00:00", "America/New_York")).toBe(Date.parse("2027-01-11T14:00:00Z"));
+    expect(resolveLocalDateTime("2027-07-01", "09:00:00", "Europe/Dublin")).toBe(summer);
+  });
+});

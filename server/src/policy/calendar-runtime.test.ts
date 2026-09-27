@@ -59,4 +59,33 @@ describe("calendar through shared policy and real SQLite service", () => {
     expect((await run("calendar_add", { ...lecture, ...patch })).ok).toBe(false);
     expect(listCalendarEvents(db)).toHaveLength(0);
   });
+
+  it("updates a series and sets attendance with no approval or timer, and stale versions fail (v3)", async () => {
+    const { db, events, run } = fixture();
+    expect((await run("calendar_add", lecture)).ok).toBe(true);
+    const [event] = listCalendarEvents(db);
+    vi.useFakeTimers();
+    const update = await run("calendar_update", { event_id: event!.id, scope: "series", expected_version: event!.version, title: "Renamed lecture" });
+    expect(update.ok).toBe(true);
+    const renamed = listCalendarEvents(db)[0]!;
+    expect(renamed.title).toBe("Renamed lecture");
+    const attend = await run("calendar_set_attendance", { event_id: renamed.id, scope: "series", expected_version: renamed.version, attendance_intent: "attend" });
+    expect(attend.ok).toBe(true);
+    expect(listCalendarEvents(db)[0]!.attendanceIntent).toBe("attend");
+    expect(events).toEqual([]);
+    expect(db.prepare("SELECT count(*) AS n FROM approvals").get()).toEqual({ n: 0 });
+    expect(vi.getTimerCount()).toBe(0);
+    const stale = await run("calendar_update", { event_id: renamed.id, scope: "series", expected_version: event!.version, title: "Stale write" });
+    expect(stale.ok).toBe(false);
+    expect(listCalendarEvents(db)[0]!.title).toBe("Renamed lecture");
+  });
+  it.each(["calendar_update", "calendar_set_attendance"])("honours a standing deny rule for %s (v3)", async tool => {
+    const { db, run } = fixture();
+    expect((await run("calendar_add", lecture)).ok).toBe(true);
+    const [event] = listCalendarEvents(db);
+    createRule(db, { source: "Fixture denial", status: "active", parsed: JSON.stringify({ match: { tool }, action: "deny" }) });
+    const result = await run(tool, { event_id: event!.id, scope: "series", expected_version: event!.version, title: "Denied", attendance_intent: "skip" });
+    expect(result).toMatchObject({ ok: false, text: expect.stringContaining("BLOCKED") });
+    expect(listCalendarEvents(db)[0]).toMatchObject({ title: lecture.title, version: event!.version });
+  });
 });

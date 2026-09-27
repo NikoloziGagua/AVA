@@ -285,12 +285,18 @@ try {
     }));
     await page.screenshot({ path: resolve(evidence, `voice-${look}-${width}.png`) });
     await page.emulateMedia({ forcedColors: 'active' });
-    await page.waitForTimeout(80);
-    check(`${look}/${width} forced colours omit decorative stars`, await page.locator('[data-metal-stars]').evaluate(el => {
+    // Starfield clears from its async matchMedia change listener. Wait for the browser to
+    // report the setting, then two frames for that listener to run; a fixed sleep raced
+    // under load. The exact zero-alpha assertion below is unchanged, with no retry.
+    await page.waitForFunction(() => matchMedia('(forced-colors: active)').matches, null, { timeout: 5000 });
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+    const forcedStars = await page.locator('[data-metal-stars]').evaluate(el => {
       const data = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
-      for (let i=3; i<data.length; i+=4) if (data[i] !== 0) return false;
-      return true;
-    }));
+      let opaque = 0;
+      for (let i=3; i<data.length; i+=4) if (data[i] !== 0) opaque += 1;
+      return { forced: matchMedia('(forced-colors: active)').matches, opaque };
+    });
+    check(`${look}/${width} forced colours omit decorative stars: ${JSON.stringify(forcedStars)}`, forcedStars.forced && forcedStars.opaque === 0);
     check(`${look}/${width} forced colours retain keyboard control`, await page.getByRole('button', { name: 'keyboard', exact: true }).isVisible());
     await page.emulateMedia({ forcedColors: 'none' });
     await page.setViewportSize({ width: 844, height: 390 });

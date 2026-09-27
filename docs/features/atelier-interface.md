@@ -121,7 +121,10 @@ refresh another screen. Cards open the exact note in Notes; editing remains ther
 When that ID is outside Notes' bounded global list, Notes reads the existing
 authenticated exact-ID endpoint. The selected file is resolved again on existing
 10-second/focus refreshes, not preserved as a stale copy. Archived and missing
-files share the unavailable notice; failed reads are not called deletion. Late
+files share the unavailable notice; failed reads are not called deletion. An
+exact-file failure shows a retry state in that reader while the library remains
+usable. Stored tool-created long documents are accepted on read; the HTTP form's
+30,000-character create limit is not retroactively imposed on existing records. Late
 responses cannot replace a newer load or selection. Folder counts still come
 from the authoritative tree; bounded/inconsistent lists are labelled partial,
 and a supplemental selected file never inflates that count. This is not full

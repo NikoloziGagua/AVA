@@ -9,6 +9,11 @@ beforeEach(() => { fetchMock.mockReset(); vi.stubGlobal("fetch", fetchMock); loc
 afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
 
 describe("Notes client boundaries", () => {
+  it("reads authoritative long tool-created records without applying HTTP create limits", async () => {
+    const stored = { ...valid, title: "A".repeat(200), content: "Stored source. ".repeat(3000) };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ note: stored })));
+    expect(await fetchNote(valid.id)).toEqual(stored);
+  });
   it("resolves only the exact encoded ID and rejects mismatched or malformed records", async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ note: { ...valid, id: "id/with space" } })));
     expect((await fetchNote("id/with space")).id).toBe("id/with space");

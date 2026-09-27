@@ -628,12 +628,15 @@ describe("Notes exact-note handoff", () => {
   });
 
   it("re-fetches an out-of-list selected file on focus instead of keeping an old copy", async () => {
-    const old = generalPage("old-idea", "An older idea", 300);
+    const old = generalPage("old-idea", "An older idea", 300, "A long tool-created note. ".repeat(1600));
     vi.mocked(notesApi.fetchNote).mockResolvedValueOnce(old).mockResolvedValue({ ...old, version: 2, title: "Updated by AVA" });
     render(<NotesScreen onStartTask={vi.fn()} initialNoteId={old.id} />);
     await waitFor(() => expect(fileHeading()).toBe(old.title));
+    expect(old.content.length).toBeGreaterThan(30_000);
+    expect(screen.getByRole("region", { name: "Note document" }).textContent).toContain("A long tool-created note.");
     window.dispatchEvent(new Event("focus"));
     await waitFor(() => expect(fileHeading()).toBe("Updated by AVA"));
+    expect(screen.getByRole("region", { name: "Note document" }).textContent).toContain("A long tool-created note.");
     expect(notesApi.fetchNote).toHaveBeenCalledTimes(2);
   });
 
@@ -678,13 +681,16 @@ describe("Notes exact-note handoff", () => {
     expect(fileHeading()).toBe("Latest data");
   });
 
-  it("reports exact-ID failure as a load failure, not deletion, and allows retry", async () => {
+  it("isolates exact-ID failure from the usable library, does not claim deletion, and allows retry", async () => {
     vi.mocked(notesApi.fetchNote).mockRejectedValue(new appApi.ApiError(502, "That note could not be loaded.", "invalid_note_receipt"));
     render(<NotesScreen onStartTask={vi.fn()} initialNoteId="old-idea" />);
     await screen.findByRole("alert");
+    expect(screen.getByRole("navigation", { name: "Folders" })).toBeTruthy();
+    expect(screen.getByRole("navigation", { name: "Files in General" })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Note document" })).toBeNull();
     expect(screen.queryByText("That note is no longer available.")).toBeNull();
     vi.mocked(notesApi.fetchNote).mockResolvedValue(generalPage("old-idea", "Recovered file", 300));
-    fireEvent.click(screen.getByRole("button", { name: "DISMISS" }));
+    fireEvent.click(screen.getByRole("button", { name: "Retry this file" }));
     await waitFor(() => expect(fileHeading()).toBe("Recovered file"));
   });
 

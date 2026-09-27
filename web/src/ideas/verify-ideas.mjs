@@ -12,6 +12,7 @@ assert.ok(evidence.startsWith(resolve('data/builds') + sep));
 await mkdir(evidence, { recursive: true });
 const { openDb } = await import(pathToFileURL(resolve(serverDist, 'state/db.js')));
 const { notesRoutes } = await import(pathToFileURL(resolve(serverDist, 'routes/notes.js')));
+const { createNote: createStoredNote } = await import(pathToFileURL(resolve(serverDist, 'state/notes.js')));
 const database = resolve(evidence, `fixture-${Date.now()}.sqlite`), token = 'local-ideas-fixture-only';
 let db = openDb(database);
 const auth = (req, res, next) => req.headers.authorization === `Bearer ${token}` ? next() : res.status(401).json({ error: 'missing_token' });
@@ -28,6 +29,8 @@ const selected = await seed({ title: 'A quieter morning', content: 'Make a littl
 await seed({ title: 'A small project with a long reference', content: 'https://example.invalid/' + 'reference'.repeat(30), kind: 'idea' });
 await seed({ title: 'Not an idea', content: 'Not part of the Ideas view.', kind: 'task' });
 await seed({ title: 'Archived thought', content: 'Not part of the Ideas view.', kind: 'idea', status: 'archived' });
+// Tools can write longer source documents than the HTTP create form permits.
+const longNote = createStoredNote(db, { title: 'Long researched idea', content: '## Long authoritative source\n\n' + 'A grounded explanation worth retaining. '.repeat(1050), kind: 'idea' });
 // Fill the global 250-note snapshot with unrelated pinned documents. The Ideas
 // screen must request the existing server filter, not filter that snapshot.
 for (let i = 0; i < 260; i++) await seed({ title: `Ordinary fixture ${i}`, content: 'An unrelated document.', kind: 'documentation', pinned: true });
@@ -50,10 +53,14 @@ try {
       localStorage.setItem('ava.token', token); localStorage.setItem('ava.ui.look', look);
       localStorage.setItem('ava-motion', 'reduced'); sessionStorage.setItem('ava:splash-seen', '1');
     }, { token, look });
-    let loseNextReceipt = false;
+    let loseNextReceipt = false, loseNextRead = false;
     await context.route('**/api/**', async route => {
       const req = route.request(), path = new URL(req.url()).pathname;
       if (path.startsWith('/api/notes')) {
+        if (loseNextRead && path === `/api/notes/${longNote.id}`) {
+          loseNextRead = false;
+          return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+        }
         if (req.method() !== 'GET') writes.push({ method: req.method(), path, body: req.postDataJSON() });
         if (loseNextReceipt && path === '/api/notes' && req.method() === 'POST') {
           loseNextReceipt = false;
@@ -96,7 +103,7 @@ try {
       check('rapid submit creates one real idea', writes.length === 1 && writes[0].body.kind === 'idea' && writes[0].body.projectId === null);
       check('exact non-HTML words persisted', db.prepare('SELECT content FROM notes ORDER BY created_at DESC LIMIT 1').get().content === 'A thought to keep\nWith exact words: <not HTML> & "quotes".');
       db.close(); db = openDb(database); router = makeRouter();
-      check('database reopen preserves saved idea', db.prepare("SELECT COUNT(*) AS n FROM notes WHERE kind='idea'").get().n === 4);
+      check('database reopen preserves saved idea', db.prepare("SELECT COUNT(*) AS n FROM notes WHERE kind='idea'").get().n === 5);
       loseNextReceipt = true;
       await draft.fill('Uncertain local thought');
       await page.getByRole('button', { name: 'Save idea', exact: true }).click();
@@ -120,6 +127,22 @@ try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await refreshed;
     await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
     check(`${look}/${width} exact file survives authoritative focus refresh`, await reader.getByRole('heading', { name: 'A quieter morning', exact: true }).count() === 1);
+    if (look === 'ink' && width === 1440) {
+      await openIdeas(page);
+      await page.getByRole('button', { name: 'Open Long researched idea in Notes', exact: true }).click();
+      await reader.getByRole('heading', { name: 'Long researched idea', exact: true }).waitFor();
+      check('long tool-created source opens beyond snapshot without applying form limits', longNote.content.length > 30_000 && (await reader.textContent()).includes('A grounded explanation worth retaining.'));
+      const longRefresh = page.waitForResponse(r => new URL(r.url()).pathname === `/api/notes/${longNote.id}`);
+      await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await longRefresh;
+      check('long selected source survives authoritative refresh', await reader.getByRole('heading', { name: 'Long researched idea', exact: true }).count() === 1);
+      loseNextRead = true;
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await page.getByText('That note could not be loaded. Your other files are still available.', { exact: true }).waitFor();
+      check('exact-read failure leaves library usable without selecting a different file', await page.getByRole('navigation', { name: 'Folders', exact: true }).isVisible() && !await reader.count() && await page.locator('.ds-note-files [aria-current="page"]').count() === 0);
+      await page.getByRole('button', { name: 'Retry this file', exact: true }).click();
+      await reader.getByRole('heading', { name: 'Long researched idea', exact: true }).waitFor();
+      check('file-only retry recovers exact source', await reader.getByRole('heading', { name: 'Long researched idea', exact: true }).count() === 1);
+    }
     await page.reload(); await openIdeas(page);
     await page.getByRole('button', { name: /Open A thought to keep/ }).waitFor();
     check(`${look}/${width} saved capture survives App reload`, await page.getByRole('button', { name: /Open A thought to keep/ }).count() === 1);

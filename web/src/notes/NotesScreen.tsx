@@ -142,6 +142,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   const pendingHandoff = useRef<string | null>(initialNoteId);
   const [selected, setSelected] = useState(GENERAL_FOLDER_ID);
   const [fileId, setFileIdState] = useState<string | null>(null);
+  const [failedFileId, setFailedFileId] = useState<string | null>(null);
   // The mount-time refresh callback must observe the current explicit selection.
   const currentFileId = useRef<string | null>(null);
   const setFileId = (id: string | null) => { currentFileId.current = id; setFileIdState(id); };
@@ -169,6 +170,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     try {
       const [listed, nextTree] = await Promise.all([fetchNotes(), fetchNotesTree()]);
       let next = listed;
+      let exactFailed = false;
       if (request !== loadRequest.current) return;
       // The global snapshot is bounded. Absence there does not mean deletion.
       // Resolve only the exact requested/selected ID through its existing route.
@@ -177,7 +179,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
           const exact = await fetchNote(wanted);
           if (exact.id === wanted && exact.status !== "archived") next = { ...listed, notes: [...listed.notes, exact] };
         } catch (cause) {
-          if (!(cause instanceof ApiError && cause.status === 404)) throw cause;
+          if (!(cause instanceof ApiError && cause.status === 404)) exactFailed = true;
         }
       }
       if (request !== loadRequest.current || wanted !== (pendingHandoff.current ?? currentFileId.current)) return;
@@ -186,6 +188,15 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
       setTree(nextTree);
       setSelected((current) => nextTree.folders.some((folder) => folder.id === current) ? current : GENERAL_FOLDER_ID);
       if (!quiet) setError(null);
+      setFailedFileId(exactFailed ? wanted : null);
+      if (exactFailed && wanted) {
+        // A single unreadable file must not hide the usable library or masquerade
+        // as deletion. Preserve only its requested identity for explicit/quiet retry.
+        if (pendingHandoff.current) { setView("files"); setPhonePane("reader"); }
+        pendingHandoff.current = null;
+        setFileId(wanted);
+        return;
+      }
       const handoff = pendingHandoff.current;
       if (handoff) {
         pendingHandoff.current = null;
@@ -260,7 +271,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
 
   const files = useMemo(() => snapshot ? folderDocuments(snapshot.notes, selected) : [], [snapshot, selected]);
   const partialFiles = partialSnapshot || (folder !== null && files.length !== folder.documentCount);
-  const selectedFile = files.find((note) => note.id === fileId) ?? files[0] ?? null;
+  const selectedFile = failedFileId && failedFileId === fileId ? null : files.find((note) => note.id === fileId) ?? files[0] ?? null;
   const searchResults = useMemo(() => {
     if (!snapshot || !query.trim()) return [];
     return snapshot.notes.filter((note) => note.status !== "archived" && matchesQuery(note, query));
@@ -524,7 +535,12 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
               onSelect={(id) => { setFileId(id); setPhonePane("reader"); }}
               onNewFile={() => newFile()}
             />
-            <NotePager
+            {failedFileId && failedFileId === fileId ? (
+              <div className="ds-note-reader flex min-h-72 flex-col items-start justify-center gap-4 px-6 py-10">
+                <p role="alert" className="text-body text-ink-2">That note could not be loaded. Your other files are still available.</p>
+                <Button size="sm" onClick={() => void load()}>Retry this file</Button>
+              </div>
+            ) : <NotePager
               note={selectedFile}
               folderName={folderName}
               folders={flatFolders}
@@ -533,7 +549,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
               onMove={(note, folderId) => void moveFile(note, folderId)}
               onAsk={(note) => onStartTask(`Open my Notes file “${note.title}” (stable ID: ${note.id}; folder: ${note.folderPath?.map((crumb) => crumb.name).join(" / ") || "General"}) and help me work through it.`)}
               onNewFile={() => newFile()}
-            />
+            />}
           </div>
         ) : (
           <>

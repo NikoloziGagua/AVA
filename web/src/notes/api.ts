@@ -128,8 +128,8 @@ function hasNoteReceipt(note: Note | null | undefined): note is Note {
   return !!note && typeof note.id === "string" && !!note.id && note.id.length <= 120
     && Number.isSafeInteger(note.version) && note.version > 0
     && NOTE_KINDS.includes(note.kind) && NOTE_SECTIONS.includes(note.section)
-    && typeof note.title === "string" && note.title.length <= 160
-    && typeof note.content === "string" && note.content.length <= 30_000
+    // Stored records can originate in tools, not only the bounded HTTP form.
+    && typeof note.title === "string" && typeof note.content === "string"
     && [...NOTE_STAGES, "archived"].includes(note.status) && typeof note.pinned === "boolean"
     && Array.isArray(note.tags) && note.tags.every(tag => typeof tag === "string")
     && Array.isArray(note.links) && note.links.every(link => link && typeof link.label === "string" && typeof link.url === "string")
@@ -205,7 +205,7 @@ export async function createNote(input: {
   // A successful HTTP status without an authoritative receipt is not a saved
   // note. Do not compare content verbatim: the server legitimately scrubs it.
   const note = result?.note;
-  if (!hasNoteReceipt(note) || note.kind !== (input.kind ?? "general")) {
+  if (!hasNoteReceipt(note) || note.kind !== (input.kind ?? "general") || note.title.length > 160 || note.content.length > 30_000) {
     throw new UnconfirmedWriteError("AVA couldn't confirm whether this note was saved. Check Notes before saving again.");
   }
   return result.note;

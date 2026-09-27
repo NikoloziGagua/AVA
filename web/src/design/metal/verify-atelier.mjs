@@ -30,40 +30,90 @@ try {
     // Fixture routing must not be intercepted by a real service worker. PWA
     // precache integrity is verified separately, not claimed by this UI smoke.
     await context.route('**/registerSW.js', route => route.fulfill({ contentType: 'text/javascript', body: '/* UI fixture: service-worker registration disabled */' }));
-    const errors = [], writes = [];
+    const errors = [], writes = [], sessionReads = [];
     page.on('pageerror', e => errors.push(e.stack || e.message));
-    page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+    page.on('console', m => {
+      if (m.type() === 'error' || /Too many active WebGL contexts/i.test(m.text())) errors.push(m.text());
+    });
     const now = Date.now();
     const session = { id: 'atelier-fixture-chat', title: 'A local design check', origin: 'human', created_at: now, updated_at: now, last_human_activity_at: now, status: 'idle', pinned: 0 };
     const note = { id: 'atelier-fixture-note', title: 'A thought worth keeping', content: 'Disposable local browser fixture.', kind: 'documentation', status: 'ideas', pinned: true, updatedAt: now, createdAt: now, tags: [], links: [], changeLog: [], collection: null, projectId: null, section: 'capture', source: 'manual', sourceSessionId: null, promotion: null, version: 1 };
     await context.addInitScript(({ look }) => {
-      localStorage.setItem('ava.token', 'browser-fixture-not-a-credential');
-      localStorage.setItem('ava.ui.look', look);
-      localStorage.setItem('ava-motion', 'full');
-      localStorage.setItem('ava:last-chat-session', 'atelier-fixture-chat');
-      sessionStorage.setItem('ava:splash-seen', '1');
+      // Seed once per disposable context; reload must use what App retained,
+      // rather than silently repairing the selection/preferences in the test.
+      if (!sessionStorage.getItem('atelier-fixture-seeded')) {
+        localStorage.setItem('ava.token', 'browser-fixture-not-a-credential');
+        localStorage.setItem('ava.ui.look', look);
+        localStorage.setItem('ava-motion', 'full');
+        localStorage.setItem('ava:last-chat-session', 'atelier-fixture-chat');
+        sessionStorage.setItem('ava:splash-seen', '1');
+        sessionStorage.setItem('atelier-fixture-seeded', '1');
+      }
       // No physical microphone, audio, provider or socket: render the real failure state.
       Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { configurable: true,
         value: async () => { throw new DOMException('Fixture microphone disabled', 'NotAllowedError'); } });
       const getContext = HTMLCanvasElement.prototype.getContext;
+      const tracked = new WeakSet(), records = [];
+      // Count live renderer resources, even on detached canvases. Keeping a native
+      // context for StrictMode is intentional; browser GC/GPU memory is not measured.
+      window.__atelierGl = () => records.map(record => ({ attached: record.canvas.deref()?.isConnected ?? false,
+        buffers: record.Buffer.size, programs: record.Program.size }));
       HTMLCanvasElement.prototype.getContext = function(type, ...args) {
         const context = getContext.call(this, type, ...args);
-        if (context && /webgl/.test(type)) this.dataset.qaContext = type;
+        if (context && /webgl/.test(type)) {
+          this.dataset.qaContext = type;
+          if (!tracked.has(context)) {
+            tracked.add(context);
+            // A strong canvas reference here would itself prevent native context
+            // collection and manufacture a context-limit warning during the soak.
+            const record = { canvas: new WeakRef(this), Buffer: new Set(), Program: new Set() };
+            records.push(record);
+            for (const kind of ['Buffer', 'Program']) {
+              const create = context[`create${kind}`].bind(context), remove = context[`delete${kind}`].bind(context);
+              context[`create${kind}`] = (...args) => { const value = create(...args); if (value) record[kind].add(value); return value; };
+              context[`delete${kind}`] = value => { const result = remove(value); record[kind].delete(value); return result; };
+            }
+          }
+        }
         return context;
       };
     }, { look });
+    const graphics = async (destination, count) => {
+      await page.waitForFunction(expected => {
+        const rows = window.__atelierGl();
+        return rows.filter(row => row.buffers || row.programs).length === expected
+          && rows.every(row => row.attached || (!row.buffers && !row.programs));
+      }, count);
+      check(`${look}/${width} ${destination} renderer resources released or singly owned`, true);
+      check(`${look}/${width} ${destination} attached WebGL count`, await page.locator('[data-qa-context]').count() === count);
+    };
     await context.route('**/api/**', async route => {
-      const request = route.request(), path = new URL(request.url()).pathname;
+      const request = route.request(), url = new URL(request.url()), path = url.pathname;
       if (request.method() !== 'GET') writes.push(`${request.method()} ${path}`);
+      if (/^\/api\/sessions\//.test(path)) sessionReads.push(path);
       let body = {};
       if (path === '/api/sessions') body = { sessions: [session], nextCursor: null };
       else if (path === '/api/sessions/atelier-fixture-chat') body = { session, messages: [
         { id: 1, role: 'user', content: 'Help me organise this week.', created_at: now },
         { id: 2, role: 'assistant', content: 'Start with one clear priority.\n\n- Read the lecture notes.\n- Leave some breathing room.', created_at: now },
       ] };
-      else if (path === '/api/calendar/events') body = { fetchedAt: now, occurrences: [], complete: true };
+      else if (path === '/api/calendar/events') body = { fetchedAt: now, events: [], occurrences: [], complete: true };
+      else if (path === '/api/notes/tree') body = {
+        folders: [{ id: 'notes_general', parentId: null, name: 'General', description: '', position: 0, builtIn: true, version: 1,
+          documentCount: 1, breadcrumb: [{ id: 'notes_general', name: 'General' }], path: 'General', createdAt: now, updatedAt: now }],
+        snapshot: { fetchedAt: now, version: 'fixture', complete: true, totalDocuments: 1 },
+        migration: { legacyProjectCount: 0, legacyRootFolderIds: [] },
+      };
       else if (path === '/api/notes') body = { notes: [note], projects: [] };
       else if (path === '/api/watches') body = { watches: [] };
+      else if (path === '/api/chat/atelier-fixture-chat/stream') {
+        // A labelled fixture response-in-progress exposes the real "voice while
+        // busy" control without sending a turn. A reconnect never repeats it.
+        const event = url.searchParams.get('lastEventId') === '0'
+          ? 'id: 1\nevent: delta\ndata: {"text":"Disposable browser fixture response in progress."}\n\n'
+          : ': local read-only fixture\n\n';
+        await route.fulfill({ contentType: 'text/event-stream', body: event }); return;
+      }
       else if (path.includes('/events') || path.includes('/stream')) {
         await route.fulfill({ contentType: 'text/event-stream', body: ': local read-only fixture\n\n' }); return;
       }
@@ -89,6 +139,7 @@ try {
     check(`${look}/${width} stars advance`, await stars.evaluate(el => el.toDataURL()) !== beforeStars);
     check(`${look}/${width} bounded stars`, await stars.getAttribute('data-star-count') === (width < 600 ? '500' : '900'));
     check(`${look}/${width} one WebGL face`, await page.locator('[data-qa-context]').count() === 1);
+    await graphics('Home', 1);
     if (width === 390) {
       const timing = await page.evaluate(() => new Promise(resolve => {
         const frames = []; let last = performance.now();
@@ -144,13 +195,68 @@ try {
     check(`${look}/${width} draft survives`, await input.inputValue() === 'Keep this unsent draft');
     check(`${look}/${width} Silk destination`, await page.locator('[data-atmosphere="silk"]').count() === 1);
     check(`${look}/${width} no page overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await graphics('Today', 0);
     await page.screenshot({ path: resolve(evidence, `today-${look}-${width}.png`) });
     await page.getByRole('group', { name: 'Quick navigation' }).getByRole('button', { name: 'Talk', exact: true }).click();
     await page.locator('.ds-quiet-conversation').waitFor();
     await page.getByText('Help me organise this week.', { exact: true }).waitFor();
     check(`${look}/${width} remembered exact chat`, await page.getByText('Help me organise this week.', { exact: true }).count() === 1);
     check(`${look}/${width} readable real conversation`, await page.locator('.ds-quiet-thread').count() === 1);
+    await graphics('Talk', 0);
     await page.screenshot({ path: resolve(evidence, `talk-${look}-${width}.png`) });
+    const navigate = async name => {
+      await page.getByRole('group', { name: 'Quick navigation' }).getByRole('button', { name, exact: true }).click();
+    };
+    const retainedDraft = async destination => {
+      check(`${look}/${width} ${destination} keeps unsent words`, await input.inputValue() === 'Keep this unsent draft');
+      check(`${look}/${width} ${destination} keeps the same composer`, await sameInput.evaluate(el => el.isConnected && el === document.querySelector('textarea[aria-label="Message AVA"]')));
+      check(`${look}/${width} ${destination} has no horizontal overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await graphics(destination, 0);
+    };
+    await navigate('Notes');
+    await page.locator('.ds-notes-folders').waitFor();
+    await retainedDraft('Notes');
+    await page.screenshot({ path: resolve(evidence, `journey-notes-${look}-${width}.png`) });
+    await navigate('Calendar');
+    await page.getByRole('region', { name: 'Calendar', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'New event', exact: true }).waitFor();
+    await retainedDraft('Calendar');
+    await page.getByRole('button', { name: 'Reminders', exact: true }).click();
+    await page.getByRole('region', { name: 'Reminders', exact: true }).waitFor();
+    await retainedDraft('Reminders');
+    await page.getByRole('button', { name: 'Back to Calendar', exact: true }).click();
+    await page.getByRole('region', { name: 'Calendar', exact: true }).waitFor();
+    await retainedDraft('Back to Calendar');
+    await navigate('Ideas');
+    await page.getByRole('heading', { name: 'Keep the spark.', exact: true }).waitFor();
+    await retainedDraft('Ideas');
+    await navigate('Home');
+    await page.getByRole('heading', { name: /Good .*Niko/ }).waitFor();
+    check(`${look}/${width} return Home keeps draft`, await input.inputValue() === 'Keep this unsent draft');
+    await page.locator('.ds-home-face [data-face="live"]').waitFor();
+    await graphics('Return Home', 1);
+    check(`${look}/${width} return Home has no overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    if (look === 'ink' && width === 390) {
+      const resources = () => page.evaluate(() => window.__atelierGl().reduce((total, row) => ({
+        buffers: total.buffers + row.buffers, programs: total.programs + row.programs,
+      }), { buffers: 0, programs: 0 }));
+      const baseline = await resources();
+      for (let trip = 1; trip <= 20; trip++) {
+        await navigate('Notes');
+        await page.locator('.ds-notes-folders').waitFor();
+        await graphics(`Round trip ${trip} Notes`, 0);
+        await navigate('Home');
+        await page.locator('.ds-home-face [data-face="live"]').waitFor();
+        await graphics(`Round trip ${trip} Home`, 1);
+        check(`Round trip ${trip} restores resource baseline`, JSON.stringify(await resources()) === JSON.stringify(baseline));
+      }
+      check('Twenty round trips preserve draft', await input.inputValue() === 'Keep this unsent draft');
+      check('Twenty round trips have no WebGL context-limit warning', !errors.some(error => /Too many active WebGL contexts/i.test(error)));
+      await page.screenshot({ path: resolve(evidence, 'home-after-twenty-round-trips.png') });
+    }
+    await navigate('Talk');
+    await page.getByText('Help me organise this week.', { exact: true }).waitFor();
+    await retainedDraft('Return Talk');
     await page.keyboard.press('Control+k');
     const menu = page.getByRole('dialog', { name: 'Menu' });
     await menu.getByRole('button', { name: 'Home', exact: true }).waitFor();
@@ -159,16 +265,19 @@ try {
     check(`${look}/${width} menu focus returns`, await page.getByRole('button', { name: 'Open menu' }).evaluate(el => el === document.activeElement));
     // App's existing in-memory workspace navigation does not push browser-history
     // entries. Do not pretend that a styling change adds cross-screen Back support.
-    await page.getByRole('group', { name: 'Quick navigation' }).getByRole('button', { name: 'Today', exact: true }).click();
-    await page.getByRole('region', { name: 'Recent notes' }).waitFor();
     check(`${look}/${width} return navigation preserves draft`, await input.inputValue() === 'Keep this unsent draft');
     // Voice uses the real engine wrapper, but microphone rejection is fixture-owned.
-    await input.fill('');
+    // Keep the draft: the fixture stream lets the existing busy-Talk voice button
+    // enter Voice without clearing words or invoking Stop/send on a real task.
     await page.getByRole('navigation', { name: 'AVA', exact: true }).getByRole('button', { name: 'Talk to AVA', exact: true }).click();
     await page.locator('.ds-atelier-voice').waitFor();
+    check(`${look}/${width} Voice discloses kept draft`, await page.getByText('Draft kept', { exact: true }).count() === 1);
+    check(`${look}/${width} Voice keeps hidden draft`, await sameInput.evaluate(el => el.isConnected && el.value === 'Keep this unsent draft'));
     await page.locator('.ds-voice-face [data-face="live"]').waitFor();
     await page.locator('.ds-atelier-voice [data-metal-stars]').waitFor();
     check(`${look}/${width} voice has one WebGL face`, await page.locator('[data-qa-context]').count() === 1);
+    await graphics('Voice', 1);
+    check(`${look}/${width} Voice has no overflow`, await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     const voiceHeight = (await page.locator('.ds-voice-face').boundingBox()).height;
     check(`${look}/${width} voice face has room`, voiceHeight >= 200);
     check(`${look}/${width} voice controls fit`, await page.getByRole('button', { name: 'keyboard', exact: true }).evaluate(el => {
@@ -190,7 +299,16 @@ try {
     await page.getByRole('button', { name: 'keyboard', exact: true }).click();
     await page.locator('.ds-quiet-conversation').waitFor();
     check(`${look}/${width} same mounted composer after Voice`, await sameInput.evaluate(el => el.isConnected && el === document.querySelector('textarea[aria-label="Message AVA"]')));
+    check(`${look}/${width} Voice return keeps unsent words`, await input.inputValue() === 'Keep this unsent draft');
+    await graphics('Voice return', 0);
+    await page.getByText('Help me organise this week.', { exact: true }).waitFor();
     check(`${look}/${width} no stars outside Home/Voice`, await page.locator('[data-metal-stars]').count() === 0);
+    await page.reload();
+    await page.getByRole('heading', { name: /Good .*Niko/ }).waitFor();
+    check(`${look}/${width} reload does not pretend draft persistence`, await input.inputValue() === '');
+    await navigate('Talk');
+    await page.getByText('Help me organise this week.', { exact: true }).waitFor();
+    check(`${look}/${width} only exact human session read`, sessionReads.length >= 3 && sessionReads.every(path => path === '/api/sessions/atelier-fixture-chat'));
     check(`${look}/${width} no writes`, writes.length === 0);
     check(`${look}/${width} no errors: ${errors.join(';')}`, errors.length === 0);
     await context.close();

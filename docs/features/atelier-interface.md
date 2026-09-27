@@ -215,6 +215,20 @@ other screens. A fixture-rejected microphone exercises the real Voice failure
 screen without audio/provider access. Desktop Edge phone-viewport frame samples
 are recorded, not presented as physical-phone performance. This is not a real
 account/provider, microphone or physical-device test.
+The integrated journey uses the actual App navigation through Home, Today, Talk,
+Notes, Calendar, its Reminders subview and back, Ideas, Home and Talk. It keeps
+the exact same unsent composer throughout. A labelled synthetic response-in-progress
+SSE event exposes the existing busy-Talk voice control; entering Voice shows
+“Draft kept”, and returning through Keyboard restores the exact chat and words.
+No chat turn is sent. Reload intentionally loses the unsaved draft and opens Home;
+Talk still resolves the remembered exact session. This does not simulate successful
+speech or treat fixture content as a real AVA response. Separate route-backed
+workspace harnesses test durable writes and reopen behaviour.
+The journey also counts attached WebGL canvases and tracks buffer/program
+allocation and deletion, including detached canvases. It expects one resource-owning
+renderer on Home/Voice and none elsewhere. Native context garbage collection and
+total GPU memory are outside this test; the renderer keeps its context during
+effect cleanup so StrictMode can immediately reuse the same canvas.
 An optional final numeric argument (bounded to 300 seconds) runs a Home motion
 soak: JavaScript heap after explicit garbage collection and the live context
 count. It does not measure total GPU/process memory.
@@ -223,3 +237,5 @@ Production build budgets and offline precache remain mandatory. Runtime
 promotion is separate from a source commit. Consult the board for exact build,
 commit, browser and release evidence. Claude has returned for independent exact
 reviews; acceptance is recorded separately for each commit, never implied.
+For the assembled everyday review and remaining boundaries, see
+[Atelier everyday review](../design/atelier-everyday-review.md).

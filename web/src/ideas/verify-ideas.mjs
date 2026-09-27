@@ -90,7 +90,10 @@ try {
     check(`${look}/${width} saved capture survives App reload`, await page.getByRole('button', { name: /Open A thought to keep/ }).count() === 1);
     if (look === 'ink' && width === 390) {
       await page.emulateMedia({ forcedColors: 'active' }); await draft.focus();
-      check('forced colours retains focus boundary', await draft.evaluate(el => getComputedStyle(el).borderBottomWidth === '2px'));
+      // Media emulation acknowledges the setting before Edge necessarily paints it.
+      await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+      const focus = await draft.evaluate(el => ({ forced: matchMedia('(forced-colors: active)').matches, visible: el.matches(':focus-visible'), border: getComputedStyle(el).borderBottomWidth }));
+      check(`forced colours retains focus boundary: ${JSON.stringify(focus)}`, focus.forced && focus.visible && focus.border === '2px');
     }
     await context.close();
   }

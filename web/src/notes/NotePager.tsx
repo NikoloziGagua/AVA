@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, ChevronLeft, ChevronRight, Clock3, FileText, FolderInput, GraduationCap, List, LoaderCircle, MessageSquareText, Pencil, Plus, Rows3 } from "lucide-react";
 import { AssistantMarkdown } from "../chat/AssistantMarkdown.js";
-import { Button } from "../components/ui/button.js";
+import { Button } from "./NotesPrimitives.js";
 import type { Note } from "./api.js";
 import { pageLayoutForWidth, paginateDocument, type DocumentPage } from "./documentPagination.js";
 import { noteFolderId, type FolderNode } from "./folders.js";
@@ -128,9 +128,9 @@ export function NotePager({ note, folderName, folders, busy, onEdit, onMove, onA
 
   if (!note || !current) {
     return (
-      <div ref={reader} className="flex min-h-72 flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/[0.09] bg-black/25 px-6 py-10 text-center">
-        <BookOpen size={20} className="text-white/30" />
-        <p className="text-sm text-white/60">No files in {folderName} yet.</p>
+      <div ref={reader} className="ds-note-reader flex min-h-72 flex-col items-center justify-center gap-3 px-6 py-10 text-center">
+        <BookOpen size={20} className="text-ink-2" />
+        <p className="text-sm text-ink-2">No files in {folderName} yet.</p>
         <Button size="sm" onClick={onNewFile}><Plus size={14} />New file</Button>
       </div>
     );
@@ -141,27 +141,27 @@ export function NotePager({ note, folderName, folders, busy, onEdit, onMove, onA
   const shownMarkdown = fullDocument ? note.content : current.markdown;
 
   return (
-    <section ref={reader} aria-label="Note document" className="min-w-0">
+    <section ref={reader} aria-label="Note document" className="ds-note-reader min-w-0">
       <div className="mb-3 flex items-center justify-between gap-2">
         <button type="button" aria-label="Previous page" disabled={fullDocument || index === 0} onClick={() => go(index - 1)}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-black/40 text-white/70 transition hover:border-[var(--ac)]/40 hover:text-[var(--ac)] disabled:opacity-25">
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-glass-strong bg-transparent text-ink-2 transition hover:border-glass-strong hover:text-ink disabled:opacity-25">
           <ChevronLeft size={18} />
         </button>
         <div className="flex min-w-0 flex-col items-center gap-2">
-          <span className="hud text-[10px] tracking-[0.16em] text-white/50" aria-live="polite" data-testid="page-counter">
+          <span className="hud text-meta tracking-[0.16em] text-ink-2" aria-live="polite" data-testid="page-counter">
             {fullDocument ? "FULL DOCUMENT" : `PAGE ${index + 1} / ${total}`}
           </span>
           {!fullDocument && total > 1 && total <= 24 && (
             <div className="flex flex-wrap justify-center gap-1.5">
               {pages.map((page, at) => (
                 <button key={page.anchor} type="button" aria-label={`Page ${at + 1}: ${page.title}`} aria-current={at === index ? "page" : undefined}
-                  onClick={() => go(at)} className={`h-2 rounded-full transition-all motion-reduce:transition-none ${at === index ? "w-5 bg-[var(--ac)]" : "w-2 bg-white/20 hover:bg-white/45"}`} />
+                  onClick={() => go(at)} className={`h-2 rounded-full transition-all motion-reduce:transition-none ${at === index ? "w-5 bg-glass-strong" : "w-2 bg-glass hover:bg-glass"}`} />
               ))}
             </div>
           )}
         </div>
         <button type="button" aria-label="Next page" disabled={fullDocument || index >= total - 1} onClick={() => go(index + 1)}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-black/40 text-white/70 transition hover:border-[var(--ac)]/40 hover:text-[var(--ac)] disabled:opacity-25">
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-glass-strong bg-transparent text-ink-2 transition hover:border-glass-strong hover:text-ink disabled:opacity-25">
           <ChevronRight size={18} />
         </button>
       </div>
@@ -179,17 +179,17 @@ export function NotePager({ note, folderName, folders, busy, onEdit, onMove, onA
           if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go(index + (dx < 0 ? 1 : -1));
         }}
         onPointerCancel={() => { swipe.current = null; }}
-        className="min-h-[420px] touch-pan-y rounded-2xl border border-white/[0.08] bg-[#07090a]/85 px-5 py-6 shadow-[0_30px_60px_-40px_rgba(0,0,0,.95)] sm:px-9 sm:py-8"
+        className="ds-note-paper min-h-[420px] touch-pan-y"
       >
-        <header className="mb-5 border-b border-white/[0.07] pb-4">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-white/40">
+        <header className="ds-note-paper-heading">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-meta text-ink-2">
             <span className="truncate">{crumbs}</span>
             <span className="flex items-center gap-1"><FileText size={11} />File</span>
-            {study && <span className="flex items-center gap-1 rounded-full border border-[#bb8cff]/35 bg-[#bb8cff]/10 px-2 py-0.5 text-[#d9c2ff]"><GraduationCap size={11} />Study</span>}
+            {study && <span className="flex items-center gap-1 rounded-full border border-glass-strong bg-canvas px-2 py-0.5 text-ink-2"><GraduationCap size={11} />Study</span>}
           </div>
-          <h2 className="text-xl font-semibold leading-snug text-white sm:text-2xl">{note.title}</h2>
-          {!fullDocument && total > 1 && <p className="mt-1 text-xs text-white/40">{current.title}</p>}
-          <p className="mt-2 flex items-center gap-1.5 text-[10px] text-white/30"><Clock3 size={10} />Updated {shortDate(note.updatedAt)} · v{note.version}</p>
+          <h2 className="text-xl font-semibold leading-snug text-ink sm:text-2xl">{note.title}</h2>
+          {!fullDocument && total > 1 && <p className="mt-1 text-xs text-ink-2">{current.title}</p>}
+          <p className="mt-2 flex items-center gap-1.5 text-meta text-ink-2"><Clock3 size={10} />Updated {shortDate(note.updatedAt)} · v{note.version}</p>
         </header>
         <AssistantMarkdown text={shownMarkdown} />
       </article>
@@ -200,28 +200,28 @@ export function NotePager({ note, folderName, folders, busy, onEdit, onMove, onA
         <Button size="sm" variant="outline" disabled={busy} onClick={() => onAsk(note)}><MessageSquareText size={13} />Ask AVA about this file</Button>
         <Button size="sm" variant="ghost" aria-expanded={contentsOpen} onClick={() => setContentsOpen((open) => !open)}><List size={13} />Contents</Button>
         <Button size="sm" variant="ghost" aria-pressed={fullDocument} onClick={() => setFullDocument((value) => !value)}><Rows3 size={13} />{fullDocument ? "Show pages" : "Show as one page"}</Button>
-        {busy && <LoaderCircle size={14} className="animate-spin text-white/40" />}
+        {busy && <LoaderCircle size={14} className="animate-spin text-ink-2" />}
       </div>
 
       {moveOpen && (
-        <label className="mt-3 flex flex-col gap-1.5 rounded-xl border border-white/[0.08] bg-black/30 px-4 py-3 text-xs text-white/50 sm:flex-row sm:items-center">
+        <label className="mt-3 flex flex-col gap-1.5 rounded-xl border border-glass-strong bg-transparent px-4 py-3 text-xs text-ink-2 sm:flex-row sm:items-center">
           <span className="shrink-0">Move this file to</span>
           <select aria-label="Destination folder" value={noteFolderId(note)} onChange={(event) => { setMoveOpen(false); if (event.target.value !== noteFolderId(note)) onMove(note, event.target.value); }}
-            className="h-9 min-w-0 flex-1 rounded-lg border border-white/10 bg-[#080a0b] px-3 text-sm text-white outline-none focus:border-[var(--ac)]/35">
+            className="h-9 min-w-0 flex-1 rounded-lg border border-glass-strong bg-canvas px-3 text-sm text-ink ds-focus focus:border-glass-strong">
             {folders.map(({ folder, depth }) => <option key={folder.id} value={folder.id}>{`${"  ".repeat(depth)}${folder.name}`}</option>)}
           </select>
         </label>
       )}
 
       {contentsOpen && (
-        <nav aria-label="Document contents" className="mt-3 rounded-xl border border-white/[0.08] bg-black/30 px-3 py-3">
+        <nav aria-label="Document contents" className="mt-3 rounded-xl border border-glass-strong bg-transparent px-3 py-3">
           <ol className="space-y-0.5">
             {pages.map((page, at) => (
               <li key={page.anchor}>
                 <button type="button" aria-current={!fullDocument && at === index ? "page" : undefined}
                   onClick={() => { setFullDocument(false); go(at); setContentsOpen(false); }}
-                  className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-xs transition motion-reduce:transition-none ${!fullDocument && at === index ? "bg-[var(--ac)]/[0.08] text-white" : "text-white/55 hover:bg-white/[0.04] hover:text-white"}`}>
-                  <span className="hud w-6 shrink-0 text-right text-[10px] text-white/30">{at + 1}</span>
+                  className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-xs transition motion-reduce:transition-none ${!fullDocument && at === index ? "bg-glass-strong text-ink" : "text-ink-2 hover:bg-glass hover:text-ink"}`}>
+                  <span className="hud w-6 shrink-0 text-right text-meta text-ink-2">{at + 1}</span>
                   <span className="min-w-0 flex-1 truncate">{page.title}</span>
                 </button>
               </li>

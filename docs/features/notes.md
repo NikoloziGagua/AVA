@@ -144,3 +144,36 @@ The folder hierarchy, explicit file list, derived in-document reader pages and
 whole-file editor are available in the Notes interface. The optional Board
 continues to use the compatibility metadata. Visual page boundaries remain a
 presentation concern; no page CRUD or parallel page store exists.
+
+## Atelier library presentation (2026-09-27)
+
+Notes now uses the shared Ink-by-default design tokens and Silver Silk ground.
+An explicit Paper preference still works. Desktop presents open folder and file
+rails beside a readable document plane. Up to 850px, Library → Files → Reader
+is an explicit local drill-down with Back controls. An exact-note handoff opens
+the reader directly. The same canonical document, derived pages, full-document
+mode, safe Markdown, versioned edits/moves, Study template, search, capture and
+optional Board/Project Brief remain.
+
+Notes-local primitives own presentation only. No preview fixture, page record,
+subtitle field, generated illustration or fake connected thought is promoted.
+Files retain identity/history. Responsive changes never change source data.
+Reload still starts at the default folder unless an exact handoff is supplied;
+per-file reading anchors remain local.
+
+The editor uses simple underline fields, not nested boxes. Save errors appear
+inside the dialog. Request-generation guards prevent older refreshes replacing
+newer snapshots. Synchronous mutation locking prevents rapid duplicate actions.
+Stale versions require reopening the authoritative file; no automatic retry or
+invented success. The existing polling cadence and backend APIs are unchanged.
+
+The five migrated Notes files are strict in the design guard: no sub-12px text,
+raw colours or per-component blur. Optional Project Brief remains a legacy
+component, not claimed fully redesigned. Native buttons, visible focus, safe
+Markdown and the existing reduced-motion policy remain.
+
+`node web/src/notes/verify-atelier-notes.mjs <built-web> <built-server-dist>`
+exercises a nested folder and two documents through actual Notes routes in a
+disposable SQLite database: pagination/full text, one explicit edit, DB reopen,
+phone Back, reload, Ink/Paper and 1440/390/320 widths. Other APIs are fixtures;
+no live data/model calls. Evidence is ignored under `data/builds`.

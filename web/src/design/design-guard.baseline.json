@@ -16,6 +16,11 @@
     "chat/ToolCallChip.tsx",
     "home/HomeScreen.tsx",
     "home/oneThing.ts",
+    "notes/NotesScreen.tsx",
+    "notes/NotesPrimitives.tsx",
+    "notes/FolderTree.tsx",
+    "notes/NoteFileList.tsx",
+    "notes/NotePager.tsx",
     "today/TodayScreen.tsx",
     "orbit/ChatListScreen.tsx",
     "voice/HoldToTalkButton.tsx",
@@ -197,26 +202,6 @@
       "tinyText": 52,
       "rawColour": 6,
       "backdrop": 0
-    },
-    "notes/FolderTree.tsx": {
-      "tinyText": 3,
-      "rawColour": 2,
-      "backdrop": 0
-    },
-    "notes/NoteFileList.tsx": {
-      "tinyText": 4,
-      "rawColour": 1,
-      "backdrop": 0
-    },
-    "notes/NotePager.tsx": {
-      "tinyText": 4,
-      "rawColour": 5,
-      "backdrop": 0
-    },
-    "notes/NotesScreen.tsx": {
-      "tinyText": 28,
-      "rawColour": 26,
-      "backdrop": 2
     },
     "notes/ProjectBrief.tsx": {
       "tinyText": 27,

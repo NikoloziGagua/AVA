@@ -47,16 +47,25 @@ Forced colours omit the artwork. If Canvas2D is unavailable, the static CSS
 ground remains. The existing face renderer, live speech signal and asset are
 unchanged. No shader per button or new dependency was added.
 
-## What is not yet migrated
+## Notes library and remaining boundaries
 
-The approved full dark Notes composition is a subsequent increment. Calendar
+Notes now uses a dark-default Silver Silk library, open folder/file rails and
+a readable document plane. Phone navigation drills from library to files to
+reader, with explicit Back controls. Versioned persistence, derived pagination,
+full text, Study files, exact handoff, Board and Project Brief survive. The
+editor uses simple fields and shows failures inside its dialog. See [Notes](notes.md).
+
+Calendar
 now opens its real server-authoritative Month/Week/Day workspace with an open
 event editor, selected-day agenda and explicit attendance. Standalone reminders
 are still reachable separately; event-linked notifications remain unavailable.
 See [Calendar C2](calendar.md#c2-the-actual-calendar-workspace) for exact limits.
 No sample events, preview localStorage, demo responses, schemas or API writes
-are promoted by this first increment. The rejected boxed event form is not
+are imported from the preview. The rejected boxed event form is not
 being reused. The old standalone previews remain design references only.
+
+Voice's portrait/composition, compact-at-rest bar and the remaining advanced
+workspaces are separate rollout steps, not claimed complete by this increment.
 
 Existing App workspace navigation is in-memory, not a browser-history router.
 Browser Back does not traverse those workspace changes, and reload opens Home;

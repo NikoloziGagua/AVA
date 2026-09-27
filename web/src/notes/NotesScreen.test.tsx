@@ -568,6 +568,36 @@ describe("Notes board view", () => {
 });
 
 describe("Notes exact-note handoff", () => {
+  it("opens an exact handoff directly in the phone reader pane", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="file-2" />);
+    await screen.findByText("PAGE 1 / 1");
+    expect(screen.getByRole("region", { name: "Notes" }).getAttribute("data-pane")).toBe("reader");
+    fireEvent.click(screen.getByRole("button", { name: "Back to files" }));
+    expect(screen.getByRole("region", { name: "Notes" }).getAttribute("data-pane")).toBe("files");
+    fireEvent.click(screen.getByRole("button", { name: "Back to library" }));
+    expect(screen.getByRole("region", { name: "Notes" }).getAttribute("data-pane")).toBe("library");
+    expect(notesApi.updateNote).not.toHaveBeenCalled();
+  });
+  it("keeps phone folder/file selection separate from derived pages", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    await openFolder(/^General/);
+    expect(screen.getByRole("region", { name: "Notes" }).getAttribute("data-pane")).toBe("files");
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Files in General" })).getByRole("button", { name: "Zulu first file" }));
+    expect(screen.getByRole("region", { name: "Notes" }).getAttribute("data-pane")).toBe("reader");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(counter()).toBe("PAGE 2 / 2");
+    expect(screen.getByRole("region", { name: "Notes" }).getAttribute("data-pane")).toBe("reader");
+  });
+  it("does not let an old concurrent refresh overwrite the latest notes", async () => {
+    let finish!: (value: NotesSnapshot) => void;
+    vi.mocked(notesApi.fetchNotes).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    window.dispatchEvent(new Event("focus"));
+    await screen.findByText("PAGE 1 / 2");
+    finish({ ...snapshot, notes: [] });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(counter()).toBe("PAGE 1 / 2");
+  });
   it("opens exactly the requested note as the file in its own folder", async () => {
     render(<NotesScreen onStartTask={vi.fn()} initialNoteId="note-1" />);
     expect(await screen.findByText("PAGE 1 / 1")).not.toBeNull();

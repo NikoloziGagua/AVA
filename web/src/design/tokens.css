@@ -470,6 +470,74 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
   .ds-calendar-cell, .ds-calendar-time-event, .ds-calendar-field input, .ds-calendar-field textarea, .ds-calendar-field select { border: 1px solid CanvasText; }
   .ds-calendar button[aria-pressed="true"] { outline: 2px solid Highlight; }
 }
+/* Notes library: one dark reading plane, open folder/file rails, no nested dashboard cards. */
+.ds-notes { position: relative; isolation: isolate; }
+.ds-notes > .ds-atmosphere { opacity: .55; }
+.ds-notes-content { position: relative; max-width: 1580px; margin: auto; padding: 40px 36px calc(var(--ds-bar-space, 118px) + 60px); }
+.ds-notes-title { margin-bottom: 30px; }
+.ds-notes-title > p { color: var(--ds-ink-2); font-size: 12px; letter-spacing: .14em; margin-bottom: 12px; }
+.ds-notes-title h1 { font-size: clamp(30px, 3.5vw, 46px); font-weight: 350; line-height: 1.15; letter-spacing: -.055em; }
+.ds-notes-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; }
+.ds-notes-wide { grid-column: 1 / -1; }
+.ds-notes-plane { min-width: 0; background: none; border: 0; box-shadow: none; }
+.ds-notes-capture { padding-bottom: 8px; }
+.ds-notes-capture .ds-notes-plane { padding: 0; }
+.ds-notes-capture textarea { min-height: 56px; border: 0; border-radius: 0; box-shadow: 0 1px var(--ds-metal-edge); padding-left: 0; background: transparent; }
+.ds-notes-capture .hud { font-size: 12px; letter-spacing: .08em; }
+.ds-notes-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; padding: 10px 13px; border: 0; border-radius: 5px; font-size: 13px; line-height: 1.4; font-weight: 450; transition: background-color 180ms, opacity 180ms; color: var(--ds-ink); background: var(--ds-glass); }
+.ds-notes-button-default { background: linear-gradient(130deg, var(--ds-alloy-a), var(--ds-alloy-c)); color: var(--ds-alloy-text); box-shadow: inset 0 1px var(--ds-alloy-hi); }
+.ds-notes-button-ghost { background: transparent; color: var(--ds-ink-2); }
+.ds-notes-button:hover { opacity: .85; }
+.ds-notes-button:disabled { opacity: .4; cursor: not-allowed; }
+.ds-notes-folders .ds-notes-plane { padding: 10px 0; }
+.ds-note-folder-tree button { min-height: 40px; border: 0; border-radius: 4px; }
+.ds-note-folder-tree button[aria-current="true"] { background: var(--ds-glass); box-shadow: inset 2px 0 var(--ds-trace); }
+.ds-notes-folder-heading { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 6px 0 26px; }
+.ds-notes-folder-heading h2 { font-size: 28px; font-weight: 400; letter-spacing: -.04em; }
+.ds-notes-folder-heading input { background: none; border: 0; border-radius: 0; box-shadow: 0 1px var(--ds-metal-edge); min-height: 44px; }
+.ds-notes-files-reader { display: grid; grid-template-columns: minmax(175px, .32fr) minmax(0, 1fr); gap: 28px; }
+.ds-note-files { padding: 4px 0; }
+.ds-note-file-row { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 20px 14px; text-align: left; border-radius: 4px; background: transparent; color: var(--ds-ink-2); }
+.ds-note-file-selected { background: var(--ds-glass); color: var(--ds-ink); box-shadow: inset 0 1px var(--ds-metal-edge); }
+.ds-note-file-title { display: block; font-size: 15px; font-weight: 450; line-height: 1.5; overflow-wrap: anywhere; }
+.ds-note-file-preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 8px; font-size: 12px; line-height: 1.65; color: var(--ds-ink-2); overflow-wrap: anywhere; }
+.ds-note-reader { min-width: 0; }
+.ds-note-paper { padding: 32px 30px 50px; background: var(--ds-canvas); border-radius: 4px; box-shadow: 0 20px 80px var(--ds-shadow), inset 0 1px var(--ds-metal-edge); overflow-wrap: anywhere; }
+.ds-note-paper-heading { margin-bottom: 32px; }
+.ds-note-paper-heading h2 { font-size: clamp(24px, 2.5vw, 34px); font-weight: 400; line-height: 1.25; letter-spacing: -.035em; margin: 22px 0 18px; }
+.ds-note-paper .ds-prose { font-size: 16px; line-height: 1.9; }
+.ds-notes-phone-path { display: none; }
+.ds-notes-editor { color: var(--ds-ink); background: var(--ds-canvas); border: 0; backdrop-filter: none; border-radius: 10px; box-shadow: 0 30px 100px var(--ds-shadow); }
+.ds-notes-editor > button[aria-label="Close dialog"] { color: var(--ds-ink); }
+.ds-notes-editor input:not([type="checkbox"]), .ds-notes-editor textarea, .ds-notes-editor select { color: var(--ds-ink); background: transparent; border: 0; border-radius: 0; box-shadow: 0 1px var(--ds-metal-edge); min-height: 44px; padding: 10px 0; font-size: 15px; }
+.ds-notes-editor textarea { line-height: 1.85; min-height: 100px; }
+.ds-notes-editor textarea[placeholder^="Write the file"] { min-height: 260px; }
+.ds-notes-editor > .grid { grid-template-columns: minmax(0, 1fr); }
+.ds-note-history > div > div { min-width: 0; display: grid; grid-template-columns: 100px minmax(0,1fr); gap: 6px 12px; }
+.ds-note-history > div > div > span { width: auto; min-width: 0; overflow-wrap: anywhere; }
+.ds-note-history > div > div > span:last-child { grid-column: 1 / -1; }
+.ds-notes-editor input:focus-visible, .ds-notes-editor textarea:focus-visible, .ds-notes-editor select:focus-visible, .ds-notes button:focus-visible, .ds-notes select:focus-visible { outline: 2px solid var(--ds-trace); outline-offset: 3px; }
+.ds-notes-editor select option, .ds-notes select option { background: var(--ds-canvas); color: var(--ds-ink); }
+.ds-notes-editor label { min-width: 0; }
+.ds-notes-editor footer { background: var(--ds-canvas); border: 0; }
+@media (min-width: 768px) { .ds-notes-editor > .grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+@media (max-width: 1150px) { .ds-notes-layout { grid-template-columns: 190px minmax(0,1fr); gap: 20px; } .ds-notes-files-reader { grid-template-columns: 175px minmax(0,1fr); gap: 18px; } .ds-note-paper { padding: 24px 20px 40px; } }
+@media (max-width: 850px) {
+  .ds-notes-content { padding: 26px 18px calc(var(--ds-bar-space, 118px) + 50px); }
+  .ds-notes-layout { display: block; }
+  .ds-notes-phone-path { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; font-size: 14px; }
+  .ds-notes-phone-path > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ds-notes-capture { margin-bottom: 26px; }
+  .ds-notes-files-reader { display: block; }
+  .ds-notes[data-pane="library"] .ds-notes-main { display: none; }
+  .ds-notes:not([data-pane="library"]) .ds-notes-folders { display: none; }
+  .ds-notes[data-pane="files"] .ds-note-reader { display: none; }
+  .ds-notes[data-pane="reader"] .ds-note-files, .ds-notes[data-pane="reader"] .ds-notes-folder-heading, .ds-notes[data-pane="reader"] .ds-notes-capture { display: none; }
+  .ds-notes[data-pane="reader"] [aria-label="Notes now use folders"] { display: none; }
+  .ds-note-paper { padding: 26px 20px 40px; }
+  .ds-notes-editor { max-width: calc(100vw - 20px); }
+}
+@media (forced-colors: active) { .ds-note-paper, .ds-note-file-selected, .ds-notes-button, .ds-notes-editor input, .ds-notes-editor select, .ds-notes-editor textarea { border: 1px solid CanvasText; } }
 /* Small landscape / zoom: permit scrolling rather than hide meaningful content. */
 @media (max-height: 620px) { .ds-atelier-home { overflow-y: auto; } .ds-home-composition { min-height: 560px; } }
 /* Forced colours: surfaces fall back to system colours with real borders. */

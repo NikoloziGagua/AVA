@@ -1,5 +1,5 @@
 import { FilePlus2, FileText, GraduationCap } from "lucide-react";
-import { Button } from "../components/ui/button.js";
+import { Button } from "./NotesPrimitives.js";
 import type { Note } from "./api.js";
 
 function filePreview(content: string): string {
@@ -20,9 +20,9 @@ export function NoteFileList({ files, selectedId, folderName, onSelect, onNewFil
   onNewFile: () => void;
 }) {
   return (
-    <nav aria-label={`Files in ${folderName}`} className="min-w-0 rounded-2xl border border-white/[0.07] bg-black/25 px-2.5 py-3 md:max-h-[720px] md:overflow-y-auto">
+    <nav aria-label={`Files in ${folderName}`} className="ds-note-files min-w-0">
       <div className="mb-2 flex items-center justify-between gap-2 px-2">
-        <div><p className="hud text-[9px] tracking-[0.15em] text-white/35">FILES</p><p className="mt-0.5 text-[10px] text-white/30">{files.length} in this folder</p></div>
+        <div><p className="hud text-meta tracking-[0.15em] text-ink-2">FILES</p><p className="mt-0.5 text-meta text-ink-2">{files.length} in this folder</p></div>
         <Button size="sm" variant="ghost" onClick={onNewFile} aria-label="New file"><FilePlus2 size={14} /></Button>
       </div>
       {files.length ? (
@@ -32,16 +32,16 @@ export function NoteFileList({ files, selectedId, folderName, onSelect, onNewFil
             return (
               <li key={file.id}>
                 <button type="button" aria-label={file.title} aria-current={selected ? "page" : undefined} onClick={() => onSelect(file.id)}
-                  className={`flex w-full items-start gap-2.5 rounded-xl border px-3 py-2.5 text-left transition motion-reduce:transition-none ${selected ? "border-[var(--ac)]/25 bg-[var(--ac)]/[0.08] text-white" : "border-transparent text-white/55 hover:border-white/[0.07] hover:bg-white/[0.035] hover:text-white"}`}>
-                  {file.documentType === "study" ? <GraduationCap size={14} className="mt-0.5 shrink-0 text-[#bb8cff]" /> : <FileText size={14} className="mt-0.5 shrink-0 text-white/35" />}
-                  <span className="min-w-0"><span className="block truncate text-xs font-medium">{file.title}</span><span className="mt-1 block max-h-8 overflow-hidden text-[9px] leading-4 text-white/30">{filePreview(file.content)}</span></span>
+                  className={`ds-focus ds-note-file-row ${selected ? "ds-note-file-selected" : ""}`}>
+                  {file.documentType === "study" ? <GraduationCap size={14} className="mt-0.5 shrink-0 text-ink-2" /> : <FileText size={14} className="mt-0.5 shrink-0 text-ink-2" />}
+                  <span className="min-w-0"><span className="ds-note-file-title">{file.title}</span><span className="ds-note-file-preview">{filePreview(file.content)}</span></span>
                 </button>
               </li>
             );
           })}
         </ol>
       ) : (
-        <button type="button" onClick={onNewFile} className="flex min-h-28 w-full flex-col items-center justify-center rounded-xl border border-dashed border-white/[0.08] px-3 text-center text-[10px] text-white/35 hover:border-[var(--ac)]/25 hover:text-white/60">
+        <button type="button" onClick={onNewFile} className="flex min-h-28 w-full flex-col items-center justify-center rounded-xl border border-dashed border-glass-strong px-3 text-center text-meta text-ink-2 hover:border-glass-strong hover:text-ink-2">
           <FilePlus2 size={16} className="mb-2" />Create the first file
         </button>
       )}

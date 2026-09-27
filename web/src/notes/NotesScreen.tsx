@@ -26,9 +26,9 @@ import {
   Trash2,
 } from "lucide-react";
 import { ApiError, fetchMemoryIndex, type MemoryIndexSearchResponse } from "../api.js";
-import { BorderGlow } from "../components/ava/BorderGlow.js";
-import { PanelShell } from "../components/ava/PanelShell.js";
-import { Button } from "../components/ui/button.js";
+import { OpenPlane as BorderGlow } from "./NotesPrimitives.js";
+import { NotesShell as PanelShell } from "./NotesPrimitives.js";
+import { Button } from "./NotesPrimitives.js";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "../components/ui/dialog.js";
 import {
   GENERAL_FOLDER_ID,
@@ -71,17 +71,17 @@ import {
 } from "./folders.js";
 
 const STAGE = {
-  ideas: { label: "Ideas", icon: Lightbulb, color: "#f6c76c", hint: "Captured and ready to shape" },
-  doing: { label: "Doing", icon: Rocket, color: "#5cf2ff", hint: "Active work and next actions" },
-  review: { label: "Review", icon: Search, color: "#bb8cff", hint: "Validate, discuss or decide" },
-  done: { label: "Done", icon: CheckCircle2, color: "#77e5a1", hint: "Finished, retained as context" },
+  ideas: { label: "Ideas", icon: Lightbulb, color: "var(--ds-ink-2)", hint: "Captured and ready to shape" },
+  doing: { label: "Doing", icon: Rocket, color: "var(--ds-ink-2)", hint: "Active work and next actions" },
+  review: { label: "Review", icon: Search, color: "var(--ds-ink-2)", hint: "Validate, discuss or decide" },
+  done: { label: "Done", icon: CheckCircle2, color: "var(--ds-ink-2)", hint: "Finished, retained as context" },
 } as const;
 
 const SECTION = {
-  capture: { label: "Quick capture", icon: Inbox, description: "Ideas, requirements and useful fragments", color: "#5cf2ff" },
-  priorities: { label: "Pinned priorities", icon: Pin, description: "What matters most right now", color: "#f6c76c" },
-  decisions: { label: "Decisions", icon: Scale, description: "What was chosen and why", color: "#bb8cff" },
-  documentation: { label: "Documentation", icon: BookOpen, description: "Stable context worth preserving", color: "#77e5a1" },
+  capture: { label: "Quick capture", icon: Inbox, description: "Ideas, requirements and useful fragments", color: "var(--ds-ink-2)" },
+  priorities: { label: "Pinned priorities", icon: Pin, description: "What matters most right now", color: "var(--ds-ink-2)" },
+  decisions: { label: "Decisions", icon: Scale, description: "What was chosen and why", color: "var(--ds-ink-2)" },
+  documentation: { label: "Documentation", icon: BookOpen, description: "Stable context worth preserving", color: "var(--ds-ink-2)" },
 } as const;
 
 /** Browser-local only: whether Sir has dismissed the one-time folders notice. */
@@ -120,9 +120,9 @@ function noticeDismissed(): boolean {
 
 function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
   return (
-    <div role="alert" className="flex items-start justify-between gap-4 rounded-xl border border-red-300/25 bg-red-400/[0.08] px-4 py-3 text-xs text-red-100">
+    <div role="alert" className="flex items-start justify-between gap-4 rounded-xl border border-glass-strong bg-danger-soft px-4 py-3 text-xs text-danger">
       <span className="leading-5">{message}</span>
-      <button type="button" onClick={onDismiss} className="hud text-[9px] tracking-[0.14em] text-red-100/60 hover:text-red-100">DISMISS</button>
+      <button type="button" onClick={onDismiss} className="hud text-meta tracking-[0.14em] text-danger hover:text-danger">DISMISS</button>
     </div>
   );
 }
@@ -141,6 +141,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   const [selected, setSelected] = useState(GENERAL_FOLDER_ID);
   const [fileId, setFileId] = useState<string | null>(null);
   const [view, setView] = useState<View>("files");
+  const [phonePane, setPhonePane] = useState<"library" | "files" | "reader">("library");
   const [query, setQuery] = useState("");
   const [capture, setCapture] = useState("");
   const [captureSection, setCaptureSection] = useState<NoteSection>("capture");
@@ -154,10 +155,14 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   const [projectMemoryLoading, setProjectMemoryLoading] = useState(false);
   const [projectMemoryError, setProjectMemoryError] = useState<string | null>(null);
   const projectMemoryRequest = useRef(0);
+  const loadRequest = useRef(0);
+  const mutation = useRef(false);
 
   const load = async (quiet = false) => {
+    const request = ++loadRequest.current;
     try {
       const [next, nextTree] = await Promise.all([fetchNotes(), fetchNotesTree()]);
+      if (request !== loadRequest.current) return;
       setSnapshot(next);
       setTree(nextTree);
       setSelected((current) => nextTree.folders.some((folder) => folder.id === current) ? current : GENERAL_FOLDER_ID);
@@ -170,6 +175,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
           setSelected(noteFolderId(target));
           setFileId(target.id);
           setView("files");
+          setPhonePane("reader");
         } else {
           // Same wording whether it was deleted, archived or never existed.
           setSelected(GENERAL_FOLDER_ID);
@@ -177,6 +183,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
         }
       }
     } catch (cause) {
+      if (request !== loadRequest.current) return;
       if (!quiet) setError(cause instanceof Error ? cause.message : "Notes could not be loaded.");
     }
   };
@@ -186,7 +193,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     const timer = window.setInterval(() => void load(true), 10_000);
     const refresh = () => void load(true);
     window.addEventListener("focus", refresh);
-    return () => { window.clearInterval(timer); window.removeEventListener("focus", refresh); };
+    return () => { ++loadRequest.current; window.clearInterval(timer); window.removeEventListener("focus", refresh); };
   }, []);
 
   const folderTree = useMemo<FolderNode[]>(() => buildFolderTree(tree?.folders ?? []), [tree]);
@@ -238,6 +245,8 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   const selectFolder = (id: string) => {
     setSelected(id);
     setFileId(null);
+    setPhonePane("files");
+    setQuery("");
   };
 
   const openFile = (note: Note) => {
@@ -245,18 +254,21 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
     setFileId(note.id);
     setView("files");
     setQuery("");
+    setPhonePane("reader");
   };
 
   const perform = async (key: string, action: () => Promise<void>) => {
+    if (mutation.current) return;
+    mutation.current = true;
     setBusy(key);
     setError(null);
     try { await action(); await load(true); }
     catch (cause) {
       setError(cause instanceof ApiError && cause.code === "stale_version"
-        ? "That changed in another window or through AVA. The latest version is shown; repeat your change if it is still needed."
+        ? "That changed in another window or through AVA. Close this editor and reopen the latest version before making your change."
         : cause instanceof Error ? cause.message : "The Notes action failed.");
       await load(true);
-    } finally { setBusy(null); }
+    } finally { mutation.current = false; setBusy(null); }
   };
 
   const quickCapture = async () => {
@@ -314,7 +326,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   if (!snapshot && !error) {
     return (
       <PanelShell title="Notes">
-        <div className="flex h-64 items-center justify-center text-white/45"><LoaderCircle className="mr-3 animate-spin" size={18} />Opening your workspace…</div>
+        <div className="flex h-64 items-center justify-center text-ink-2"><LoaderCircle className="mr-3 animate-spin" size={18} />Opening your workspace…</div>
       </PanelShell>
     );
   }
@@ -327,14 +339,21 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   const crumbs = folder ? folderLabel(folder) : "General";
 
   return (
-    <PanelShell title="Notes" grid>
-      <section className="lg:col-span-12" data-panel-section>
+    <PanelShell title="Notes" grid pane={phonePane}>
+      <div className="ds-notes-phone-path ds-notes-wide">
+        {phonePane !== "library" && <button className="ds-focus ds-notes-button ds-notes-button-ghost" onClick={() => {
+          setPhonePane(phonePane === "reader" ? "files" : "library");
+          requestAnimationFrame(() => document.querySelector<HTMLElement>(phonePane === "reader" ? '.ds-note-files button[aria-current="page"]' : '.ds-notes-folders button[aria-current="true"]')?.focus());
+        }}><ArrowLeft size={16} aria-hidden />{phonePane === "reader" ? "Back to files" : "Back to library"}</button>}
+        <span>{phonePane === "library" ? "Library" : phonePane === "files" ? folderName : selectedFile?.title ?? folderName}</span>
+      </div>
+      <section className="ds-notes-wide ds-notes-capture" data-panel-section>
         <BorderGlow className="overflow-hidden px-5 py-4 sm:px-6">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
             <div className="min-w-0 flex-1">
               <div className="mb-2 flex items-center gap-2">
-                <NotebookPen size={15} className="text-[var(--ac)]" />
-                <span className="hud text-[10px] tracking-[0.18em] text-white/55">QUICK CAPTURE · {folderName.toUpperCase()}</span>
+                <NotebookPen size={15} className="text-ink" />
+                <span className="hud text-meta tracking-[0.18em] text-ink-2">QUICK CAPTURE · {folderName.toUpperCase()}</span>
               </div>
               <textarea
                 value={capture}
@@ -343,7 +362,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void quickCapture(); }
                 }}
                 placeholder="Drop the thought here. AVA can organise it with you later…"
-                className="min-h-16 w-full resize-none rounded-xl border border-white/10 bg-black/45 px-4 py-3 text-sm leading-6 text-white outline-none transition focus:border-[var(--ac)]/45 focus:ring-2 focus:ring-[var(--ac)]/10"
+                className="min-h-16 w-full resize-none rounded-xl border border-glass-strong bg-transparent px-4 py-3 text-sm leading-6 text-ink ds-focus transition focus:border-glass-strong focus:ring-2 focus:ring-glass-strong"
               />
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -353,17 +372,17 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                 const active = captureSection === section;
                 return (
                   <button key={section} type="button" aria-pressed={active} onClick={() => setCaptureSection(section)}
-                    className={`hidden h-9 sm:flex items-center gap-2 rounded-lg border px-3 text-[11px] transition ${active ? "border-white/25 bg-white/10 text-white" : "border-white/[0.07] bg-black/25 text-white/45 hover:text-white/75"}`}>
+                    className={`hidden h-9 sm:flex items-center gap-2 rounded-lg border px-3 text-meta transition ${active ? "border-glass-strong bg-glass text-ink" : "border-glass-strong bg-transparent text-ink-2 hover:text-ink-2"}`}>
                     <Icon size={13} style={{ color: active ? meta.color : undefined }} />{meta.label}
                   </button>
                 );
               })}
-              <Button size="sm" disabled={!capture.trim() || busy === "capture"} onClick={() => void quickCapture()} className="h-9 bg-[var(--ac)] text-black hover:bg-[#b4f8ff]">
+              <Button size="sm" disabled={!capture.trim() || busy === "capture"} onClick={() => void quickCapture()} className="h-9 bg-glass-strong text-ink hover:bg-canvas">
                 {busy === "capture" ? <LoaderCircle size={14} className="animate-spin" /> : <Plus size={14} />}Capture
               </Button>
             </div>
           </div>
-          <div className="mt-2 hidden items-center justify-between gap-3 text-[10px] text-white/30 sm:flex">
+          <div className="mt-2 hidden items-center justify-between gap-3 text-meta text-ink-2 sm:flex">
             <span>Tip: tell AVA “add this to my Agile Development study notes.”</span>
             <span className="hidden sm:block">Ctrl + Enter to capture</span>
           </div>
@@ -371,9 +390,9 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
       </section>
 
       {showMigration && (
-        <section aria-label="Notes now use folders" className="lg:col-span-12" data-panel-section>
-          <div className="rounded-xl border border-[var(--ac)]/20 bg-[var(--ac)]/[0.05] px-4 py-3 text-xs leading-5 text-white/70">
-            <p className="font-medium text-white">Notes now live as files inside folders.</p>
+        <section aria-label="Notes now use folders" className="ds-notes-wide" data-panel-section>
+          <div className="rounded-xl border border-glass-strong bg-glass-strong px-4 py-3 text-xs leading-5 text-ink-2">
+            <p className="font-medium text-ink">Notes now live as files inside folders.</p>
             <p className="mt-1">
               All {tree.snapshot.totalDocuments} of your notes are here unchanged, in the order they were written.
               Your old project spaces became folders. Nothing was merged or renamed.
@@ -381,28 +400,28 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
             {legacy.length > 0 && (
               <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Folders made from project spaces">
                 {legacy.map((entry) => (
-                  <li key={entry.id} className="rounded-md border border-white/10 bg-black/30 px-2 py-0.5 text-[11px] text-white/60">{folderLabel(entry)} · {entry.documentCount}</li>
+                  <li key={entry.id} className="rounded-md border border-glass-strong bg-transparent px-2 py-0.5 text-meta text-ink-2">{folderLabel(entry)} · {entry.documentCount}</li>
                 ))}
               </ul>
             )}
-            <p className="mt-2 text-white/50">If two folders belong together, move the files yourself or ask AVA to combine them. She will show you first.</p>
-            <button type="button" onClick={dismissMigration} className="hud mt-2 text-[9px] tracking-[0.14em] text-[var(--ac)]/80 hover:text-[var(--ac)]">GOT IT</button>
+            <p className="mt-2 text-ink-2">If two folders belong together, move the files yourself or ask AVA to combine them. She will show you first.</p>
+            <button type="button" onClick={dismissMigration} className="hud mt-2 text-meta tracking-[0.14em] text-ink hover:text-ink">GOT IT</button>
           </div>
         </section>
       )}
 
-      {(error || notice) && (
-        <div className="lg:col-span-12" data-panel-section>
+      {(error || notice) && !editor && !folderDialog && (
+        <div className="ds-notes-wide" data-panel-section>
           {error ? <ErrorBanner message={error} onDismiss={() => setError(null)} /> : (
-            <div role="status" className="flex items-start justify-between gap-4 rounded-xl border border-[var(--ac)]/20 bg-[var(--ac)]/[0.06] px-4 py-3 text-xs text-[#bdf8ff]">
+            <div role="status" className="flex items-start justify-between gap-4 rounded-xl border border-glass-strong bg-glass-strong px-4 py-3 text-xs text-ink-2">
               <span>{notice}</span>
-              <button type="button" onClick={() => setNotice(null)} className="hud text-[9px] tracking-[0.14em] text-[#bdf8ff]/60 hover:text-[#bdf8ff]">DISMISS</button>
+              <button type="button" onClick={() => setNotice(null)} className="hud text-meta tracking-[0.14em] text-ink-2 hover:text-ink-2">DISMISS</button>
             </div>
           )}
         </div>
       )}
 
-      <aside className="lg:col-span-3" data-panel-section>
+      <aside className="ds-notes-folders" data-panel-section>
         <BorderGlow className="px-3 py-3 sm:px-4 sm:py-4">
           <FolderTree
             tree={folderTree}
@@ -423,58 +442,58 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
         </BorderGlow>
       </aside>
 
-      <main className="min-w-0 lg:col-span-9" data-panel-section>
-        <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-white/[0.07] bg-black/30 px-4 py-3 sm:px-5 md:flex-row md:items-center md:justify-between">
+      <main className="min-w-0 ds-notes-main" data-panel-section>
+        <div className="ds-notes-folder-heading">
           <div className="min-w-0">
-            <p className="truncate text-[10px] text-white/35">{crumbs}</p>
+            <p className="truncate text-meta text-ink-2">{crumbs}</p>
             <div className="flex items-center gap-2">
-              <h2 className="truncate text-lg font-semibold text-white">{folderName}</h2>
-              <span className="rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/40">{files.length} {files.length === 1 ? "file" : "files"}</span>
+              <h2 className="truncate text-lg font-semibold text-ink">{folderName}</h2>
+              <span className="rounded-full border border-glass-strong px-2 py-0.5 text-meta text-ink-2">{files.length} {files.length === 1 ? "file" : "files"}</span>
             </div>
-            {folder?.description && <p className="mt-0.5 text-xs text-white/40">{folder.description}</p>}
+            {folder?.description && <p className="mt-0.5 text-xs text-ink-2">{folder.description}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="relative min-w-0 basis-full sm:w-52 sm:basis-auto sm:flex-none">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-2" />
               <input
                 aria-label={view === "files" ? "Search all files" : "Search this folder"}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={view === "files" ? "Search all files" : "Search this folder"}
-                className="h-9 w-full rounded-lg border border-white/10 bg-black/40 pl-9 pr-3 text-xs text-white outline-none focus:border-[var(--ac)]/35"
+                className="h-9 w-full rounded-lg border border-glass-strong bg-transparent pl-9 pr-3 text-xs text-ink ds-focus focus:border-glass-strong"
               />
             </label>
-            <div role="group" aria-label="View" className="flex rounded-lg border border-white/10 p-0.5">
-              <button type="button" aria-pressed={view === "files"} onClick={() => setView("files")} className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11px] ${view === "files" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/75"}`}><BookOpen size={13} />Files</button>
-              <button type="button" aria-pressed={view === "board"} onClick={() => setView("board")} className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[11px] ${view === "board" ? "bg-white/10 text-white" : "text-white/45 hover:text-white/75"}`}><KanbanSquare size={13} />Board</button>
+            <div role="group" aria-label="View" className="flex rounded-lg border border-glass-strong p-0.5">
+              <button type="button" aria-pressed={view === "files"} onClick={() => setView("files")} className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-meta ${view === "files" ? "bg-glass text-ink" : "text-ink-2 hover:text-ink-2"}`}><BookOpen size={13} />Files</button>
+              <button type="button" aria-pressed={view === "board"} onClick={() => setView("board")} className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-meta ${view === "board" ? "bg-glass text-ink" : "text-ink-2 hover:text-ink-2"}`}><KanbanSquare size={13} />Board</button>
             </div>
-            <button type="button" aria-label="Refresh notes" onClick={() => void load()} className="flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 text-white/40 transition hover:text-white"><RefreshCw size={14} /></button>
+            <button type="button" aria-label="Refresh notes" onClick={() => void load()} className="flex h-9 w-9 items-center justify-center rounded-lg border border-glass-strong text-ink-2 transition hover:text-ink"><RefreshCw size={14} /></button>
             <Button size="sm" onClick={() => newFile()} className="h-9"><Plus size={14} />New file</Button>
             <Button size="sm" variant="outline" onClick={() => newFile("study")} className="h-9"><GraduationCap size={14} />Study file</Button>
           </div>
         </div>
 
         {view === "files" && query.trim() ? (
-          <section aria-label="Search results" className="rounded-2xl border border-white/[0.07] bg-black/25 px-3 py-3">
-            <p className="mb-2 px-2 text-[10px] text-white/40">{searchResults.length} {searchResults.length === 1 ? "file matches" : "files match"} “{query.trim()}”</p>
+          <section aria-label="Search results" className="rounded-2xl border border-glass-strong bg-transparent px-3 py-3">
+            <p className="mb-2 px-2 text-meta text-ink-2">{searchResults.length} {searchResults.length === 1 ? "file matches" : "files match"} “{query.trim()}”</p>
             <ul className="space-y-0.5">
               {searchResults.map((note) => (
                 <li key={note.id}>
-                  <button type="button" onClick={() => openFile(note)} className="flex w-full flex-col rounded-lg px-3 py-2 text-left transition hover:bg-white/[0.04]">
-                    <span className="text-sm text-white/85">{note.title}</span>
-                    <span className="text-[10px] text-white/35">{note.folderPath?.map((crumb) => crumb.name).join(" / ") || "General"}</span>
+                  <button type="button" onClick={() => openFile(note)} className="flex w-full flex-col rounded-lg px-3 py-2 text-left transition hover:bg-glass">
+                    <span className="text-sm text-ink-2">{note.title}</span>
+                    <span className="text-meta text-ink-2">{note.folderPath?.map((crumb) => crumb.name).join(" / ") || "General"}</span>
                   </button>
                 </li>
               ))}
             </ul>
           </section>
         ) : view === "files" ? (
-          <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(180px,0.32fr)_minmax(0,1fr)]">
+          <div className="ds-notes-files-reader">
             <NoteFileList
               files={files}
               selectedId={selectedFile?.id ?? null}
               folderName={folderName}
-              onSelect={setFileId}
+              onSelect={(id) => { setFileId(id); setPhonePane("reader"); }}
               onNewFile={() => newFile()}
             />
             <NotePager
@@ -504,14 +523,14 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
             )}
 
             {pinned.length > 0 && (
-              <div className="mb-5 rounded-xl border border-[#f6c76c]/20 bg-[#f6c76c]/[0.04] px-4 py-3">
-                <div className="mb-2 flex items-center gap-2 hud text-[9px] tracking-[0.16em] text-[#f6c76c]/80"><Pin size={12} />PINNED PRIORITIES</div>
+              <div className="mb-5 rounded-xl border border-glass-strong bg-canvas px-4 py-3">
+                <div className="mb-2 flex items-center gap-2 hud text-meta tracking-[0.16em] text-ink-2"><Pin size={12} />PINNED PRIORITIES</div>
                 <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                   {pinned.map((note) => (
                     <button key={note.id} type="button" onClick={() => openFile(note)}
-                      className="min-w-52 max-w-72 rounded-lg border border-white/[0.07] bg-black/30 px-3 py-2 text-left text-xs text-white/70 hover:border-[#f6c76c]/25 hover:text-white">
+                      className="min-w-52 max-w-72 rounded-lg border border-glass-strong bg-transparent px-3 py-2 text-left text-xs text-ink-2 hover:border-glass-strong hover:text-ink">
                       <span className="line-clamp-1 font-medium">{note.title}</span>
-                      <span className="mt-1 block line-clamp-1 text-[10px] text-white/30">{note.content}</span>
+                      <span className="mt-1 block line-clamp-1 text-meta text-ink-2">{note.content}</span>
                     </button>
                   ))}
                 </div>
@@ -525,19 +544,19 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                   const Icon = meta.icon;
                   const notes = boardNotes.filter((note) => note.status === stage);
                   return (
-                    <section key={stage} className="min-h-[360px] rounded-2xl border border-white/[0.07] bg-white/[0.018] p-3"
+                    <section key={stage} className="min-h-[360px] rounded-2xl border border-glass-strong bg-glass p-3"
                       onDragOver={(event) => event.preventDefault()}
                       onDrop={(event) => {
                         event.preventDefault();
                         const note = snapshot.notes.find((entry) => entry.id === event.dataTransfer.getData("text/note-id"));
                         if (note) void moveNote(note, stage);
                       }}>
-                      <header className="mb-3 rounded-xl border border-white/[0.06] bg-black/35 px-3 py-3">
+                      <header className="mb-3 rounded-xl border border-glass-strong bg-transparent px-3 py-3">
                         <div className="flex items-center justify-between">
-                          <span className="flex items-center gap-2 text-xs font-semibold text-white/80"><Icon size={14} style={{ color: meta.color }} />{meta.label}</span>
-                          <span className="hud rounded-full border border-white/10 px-2 py-0.5 text-[9px] text-white/35">{notes.length}</span>
+                          <span className="flex items-center gap-2 text-xs font-semibold text-ink-2"><Icon size={14} style={{ color: meta.color }} />{meta.label}</span>
+                          <span className="hud rounded-full border border-glass-strong px-2 py-0.5 text-meta text-ink-2">{notes.length}</span>
                         </div>
-                        <p className="mt-1.5 text-[9px] text-white/30">{meta.hint}</p>
+                        <p className="mt-1.5 text-meta text-ink-2">{meta.hint}</p>
                       </header>
                       <div className="space-y-2.5">
                         {notes.map((note) => (
@@ -552,7 +571,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                         ))}
                         {notes.length === 0 && (
                           <button type="button" onClick={() => newFile()}
-                            className="flex min-h-24 w-full flex-col items-center justify-center rounded-xl border border-dashed border-white/[0.08] text-[10px] text-white/25 transition hover:border-[var(--ac)]/20 hover:text-white/45">
+                            className="flex min-h-24 w-full flex-col items-center justify-center rounded-xl border border-dashed border-glass-strong text-meta text-ink-2 transition hover:border-glass-strong hover:text-ink-2">
                             <Plus size={15} className="mb-2" />Add to {meta.label}
                           </button>
                         )}
@@ -572,7 +591,8 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
         parentName={folderDialog?.mode === "create" ? folderDialog.parent?.name ?? null : null}
         initialName={folderDialog?.mode === "rename" ? folderDialog.folder.name : ""}
         busy={busy === "folder"}
-        onOpenChange={(open) => { if (!open) setFolderDialog(null); }}
+        error={error}
+        onOpenChange={(open) => { if (!open && !busy) setFolderDialog(null); }}
         onSubmit={async (name, topLevel) => {
           const state = folderDialog;
           if (!state) return;
@@ -590,7 +610,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
         }}
       />
 
-      <NoteEditor open={!!editor} target={editor} folders={flatFolders} busy={busy === "editor"} onOpenChange={(open) => { if (!open) setEditor(null); }}
+      <NoteEditor open={!!editor} target={editor} folders={flatFolders} busy={busy === "editor"} error={error} onOpenChange={(open) => { if (!open && !busy) setEditor(null); }}
         onSave={async (draft) => {
           const current = editor?.note ?? null;
           await perform("editor", async () => {
@@ -607,6 +627,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
               setSelected(noteFolderId(created));
               setFileId(created.id);
               setView("files");
+              setPhonePane("reader");
             }
             setEditor(null);
             setNotice(current ? "File updated with a new change-history entry." : "New file added at the end of the folder.");
@@ -640,26 +661,26 @@ function NoteCard({ note, busy, onOpen, onMove, onPin }: {
   const stageIndex = NOTE_STAGES.indexOf(note.status as typeof NOTE_STAGES[number]);
   return (
     <article draggable onDragStart={(event) => { event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/note-id", note.id); }}
-      className="group rounded-xl border border-white/[0.075] bg-black/40 px-3.5 py-3 shadow-[0_16px_28px_-24px_rgba(0,0,0,.95)] transition hover:-translate-y-0.5 hover:border-white/15 hover:bg-black/55">
+      className="group rounded-xl border border-glass-strong bg-transparent px-3.5 py-3 shadow-none transition hover:-translate-y-0.5 hover:border-glass-strong hover:bg-transparent">
       <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.12em] text-white/35"><GripVertical size={11} className="cursor-grab" /><SectionIcon size={11} style={{ color: section.color }} />{note.kind}</span>
-        <button type="button" aria-label={note.pinned ? "Unpin note" : "Pin note"} onClick={onPin} className={note.pinned ? "text-[#f6c76c]" : "text-white/20 hover:text-white/55"}><Pin size={12} fill={note.pinned ? "currentColor" : "none"} /></button>
+        <span className="flex items-center gap-1.5 text-meta uppercase tracking-[0.12em] text-ink-2"><GripVertical size={11} className="cursor-grab" /><SectionIcon size={11} style={{ color: section.color }} />{note.kind}</span>
+        <button type="button" aria-label={note.pinned ? "Unpin note" : "Pin note"} onClick={onPin} className={note.pinned ? "text-ink-2" : "text-ink-2 hover:text-ink-2"}><Pin size={12} fill={note.pinned ? "currentColor" : "none"} /></button>
       </div>
       <button type="button" onClick={onOpen} className="block w-full text-left">
-        <h3 className="line-clamp-2 text-[13px] font-semibold leading-5 text-white/85 group-hover:text-white">{note.title}</h3>
-        <p className="mt-1.5 line-clamp-3 whitespace-pre-wrap text-[10px] leading-4 text-white/38">{note.content}</p>
+        <h3 className="line-clamp-2 text-[13px] font-semibold leading-5 text-ink-2 group-hover:text-ink">{note.title}</h3>
+        <p className="mt-1.5 line-clamp-3 whitespace-pre-wrap text-meta leading-4 text-ink-2">{note.content}</p>
       </button>
-      {note.tags.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1">{note.tags.slice(0, 3).map((tag) => <span key={tag} className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[8px] text-white/35">#{tag}</span>)}</div>}
-      <div className="mt-3 flex items-center justify-between border-t border-white/[0.055] pt-2.5">
-        <span className="flex items-center gap-2 text-[8px] text-white/25">
+      {note.tags.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1">{note.tags.slice(0, 3).map((tag) => <span key={tag} className="rounded bg-glass px-1.5 py-0.5 text-meta text-ink-2">#{tag}</span>)}</div>}
+      <div className="mt-3 flex items-center justify-between border-t border-glass-strong pt-2.5">
+        <span className="flex items-center gap-2 text-meta text-ink-2">
           <Clock3 size={10} />{shortDate(note.updatedAt)}
           {note.links.length > 0 && <span className="flex items-center gap-1"><Link2 size={9} />{note.links.length}</span>}
-          {note.promotion && <span className="text-[#77e5a1]">PROMOTED</span>}
+          {note.promotion && <span className="text-ink-2">PROMOTED</span>}
         </span>
         <span className="flex items-center gap-1">
-          <button type="button" aria-label="Move note left" disabled={busy || stageIndex <= 0} onClick={onMove.bind(null, -1)} className="rounded p-1 text-white/25 hover:bg-white/5 hover:text-white disabled:opacity-15"><ArrowLeft size={11} /></button>
-          <button type="button" aria-label="Edit note" onClick={onOpen} className="rounded p-1 text-white/25 hover:bg-white/5 hover:text-white"><Pencil size={11} /></button>
-          <button type="button" aria-label="Move note right" disabled={busy || stageIndex >= NOTE_STAGES.length - 1} onClick={onMove.bind(null, 1)} className="rounded p-1 text-white/25 hover:bg-white/5 hover:text-white disabled:opacity-15">{busy ? <LoaderCircle size={11} className="animate-spin" /> : <ArrowRight size={11} />}</button>
+          <button type="button" aria-label="Move note left" disabled={busy || stageIndex <= 0} onClick={onMove.bind(null, -1)} className="rounded p-1 text-ink-2 hover:bg-glass hover:text-ink disabled:opacity-15"><ArrowLeft size={11} /></button>
+          <button type="button" aria-label="Edit note" onClick={onOpen} className="rounded p-1 text-ink-2 hover:bg-glass hover:text-ink"><Pencil size={11} /></button>
+          <button type="button" aria-label="Move note right" disabled={busy || stageIndex >= NOTE_STAGES.length - 1} onClick={onMove.bind(null, 1)} className="rounded p-1 text-ink-2 hover:bg-glass hover:text-ink disabled:opacity-15">{busy ? <LoaderCircle size={11} className="animate-spin" /> : <ArrowRight size={11} />}</button>
         </span>
       </div>
     </article>
@@ -677,11 +698,12 @@ function linksFromText(text: string): NoteLink[] {
   });
 }
 
-function NoteEditor({ open, target, folders, busy, onOpenChange, onSave, onDelete, onPromote }: {
+function NoteEditor({ open, target, folders, busy, error, onOpenChange, onSave, onDelete, onPromote }: {
   open: boolean;
   target: EditorTarget | null;
   folders: FolderNode[];
   busy: boolean;
+  error: string | null;
   onOpenChange: (open: boolean) => void;
   onSave: (draft: EditorDraft) => Promise<void>;
   onDelete?: () => Promise<void>;
@@ -723,20 +745,21 @@ function NoteEditor({ open, target, folders, busy, onOpenChange, onSave, onDelet
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] max-w-3xl overflow-y-auto border-white/10 bg-[#050708]/95 p-0">
-        <div className="sticky top-0 z-10 border-b border-white/[0.07] bg-[#050708]/95 px-6 py-5 backdrop-blur-xl">
-          <div className="flex items-center gap-2"><FileText size={16} className="text-[var(--ac)]" /><DialogTitle className="text-sm font-semibold">{note ? "Edit file" : documentType === "study" ? "New study file" : "New file"}</DialogTitle>{note && <span className="hud text-[8px] text-white/25">V{note.version}</span>}</div>
-          <DialogDescription className="mt-1 text-[10px] text-white/35">Context, references and every meaningful change stay together.</DialogDescription>
+      <DialogContent className="ds-root ds-notes-editor max-h-[88vh] max-w-3xl overflow-y-auto border-0 bg-canvas p-0">
+        <div className="sticky top-0 z-10 border-b border-glass-strong bg-canvas px-6 py-5 ">
+          <div className="flex items-center gap-2"><FileText size={16} className="text-ink" /><DialogTitle className="text-sm font-semibold">{note ? "Edit file" : documentType === "study" ? "New study file" : "New file"}</DialogTitle>{note && <span className="hud text-meta text-ink-2">V{note.version}</span>}</div>
+          <DialogDescription className="mt-1 text-meta text-ink-2">Context, references and every meaningful change stay together.</DialogDescription>
         </div>
         <div className="grid gap-5 px-6 py-5 md:grid-cols-2">
-          <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Title</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} className="h-10 w-full rounded-lg border border-white/10 bg-black/45 px-3 text-sm text-white outline-none focus:border-[var(--ac)]/35" placeholder={documentType === "study" ? "e.g. Lecture 4: Scrum roles" : "A clear, useful title"} /></label>
-          <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Document</span><textarea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-56 w-full resize-y rounded-lg border border-white/10 bg-black/45 px-3 py-3 text-sm leading-6 text-white outline-none focus:border-[var(--ac)]/35" placeholder="Write the file. Markdown headings and lists work." /></label>
+          {error && <p role="alert" className="md:col-span-2 text-body text-danger">{error}</p>}
+          <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span>Title</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} className="h-10 w-full rounded-lg border border-glass-strong bg-transparent px-3 text-sm text-ink ds-focus focus:border-glass-strong" placeholder={documentType === "study" ? "e.g. Lecture 4: Scrum roles" : "A clear, useful title"} /></label>
+          <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span>Document</span><textarea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-56 w-full resize-y rounded-lg border border-glass-strong bg-transparent px-3 py-3 text-sm leading-6 text-ink ds-focus focus:border-glass-strong" placeholder="Write the file. Markdown headings and lists work." /></label>
           <FieldSelect label="Folder" value={folderId} onChange={setFolderId} options={folders.map(({ folder, depth }) => ({ value: folder.id, label: `${"  ".repeat(depth)}${folder.name}` }))} />
           <FieldSelect label="File type" value={documentType} onChange={(value) => changeType(value as NoteDocumentType)} options={[{ value: "general", label: "General file" }, { value: "study", label: "Study notes" }]} />
           <FieldSelect label="Template section" value={section} onChange={(value) => setSection(value as NoteSection)} options={NOTE_SECTIONS.map((value) => ({ value, label: SECTION[value].label }))} />
           <FieldSelect label="Kind" value={kind} onChange={(value) => setKind(value as NoteKind)} options={NOTE_KINDS.map((value) => ({ value, label: value.replace("_", " ") }))} />
           <FieldSelect label="Board stage" value={status} onChange={(value) => setStatus(value as NoteStage)} options={NOTE_STAGES.map((value) => ({ value, label: STAGE[value].label }))} />
-          <label className="space-y-1.5 text-xs text-white/45"><span>Tags</span><input value={tags} onChange={(event) => setTags(event.target.value)} className="h-10 w-full rounded-lg border border-white/10 bg-black/45 px-3 text-sm text-white outline-none focus:border-[var(--ac)]/35" placeholder="voice, reliability, UX" /></label>
+          <label className="space-y-1.5 text-xs text-ink-2"><span>Tags</span><input value={tags} onChange={(event) => setTags(event.target.value)} className="h-10 w-full rounded-lg border border-glass-strong bg-transparent px-3 text-sm text-ink ds-focus focus:border-glass-strong" placeholder="voice, reliability, UX" /></label>
           <label className="flex items-end md:col-span-2">
             <button
               type="button"
@@ -747,30 +770,30 @@ function NoteEditor({ open, target, folders, busy, onOpenChange, onSave, onDelet
               className={
                 "flex h-10 w-full items-center justify-center gap-2 rounded-lg border text-xs transition " +
                 (pinned
-                  ? "border-[#f6c76c]/35 bg-[#f6c76c]/10 text-[#ffe1a0]"
-                  : "border-white/10 bg-black/45 text-white/40 hover:text-white/70")
+                  ? "border-glass-strong bg-canvas text-ink-2"
+                  : "border-glass-strong bg-transparent text-ink-2 hover:text-ink-2")
               }
             >
               <Pin size={13} fill={pinned ? "currentColor" : "none"} />
               {pinned ? "Pinned priority" : "Pin as priority"}
             </button>
           </label>
-          <label className="space-y-1.5 text-xs text-white/45 md:col-span-2"><span>Links · one per line as Label | URL</span><textarea value={linkText} onChange={(event) => setLinkText(event.target.value)} className="min-h-20 w-full resize-y rounded-lg border border-white/10 bg-black/45 px-3 py-2 font-mono text-[11px] leading-5 text-white outline-none focus:border-[var(--ac)]/35" placeholder="Design | https://…" /></label>
+          <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span>Links · one per line as Label | URL</span><textarea value={linkText} onChange={(event) => setLinkText(event.target.value)} className="min-h-20 w-full resize-y rounded-lg border border-glass-strong bg-transparent px-3 py-2 font-mono text-meta leading-5 text-ink ds-focus focus:border-glass-strong" placeholder="Design | https://…" /></label>
 
           {note && note.changeLog.length > 0 && (
-            <section className="md:col-span-2 rounded-xl border border-white/[0.07] bg-black/25 px-4 py-4">
-              <div className="mb-3 flex items-center gap-2 hud text-[9px] tracking-[0.15em] text-white/45"><Clock3 size={12} />CHANGE HISTORY</div>
-              <div className="space-y-2">{note.changeLog.slice().reverse().slice(0, 8).map((entry) => <div key={entry.id} className="flex gap-3 text-[10px]"><span className="w-28 shrink-0 text-white/25">{shortDate(entry.at)}</span><span className="w-16 shrink-0 uppercase text-[var(--ac)]/65">{entry.action}</span><span className="text-white/50">{entry.detail}</span></div>)}</div>
+            <section className="ds-note-history md:col-span-2 px-1 py-4">
+              <div className="mb-3 flex items-center gap-2 hud text-meta tracking-[0.15em] text-ink-2"><Clock3 size={12} />CHANGE HISTORY</div>
+              <div className="space-y-2">{note.changeLog.slice().reverse().slice(0, 8).map((entry) => <div key={entry.id} className="flex gap-3 text-meta"><span className="w-28 shrink-0 text-ink-2">{shortDate(entry.at)}</span><span className="w-16 shrink-0 uppercase text-ink">{entry.action}</span><span className="text-ink-2">{entry.detail}</span></div>)}</div>
             </section>
           )}
         </div>
-        <footer className="sticky bottom-0 flex flex-col gap-3 border-t border-white/[0.07] bg-[#050708]/95 px-6 py-4 backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
+        <footer className="sticky bottom-0 flex flex-col gap-3 border-t border-glass-strong bg-canvas px-6 py-4  sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap gap-2">
             {note && onPromote && <><Button size="sm" variant="outline" disabled={busy} onClick={() => void onPromote("task")}><ListChecks size={13} />Start task</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void onPromote("self_improvement")}><Sparkles size={13} />Self-improvement</Button></>}
-            {note?.promotion && <span className="flex items-center gap-1.5 text-[9px] text-[#77e5a1]"><CheckCircle2 size={11} />Promoted to {note.promotion.type.replace("_", " ")}</span>}
+            {note?.promotion && <span className="flex items-center gap-1.5 text-meta text-ink-2"><CheckCircle2 size={11} />Promoted to {note.promotion.type.replace("_", " ")}</span>}
           </div>
           <div className="flex items-center justify-end gap-2">
-            {onDelete && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void onDelete()} className="text-red-300/60 hover:text-red-200"><Trash2 size={13} />Delete</Button>}
+            {onDelete && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void onDelete()} className="text-danger hover:text-danger"><Trash2 size={13} />Delete</Button>}
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button size="sm" disabled={!content.trim() || busy} onClick={() => void onSave({ title, content, kind, status, folderId, documentType, section, tags: tags.split(",").map((tag) => tag.trim()).filter(Boolean), links: linksFromText(linkText), pinned })}>{busy ? <LoaderCircle size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}Save file</Button>
           </div>
@@ -781,5 +804,5 @@ function NoteEditor({ open, target, folders, busy, onOpenChange, onSave, onDelet
 }
 
 function FieldSelect({ label, value, options, onChange }: { label: string; value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void }) {
-  return <label className="space-y-1.5 text-xs text-white/45"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-lg border border-white/10 bg-[#080a0b] px-3 text-sm text-white outline-none focus:border-[var(--ac)]/35">{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
+  return <label className="space-y-1.5 text-xs text-ink-2"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-lg border border-glass-strong bg-canvas px-3 text-sm text-ink ds-focus focus:border-glass-strong">{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
 }

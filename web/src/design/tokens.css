@@ -370,7 +370,7 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
 .ds-object-compact.ds-object-twin .ds-object-value { padding: 14px 10px; }
 .ds-object-compact.ds-object-twin .ds-object-story { padding: 12px; }
 .ds-atelier-home { overflow: hidden; }
-.ds-home-composition { height: 100%; grid-template-rows: auto minmax(60px, 1fr) auto auto auto; padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: calc(var(--ds-bar-space, 118px) + 20px + env(safe-area-inset-bottom, 0px)); }
+.ds-home-composition { height: 100%; grid-template-rows: auto minmax(60px, 1fr) auto; padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: calc(var(--ds-bar-space, 118px) + 20px + env(safe-area-inset-bottom, 0px)); }
 .ds-home-face { min-height: 0; height: 100%; max-height: 560px; }
 .ds-composer-grow { width: 100%; max-width: 480px; margin-inline: auto; transition: max-width 240ms ease, border-radius 150ms ease; }
 .ds-composer-grow[data-expanded="true"] { max-width: 720px; }
@@ -382,8 +382,8 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
 .ds-voice-caption { flex-shrink: 0; min-height: 2rem; }
 .ds-voice-composition { min-height: 210px; }
 @media (max-height: 620px) { .ds-voice-composition { flex: 0 0 auto; min-height: 260px; } .ds-voice-face { height: 160px; flex: none; } }
-.ds-home-suggestions { position: relative; }
-.ds-home-suggestions[open] { max-height: 150px; overflow-y: auto; }
+
+
 .ds-quiet-conversation { background: radial-gradient(ellipse at 50% 0, var(--ds-atmosphere-halo), transparent 65%), var(--ds-canvas); }
 .ds-quiet-thread { gap: 40px; padding-top: 20px; }
 .ds-quiet-thread .ds-prose { line-height: 1.85; }

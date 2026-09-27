@@ -242,8 +242,14 @@ workspace harnesses test durable writes and reopen behaviour.
 The journey also counts attached WebGL canvases and tracks buffer/program
 allocation and deletion, including detached canvases. It expects one resource-owning
 renderer on Home/Voice and none elsewhere. Native context garbage collection and
-total GPU memory are outside this test; the renderer keeps its context during
-effect cleanup so StrictMode can immediately reuse the same canvas.
+total GPU memory are outside this test. The renderer keeps its context through
+effect cleanup while its canvas is still connected, so StrictMode, look and
+motion changes reuse the same canvas. When the canvas has really left the page,
+FaceStage calls `FaceRenderer.release()` after freeing the buffer and program,
+instead of waiting for garbage collection. That uses `WEBGL_lose_context`. The
+check belongs to the native context (`isContextLost()`), so renderers that share
+one canvas lose its context only once. Release is best effort: a missing or
+throwing extension falls back to ordinary collection without an error.
 An optional final numeric argument (bounded to 300 seconds) runs a Home motion
 soak: JavaScript heap after explicit garbage collection and the live context
 count. It does not measure total GPU/process memory.

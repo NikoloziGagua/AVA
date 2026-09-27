@@ -28,6 +28,9 @@ const selected = await seed({ title: 'A quieter morning', content: 'Make a littl
 await seed({ title: 'A small project with a long reference', content: 'https://example.invalid/' + 'reference'.repeat(30), kind: 'idea' });
 await seed({ title: 'Not an idea', content: 'Not part of the Ideas view.', kind: 'task' });
 await seed({ title: 'Archived thought', content: 'Not part of the Ideas view.', kind: 'idea', status: 'archived' });
+// Fill the global 250-note snapshot with unrelated pinned documents. The Ideas
+// screen must request the existing server filter, not filter that snapshot.
+for (let i = 0; i < 260; i++) await seed({ title: `Ordinary fixture ${i}`, content: 'An unrelated document.', kind: 'documentation', pinned: true });
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const checks = [], errors = [], writes = [];
 const check = (label, value) => { assert.ok(value, label); checks.push(label); };
@@ -38,6 +41,8 @@ const openIdeas = async page => {
 };
 try {
   check('Notes requires authentication', (await fetch(origin + '/api/notes')).status === 401);
+  const globalNotes = await (await fetch(origin + '/api/notes', { headers: { authorization: `Bearer ${token}` } })).json();
+  check('global snapshot demonstrably crowds out older ideas', globalNotes.notes.length === 250 && globalNotes.notes.every(note => note.kind !== 'idea'));
   for (const look of ['ink', 'paper']) for (const width of [1440, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, serviceWorkers: 'block' });
     await context.route('**/registerSW.js', r => r.fulfill({ contentType: 'text/javascript', body: '' }));
@@ -45,9 +50,18 @@ try {
       localStorage.setItem('ava.token', token); localStorage.setItem('ava.ui.look', look);
       localStorage.setItem('ava-motion', 'reduced'); sessionStorage.setItem('ava:splash-seen', '1');
     }, { token, look });
-    await context.route('**/api/**', route => {
+    let loseNextReceipt = false;
+    await context.route('**/api/**', async route => {
       const req = route.request(), path = new URL(req.url()).pathname;
-      if (path.startsWith('/api/notes')) { if (req.method() !== 'GET') writes.push({ method: req.method(), path, body: req.postDataJSON() }); return route.continue(); }
+      if (path.startsWith('/api/notes')) {
+        if (req.method() !== 'GET') writes.push({ method: req.method(), path, body: req.postDataJSON() });
+        if (loseNextReceipt && path === '/api/notes' && req.method() === 'POST') {
+          loseNextReceipt = false;
+          const stored = await route.fetch(); assert.ok(stored.ok());
+          return route.fulfill({ status: 200, contentType: 'text/html', body: '<html>Fixture lost the receipt, not the committed write.</html>' });
+        }
+        return route.continue();
+      }
       let body = {};
       if (path === '/api/calendar/events') body = { fetchedAt: Date.now(), complete: true, events: [], occurrences: [] };
       else if (path === '/api/watches') body = { watches: [] };
@@ -57,7 +71,14 @@ try {
     });
     const page = await context.newPage();
     page.on('pageerror', e => errors.push(e.stack)); page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
-    await page.goto(origin); await openIdeas(page);
+    await page.goto(origin);
+    if (look === 'ink' && width === 1440) {
+      await page.getByRole('group', { name: 'Quick navigation' }).getByRole('button', { name: 'Today', exact: true }).click();
+      const recent = page.getByRole('region', { name: 'Recent ideas' });
+      await recent.getByText('A quieter morning', { exact: true }).waitFor();
+      check('Today independently retrieves ideas beyond the global snapshot', await recent.getByText('A quieter morning', { exact: true }).count() === 1);
+    }
+    await openIdeas(page);
     const ideaCard = page.getByRole('button', { name: 'Open A quieter morning in Notes', exact: true });
     await ideaCard.waitFor();
     check(`${look}/${width} only live ideas`, !await page.getByText('Not an idea', { exact: true }).count() && !await page.getByText('Archived thought', { exact: true }).count());
@@ -68,7 +89,7 @@ try {
     check(`${look}/${width} visible underline focus`, await draft.evaluate(el => getComputedStyle(el).outlineStyle === 'none' && getComputedStyle(el).boxShadow !== 'none'));
     await draft.fill('A thought to keep\nWith exact words: <not HTML> & "quotes".');
     await page.keyboard.press('Enter');
-    check(`${look}/${width} typing does not save`, writes.length === (look === 'ink' && width === 1440 ? 0 : 1));
+    check(`${look}/${width} typing does not save`, writes.length === (look === 'ink' && width === 1440 ? 0 : 2));
     if (look === 'ink' && width === 1440) {
       await draft.locator('xpath=ancestor::form').evaluate(el => { el.requestSubmit(); el.requestSubmit(); });
       await page.getByText('Idea saved.', { exact: true }).waitFor();
@@ -76,15 +97,29 @@ try {
       check('exact non-HTML words persisted', db.prepare('SELECT content FROM notes ORDER BY created_at DESC LIMIT 1').get().content === 'A thought to keep\nWith exact words: <not HTML> & "quotes".');
       db.close(); db = openDb(database); router = makeRouter();
       check('database reopen preserves saved idea', db.prepare("SELECT COUNT(*) AS n FROM notes WHERE kind='idea'").get().n === 4);
+      loseNextReceipt = true;
+      await draft.fill('Uncertain local thought');
+      await page.getByRole('button', { name: 'Save idea', exact: true }).click();
+      await page.getByText(/It may have been saved. Your ideas have been refreshed/).waitFor();
+      check('missing receipt retains draft without claiming saved', await draft.inputValue() === 'Uncertain local thought' && !await page.getByText('Idea saved.', { exact: true }).count());
+      check('unknown outcome never resends although the write really landed', writes.length === 2 && db.prepare("SELECT COUNT(*) AS n FROM notes WHERE content='Uncertain local thought'").get().n === 1);
+      check('read-only refresh shows the saved row without treating it as proof', await page.getByRole('button', { name: 'Open Uncertain local thought in Notes', exact: true }).count() === 1);
     }
     await page.screenshot({ path: resolve(evidence, `ideas-${look}-${width}.png`) });
     check(`${look}/${width} no viewport or workspace overflow`, await page.locator('.ds-ideas').evaluate(el => el.scrollWidth <= el.clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth));
-    await ideaCard.focus();
+    // The uncertain-save check clicked a mouse button. Establish keyboard
+    // modality before inspecting :focus-visible on the next card.
+    await page.keyboard.press('Tab'); await ideaCard.focus();
     check(`${look}/${width} card keyboard focus visible`, await ideaCard.evaluate(el => getComputedStyle(el).outlineStyle !== 'none'));
     await page.keyboard.press('Enter');
     const reader = page.getByRole('region', { name: 'Note document' });
     await reader.getByRole('heading', { name: 'A quieter morning', exact: true }).waitFor();
     check(`${look}/${width} exact note handoff`, await reader.getByRole('heading', { name: 'A quieter morning', exact: true }).count() === 1 && await reader.getByText(selected.content, { exact: true }).count() === 1);
+    check(`${look}/${width} bounded folder list is honestly partial`, await page.getByText('Partial list; other files may not be included.', { exact: true }).count() === 1);
+    const refreshed = page.waitForResponse(r => new URL(r.url()).pathname === `/api/notes/${selected.id}` && r.request().method() === 'GET');
+    await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await refreshed;
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+    check(`${look}/${width} exact file survives authoritative focus refresh`, await reader.getByRole('heading', { name: 'A quieter morning', exact: true }).count() === 1);
     await page.reload(); await openIdeas(page);
     await page.getByRole('button', { name: /Open A thought to keep/ }).waitFor();
     check(`${look}/${width} saved capture survives App reload`, await page.getByRole('button', { name: /Open A thought to keep/ }).count() === 1);
@@ -97,7 +132,7 @@ try {
     }
     await context.close();
   }
-  check('only explicit capture mutated state', writes.length === 1 && writes[0].path === '/api/notes');
+  check('only the two explicit captures mutated state', writes.length === 2 && writes.every(write => write.path === '/api/notes' && write.method === 'POST'));
   check(`zero browser errors: ${errors.join(';')}`, errors.length === 0);
   db.prepare('DELETE FROM notes').run();
   check('disposable fixture records cleaned', db.prepare('SELECT COUNT(*) AS n FROM notes').get().n === 0);

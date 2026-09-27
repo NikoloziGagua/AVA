@@ -84,7 +84,8 @@ export function splitNotes(notes: Note[]): { ideas: Note[]; notes: Note[] } {
  */
 export function TodayScreen(props: TodayScreenProps) {
   const [talks, setTalks] = useState<Section<SessionRow[]>>({ status: "loading" });
-  const [notes, setNotes] = useState<Section<{ ideas: Note[]; notes: Note[] }>>({ status: "loading" });
+  const [notes, setNotes] = useState<Section<Note[]>>({ status: "loading" });
+  const [ideas, setIdeas] = useState<Section<Note[]>>({ status: "loading" });
   // Reminder statuses change while Today is open, so this card keeps refreshing.
   const { feed } = useReminderFeed();
   const reminders: Section<{ upcoming: WatchRow[]; total: number }> = feed.status === "ok"
@@ -98,13 +99,16 @@ export function TodayScreen(props: TodayScreenProps) {
       .then((page) => { if (!cancelled) setTalks({ status: "ok", value: page.sessions }); })
       .catch(() => { if (!cancelled) setTalks({ status: "error" }); });
     fetchNotes()
-      .then((snapshot) => { if (!cancelled) setNotes({ status: "ok", value: splitNotes(snapshot.notes) }); })
+      .then((snapshot) => { if (!cancelled) setNotes({ status: "ok", value: splitNotes(snapshot.notes).notes }); })
       .catch(() => { if (!cancelled) setNotes({ status: "error" }); });
+    fetchNotes({ kind: "idea" })
+      .then((snapshot) => { if (!cancelled) setIdeas({ status: "ok", value: splitNotes(snapshot.notes).ideas }); })
+      .catch(() => { if (!cancelled) setIdeas({ status: "error" }); });
     return () => { cancelled = true; };
   }, []);
 
-  const firstRun = talks.status === "ok" && notes.status === "ok" && reminders.status === "ok"
-    && talks.value.length === 0 && notes.value.ideas.length === 0 && notes.value.notes.length === 0
+  const firstRun = talks.status === "ok" && notes.status === "ok" && ideas.status === "ok" && reminders.status === "ok"
+    && talks.value.length === 0 && ideas.value.length === 0 && notes.value.length === 0
     && reminders.value.total === 0;
 
   const dateLine = now.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
@@ -153,7 +157,7 @@ export function TodayScreen(props: TodayScreenProps) {
           <div className="flex flex-col gap-4">
             <TodayCard title="Recent ideas" icon={<Lightbulb size={15} aria-hidden />} action={{ label: "All ideas", onClick: props.onOpenIdeas }}>
               <SectionBody
-                section={notes.status === "ok" ? { status: "ok", value: notes.value.ideas.slice(0, LIST_SIZE) } : notes}
+                section={ideas.status === "ok" ? { status: "ok", value: ideas.value.slice(0, LIST_SIZE) } : ideas}
                 loadingText="Loading ideas…"
                 errorText="Your ideas could not be loaded."
                 emptyText="No ideas yet."
@@ -165,7 +169,7 @@ export function TodayScreen(props: TodayScreenProps) {
 
             <TodayCard title="Recent notes" icon={<FileText size={15} aria-hidden />} action={{ label: "All notes", onClick: props.onOpenNotes }}>
               <SectionBody
-                section={notes.status === "ok" ? { status: "ok", value: notes.value.notes.slice(0, LIST_SIZE) } : notes}
+                section={notes.status === "ok" ? { status: "ok", value: notes.value.slice(0, LIST_SIZE) } : notes}
                 loadingText="Loading notes…"
                 errorText="Your notes could not be loaded."
                 emptyText="No notes yet."

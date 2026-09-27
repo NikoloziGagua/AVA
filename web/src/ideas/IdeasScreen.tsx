@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { Atmosphere } from "../design/metal/Atmosphere.js";
 import { MetalObject } from "../design/metal/MetalObject.js";
+import { DEFAULT_TIME_ZONE } from "../calendar/api.js";
+import { createOutcomeUnknown } from "../reminders/createErrors.js";
 import { createNote, fetchNotes, type Note } from "../notes/api.js";
 
 /** Nika's ideas: notes with kind "idea", newest first. */
@@ -12,7 +14,7 @@ export function ideasFrom(notes: Note[]): Note[] {
 }
 
 function formatWhen(value: number): string {
-  return new Intl.DateTimeFormat("en-IE", { timeZone: "Europe/Dublin", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(value);
+  return new Intl.DateTimeFormat("en-IE", { timeZone: DEFAULT_TIME_ZONE, day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(value);
 }
 
 function excerpt(content: string): string {
@@ -39,11 +41,15 @@ export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => vo
   const refresh = async () => {
     const version = ++requestVersion.current;
     try {
-      const snapshot = await fetchNotes();
-      if (mounted.current && version === requestVersion.current) setLoad({ status: "ok", ideas: ideasFrom(snapshot.notes) });
+      const snapshot = await fetchNotes({ kind: "idea" });
+      if (mounted.current && version === requestVersion.current) {
+        setLoad({ status: "ok", ideas: ideasFrom(snapshot.notes) });
+        return true;
+      }
     } catch (error) {
       if (mounted.current && version === requestVersion.current) setLoad({ status: "error", message: error instanceof Error ? error.message : "Ideas could not be loaded." });
     }
+    return false;
   };
 
   useEffect(() => {
@@ -70,7 +76,13 @@ export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => vo
       await refresh();
     } catch (error) {
       // Keep the words; say what went wrong.
-      if (mounted.current) setSaveError(error instanceof Error ? error.message : "That idea could not be saved.");
+      if (!mounted.current) return;
+      if (createOutcomeUnknown(error)) {
+        const refreshed = await refresh();
+        if (mounted.current) setSaveError(refreshed
+          ? "It may have been saved. Your ideas have been refreshed, but a matching idea is not proof. Check the list before saving again. Your words are kept here."
+          : "It may have been saved, and the list could not be refreshed. Check Your ideas when AVA is reachable before saving again. Your words are kept here.");
+      } else setSaveError(error instanceof Error ? error.message : "That idea could not be saved.");
     } finally {
       savePending.current = false;
       if (mounted.current) setSaving(false);
@@ -116,6 +128,7 @@ export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => vo
 
       <section aria-label="Your ideas" className="ds-ideas-library">
         <header><h2>Your ideas</h2><p>Most recently updated first</p></header>
+        {load.status === "ok" && load.ideas.length === 250 && <p role="status" className="mb-5 text-meta text-ink-2">Showing 250 loaded ideas; other ideas may not be included.</p>}
         {load.status === "loading" && <p role="status" className="text-body text-ink-2">Loading ideas…</p>}
         {load.status === "error" && (
           <div role="alert" className="flex flex-col items-start gap-3 text-body text-ink-2">
@@ -134,7 +147,8 @@ export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => vo
               <li key={idea.id}>
                 <MetalObject
                   variant="twin"
-                  eyebrow="IDEA"
+                  eyebrow="UPDATED"
+                  value={new Intl.DateTimeFormat("en-IE", { timeZone: DEFAULT_TIME_ZONE, day: "numeric", month: "short" }).format(idea.updatedAt)}
                   title={idea.title || "Untitled idea"}
                   label={`Open ${idea.title || "Untitled idea"} in Notes`}
                   detail={<>{idea.content && <span>{excerpt(idea.content)}</span>}<time dateTime={new Date(idea.updatedAt).toISOString()}>Updated {formatWhen(idea.updatedAt)} · Dublin</time></>}

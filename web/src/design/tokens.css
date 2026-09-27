@@ -406,7 +406,7 @@ button.ds-metal-object:hover { transform: translateY(-2px); }
 .ds-ideas-header > p:last-child { font-size: 15px; color: var(--ds-ink-2); }
 .ds-ideas-capture { max-width: 760px; margin-bottom: 58px; }
 .ds-ideas-field { display: grid; gap: 14px; font-size: 14px; color: var(--ds-ink-2); }
-.ds-ideas-field textarea { display: block; width: 100%; min-height: 100px; max-height: 350px; resize: vertical; padding: 8px 0 14px; background: transparent; border: 0; border-radius: 0; color: var(--ds-ink); font-size: 19px; line-height: 1.6; }
+.ds-ideas-field textarea { display: block; width: 100%; min-height: 100px; max-height: 350px; resize: vertical; padding: 8px 0 14px; background: transparent; border: 0; border-bottom: 1px solid var(--ds-metal-edge); border-radius: 0; color: var(--ds-ink); font-size: 19px; line-height: 1.6; }
 .ds-ideas-field textarea::placeholder { color: var(--ds-ink-3); }
 .ds-root .ds-ideas-field textarea:focus-visible { outline: none; box-shadow: 0 2px var(--ds-focus); }
 .ds-ideas-capture-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-top: 16px; }

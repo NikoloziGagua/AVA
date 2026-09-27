@@ -11,7 +11,7 @@ vi.mock("../api.js", () => ({
   fetchWatches: () => fetchWatches(),
   lastHumanActivity: (s: { last_human_activity_at?: number | null; created_at: number }) => s.last_human_activity_at ?? s.created_at,
 }));
-vi.mock("../notes/api.js", () => ({ fetchNotes: () => fetchNotes() }));
+vi.mock("../notes/api.js", () => ({ fetchNotes: (filter: unknown) => fetchNotes(filter) }));
 vi.mock("../components/ava/Orb.js", () => ({ Orb: () => <span data-testid="orb" /> }));
 
 import { STARTERS, TodayScreen, splitNotes, type TodayScreenProps } from "./TodayScreen.js";
@@ -70,6 +70,24 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Today", () => {
+  it("loads ideas independently so a full global note snapshot cannot crowd them out", async () => {
+    fetchNotes.mockImplementation(filter => Promise.resolve({ notes: filter?.kind === "idea"
+      ? [note({ id: "old-idea", title: "Earlier idea", kind: "idea" })]
+      : Array.from({ length: 250 }, (_, i) => note({ id: `note-${i}`, title: `Ordinary ${i}`, updatedAt: 100 + i })) }));
+    render(<TodayScreen {...props()} />);
+    expect(await screen.findByText("Earlier idea")).toBeTruthy();
+    expect(fetchNotes).toHaveBeenCalledWith({ kind: "idea" });
+    expect(await screen.findByText("Ordinary 249")).toBeTruthy();
+  });
+
+  it("retains recent notes when the independent ideas request fails", async () => {
+    fetchNotes.mockImplementation(filter => filter?.kind ? Promise.reject(new Error("offline")) : Promise.resolve({ notes: [note({ title: "Visible note" })] }));
+    render(<TodayScreen {...props()} />);
+    expect(await screen.findByText("Your ideas could not be loaded.")).toBeTruthy();
+    expect(await screen.findByText("Visible note")).toBeTruthy();
+    expect(screen.queryByText("Let's set AVA up to run your week.")).toBeNull();
+  });
+
   it("asks only for Nika's three latest conversations", async () => {
     render(<TodayScreen {...props()} />);
     await screen.findByText("Planning this week");

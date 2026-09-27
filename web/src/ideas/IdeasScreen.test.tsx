@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import type { Note } from "../notes/api.js";
+import { ApiError, UnconfirmedWriteError } from "../api.js";
 
 const fetchNotes = vi.fn();
 const createNote = vi.fn();
 vi.mock("../notes/api.js", () => ({
-  fetchNotes: () => fetchNotes(),
+  fetchNotes: (filter: unknown) => fetchNotes(filter),
   createNote: (input: unknown) => createNote(input),
 }));
 vi.mock("../design/metal/Atmosphere.js", () => ({ Atmosphere: ({ kind }: { kind: string }) => <div data-atmosphere={kind} aria-hidden="true" /> }));
@@ -40,6 +41,7 @@ describe("Ideas", () => {
     render(<IdeasScreen onOpenNote={onOpenNote} />);
     fireEvent.click(await screen.findByText("Split-the-bills app"));
     expect(onOpenNote).toHaveBeenCalledWith("i1");
+    expect(fetchNotes).toHaveBeenCalledWith({ kind: "idea" });
     expect(screen.queryByText("Buy printer ink")).toBeNull();
   });
 
@@ -96,13 +98,14 @@ describe("Ideas", () => {
   });
 
   it("keeps the words and explains when saving fails", async () => {
-    createNote.mockRejectedValue(new Error("note content is required"));
+    createNote.mockRejectedValue(new ApiError(400, "note content is required"));
     render(<IdeasScreen onOpenNote={vi.fn()} />);
     await screen.findByText("Split-the-bills app");
     fireEvent.change(screen.getByLabelText("What's the idea?"), { target: { value: "Keep me" } });
     fireEvent.click(screen.getByRole("button", { name: "Save idea" }));
     expect((await screen.findByRole("alert")).textContent).toContain("note content is required");
     expect((screen.getByLabelText("What's the idea?") as HTMLTextAreaElement).value).toBe("Keep me");
+    expect(fetchNotes).toHaveBeenCalledTimes(1);
   });
 
   it("shows an honest empty state", async () => {
@@ -127,6 +130,7 @@ describe("Ideas", () => {
     expect(document.querySelector('[data-atmosphere="silk"]')).toBeTruthy();
     expect(card.querySelector("time")?.textContent).toContain("16:20");
     expect(card.querySelector("time")?.getAttribute("datetime")).toBe("2026-09-27T15:20:00.000Z");
+    expect(card.querySelector(".ds-object-value strong")?.textContent).toMatch(/27 Sept?/);
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Keep the spark.");
     expect((screen.getByLabelText("What's the idea?") as HTMLTextAreaElement).maxLength).toBe(30_000);
   });
@@ -196,6 +200,36 @@ describe("Ideas", () => {
     expect(container.querySelector("img")).toBeNull();
     expect(screen.getByText('<img src=x onerror="alert(1)">')).toBeTruthy();
     expect(createNote).not.toHaveBeenCalled();
+  });
+
+  it.each([new ApiError(0, "offline"), new ApiError(503, "unavailable"), new UnconfirmedWriteError("missing receipt")])("retains an uncertain capture and refreshes without replay: %s", async error => {
+    createNote.mockRejectedValue(error);
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    await screen.findByText("Split-the-bills app");
+    fireEvent.change(screen.getByLabelText("What's the idea?"), { target: { value: "Keep this thought" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save idea" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("a matching idea is not proof");
+    expect(fetchNotes).toHaveBeenCalledTimes(2);
+    expect(createNote).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Idea saved.")).toBeNull();
+    expect((screen.getByLabelText("What's the idea?") as HTMLTextAreaElement).value).toBe("Keep this thought");
+  });
+
+  it("explains when both create and its read-only check are unavailable", async () => {
+    createNote.mockRejectedValue(new ApiError(0, "offline"));
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    await screen.findByText("Split-the-bills app");
+    fetchNotes.mockRejectedValue(new Error("List unavailable"));
+    fireEvent.change(screen.getByLabelText("What's the idea?"), { target: { value: "Uncertain" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save idea" }));
+    await screen.findByText(/It may have been saved, and the list could not be refreshed/);
+    expect(createNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("discloses a bounded 250-item snapshot without claiming global recency or completeness", async () => {
+    fetchNotes.mockResolvedValue({ notes: Array.from({ length: 250 }, (_, i) => note({ id: String(i), title: `Idea ${i}` })) });
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    expect(await screen.findByText("Showing 250 loaded ideas; other ideas may not be included.")).toBeTruthy();
   });
 });
 

@@ -22,6 +22,7 @@ vi.mock("./api.js", async (importOriginal) => {
   return {
     ...actual,
     fetchNotes: vi.fn(),
+    fetchNote: vi.fn(),
     fetchNotesTree: vi.fn(),
     createNote: vi.fn(),
     createNoteFolder: vi.fn(),
@@ -186,6 +187,7 @@ const memoryResponse: MemoryIndexSearchResponse = {
 beforeEach(() => {
   window.localStorage.clear();
   vi.mocked(notesApi.fetchNotes).mockResolvedValue(snapshot);
+  vi.mocked(notesApi.fetchNote).mockRejectedValue(new appApi.ApiError(404, "note_not_found"));
   vi.mocked(notesApi.fetchNotesTree).mockResolvedValue(tree);
   vi.mocked(notesApi.createNote).mockResolvedValue(generalPage("note-new", "New file", 2));
   vi.mocked(notesApi.createNoteFolder).mockResolvedValue(folder({ id: "folder-new", name: "Lectures", parentId: "notes_general" }));
@@ -326,6 +328,31 @@ describe("Notes files and derived pages", () => {
       section: "capture",
       kind: "idea",
     })));
+  });
+
+  it("retains a quick-capture draft when the create receipt is unconfirmed", async () => {
+    vi.mocked(notesApi.createNote).mockRejectedValue(new appApi.UnconfirmedWriteError("Save not confirmed. Check Notes before saving again."));
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    const input = await screen.findByPlaceholderText(/Drop the thought here/i);
+    fireEvent.change(input, { target: { value: "Keep these words" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Capture$/i }));
+    expect(await screen.findByText("Save not confirmed. Check Notes before saving again.")).toBeTruthy();
+    expect((input as HTMLTextAreaElement).value).toBe("Keep these words");
+    expect(notesApi.createNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the new-file editor open with its draft on an unconfirmed receipt", async () => {
+    vi.mocked(notesApi.createNote).mockRejectedValue(new appApi.UnconfirmedWriteError("Save not confirmed. Check Notes before saving again."));
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    await screen.findByText("PAGE 1 / 2");
+    fireEvent.click(screen.getByRole("button", { name: /Study file/ }));
+    fireEvent.change(screen.getByPlaceholderText(/Lecture 4/), { target: { value: "My study file" } });
+    fireEvent.change(screen.getByPlaceholderText(/Write the file/), { target: { value: "My full draft" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save file/ }));
+    const dialog = screen.getByRole("dialog");
+    expect(await within(dialog).findByText("Save not confirmed. Check Notes before saving again.")).toBeTruthy();
+    expect((within(dialog).getByPlaceholderText(/Write the file/) as HTMLTextAreaElement).value).toBe("My full draft");
+    expect(notesApi.createNote).toHaveBeenCalledTimes(1);
   });
 
   it("starts a study file from the template headings", async () => {
@@ -587,6 +614,87 @@ describe("Notes board view", () => {
 });
 
 describe("Notes exact-note handoff", () => {
+  it("resolves a file outside the bounded list without changing that list or folder counts", async () => {
+    const old = generalPage("old-idea", "An older idea", 300);
+    vi.mocked(notesApi.fetchNote).mockResolvedValue(old);
+    vi.mocked(notesApi.fetchNotesTree).mockResolvedValue({ ...tree, folders: tree.folders.map(f => f.id === general.id ? { ...f, documentCount: 300 } : f) });
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId={old.id} />);
+    await waitFor(() => expect(fileHeading()).toBe(old.title));
+    expect(notesApi.fetchNote).toHaveBeenCalledWith(old.id);
+    expect(snapshot.notes).toHaveLength(3);
+    expect(screen.getByText("300 files")).toBeTruthy();
+    expect(screen.getByText("3 loaded in this folder")).toBeTruthy();
+    expect(screen.getByText("Partial list; other files may not be included.")).toBeTruthy();
+  });
+
+  it("re-fetches an out-of-list selected file on focus instead of keeping an old copy", async () => {
+    const old = generalPage("old-idea", "An older idea", 300);
+    vi.mocked(notesApi.fetchNote).mockResolvedValueOnce(old).mockResolvedValue({ ...old, version: 2, title: "Updated by AVA" });
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId={old.id} />);
+    await waitFor(() => expect(fileHeading()).toBe(old.title));
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(fileHeading()).toBe("Updated by AVA"));
+    expect(notesApi.fetchNote).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["deleted", "archived"])("drops a selected out-of-list file when it becomes %s", async state => {
+    const old = generalPage("old-idea", "An older idea", 300);
+    vi.mocked(notesApi.fetchNote).mockResolvedValueOnce(old);
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId={old.id} />);
+    await waitFor(() => expect(fileHeading()).toBe(old.title));
+    if (state === "deleted") vi.mocked(notesApi.fetchNote).mockRejectedValue(new appApi.ApiError(404, "not_found"));
+    else vi.mocked(notesApi.fetchNote).mockResolvedValue({ ...old, status: "archived" });
+    window.dispatchEvent(new Event("focus"));
+    await screen.findByText("That note is no longer available.");
+    expect(screen.queryByText(old.title)).toBeNull();
+  });
+
+  it("does not let a late exact-ID refresh replace a newly selected file", async () => {
+    const old = generalPage("old-idea", "An older idea", 300);
+    vi.mocked(notesApi.fetchNote).mockResolvedValueOnce(old);
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId={old.id} />);
+    await waitFor(() => expect(fileHeading()).toBe(old.title));
+    let finish!: (value: Note) => void;
+    vi.mocked(notesApi.fetchNote).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(notesApi.fetchNote).toHaveBeenCalledTimes(2));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Files in General" })).getByRole("button", { name: fileOne.title }));
+    finish({ ...old, title: "Late old data" });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(fileHeading()).toBe(fileOne.title);
+    expect(screen.queryByText("Late old data")).toBeNull();
+  });
+
+  it("ignores an old exact-ID load after a newer refresh has completed", async () => {
+    const old = generalPage("old-idea", "An older idea", 300);
+    let finish!: (value: Note) => void;
+    vi.mocked(notesApi.fetchNote).mockReturnValueOnce(new Promise(resolve => { finish = resolve; })).mockResolvedValue({ ...old, title: "Latest data" });
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId={old.id} />);
+    await waitFor(() => expect(notesApi.fetchNote).toHaveBeenCalledTimes(1));
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(fileHeading()).toBe("Latest data"));
+    finish(old);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(fileHeading()).toBe("Latest data");
+  });
+
+  it("reports exact-ID failure as a load failure, not deletion, and allows retry", async () => {
+    vi.mocked(notesApi.fetchNote).mockRejectedValue(new appApi.ApiError(502, "That note could not be loaded.", "invalid_note_receipt"));
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="old-idea" />);
+    await screen.findByRole("alert");
+    expect(screen.queryByText("That note is no longer available.")).toBeNull();
+    vi.mocked(notesApi.fetchNote).mockResolvedValue(generalPage("old-idea", "Recovered file", 300));
+    fireEvent.click(screen.getByRole("button", { name: "DISMISS" }));
+    await waitFor(() => expect(fileHeading()).toBe("Recovered file"));
+  });
+
+  it("treats an archived exact-ID response as unavailable without revealing its title", async () => {
+    vi.mocked(notesApi.fetchNote).mockResolvedValue({ ...generalPage("old-idea", "Archived private title", 300), status: "archived" });
+    render(<NotesScreen onStartTask={vi.fn()} initialNoteId="old-idea" />);
+    await screen.findByText("That note is no longer available.");
+    expect(screen.queryByText("Archived private title")).toBeNull();
+  });
+
   it("wraps rendered Markdown in the actual bounded prose surface", async () => {
     render(<NotesScreen onStartTask={vi.fn()} initialNoteId="file-2" />);
     await screen.findByText("PAGE 1 / 1");

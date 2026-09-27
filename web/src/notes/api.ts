@@ -1,4 +1,4 @@
-import { ApiError } from "../api.js";
+import { ApiError, UnconfirmedWriteError } from "../api.js";
 import { clearToken, getToken } from "../auth/tokens.js";
 
 export const NOTE_KINDS = [
@@ -120,8 +120,33 @@ async function notesRequest<T>(path: string, init: RequestInit = {}): Promise<T>
   return body as T;
 }
 
-export function fetchNotes(): Promise<NotesSnapshot> {
-  return notesRequest("/api/notes");
+export function fetchNotes(filter: { kind?: NoteKind } = {}): Promise<NotesSnapshot> {
+  return notesRequest(`/api/notes${filter.kind ? `?kind=${encodeURIComponent(filter.kind)}` : ""}`);
+}
+
+function hasNoteReceipt(note: Note | null | undefined): note is Note {
+  return !!note && typeof note.id === "string" && !!note.id && note.id.length <= 120
+    && Number.isSafeInteger(note.version) && note.version > 0
+    && NOTE_KINDS.includes(note.kind) && NOTE_SECTIONS.includes(note.section)
+    && typeof note.title === "string" && note.title.length <= 160
+    && typeof note.content === "string" && note.content.length <= 30_000
+    && [...NOTE_STAGES, "archived"].includes(note.status) && typeof note.pinned === "boolean"
+    && Array.isArray(note.tags) && note.tags.every(tag => typeof tag === "string")
+    && Array.isArray(note.links) && note.links.every(link => link && typeof link.label === "string" && typeof link.url === "string")
+    && Array.isArray(note.changeLog) && note.changeLog.every(change => change && typeof change.id === "string" && Number.isFinite(change.at) && typeof change.action === "string" && typeof change.detail === "string")
+    && (note.folderId === undefined || typeof note.folderId === "string")
+    && (note.folderPath === undefined || (Array.isArray(note.folderPath) && note.folderPath.every(crumb => crumb && typeof crumb.id === "string" && typeof crumb.name === "string")))
+    && Number.isFinite(note.createdAt) && Number.isFinite(note.updatedAt);
+}
+
+/** Exact ID authority when the bounded list does not contain a requested file. */
+export async function fetchNote(id: string): Promise<Note> {
+  const path = `/api/notes/${encodeURIComponent(id)}`;
+  const result = await notesRequest<{ note: Note }>(path);
+  if (!hasNoteReceipt(result?.note) || result.note.id !== id) {
+    throw new ApiError(502, "That note could not be loaded.", "invalid_note_receipt", null, path);
+  }
+  return result.note;
 }
 
 export function fetchNotesTree(): Promise<NotesTree> {
@@ -177,6 +202,12 @@ export async function createNote(input: {
     method: "POST",
     body: JSON.stringify(input),
   });
+  // A successful HTTP status without an authoritative receipt is not a saved
+  // note. Do not compare content verbatim: the server legitimately scrubs it.
+  const note = result?.note;
+  if (!hasNoteReceipt(note) || note.kind !== (input.kind ?? "general")) {
+    throw new UnconfirmedWriteError("AVA couldn't confirm whether this note was saved. Check Notes before saving again.");
+  }
   return result.note;
 }
 

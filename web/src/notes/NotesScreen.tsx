@@ -40,6 +40,7 @@ import {
   deleteNote,
   deleteNoteFolder,
   fetchNotes,
+  fetchNote,
   fetchNotesTree,
   promoteNote,
   updateNote,
@@ -134,12 +135,16 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   initialNoteId?: string | null;
 }) {
   const [snapshot, setSnapshot] = useState<NotesSnapshot | null>(null);
+  const [partialSnapshot, setPartialSnapshot] = useState(false);
   const [tree, setTree] = useState<NotesTree | null>(null);
   // One-shot per navigation: consumed by the first successful snapshot, so the
   // periodic refresh can never re-open or re-select it.
   const pendingHandoff = useRef<string | null>(initialNoteId);
   const [selected, setSelected] = useState(GENERAL_FOLDER_ID);
-  const [fileId, setFileId] = useState<string | null>(null);
+  const [fileId, setFileIdState] = useState<string | null>(null);
+  // The mount-time refresh callback must observe the current explicit selection.
+  const currentFileId = useRef<string | null>(null);
+  const setFileId = (id: string | null) => { currentFileId.current = id; setFileIdState(id); };
   const [view, setView] = useState<View>("files");
   const [phonePane, setPhonePane] = useState<"library" | "files" | "reader">("library");
   const [query, setQuery] = useState("");
@@ -160,10 +165,24 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
 
   const load = async (quiet = false) => {
     const request = ++loadRequest.current;
+    const wanted = pendingHandoff.current ?? currentFileId.current;
     try {
-      const [next, nextTree] = await Promise.all([fetchNotes(), fetchNotesTree()]);
+      const [listed, nextTree] = await Promise.all([fetchNotes(), fetchNotesTree()]);
+      let next = listed;
       if (request !== loadRequest.current) return;
+      // The global snapshot is bounded. Absence there does not mean deletion.
+      // Resolve only the exact requested/selected ID through its existing route.
+      if (wanted && !next.notes.some((note) => note.id === wanted)) {
+        try {
+          const exact = await fetchNote(wanted);
+          if (exact.id === wanted && exact.status !== "archived") next = { ...listed, notes: [...listed.notes, exact] };
+        } catch (cause) {
+          if (!(cause instanceof ApiError && cause.status === 404)) throw cause;
+        }
+      }
+      if (request !== loadRequest.current || wanted !== (pendingHandoff.current ?? currentFileId.current)) return;
       setSnapshot(next);
+      setPartialSnapshot(listed.notes.length >= 250 || !nextTree.snapshot.complete);
       setTree(nextTree);
       setSelected((current) => nextTree.folders.some((folder) => folder.id === current) ? current : GENERAL_FOLDER_ID);
       if (!quiet) setError(null);
@@ -181,10 +200,15 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
           setSelected(GENERAL_FOLDER_ID);
           setNotice("That note is no longer available.");
         }
+      } else if (wanted) {
+        const target = next.notes.find((note) => note.id === wanted && note.status !== "archived");
+        if (target) setSelected(noteFolderId(target));
+        else { setFileId(null); setNotice("That note is no longer available."); }
       }
     } catch (cause) {
-      if (request !== loadRequest.current) return;
+      if (request !== loadRequest.current || wanted !== (pendingHandoff.current ?? currentFileId.current)) return;
       if (!quiet) setError(cause instanceof Error ? cause.message : "Notes could not be loaded.");
+      else if (wanted) setError(current => current ?? "The selected file could not be refreshed. Its contents may be out of date.");
     }
   };
 
@@ -235,6 +259,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
   }, [briefProject?.id, briefProject?.name]);
 
   const files = useMemo(() => snapshot ? folderDocuments(snapshot.notes, selected) : [], [snapshot, selected]);
+  const partialFiles = partialSnapshot || (folder !== null && files.length !== folder.documentCount);
   const selectedFile = files.find((note) => note.id === fileId) ?? files[0] ?? null;
   const searchResults = useMemo(() => {
     if (!snapshot || !query.trim()) return [];
@@ -449,7 +474,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
             <p className="truncate text-meta text-ink-2">{crumbs}</p>
             <div className="flex items-center gap-2">
               <h2 className="truncate text-lg font-semibold text-ink">{folderName}</h2>
-              <span className="rounded-full border border-glass-strong px-2 py-0.5 text-meta text-ink-2">{files.length} {files.length === 1 ? "file" : "files"}</span>
+              <span className="rounded-full border border-glass-strong px-2 py-0.5 text-meta text-ink-2">{folder?.documentCount ?? files.length} {(folder?.documentCount ?? files.length) === 1 ? "file" : "files"}</span>
             </div>
             {folder?.description && <p className="mt-0.5 text-xs text-ink-2">{folder.description}</p>}
           </div>
@@ -476,6 +501,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
 
         {view === "files" && query.trim() ? (
           <section aria-label="Search results" className="rounded-2xl border border-glass-strong bg-transparent px-3 py-3">
+            {partialSnapshot && <p className="px-2 text-meta text-ink-2">Searching loaded files only; other files may not be included.</p>}
             <p className="mb-2 px-2 text-meta text-ink-2">{searchResults.length} {searchResults.length === 1 ? "file matches" : "files match"} “{query.trim()}”</p>
             <ul className="space-y-0.5">
               {searchResults.map((note) => (
@@ -494,6 +520,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
               files={files}
               selectedId={selectedFile?.id ?? null}
               folderName={folderName}
+              partial={partialFiles}
               onSelect={(id) => { setFileId(id); setPhonePane("reader"); }}
               onNewFile={() => newFile()}
             />

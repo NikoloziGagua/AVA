@@ -103,6 +103,13 @@ does not claim to add history restoration or persistent unsent drafts.
 
 Ideas uses an open Silver Silk capture and Twin-plane cards backed by the existing
 Notes API. Only non-archived `kind: idea` records appear, newest update first;
+the query applies that existing server filter before the 250-row bound, so ordinary
+notes no longer crowd them out. Today requests its ideas independently too, and
+one failed ideas read does not hide its ordinary notes. At 250 ideas the UI warns
+that other ideas may be omitted. The server selects pinned records first, so the
+client's newest-first order is over returned records, not a promise of globally
+complete recency. Other Recent notes remain over the existing bounded snapshot.
+The Twin plate shows the real updated day/month, using the shared Dublin default;
 the displayed Dublin timestamp is the recorded update time, not priority or
 progress. Enter in the textarea is a newline. Only Save idea writes; a synchronous
 in-flight guard prevents double submission. The 30,000-character limit matches
@@ -111,6 +118,23 @@ announces “Idea saved.” independently of list refresh. Read failures can be 
 without re-sending the capture. Failed writes keep the draft visible. Older read
 responses cannot replace a newer snapshot, and unmounted completions do not
 refresh another screen. Cards open the exact note in Notes; editing remains there.
+When that ID is outside Notes' bounded global list, Notes reads the existing
+authenticated exact-ID endpoint. The selected file is resolved again on existing
+10-second/focus refreshes, not preserved as a stale copy. Archived and missing
+files share the unavailable notice; failed reads are not called deletion. Late
+responses cannot replace a newer load or selection. Folder counts still come
+from the authoritative tree; bounded/inconsistent lists are labelled partial,
+and a supplemental selected file never inflates that count. This is not full
+library pagination or global search; search over a bounded snapshot says so.
+The shared Notes create client now requires a bounded note ID, positive version,
+expected kind, known section/status, textual title/content, renderable collections
+and finite recorded times
+before returning a receipt. Malformed 2xx is an unconfirmed write, not success.
+It does not compare content byte-for-byte because the server sanitizes it.
+Ideas refreshes the list after network/5xx/malformed receipt errors and explains
+that the save may have landed; no matching row is treated as proof, and no write
+is replayed. A definite 400 remains a correctable validation error. Notes quick
+capture/new-file callers retain their drafts and display the unconfirmed error.
 This is not a new Ideas store, background indexing job or automatic send. Drafts
 are still screen-local and are not promised across navigation/reload. Network
 failure after server acceptance remains uncertain under the existing create API;
@@ -118,6 +142,8 @@ there is no new cross-request idempotency contract or automatic write retry.
 
 `node web/src/ideas/verify-ideas.mjs <built-web> <built-server> <evidence-directory>`
 uses actual authenticated Notes routes and disposable SQLite with the built App.
+It seeds 260 unrelated pinned documents to prove server-filtered Ideas/Today
+retrieval, and drops a successful write receipt to test uncertainty without replay.
 It checks explicit capture, duplicate-submit suppression, exact Notes handoff,
 restart/reload persistence, Ink/Paper at 1440/390/320, long words, keyboard focus,
 Reduced/forced-colours and zero unexpected browser errors. Other endpoints are

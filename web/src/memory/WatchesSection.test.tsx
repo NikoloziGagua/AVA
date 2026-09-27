@@ -174,6 +174,30 @@ describe("WatchesSection", () => {
 });
 
 describe("WatchesSection reminder receipts (i4 v2)", () => {
+  it("never truncates the phone-receipt caveat behind prompt expansion", async () => {
+    const dueAt = Date.now() - 60_000;
+    fetchWatches.mockResolvedValue([watch({
+      id: "accepted", prompt: "A reminder", kind: "reminder", run_at: dueAt, once: 1, enabled: 0,
+      reminder_status: {
+        version: 1, occurrenceId: `reminder:accepted:${dueAt}`, revision: 1, state: "accepted", dueAt, timeZone: "Europe/Dublin",
+        expiresAt: dueAt + 900_000, attempts: 1, attemptedAt: dueAt, nextAttemptAt: null, acceptedAt: dueAt,
+        subscriptions: { total: 1, accepted: 1, rejectedTransient: 0, rejectedPermanent: 0, unknown: 0 },
+        reasonCode: null, phoneReceipt: "unconfirmed",
+      },
+    })]);
+    render(<WatchesSection />);
+    await screen.findByText("Accepted by notification service");
+    const detail = screen.getByText(/can't confirm your phone showed it/);
+    expect(detail.classList.contains("truncate")).toBe(false);
+    expect(detail.classList.contains("whitespace-normal")).toBe(true);
+    expect(detail.parentElement?.classList.contains("flex-wrap")).toBe(true);
+    expect(detail.closest(".lg-slab")?.classList.contains("opacity-60")).toBe(false);
+    expect(detail.closest(".ds-legacy-reminder-row")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "A reminder" }).getAttribute("aria-expanded")).toBe("false");
+    expect(setWatchEnabled).not.toHaveBeenCalled();
+    expect(deleteWatchApi).not.toHaveBeenCalled();
+  });
+
   it("shows a direct reminder's receipt instead of its old 'delivered' glyph", async () => {
     const dueAt = Date.now() - 60_000;
     fetchWatches.mockResolvedValue([watch({

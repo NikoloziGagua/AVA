@@ -237,6 +237,26 @@ describe("App navigation", () => {
     expect(screen.queryByRole("navigation", { name: "AVA" })).toBeNull();
   });
 
+  it("marks the actual surface independently of the selected look without remounting the bar", async () => {
+    window.localStorage.setItem("ava.ui.look", "paper");
+    render(<App />);
+    await screen.findByTestId("mock-home");
+    const input = screen.getByRole("textbox", { name: "Message AVA" });
+    fireEvent.change(input, { target: { value: "Keep my draft" } });
+    expect(input.closest("[data-app-surface]")?.getAttribute("data-app-surface")).toBe("atelier");
+    for (const destination of ["Memory", "Reminders & watches", "Settings"]) {
+      go(destination);
+      await waitFor(() => expect(input.closest("[data-app-surface]")?.getAttribute("data-app-surface")).toBe("legacy"));
+      expect(screen.getByRole("textbox", { name: "Message AVA" })).toBe(input);
+      expect((input as HTMLTextAreaElement).value).toBe("Keep my draft");
+    }
+    go("Home");
+    await screen.findByTestId("mock-home");
+    expect(input.closest("[data-app-surface]")?.getAttribute("data-app-surface")).toBe("atelier");
+    expect(window.localStorage.getItem("ava.ui.look")).toBe("paper");
+    expect(state.talkSends).toEqual([]);
+  });
+
   it("plays the intro once per tab and then lands on Home", () => {
     window.sessionStorage.clear();
     const first = render(<App />);

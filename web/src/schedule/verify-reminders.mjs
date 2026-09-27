@@ -43,6 +43,40 @@ const openMenu = async (page, name) => {
   await page.locator('.ds-menu').getByRole('button', { name, exact: true }).click();
 };
 const localWhen = instant => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Dublin', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(instant).replace(' ', 'T');
+// Sample the actual composited background under the caveat, with only its text
+// temporarily transparent. Compare declared foreground against every backdrop
+// pixel; this is browser-fixture evidence, not a physical-display measurement.
+const contrastOverBackdrop = async (page, field) => {
+  const paint = await field.evaluate(el => {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext('2d'); ctx.fillStyle = getComputedStyle(el).color; ctx.fillRect(0, 0, 1, 1);
+    let opacity = 1;
+    for (let parent = el; parent; parent = parent.parentElement) opacity *= Number(getComputedStyle(parent).opacity);
+    return { colour: [...ctx.getImageData(0, 0, 1, 1).data], opacity, inline: el.style.color };
+  });
+  let backdrop;
+  try {
+    await field.evaluate(el => { el.style.color = 'transparent'; });
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+    backdrop = (await page.screenshot({ clip: await field.boundingBox() })).toString('base64');
+  } finally { await field.evaluate((el, colour) => { el.style.color = colour; }, paint.inline); }
+  return page.evaluate(async ({ backdrop, paint }) => {
+    const image = new Image(); image.src = `data:image/png;base64,${backdrop}`; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+    const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0);
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const luminance = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4).reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+    const alpha = paint.colour[3] / 255 * paint.opacity;
+    let minimum = Infinity;
+    for (let i = 0; i < pixels.length; i += 4) {
+      const background = [pixels[i], pixels[i + 1], pixels[i + 2]];
+      const foreground = background.map((v, j) => paint.colour[j] * alpha + v * (1 - alpha));
+      const a = luminance(background), b = luminance(foreground);
+      minimum = Math.min(minimum, (Math.max(a, b) + .05) / (Math.min(a, b) + .05));
+    }
+    return { minimum, opacity: paint.opacity, colour: paint.colour };
+  }, { backdrop, paint });
+};
 try {
   check('authenticated reads required', (await fetch(origin + '/api/watches')).status === 401);
   for (const look of ['ink', 'paper']) for (const width of [1440, 390, 320]) {
@@ -82,6 +116,7 @@ try {
     activePage = page;
     page.on('pageerror', e => errors.push(String(e))); page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
     await page.goto(origin); await navigate(page);
+    check(`${look}/${width} Atelier navigation keeps its scrim`, await page.locator('.ds-navigation-host').evaluate(el => el.closest('[data-app-surface]')?.dataset.appSurface === 'atelier' && getComputedStyle(el, '::before').backgroundImage !== 'none'));
     const receipt = page.getByRole('listitem').filter({ hasText: accepted.prompt });
     await receipt.waitFor();
     check(`${look}/${width} truthful service receipt`, (await receipt.textContent()).includes('Accepted by notification service') && (await receipt.textContent()).includes("can't confirm your phone showed it"));
@@ -133,18 +168,30 @@ try {
       check(`${look} forced-colour focus`, await draft.evaluate(el => getComputedStyle(el).borderBottomWidth === '2px'));
       await page.emulateMedia({ forcedColors: 'none' });
     }
-    if (width === 1440) {
+    {
       await openMenu(page, 'Reminders & watches');
       const legacy = page.locator('[data-reminder-appearance="legacy"][data-reminder-tone="good"]').first(); await legacy.waitFor();
       const legacyStyle = await legacy.evaluate(el => ({ font: getComputedStyle(el).fontSize, colour: getComputedStyle(el).color }));
-      check(`${look} Watches legacy receipt stays legacy: ${JSON.stringify(legacyStyle)}`, await page.locator('[data-reminder-appearance="atelier"]').count() === 0 && Number.parseFloat(legacyStyle.font) >= 12);
-      await page.screenshot({ path: resolve(evidence, `legacy-watches-${look}.png`) });
+      check(`${look}/${width} Watches legacy receipt stays legacy: ${JSON.stringify(legacyStyle)}`, await page.locator('[data-reminder-appearance="atelier"]').count() === 0 && Number.parseFloat(legacyStyle.font) >= 12);
+      check(`${look}/${width} Watches has no incompatible navigation glow`, await page.locator('.ds-navigation-host').evaluate(el => el.closest('[data-app-surface]')?.dataset.appSurface === 'legacy' && getComputedStyle(el, '::before').backgroundImage === 'none'));
+      await page.screenshot({ path: resolve(evidence, `legacy-watches-${look}-${width}.png`) });
       await openMenu(page, 'Memory');
       await page.getByRole('button', { name: 'List', exact: true }).click();
       await legacy.waitFor();
-      check(`${look} Memory legacy receipt stays legacy`, await page.locator('[data-reminder-appearance="atelier"]').count() === 0);
-      await legacy.scrollIntoViewIfNeeded(); await page.screenshot({ path: resolve(evidence, `legacy-memory-${look}.png`) });
+      check(`${look}/${width} Memory legacy receipt stays legacy`, await page.locator('[data-reminder-appearance="atelier"]').count() === 0);
+      check(`${look}/${width} Memory has no incompatible navigation glow`, await page.locator('.ds-navigation-host').evaluate(el => getComputedStyle(el, '::before').backgroundImage === 'none'));
+      const caveat = page.getByText(/can't confirm your phone showed it/);
+      await caveat.scrollIntoViewIfNeeded();
+      check(`${look}/${width} full Memory receipt caveat wraps without expansion`, await caveat.evaluate(el => {
+        const style = getComputedStyle(el);
+        return style.whiteSpace !== 'nowrap' && style.textOverflow !== 'ellipsis' && el.scrollWidth <= el.clientWidth + 1 && el.scrollHeight <= el.clientHeight + 1 && parseFloat(style.fontSize) >= 12;
+      }));
+      check(`${look}/${width} Memory receipt fits its row`, await legacy.evaluate(el => el.parentElement.scrollWidth <= el.parentElement.clientWidth + 1));
+      const contrast = await contrastOverBackdrop(page, caveat);
+      check(`${look}/${width} caveat contrast >=4.5:1 over rendered backdrop (${contrast.minimum.toFixed(2)}:1) and undimmed`, contrast.minimum >= 4.5 && contrast.opacity === 1);
+      await page.screenshot({ path: resolve(evidence, `legacy-memory-${look}-${width}.png`) });
       readMode = 'empty'; await navigate(page); await page.getByText(/No reminders yet/).waitFor();
+      check(`${look}/${width} return restores Atelier scrim without changing look`, await page.locator('.ds-navigation-host').evaluate((el, look) => document.documentElement.dataset.look === look && getComputedStyle(el, '::before').backgroundImage !== 'none', look));
       check(`${look} empty state is designed`, await page.getByText(/No reminders yet/).count() === 1);
       readMode = 'broken'; await page.reload(); await navigate(page);
       await page.getByRole('button', { name: 'Retry', exact: true }).waitFor();

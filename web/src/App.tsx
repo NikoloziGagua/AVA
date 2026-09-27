@@ -103,6 +103,9 @@ type View =
 // otherwise entering chat would capture a still-exiting orb and the next orb
 // view would Flip from a stale snapshot.
 const VIEWS_WITH_ORB = ["splash", "today", "voice"];
+// Explicit presentation ownership, not a guess from background colour or theme.
+// Older workspaces retain dark surfaces even when the bar's look is Paper.
+const ATELIER_VIEWS: readonly View["name"][] = ["home", "today", "chat", "voice", "notes", "ideas", "schedule", "list"];
 const LAST_CHAT_STORAGE_KEY = "ava:last-chat-session";
 // The intro plays once per browser tab; reloads go straight to Today.
 const SPLASH_SEEN_KEY = "ava:splash-seen";
@@ -486,7 +489,7 @@ export function App() {
   }
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-black text-white">
+    <div data-app-surface={ATELIER_VIEWS.includes(view.name) ? "atelier" : "legacy"} className="relative w-full h-full overflow-hidden bg-black text-white">
       <GlassFilter />
       <div className="ava-app-stage">
       {/* Exactly one route surface is mounted at a time. Entry motion is small

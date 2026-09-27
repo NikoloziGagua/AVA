@@ -332,6 +332,7 @@ nav[data-compact] .ds-menu[data-open="true"] { clip-path: inset(0 0 0 0 round 30
 .ds-metal-bar { background: linear-gradient(135deg, var(--ds-metal-top), var(--ds-metal-bottom) 65%); box-shadow: inset 0 1px var(--ds-metal-edge), 0 12px 35px var(--ds-shadow); }
 .ds-navigation-host { isolation: isolate; }
 .ds-navigation-host:not([data-compact])::before { content: ""; position: absolute; z-index: -1; inset: -22px -60px -24px; background: radial-gradient(ellipse at 50% 85%, var(--ds-canvas) 25%, transparent 72%); pointer-events: none; }
+[data-app-surface="legacy"] .ds-navigation-host::before { background: none; }
 .ds-light-trace { pointer-events: auto; position: relative; display: grid; grid-template-columns: repeat(var(--trace-count), minmax(0, 1fr)); margin: 0 auto 9px; max-width: 480px; background: var(--ds-canvas); border-radius: 10px; }
 .ds-light-trace button { min-width: 0; min-height: 44px; padding: 6px 2px; font-size: 12px; color: var(--ds-ink-2); border-radius: 6px; background: transparent; }
 .ds-light-trace button:hover, .ds-light-trace button[aria-current="page"] { color: var(--ds-ink); }
@@ -457,6 +458,14 @@ textarea.ds-schedule-input { min-height: 108px; max-height: 360px; resize: verti
 .ds-schedule-item { min-width: 0; display: grid; gap: 12px; padding: 0; }
 .ds-reminder-status { display: inline-flex; justify-self: start; align-items: center; flex-shrink: 0; max-width: 100%; padding: 6px 10px; border-radius: 6px; background: var(--ds-glass); color: var(--ds-ink-2); font-size: 12px; line-height: 1.5; text-align: left; overflow-wrap: anywhere; }
 .chip[data-reminder-appearance="legacy"] { font-size: 12px; line-height: 1.5; }
+/* A one-off receipt is evidence: readable even after its watch is disabled. */
+.ds-legacy-reminder-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) 28px; }
+.ds-legacy-reminder-body { display: contents; }
+.ds-legacy-reminder-row > button:first-child { grid-column: 1; grid-row: 1; }
+.ds-legacy-reminder-row > button:last-child { grid-column: 3; grid-row: 1; }
+.ds-legacy-reminder-body > button { grid-column: 2; grid-row: 1; }
+.ds-legacy-reminder-body > div { grid-column: 1 / -1; }
+.ds-legacy-reminder-receipt .chip { min-width: 0; overflow-wrap: anywhere; }
 .ds-reminder-status[data-reminder-tone="active"] { color: var(--ds-info); background: var(--ds-info-soft); }
 .ds-reminder-status[data-reminder-tone="good"] { color: var(--ds-success); background: var(--ds-success-soft); }
 .ds-reminder-status[data-reminder-tone="warn"] { color: var(--ds-warning); background: var(--ds-warning-soft); }

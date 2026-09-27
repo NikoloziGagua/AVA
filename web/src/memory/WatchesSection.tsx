@@ -159,7 +159,7 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
     <div
       className={
         "lg-slab lg-sweep relative flex items-start gap-3 rounded-xl px-4 py-3 text-xs " +
-        (on ? "" : "opacity-60")
+        (receipt ? "ds-legacy-reminder-row" : on ? "" : "opacity-60")
       }
       style={{ "--sweep-x": "-130%" } as CSSProperties}
       onMouseEnter={contextSafe((e: React.MouseEvent<HTMLDivElement>) => hoverLift(e.currentTarget, true, reduced))}
@@ -177,7 +177,7 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
         <span className="tgl-knob" />
       </button>
 
-      <div className="min-w-0 flex-1">
+      <div className={"min-w-0 flex-1 " + (receipt ? "ds-legacy-reminder-body" : "")}>
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -197,9 +197,9 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
         </div>
 
         {receipt ? (
-          <div className="mt-1.5 flex items-center gap-2 text-[11px] leading-relaxed">
+          <div className="ds-legacy-reminder-receipt mt-1.5 flex flex-wrap items-start gap-2 text-xs leading-relaxed">
             <ReminderStatusChip presentation={receipt} />
-            <span className={"min-w-0 flex-1 text-white/55 " + (expanded ? "whitespace-pre-wrap break-words" : "truncate")}>
+            <span className="min-w-0 flex-1 basis-44 whitespace-normal break-words text-white/75">
               {receipt.detail}
             </span>
           </div>

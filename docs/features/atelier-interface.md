@@ -172,6 +172,17 @@ for Watches and Memory, including when the app's global preference is Paper.
 No Watch control, notification policy, recurrence or Calendar model was changed.
 This is presentation over real data, not proof of physical phone delivery.
 
+App explicitly distinguishes migrated Atelier surfaces from legacy dark ones.
+On legacy pages the navigation's decorative radial scrim is omitted; the bar
+and its opaque label ground still honour the selected look. Returning to an
+Atelier page restores the scrim, without changing the look or remounting the
+composer. This does not claim the older workspaces have been redesigned.
+Memory's existing one-off reminder detail always wraps, including the full
+phone-receipt caveat, across the row's full width. Receipt-bearing rows do not
+dim their evidence after disabling; the switch and receipt words convey state.
+Expanding the prompt is not needed to read it. Ordinary
+watch-result truncation/expansion and all watch actions are unchanged.
+
 `node web/src/schedule/verify-reminders.mjs <built-web> <built-server> <evidence-directory>`
 uses real authenticated watch routes and disposable SQLite, with no scheduler or
 push transport. It checks explicit create/confirmed delete, a lost create receipt,

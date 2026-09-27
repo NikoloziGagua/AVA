@@ -5,9 +5,9 @@ import { FaceRenderer, FaceRendererError } from "./renderer.js";
 vi.mock("./colors.js", () => ({ faceColours: () => ({ dot: [1, 1, 1], light: [1, 1, 1] }) }));
 
 /** A WebGL stand-in that records what was created and released. */
-function fakeGl(options: { compiles?: boolean[]; links?: boolean; buffer?: boolean } = {}) {
+function fakeGl(options: { compiles?: boolean[]; links?: boolean; buffer?: boolean; loseExtension?: boolean } = {}) {
   const compiles = [...(options.compiles ?? [true, true])];
-  const calls = { deleteShader: [] as unknown[], detachShader: [] as unknown[], deleteProgram: [] as unknown[], uniforms: {} as Record<string, number> };
+  const calls = { deleteShader: [] as unknown[], detachShader: [] as unknown[], deleteProgram: [] as unknown[], uniforms: {} as Record<string, number>, lost: 0 };
   let shaders = 0;
   const known: Record<string, unknown> = {
     createShader: () => ({ shader: ++shaders }),
@@ -23,6 +23,7 @@ function fakeGl(options: { compiles?: boolean[]; links?: boolean; buffer?: boole
     deleteShader: (shader: unknown) => calls.deleteShader.push(shader),
     detachShader: (_program: unknown, shader: unknown) => calls.detachShader.push(shader),
     deleteProgram: (program: unknown) => calls.deleteProgram.push(program),
+    getExtension: (name: string) => (name === "WEBGL_lose_context" && options.loseExtension !== false ? { loseContext: () => { calls.lost += 1; } } : null),
   };
   const gl = new Proxy(known, { get: (target, name: string) => (name in target ? target[name] : () => null) });
   const canvas = { getContext: () => gl } as unknown as HTMLCanvasElement;
@@ -97,5 +98,24 @@ describe("FaceRenderer presence, breath and drift", () => {
     expect(calls.uniforms.uBreath).toBeCloseTo(lively.state.breath, 9);
     expect(calls.uniforms.uBreath).toBeGreaterThan(0);
     expect(calls.uniforms.uDrift).toBeCloseTo(lively.state.drift, 9);
+  });
+});
+
+describe("FaceRenderer context release", () => {
+  it("gives the context back once, and only when asked", () => {
+    const { canvas, calls } = fakeGl();
+    const renderer = new FaceRenderer(canvas);
+    renderer.dispose();
+    expect(calls.lost).toBe(0);
+    renderer.release();
+    expect(calls.lost).toBe(1);
+  });
+
+  it("does nothing when the browser has no lose-context extension", () => {
+    const { canvas, calls } = fakeGl({ loseExtension: false });
+    const renderer = new FaceRenderer(canvas);
+    renderer.dispose();
+    expect(() => renderer.release()).not.toThrow();
+    expect(calls.lost).toBe(0);
   });
 });

@@ -12,6 +12,7 @@ vi.mock("./renderer.js", () => ({
   FaceRenderer: class {
     setPoints() {}
     setPresence() {}
+    release() {}
     resize() {}
     draw(_t: number, anim: { level: number | null }) { fake.levels.push(anim.level); }
     dispose() {}

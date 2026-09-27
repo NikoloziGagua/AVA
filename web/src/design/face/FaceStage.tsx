@@ -161,6 +161,9 @@ export function FaceStage({ mode = "idle", level = null, sampleLevel, label = "A
       canvas.removeEventListener("webglcontextlost", onLost);
       frame.current = null;
       active.dispose();
+      // A real unmount gives the context back now; a StrictMode re-run or a look
+      // or motion change keeps this same connected canvas and reuses its context.
+      setTimeout(() => { if (!canvas.isConnected) active.release(); }, 0);
     };
   }, [asset, look, reduced, fallback, animator]);
 

@@ -123,12 +123,20 @@ export class FaceRenderer {
 
   /**
    * Frees this renderer's buffer and program. The canvas keeps its context so a
-   * remount (or React's development double-mount) can draw again immediately;
-   * the context itself goes when the canvas leaves the page.
+   * remount (or React's development double-mount) can draw again immediately.
    */
   dispose(): void {
     const gl = this.gl;
     gl.deleteBuffer(this.buffer);
     gl.deleteProgram(this.program);
+  }
+
+  /**
+   * Gives the WebGL context back now, for a canvas that has left the page for
+   * good. Otherwise it would wait for garbage collection, and repeated visits
+   * could reach the browser's context limit. Call only after dispose().
+   */
+  release(): void {
+    try { this.gl.getExtension("WEBGL_lose_context")?.loseContext(); } catch { /* already lost */ }
   }
 }

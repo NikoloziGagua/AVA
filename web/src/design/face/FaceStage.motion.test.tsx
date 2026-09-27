@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseFaceAsset } from "./asset.js";
@@ -5,7 +6,7 @@ import { buildFaceAsset } from "./fixture.test-helper.js";
 import { setMotionPref } from "../../lib/motionPref.js";
 
 type Drawn = { pointer: unknown; still: boolean; profile: string; breath: number };
-const fake = vi.hoisted(() => ({ draws: 0, pointers: [] as unknown[], frames: [] as Drawn[], presence: [] as number[], resized: [] as Array<() => void> }));
+const fake = vi.hoisted(() => ({ draws: 0, pointers: [] as unknown[], frames: [] as Drawn[], presence: [] as number[], instances: [] as Array<{ released: number }>, resized: [] as Array<() => void> }));
 vi.mock("./asset.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./asset.js")>()),
   sharedFaceAsset: vi.fn(),
@@ -14,6 +15,9 @@ vi.mock("./renderer.js", () => ({
   FaceRenderer: class {
     setPoints() {}
     setPresence(value: number) { fake.presence.push(value); }
+    released = 0;
+    constructor() { fake.instances.push(this); }
+    release() { this.released += 1; }
     resize() {}
     draw(_t: number, anim: { pointer: unknown; still: boolean; profile: string; state: { breath: number } }) {
       fake.draws += 1;
@@ -32,6 +36,7 @@ beforeEach(() => {
   fake.pointers = [];
   fake.frames = [];
   fake.presence = [];
+  fake.instances = [];
   fake.resized = [];
   vi.stubGlobal("ResizeObserver", class { constructor(callback: () => void) { fake.resized.push(callback); } observe() {} disconnect() {} });
   vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} });
@@ -97,5 +102,29 @@ describe("FaceStage lively profile (Niko's room messages 773 and 775)", () => {
     const resumed = fake.frames.slice(reducedAt + 1);
     expect(resumed.every((frame) => frame.still === false && frame.profile === "lively")).toBe(true);
     expect(resumed[0]!.pointer).toBeNull();
+  });
+});
+
+describe("FaceStage context release", () => {
+  beforeEach(() => {
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 4) as unknown as number);
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+  });
+
+  it("keeps the context through StrictMode and motion changes, and gives it back once on a real unmount", async () => {
+    localStorage.setItem("ava-motion", "full");
+    const { unmount } = render(<StrictMode><FaceStage label="AVA" /></StrictMode>);
+    await waitFor(() => expect(fake.draws).toBeGreaterThan(2));
+    act(() => setMotionPref("reduced"));
+    await waitFor(() => expect(fake.frames.at(-1)?.still).toBe(true));
+    act(() => setMotionPref("full"));
+    await waitFor(() => expect(fake.frames.at(-1)?.still).toBe(false));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Only renderers made in this test are counted; an earlier test's release may land late.
+    expect(fake.instances.length).toBeGreaterThan(1);
+    expect(fake.instances.every((instance) => instance.released === 0)).toBe(true);
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(fake.instances.map((instance) => instance.released).sort()).toEqual([...Array(fake.instances.length - 1).fill(0), 1]);
   });
 });

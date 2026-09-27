@@ -1,7 +1,9 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseFaceAsset } from "./asset.js";
 import { buildFaceAsset } from "./fixture.test-helper.js";
+import { setMotionPref } from "../../lib/motionPref.js";
 
 const assetState = vi.hoisted(() => ({ load: vi.fn() }));
 vi.mock("./asset.js", async (importOriginal) => ({
@@ -81,5 +83,50 @@ describe("FaceAnimator", () => {
     for (let i = 0; i < 240; i++) anim.step(i / 60, 1 / 60);
     expect(anim.state.yaw).toBeGreaterThan(0.1);
     expect(anim.state.gx).toBeGreaterThan(0.5);
+  });
+});
+
+describe("FaceStage context release with the real renderer", () => {
+  afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); });
+
+  it("loses the canvas's one context exactly once after a burst of replacements and an unmount", async () => {
+    vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+    vi.stubGlobal("IntersectionObserver", class { observe() {} disconnect() {} });
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 4) as unknown as number);
+    vi.stubGlobal("cancelAnimationFrame", (id: number) => clearTimeout(id));
+    localStorage.setItem("ava-motion", "full");
+    // One fake native context per canvas, like the browser: renderers share it.
+    const contexts = new Map<HTMLCanvasElement, { lost: number; programs: number }>();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+      let state = contexts.get(this);
+      if (!state) { state = { lost: 0, programs: 0 }; contexts.set(this, state); }
+      const native = state;
+      const known: Record<string, unknown> = {
+        createShader: () => ({}), createBuffer: () => ({}), getAttribLocation: () => -1, getUniformLocation: () => ({}),
+        createProgram: () => { native.programs += 1; return {}; },
+        getShaderParameter: () => true, getProgramParameter: () => true,
+        isContextLost: () => native.lost > 0,
+        getExtension: (name: string) => (name === "WEBGL_lose_context" ? { loseContext: () => { native.lost += 1; } } : null),
+      };
+      return new Proxy(known, { get: (target, key: string) => (key in target ? target[key] : () => null) }) as unknown as RenderingContext;
+    });
+    assetState.load.mockResolvedValue(parseFaceAsset(buildFaceAsset()));
+    const { unmount } = render(<StrictMode><FaceStage label="AVA" /></StrictMode>);
+    await waitFor(() => expect([...contexts.values()][0]?.programs ?? 0).toBeGreaterThan(0));
+    const native = [...contexts.values()][0]!;
+
+    // Renderers replaced on the same connected canvas never give the context back.
+    act(() => setMotionPref("reduced"));
+    act(() => setMotionPref("full"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(native.programs).toBeGreaterThanOrEqual(3);
+    expect(native.lost).toBe(0);
+
+    // A replacement then an immediate unmount leaves two releases pending for one context.
+    act(() => setMotionPref("reduced"));
+    unmount();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(contexts.size).toBe(1);
+    expect(native.lost).toBe(1);
   });
 });

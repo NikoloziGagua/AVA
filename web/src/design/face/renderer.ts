@@ -134,9 +134,15 @@ export class FaceRenderer {
   /**
    * Gives the WebGL context back now, for a canvas that has left the page for
    * good. Otherwise it would wait for garbage collection, and repeated visits
-   * could reach the browser's context limit. Call only after dispose().
+   * could reach the browser's context limit. Call only after dispose(). Several
+   * renderers can share one canvas's context (StrictMode, look or motion
+   * changes), so the context itself, not this renderer, decides: once it is
+   * lost, later calls do nothing.
    */
   release(): void {
-    try { this.gl.getExtension("WEBGL_lose_context")?.loseContext(); } catch { /* already lost */ }
+    try {
+      if (this.gl.isContextLost()) return;
+      this.gl.getExtension("WEBGL_lose_context")?.loseContext();
+    } catch { /* unsupported or already gone */ }
   }
 }

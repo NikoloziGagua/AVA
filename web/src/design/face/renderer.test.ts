@@ -5,7 +5,7 @@ import { FaceRenderer, FaceRendererError } from "./renderer.js";
 vi.mock("./colors.js", () => ({ faceColours: () => ({ dot: [1, 1, 1], light: [1, 1, 1] }) }));
 
 /** A WebGL stand-in that records what was created and released. */
-function fakeGl(options: { compiles?: boolean[]; links?: boolean; buffer?: boolean; loseExtension?: boolean } = {}) {
+function fakeGl(options: { compiles?: boolean[]; links?: boolean; buffer?: boolean; loseExtension?: boolean | "throws" } = {}) {
   const compiles = [...(options.compiles ?? [true, true])];
   const calls = { deleteShader: [] as unknown[], detachShader: [] as unknown[], deleteProgram: [] as unknown[], uniforms: {} as Record<string, number>, lost: 0 };
   let shaders = 0;
@@ -23,7 +23,11 @@ function fakeGl(options: { compiles?: boolean[]; links?: boolean; buffer?: boole
     deleteShader: (shader: unknown) => calls.deleteShader.push(shader),
     detachShader: (_program: unknown, shader: unknown) => calls.detachShader.push(shader),
     deleteProgram: (program: unknown) => calls.deleteProgram.push(program),
-    getExtension: (name: string) => (name === "WEBGL_lose_context" && options.loseExtension !== false ? { loseContext: () => { calls.lost += 1; } } : null),
+    isContextLost: () => calls.lost > 0,
+    getExtension: (name: string) => {
+      if (options.loseExtension === "throws") throw new Error("extension query failed");
+      return name === "WEBGL_lose_context" && options.loseExtension !== false ? { loseContext: () => { calls.lost += 1; } } : null;
+    },
   };
   const gl = new Proxy(known, { get: (target, name: string) => (name in target ? target[name] : () => null) });
   const canvas = { getContext: () => gl } as unknown as HTMLCanvasElement;
@@ -117,5 +121,21 @@ describe("FaceRenderer context release", () => {
     renderer.dispose();
     expect(() => renderer.release()).not.toThrow();
     expect(calls.lost).toBe(0);
+  });
+
+  it("survives an extension query that throws", () => {
+    const { canvas, calls } = fakeGl({ loseExtension: "throws" });
+    const renderer = new FaceRenderer(canvas);
+    renderer.dispose();
+    expect(() => renderer.release()).not.toThrow();
+    expect(calls.lost).toBe(0);
+  });
+
+  it("loses a context shared by several renderers only once", () => {
+    const { canvas, calls } = fakeGl();
+    const first = new FaceRenderer(canvas), second = new FaceRenderer(canvas);
+    first.dispose(); second.dispose();
+    first.release(); second.release(); first.release();
+    expect(calls.lost).toBe(1);
   });
 });

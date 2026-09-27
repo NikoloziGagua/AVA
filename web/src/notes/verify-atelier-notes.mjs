@@ -50,6 +50,9 @@ try {
     await page.goto(origin);
     await page.getByRole('group', { name: 'Quick navigation' }).getByRole('button', { name: 'Notes', exact: true }).click();
     await page.getByRole('navigation', { name: 'Folders', exact: true }).getByRole('button', { name: /^Agile Development/ }).click();
+    const quickCapture = page.getByRole('textbox', { name: 'Quick capture to Agile Development', exact: true });
+    await quickCapture.fill('A local unsent thought');
+    check(`${look}/${width} quick capture has a stable destination label`, await quickCapture.inputValue() === 'A local unsent thought');
     const files = page.getByRole('navigation', { name: 'Files in Agile Development' });
     await files.getByRole('button', { name: 'Lecture one', exact: true }).click();
     await page.getByRole('region', { name: 'Note document' }).waitFor();
@@ -76,8 +79,15 @@ try {
     check(`${look}/${width} optional details start closed`, await page.getByText('Details · folder, type, tags and history').evaluate(el => !el.closest('details').open));
     await page.screenshot({ path: resolve(evidence, `notes-editor-${look}-${width}.png`) });
     check(`${look}/${width} editor fits`, await page.getByRole('dialog').evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+    await documentInput.fill(long + '\n\nA saved clarification.');
+    check(`${look}/${width} populated Document keeps its exact name`, (await documentInput.inputValue()).endsWith('A saved clarification.'));
+    check(`${look}/${width} exact Document label remains independent of content`, await page.getByLabel('Document', { exact: true }).inputValue({ timeout: 5000 }) === await documentInput.inputValue());
+    await page.getByText('Details · folder, type, tags and history').click();
+    const linksInput = page.getByRole('dialog').getByRole('textbox', { name: 'Links · one per line as Label | URL', exact: true });
+    await linksInput.fill('Example | https://example.com');
+    check(`${look}/${width} populated Links keeps its exact name`, await linksInput.inputValue() === 'Example | https://example.com');
+    check(`${look}/${width} exact Links label remains independent of content`, await page.getByLabel('Links · one per line as Label | URL', { exact: true }).inputValue({ timeout: 5000 }) === await linksInput.inputValue());
     if (look === 'ink' && width === 1440) {
-      await page.getByRole('dialog').getByRole('textbox', { name: 'Document', exact: true }).fill(long + '\n\nA saved clarification.');
       await page.getByRole('button', { name: 'Save file', exact: true }).click();
       await page.getByRole('dialog').waitFor({ state: 'hidden' });
       check('real versioned edit persisted once', db.prepare('SELECT version FROM notes WHERE id=?').get(first.id).version === 2);

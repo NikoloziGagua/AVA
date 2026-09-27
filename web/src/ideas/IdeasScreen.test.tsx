@@ -36,6 +36,19 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Ideas", () => {
+  it("keeps a static accessible name while the exact draft changes", async () => {
+    render(<IdeasScreen onOpenNote={vi.fn()} />);
+    await screen.findByText("Split-the-bills app");
+    const field = screen.getByRole("textbox", { name: "What's the idea?" });
+    for (const value of ['A thought & "quotes"', "A second line\nwith <literal> text", ""]) {
+      fireEvent.change(field, { target: { value } });
+      expect(screen.getByRole("textbox", { name: "What's the idea?" })).toBe(field);
+      expect(document.getElementById(field.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("What's the idea?");
+      expect((field as HTMLTextAreaElement).value).toBe(value);
+    }
+    expect(createNote).not.toHaveBeenCalled();
+  });
+
   it("lists only ideas and opens the exact note", async () => {
     const onOpenNote = vi.fn();
     render(<IdeasScreen onOpenNote={onOpenNote} />);

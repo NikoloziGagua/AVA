@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { Atmosphere } from "../design/metal/Atmosphere.js";
 import { MetalObject } from "../design/metal/MetalObject.js";
@@ -29,6 +29,7 @@ type Load = { status: "loading" } | { status: "error"; message: string } | { sta
  * idea hands its exact id to the Notes screen.
  */
 export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => void }) {
+  const draftLabelId = useId();
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -103,8 +104,9 @@ export function IdeasScreen({ onOpenNote }: { onOpenNote: (noteId: string) => vo
           onSubmit={(event) => { event.preventDefault(); void save(); }}
         >
           <label className="ds-ideas-field">
-            <span>What's the idea?</span>
+            <span id={draftLabelId}>What's the idea?</span>
             <textarea
+              aria-labelledby={draftLabelId}
               value={draft}
               onChange={(event) => { setDraft(event.target.value); setSaved(false); setSaveError(null); }}
               // Held still while saving, so no new words can be lost.

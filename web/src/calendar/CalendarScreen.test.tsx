@@ -105,6 +105,16 @@ describe("Calendar workspace", () => {
   });
 });
 describe("Open event editor", () => {
+  it("keeps Description's accessible name separate from entered text", async () => {
+    render(<EventEditor date="2030-09-27" onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.click(screen.getByText("More details · Europe/Dublin"));
+    const field = screen.getByRole("textbox", { name: "Description" });
+    fireEvent.change(field, { target: { value: 'Lecture notes\n<literal> & "quoted"' } });
+    expect(screen.getByRole("textbox", { name: "Description" })).toBe(field);
+    expect(document.getElementById(field.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("Description");
+    expect(api.save).not.toHaveBeenCalled();
+  });
+
   it("submits exact fields only on explicit Save, uses Dublin and blocks double submits", async () => {
     let finish!: (value: typeof event) => void;
     api.save.mockReturnValue(new Promise(resolve => { finish = resolve; }));

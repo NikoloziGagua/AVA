@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -393,6 +393,7 @@ export function NotesScreen({ onStartTask, onOpenChat, initialNoteId = null }: {
                 <span className="hud text-meta tracking-[0.18em] text-ink-2">QUICK CAPTURE · {folderName.toUpperCase()}</span>
               </div>
               <textarea
+                aria-label={`Quick capture to ${folderName}`}
                 value={capture}
                 onChange={(event) => setCapture(event.target.value)}
                 onKeyDown={(event) => {
@@ -754,6 +755,8 @@ function NoteEditor({ open, target, folders, busy, error, onOpenChange, onSave, 
   onPromote?: (target: "task" | "self_improvement") => Promise<void>;
 }) {
   const note = target?.note ?? null;
+  const documentLabelId = useId();
+  const linksLabelId = useId();
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [kind, setKind] = useState<NoteKind>("idea");
@@ -797,7 +800,7 @@ function NoteEditor({ open, target, folders, busy, error, onOpenChange, onSave, 
         <div className="grid gap-5 px-6 py-5 md:grid-cols-2">
           {error && <p role="alert" className="md:col-span-2 text-body text-danger">{error}</p>}
           <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span>Title</span><input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} className="h-10 w-full rounded-lg border border-glass-strong bg-transparent px-3 text-sm text-ink ds-focus focus:border-glass-strong" placeholder={documentType === "study" ? "e.g. Lecture 4: Scrum roles" : "A clear, useful title"} /></label>
-          <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span>Document</span><textarea value={content} onChange={(event) => setContent(event.target.value)} className="min-h-56 w-full resize-y rounded-lg border border-glass-strong bg-transparent px-3 py-3 text-sm leading-6 text-ink ds-focus focus:border-glass-strong" placeholder="Write the file. Markdown headings and lists work." /></label>
+          <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span id={documentLabelId}>Document</span><textarea aria-labelledby={documentLabelId} value={content} onChange={(event) => setContent(event.target.value)} className="min-h-56 w-full resize-y rounded-lg border border-glass-strong bg-transparent px-3 py-3 text-sm leading-6 text-ink ds-focus focus:border-glass-strong" placeholder="Write the file. Markdown headings and lists work." /></label>
           <details className="md:col-span-2"><summary className="ds-focus cursor-pointer py-3 text-meta text-ink-2">Details · folder, type, tags and history</summary>
           <div className="grid gap-5 pt-3 md:grid-cols-2">
           <FieldSelect label="Folder" value={folderId} onChange={setFolderId} options={folders.map(({ folder, depth }) => ({ value: folder.id, label: `${"  ".repeat(depth)}${folder.name}` }))} />
@@ -825,7 +828,7 @@ function NoteEditor({ open, target, folders, busy, error, onOpenChange, onSave, 
               {pinned ? "Pinned priority" : "Pin as priority"}
             </button>
           </label>
-          <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span>Links · one per line as Label | URL</span><textarea value={linkText} onChange={(event) => setLinkText(event.target.value)} className="min-h-20 w-full resize-y rounded-lg border border-glass-strong bg-transparent px-3 py-2 font-mono text-meta leading-5 text-ink ds-focus focus:border-glass-strong" placeholder="Design | https://…" /></label>
+          <label className="space-y-1.5 text-xs text-ink-2 md:col-span-2"><span id={linksLabelId}>Links · one per line as Label | URL</span><textarea aria-labelledby={linksLabelId} value={linkText} onChange={(event) => setLinkText(event.target.value)} className="min-h-20 w-full resize-y rounded-lg border border-glass-strong bg-transparent px-3 py-2 font-mono text-meta leading-5 text-ink ds-focus focus:border-glass-strong" placeholder="Design | https://…" /></label>
 
           {note && note.changeLog.length > 0 && (
             <section className="ds-note-history md:col-span-2 px-1 py-4">

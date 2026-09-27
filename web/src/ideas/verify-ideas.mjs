@@ -91,10 +91,12 @@ try {
     check(`${look}/${width} only live ideas`, !await page.getByText('Not an idea', { exact: true }).count() && !await page.getByText('Archived thought', { exact: true }).count());
     check(`${look}/${width} Silk static under Reduced`, await page.locator('[data-atmosphere="silk"] canvas').getAttribute('data-motion') === 'static');
     check(`${look}/${width} real update timezone`, (await ideaCard.locator('time').textContent()).includes('Dublin'));
-    const draft = page.getByRole('textbox', { name: "What's the idea?" });
+    const draft = page.getByRole('textbox', { name: "What's the idea?", exact: true });
     await draft.focus();
     check(`${look}/${width} visible underline focus`, await draft.evaluate(el => getComputedStyle(el).outlineStyle === 'none' && getComputedStyle(el).boxShadow !== 'none'));
     await draft.fill('A thought to keep\nWith exact words: <not HTML> & "quotes".');
+    check(`${look}/${width} typed draft keeps its exact accessible name`, await draft.inputValue() === 'A thought to keep\nWith exact words: <not HTML> & "quotes".');
+    check(`${look}/${width} exact label remains independent of draft`, await page.getByLabel("What's the idea?", { exact: true }).inputValue({ timeout: 5000 }) === await draft.inputValue());
     await page.keyboard.press('Enter');
     check(`${look}/${width} typing does not save`, writes.length === (look === 'ink' && width === 1440 ? 0 : 2));
     if (look === 'ink' && width === 1440) {

@@ -185,6 +185,13 @@ navigation focus/selection, capped Canvas2D, StrictMode cleanup, hidden/offscree
 reduced-motion, forced-colours and unavailable-canvas behaviour. Existing Home,
 Today, bar, chat and full web tests cover the preserved data/session behaviours.
 
+Ideas capture, Notes Document/Links and Calendar Description associate their
+visible static labels explicitly with the controlled textareas. Typed content
+must not become part of a field's accessible name. Notes quick capture has a
+natural destination-specific name (`Quick capture to <folder>`). Existing saves,
+shortcuts, drafts and cancellation are unchanged. Browser checks re-query the
+exact accessible names after filling the fields, in addition to unit coverage.
+
 `node web/src/design/metal/verify-atelier.mjs <built-web-directory>` exercises
 the built production App in Edge at 1440/390/320, Ink and Paper. All API responses
 are disposable browser fixtures; it rejects writes, checks moving/static pixels,

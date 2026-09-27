@@ -330,6 +330,34 @@ describe("Notes files and derived pages", () => {
     })));
   });
 
+  it("labels quick capture by its real destination, independently of the draft", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    await screen.findByText("PAGE 1 / 2");
+    const field = screen.getByRole("textbox", { name: "Quick capture to General" });
+    fireEvent.change(field, { target: { value: "Thoughts are not field labels" } });
+    expect(screen.getByRole("textbox", { name: "Quick capture to General" })).toBe(field);
+    expect(notesApi.createNote).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("combobox", { name: "Folder" }), { target: { value: "folder-agile" } });
+    expect(screen.getByRole("textbox", { name: "Quick capture to Agile Development" })).toBe(field);
+  });
+
+  it("keeps Document and Links names stable while editing populated text", async () => {
+    render(<NotesScreen onStartTask={vi.fn()} />);
+    await screen.findByText("PAGE 1 / 2");
+    fireEvent.click(screen.getByRole("button", { name: /^Edit file$/ }));
+    const dialog = within(screen.getByRole("dialog"));
+    const content = dialog.getByRole("textbox", { name: "Document" });
+    fireEvent.change(content, { target: { value: "## A new idea\nExact & complete." } });
+    expect(dialog.getByRole("textbox", { name: "Document" })).toBe(content);
+    expect(document.getElementById(content.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("Document");
+    fireEvent.click(dialog.getByText("Details · folder, type, tags and history"));
+    const links = dialog.getByRole("textbox", { name: "Links · one per line as Label | URL" });
+    fireEvent.change(links, { target: { value: "Example | https://example.com" } });
+    expect(dialog.getByRole("textbox", { name: "Links · one per line as Label | URL" })).toBe(links);
+    expect(document.getElementById(links.getAttribute("aria-labelledby") ?? "")?.textContent).toBe("Links · one per line as Label | URL");
+    expect(notesApi.updateNote).not.toHaveBeenCalled();
+  });
+
   it("retains a quick-capture draft when the create receipt is unconfirmed", async () => {
     vi.mocked(notesApi.createNote).mockRejectedValue(new appApi.UnconfirmedWriteError("Save not confirmed. Check Notes before saving again."));
     render(<NotesScreen onStartTask={vi.fn()} />);

@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Sheet } from "../design/Sheet.js";
 import { fetchNotesTree, type NoteFolder } from "../notes/api.js";
 import { ApiError } from "../api.js";
 import { saveCalendarEvent, updateOccurrence, type EventDefinition, type EventInput } from "./workspace-api.js";
 import { DEFAULT_TIME_ZONE, type CalendarOccurrence } from "./api.js";
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return <label className="ds-calendar-field"><span>{label}</span>{children}</label>;
+function Field({ label, children, labelId }: { label: string; children: ReactNode; labelId?: string }) {
+  return <label className="ds-calendar-field"><span id={labelId}>{label}</span>{children}</label>;
 }
 function errorText(error: unknown): string {
   return error instanceof ApiError ? error.message : "This change could not be confirmed. Close and refresh before trying again.";
@@ -15,6 +15,7 @@ function errorText(error: unknown): string {
 export function EventEditor({ date, base, onClose, onSaved }: {
   date: string; base?: EventDefinition; onClose: () => void; onSaved: (date: string) => void;
 }) {
+  const descriptionLabelId = useId();
   const [draft, setDraft] = useState<EventInput>(() => base ? {
     title: base.title, description: base.description, location: base.location, kind: base.kind,
     timeZone: base.timeZone, anchorLocalDate: base.anchorLocalDate, startLocalTime: base.startLocalTime,
@@ -77,7 +78,7 @@ export function EventEditor({ date, base, onClose, onSaved }: {
         <Field label="Attendance plan"><select value={draft.attendanceIntent} onChange={e => set("attendanceIntent", e.target.value as EventInput["attendanceIntent"])}><option value="undecided">Undecided</option><option value="attend">Plan to attend</option><option value="skip">Plan to skip / study independently</option></select></Field>
       </div>
       <Field label="Location"><input maxLength={500} value={draft.location} onChange={e => set("location", e.target.value)} placeholder="Optional" /></Field>
-          <Field label="Description"><textarea maxLength={5000} rows={3} value={draft.description} onChange={e => set("description", e.target.value)} /></Field>
+          <Field label="Description" labelId={descriptionLabelId}><textarea aria-labelledby={descriptionLabelId} maxLength={5000} rows={3} value={draft.description} onChange={e => set("description", e.target.value)} /></Field>
           <Field label="Study folder"><select disabled={!foldersAvailable} value={draft.notesFolderId ?? ""} onChange={e => set("notesFolderId", e.target.value || null)}>
             <option value="">No linked folder</option>
             {draft.notesFolderId && !folders.some(f => f.id === draft.notesFolderId) && <option value={draft.notesFolderId}>Existing folder (not loaded)</option>}

@@ -57,6 +57,10 @@ try {
   check('event opens with only essential fields', !await page.getByLabel('Location', { exact: true }).isVisible());
   await page.getByText(/More details/).click();
   await page.getByLabel('Location', { exact: true }).fill('Fixture room');
+  const description = page.getByRole('textbox', { name: 'Description', exact: true });
+  await description.fill('Questions\n<literal> & "quoted"');
+  check('typed Description keeps its exact accessible name', await description.inputValue() === 'Questions\n<literal> & "quoted"');
+  check('exact Description label remains independent of content', await page.getByLabel('Description', { exact: true }).inputValue({ timeout: 5000 }) === await description.inputValue());
   await page.getByRole('button', { name: 'Save event', exact: true }).click();
   const agenda = page.getByRole('complementary', { name: 'Selected day' });
   await agenda.getByRole('button', { name: /Disposable lecture/ }).click();

@@ -49,9 +49,11 @@ unchanged. No shader per button or new dependency was added.
 
 ## What is not yet migrated
 
-The approved Calendar workspace/event editor and full dark Notes composition
-are subsequent increments. The current Calendar destination still opens the
-legacy Schedule/reminders screen; only Home reads actual calendar occurrences.
+The approved full dark Notes composition is a subsequent increment. Calendar
+now opens its real server-authoritative Month/Week/Day workspace with an open
+event editor, selected-day agenda and explicit attendance. Standalone reminders
+are still reachable separately; event-linked notifications remain unavailable.
+See [Calendar C2](calendar.md#c2-the-actual-calendar-workspace) for exact limits.
 No sample events, preview localStorage, demo responses, schemas or API writes
 are promoted by this first increment. The rejected boxed event form is not
 being reused. The old standalone previews remain design references only.

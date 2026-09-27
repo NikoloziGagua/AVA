@@ -132,8 +132,8 @@ vi.mock("./ideas/IdeasScreen.js", () => ({
     <div>ideas-screen<button onClick={() => onOpenNote("idea-3")}>mock open idea</button></div>
   ),
 }));
-vi.mock("./schedule/ScheduleScreen.js", () => ({
-  ScheduleScreen: ({ onOpenTalk }: { onOpenTalk: () => void }) => (
+vi.mock("./calendar/CalendarScreen.js", () => ({
+  CalendarScreen: ({ onOpenTalk }: { onOpenTalk: () => void }) => (
     <div>schedule-screen<button onClick={onOpenTalk}>mock schedule talk</button></div>
   ),
 }));

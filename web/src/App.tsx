@@ -66,7 +66,7 @@ const VisualsScreen = lazy(async () => ({
 // a local fetch after the first visit.
 const NotesScreen = lazy(async () => ({ default: (await import("./notes/NotesScreen.js")).NotesScreen }));
 const IdeasScreen = lazy(async () => ({ default: (await import("./ideas/IdeasScreen.js")).IdeasScreen }));
-const ScheduleScreen = lazy(async () => ({ default: (await import("./schedule/ScheduleScreen.js")).ScheduleScreen }));
+const CalendarScreen = lazy(async () => ({ default: (await import("./calendar/CalendarScreen.js")).CalendarScreen }));
 const ChatListScreen = lazy(async () => ({ default: (await import("./orbit/ChatListScreen.js")).ChatListScreen }));
 const WatchesScreen = lazy(async () => ({ default: (await import("./watches/WatchesScreen.js")).WatchesScreen }));
 const RulesScreen = lazy(async () => ({ default: (await import("./rules/RulesScreen.js")).RulesScreen }));
@@ -578,7 +578,7 @@ export function App() {
             animate={SCREEN.to}
             transition={enterT}
           >
-            <ScheduleScreen onOpenTalk={openTalk} />
+            <CalendarScreen onOpenTalk={openTalk} />
           </motion.div>
         )}
         {view.name === "chat" && (

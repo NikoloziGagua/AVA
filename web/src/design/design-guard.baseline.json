@@ -1,5 +1,7 @@
 {
   "migrated": [
+    "calendar/CalendarScreen.tsx",
+    "calendar/EventEditor.tsx",
     "approvals/ApprovalCard.tsx",
     "chat/AssistantMarkdown.tsx",
     "chat/ChatScreen.tsx",

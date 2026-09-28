@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Decision Replay · AVA Future</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .rail { position: relative; margin: 8px 0 22px; padding: 26px 8px 10px; }
+  .rail-line { position: absolute; left: 24px; right: 24px; top: 40px; height: 2px; background: var(--line-2); border-radius: 2px; }
+  .rail-fill { position: absolute; left: 24px; top: 40px; height: 2px; border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); box-shadow: 0 0 12px rgba(156,196,255,.8); transition: width .6s var(--ease); }
+  .nodes { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); }
+  .node { display: grid; justify-items: center; gap: 8px; background: none; border: 0; cursor: pointer; padding: 0; text-align: center; }
+  .dot { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line-2); background: #0b0e15; display: grid; place-items: center; font-family: var(--mono); font-size: 12px; color: var(--ink-3); transition: all .4s var(--ease); }
+  .node[aria-current="step"] .dot { background: var(--ink); color: #06080c; box-shadow: 0 0 0 6px rgba(156,196,255,.15), 0 0 24px rgba(156,196,255,.7); }
+  .node.past .dot { border-color: rgba(156,196,255,.6); color: var(--accent); }
+  .node small { font-size: 12px; color: var(--ink-3); max-width: 130px; }
+  .node[aria-current="step"] small { color: var(--ink); }
+  .stage { grid-template-columns: 1.25fr 1fr; align-items: start; }
+  @media (max-width: 880px) { .stage { grid-template-columns: 1fr; } .node small { display: none; } }
+  .decision h2 { font-size: 24px; margin-bottom: 6px; }
+  .when { font-family: var(--mono); font-size: 12px; color: var(--ink-3); letter-spacing: .08em; }
+  .alts { display: grid; gap: 6px; margin: 14px 0; }
+  .alt { display: flex; justify-content: space-between; gap: 10px; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--glass); font-size: 14px; }
+  .alt.chosen { border-color: rgba(134,227,190,.45); background: rgba(134,227,190,.07); }
+  .alt .why { color: var(--ink-3); font-size: 13px; }
+  .meter { height: 8px; border-radius: 99px; background: rgba(255,255,255,.07); overflow: hidden; margin-top: 6px; }
+  .meter i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--warm), var(--accent)); transition: width .6s var(--ease); }
+  .changed { margin-top: 14px; padding: 10px 12px; border-left: 2px solid var(--accent-2); background: rgba(198,168,255,.06); border-radius: 0 10px 10px 0; font-size: 14px; color: var(--ink-2); }
+  .evidence { display: grid; gap: 10px; }
+  .note { padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass); transition: all .5s var(--ease); opacity: .38; }
+  .note.lit { opacity: 1; border-color: rgba(156,196,255,.5); box-shadow: 0 0 0 1px rgba(156,196,255,.18), 0 0 26px rgba(156,196,255,.18); }
+  .note .meta { font-family: var(--mono); font-size: 12px; color: var(--ink-3); }
+  .note blockquote { margin: 6px 0 0; font-size: 14px; color: var(--ink-2); }
+  .cited { font-family: var(--mono); font-size: 11.5px; color: var(--accent); margin-left: 6px; opacity: 0; transition: opacity .4s; }
+  .note.lit .cited { opacity: 1; }
+  .review { margin-top: 16px; display: none; }
+  .review.show { display: block; animation: fadeIn .6s var(--ease) both; }
+  .calib { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+  .calib div { padding: 10px; border-radius: 12px; border: 1px solid var(--line); text-align: center; }
+  .calib b { display: block; font-size: 22px; }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <a class="back" href="index.html">← All concepts</a>
+    <span class="eyebrow">Concept 01 · Top pick</span>
+    <span class="badge demo">DEMO · synthetic idea "Tabby"</span>
+  </div>
+  <h1><span class="silver">Decision Replay</span></h1>
+  <p class="lede">Scrub back through how an idea became what it is. At each turning point AVA shows what you decided, what you turned down, how sure you were, and the exact notes that drove it. Then it checks your reasoning against what actually happened.</p>
+
+  <section class="card rail" aria-label="Turning points">
+    <div class="rail-line"></div><div class="rail-fill" id="fill"></div>
+    <div class="nodes" id="nodes"></div>
+    <div class="row" style="margin-top:18px;justify-content:center">
+      <button class="btn" id="prev" aria-label="Previous turning point">◀</button>
+      <button class="btn solid" id="play">▶ Replay the story</button>
+      <button class="btn" id="next" aria-label="Next turning point">▶</button>
+    </div>
+  </section>
+
+  <section class="grid stage">
+    <article class="card glow decision" aria-live="polite">
+      <div class="when" id="when"></div>
+      <h2 id="title"></h2>
+      <p class="muted" id="because"></p>
+      <div class="alts" id="alts"></div>
+      <div class="row" style="justify-content:space-between"><span class="faint">How sure you were</span><span class="faint" id="confText"></span></div>
+      <div class="meter"><i id="conf"></i></div>
+      <div class="changed" id="changed"></div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn" id="reviewBtn">Review against what happened</button>
+        <a class="btn" href="02-challenge-room.html">Challenge this decision →</a>
+      </div>
+      <div class="review card" id="review">
+        <span class="badge demo">SYNTHETIC OUTCOME</span>
+        <p class="muted" style="margin:10px 0 0" id="outcome"></p>
+        <div class="calib" id="calib"></div>
+      </div>
+    </article>
+    <aside>
+      <div class="eyebrow" style="margin:4px 0 10px">Evidence behind it · exact notes</div>
+      <div class="evidence" id="evidence"></div>
+    </aside>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>"Tabby" and every note, date and number here are invented.</li><li>The outcome review is scripted.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>Decisions linked to exact Note IDs and versions, so evidence never drifts.</li><li>Confidence recorded <em>before</em> the outcome, so hindsight can't rewrite it.</li></ul></div>
+    <div class="card"><h3>How it plugs into AVA</h3><p>Built on Notes (stable IDs), ProjectBrief and memory checkpoints. Missing today: note body history and a note-ID → decision link (Codex's feasibility review). One project view, not a second Project Brain.</p></div>
+    <div class="card"><h3>Why it's worth it</h3><p>Written reasoning resists hindsight bias: you see what you actually thought, not what you remember thinking. <a href="https://fs.blog/decision-journal/" target="_blank" rel="noopener">Decision journal practice</a>.</p><p class="faint" style="margin-top:6px">Effort: medium · Risk: low · Daily value: high</p></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  var NOTES = {
+    rant: { title: "House bills rant", when: "2 Sep", quote: "Chasing 4 people for the electricity bill again. There has to be a better way." },
+    survey: { title: "Survey: 9 housemates", when: "8 Sep", quote: "7 of 9 already use Revolut groups. All 9 hate being the one who chases." },
+    interviews: { title: "Interviews: 3 houses", when: "13 Sep", quote: "Nobody asked for a better calculator. Everyone asked for someone else to do the nagging." },
+    splitwise: { title: "Competitor scan", when: "13 Sep", quote: "Splitwise splits well. Reminders are manual and easy to ignore." },
+    pricing: { title: "Pricing test", when: "19 Sep", quote: "5 of 12 said yes at €2 per house per month. 2 said yes at €1 per person." },
+  };
+  var STEPS = [
+    { when: "TUE 2 SEP 2026", title: "Build an app that splits house bills", because: "A personal pain: chasing housemates every month.", conf: 60,
+      alts: [["Split house bills", "chosen", "Real, repeated pain"], ["Just use a spreadsheet", "", "Nobody updates it"]],
+      notes: ["rant"], changed: "The starting point: a problem you felt yourself." },
+    { when: "TUE 9 SEP 2026", title: "Target student houses first", because: "The survey showed students feel the pain most and already share money apps.", conf: 65,
+      alts: [["Student houses", "chosen", "7/9 already use group payments"], ["All flatmates", "", "Too broad to reach"], ["Couples", "", "Rarely chase each other"]],
+      notes: ["rant", "survey"], changed: "Narrowed from 'everyone who shares bills' to one reachable group." },
+    { when: "SUN 14 SEP 2026", title: "Pivot: the product is the chasing, not the splitting", because: "Interviews: people want someone else to nag, and splitting is already solved.", conf: 55,
+      alts: [["Automatic polite chasing", "chosen", "The pain nobody solves"], ["Better split maths", "", "Splitwise already does it"]],
+      notes: ["survey", "interviews", "splitwise"], changed: "Your confidence dropped (65% → 55%) because you were leaving known ground. Worth noticing." },
+    { when: "SAT 20 SEP 2026", title: "Price at €2 per house per month, first month free", because: "It beat €1 per person in the pricing test and stays simple for a house to agree to.", conf: 50,
+      alts: [["€2 per house", "chosen", "5/12 said yes"], ["€1 per person", "", "2/12, awkward to split"], ["Free + ads", "", "Ads in a money app feel wrong"]],
+      notes: ["interviews", "pricing"], changed: "The first decision based on a number from real people." },
+    { when: "SAT 27 SEP 2026 · NOW", title: "Next: a two-week pilot with four houses", because: "Cheapest way to test whether auto-chasing actually gets bills paid.", conf: 70,
+      alts: [["4-house pilot", "chosen", "Two weeks, near free"], ["Build the full app first", "", "Months before any signal"]],
+      notes: ["interviews", "pricing"], changed: "Open decision: the replay marks it 'pending outcome'." },
+  ];
+  var at = 0, playing = false;
+  var nodes = document.getElementById("nodes"), evidence = document.getElementById("evidence");
+  STEPS.forEach(function (s, i) {
+    var b = document.createElement("button");
+    b.className = "node"; b.type = "button";
+    b.innerHTML = '<span class="dot">' + (i + 1) + "</span><small>" + AVAF.esc(s.title) + "</small>";
+    b.addEventListener("click", function () { show(i); });
+    nodes.appendChild(b);
+  });
+  Object.keys(NOTES).forEach(function (id) {
+    var n = NOTES[id], el = document.createElement("div");
+    el.className = "note"; el.dataset.id = id;
+    el.innerHTML = '<div class="meta">NOTE · ' + AVAF.esc(n.when) + '<span class="cited">● cited</span></div><h3 style="margin:4px 0 0">' + AVAF.esc(n.title) + "</h3><blockquote>" + AVAF.esc(n.quote) + "</blockquote>";
+    evidence.appendChild(el);
+  });
+  function show(i) {
+    at = Math.max(0, Math.min(STEPS.length - 1, i));
+    var s = STEPS[at];
+    document.getElementById("when").textContent = s.when;
+    document.getElementById("title").textContent = s.title;
+    document.getElementById("because").textContent = s.because;
+    document.getElementById("alts").innerHTML = s.alts.map(function (a) {
+      return '<div class="alt ' + a[1] + '"><span>' + (a[1] ? "✓ " : "✕ ") + AVAF.esc(a[0]) + '</span><span class="why">' + AVAF.esc(a[2]) + "</span></div>";
+    }).join("");
+    document.getElementById("conf").style.width = s.conf + "%";
+    document.getElementById("confText").textContent = s.conf + "%";
+    document.getElementById("changed").textContent = s.changed;
+    [].forEach.call(nodes.children, function (n, k) {
+      n.classList.toggle("past", k < at);
+      if (k === at) n.setAttribute("aria-current", "step"); else n.removeAttribute("aria-current");
+    });
+    document.getElementById("fill").style.width = "calc((100% - 48px) * " + (at / (STEPS.length - 1)) + ")";
+    [].forEach.call(evidence.children, function (el) { el.classList.toggle("lit", s.notes.indexOf(el.dataset.id) >= 0); });
+    document.getElementById("reviewBtn").disabled = at !== 3;
+    document.getElementById("reviewBtn").title = at === 3 ? "" : "Review works on a decision whose outcome is known (step 4 in this demo)";
+    document.getElementById("review").classList.remove("show");
+  }
+  document.getElementById("prev").addEventListener("click", function () { show(at - 1); });
+  document.getElementById("next").addEventListener("click", function () { show(at + 1); });
+  document.getElementById("play").addEventListener("click", async function () {
+    if (playing) return; playing = true;
+    for (var i = 0; i < STEPS.length; i++) { show(i); await AVAF.sleep(1900); }
+    playing = false;
+  });
+  document.getElementById("reviewBtn").addEventListener("click", function () {
+    document.getElementById("outcome").textContent = "Two weeks later: 11 of 30 houses you pitched started the free month; 4 converted to €2. You were 50% sure pricing would hold. It held for the houses that tried it, but only a third tried it. The weak link was getting started, not the price.";
+    document.getElementById("calib").innerHTML = '<div><b>50%</b><span class="faint">you predicted</span></div><div><b>36%</b><span class="faint">converted after trying</span></div><div><b style="color:var(--warm)">37%</b><span class="faint">even tried it</span></div>';
+    document.getElementById("review").classList.add("show");
+  });
+  show(0);
+})();
+</script>
+</body>
+</html>

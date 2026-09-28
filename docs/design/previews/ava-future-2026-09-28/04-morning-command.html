@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Morning Command Center · AVA Future</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .cols { grid-template-columns: 380px 1fr; align-items: start; }
+  @media (max-width: 920px) { .cols { grid-template-columns: 1fr; } }
+  .phone { border-radius: 38px; padding: 14px; border: 1px solid var(--line-2); background: linear-gradient(180deg, #0c1018, #06080d); box-shadow: 0 30px 80px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.04); }
+  .screen { border-radius: 28px; min-height: 640px; padding: 16px 14px; background: radial-gradient(ellipse at 50% -10%, rgba(126,156,255,.22), transparent 60%), #05070b; display: flex; flex-direction: column; gap: 10px; }
+  .island { align-self: center; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 99px; background: #f4f4f5; color: #06080c; font-size: 12.5px; font-weight: 600; }
+  .island i { width: 7px; height: 7px; border-radius: 50%; background: #06080c; animation: breathe 1.4s infinite; }
+  .bubble { padding: 10px 12px; border-radius: 16px; font-size: 14px; max-width: 92%; animation: fadeIn .4s var(--ease) both; }
+  .bubble.ava { background: var(--glass-2); border: 1px solid var(--line); align-self: flex-start; border-bottom-left-radius: 6px; }
+  .bubble.me { background: var(--ink); color: #06080c; align-self: flex-end; border-bottom-right-radius: 6px; }
+  .brief { display: grid; gap: 8px; }
+  .bcard { padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,.04); font-size: 13.5px; animation: fadeIn .5s var(--ease) both; }
+  .bcard .k { font: 11.5px var(--mono); letter-spacing: .1em; color: var(--ink-3); text-transform: uppercase; }
+  .wave { display: flex; gap: 3px; align-items: center; height: 22px; align-self: flex-end; }
+  .wave i { width: 3px; background: var(--ink); border-radius: 2px; animation: wv .9s ease-in-out infinite; }
+  .wave i:nth-child(2) { animation-delay: .1s } .wave i:nth-child(3) { animation-delay: .2s } .wave i:nth-child(4) { animation-delay: .3s } .wave i:nth-child(5) { animation-delay: .4s }
+  @keyframes wv { 0%,100% { height: 5px } 50% { height: 20px } }
+  .day { position: relative; margin-top: 8px; }
+  .hour { display: grid; grid-template-columns: 54px 1fr; height: 52px; border-top: 1px solid var(--line); }
+  .hour span { font: 12px var(--mono); color: var(--ink-3); padding-top: 4px; }
+  .block { position: absolute; left: 62px; right: 8px; border-radius: 12px; padding: 5px 11px; line-height: 1.3; font-size: 13.5px; border: 1px solid; animation: grow .6s var(--ease) both; overflow: hidden; }
+  @keyframes grow { from { opacity: 0; transform: scaleY(.4); transform-origin: top; } to { opacity: 1; transform: none; } }
+  .block small { display: block; color: var(--ink-3); font-size: 12px; }
+  .b-gym { background: rgba(134,227,190,.10); border-color: rgba(134,227,190,.45); }
+  .b-build { background: rgba(156,196,255,.10); border-color: rgba(156,196,255,.5); }
+  .b-lecture { background: rgba(255,255,255,.05); border-color: var(--line-2); }
+  .b-run { background: rgba(255,192,122,.10); border-color: rgba(255,192,122,.45); }
+  .nudges { display: grid; gap: 8px; margin-top: 14px; }
+  .nudge { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; border: 1px dashed var(--line-2); font-size: 14px; animation: fadeIn .5s var(--ease) both; }
+  .tag { font: 11.5px var(--mono); padding: 2px 7px; border-radius: 99px; border: 1px solid var(--line-2); color: var(--ink-3); white-space: nowrap; }
+  .tag.obs { color: var(--good); border-color: rgba(134,227,190,.45); }
+  .evening { display: none; } .evening.show { display: block; animation: fadeIn .5s var(--ease) both; }
+  .erow { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 99px; padding: 2px; }
+  .seg button { border: 0; background: none; padding: 5px 10px; border-radius: 99px; cursor: pointer; color: var(--ink-2); font-size: 12.5px; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: #06080c; }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <a class="back" href="index.html">← All concepts</a>
+    <span class="eyebrow">Concept 04 · Top pick (with 05)</span>
+    <span class="badge demo">DEMO · scripted morning</span>
+  </div>
+  <h1><span class="silver">Morning Command Center</span></h1>
+  <p class="lede">Wake up to what matters from overnight, say your plan out loud ("gym at 10, build AVA auth, lecture at 3, run at 6"), and AVA turns it into a day with gentle nudges. In the evening it asks how it went. It never assumes you did something just because it was planned.</p>
+  <div class="row" style="margin-bottom:16px">
+    <button class="btn solid" id="go">▶ Start the morning check-in</button>
+    <button class="btn" id="eve" disabled>Jump to the evening</button>
+  </div>
+
+  <section class="grid cols">
+    <div class="phone" aria-label="Phone preview"><div class="screen" id="screen"><div class="island"><i></i>AVA · 08:12</div></div></div>
+    <div>
+      <article class="card glow">
+        <div class="row" style="justify-content:space-between"><h2 style="margin:0">Today, Monday 28 Sep</h2><span class="faint" id="count">Waiting for your plan…</span></div>
+        <div class="day" id="day"></div>
+        <div class="nudges" id="nudges"></div>
+      </article>
+      <article class="card evening" id="evening" style="margin-top:16px">
+        <h2>21:30 · "How did it go?"</h2>
+        <p class="muted" style="margin-top:0">Every block stays distinct: done, moved, skipped. No invented streaks, and nothing is marked done because the time passed.</p>
+        <div id="erows"></div>
+        <p class="faint" id="esum" style="margin-top:10px"></p>
+      </article>
+    </div>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>The overnight brief, the spoken plan and the times are scripted.</li><li>The voice waveform is decorative.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>Your spoken plan → optional calendar blocks you confirm.</li><li>Nudges as reminders.</li><li>The evening review writes a short journal line per project. Planned, done and deferred are stored separately.</li></ul></div>
+    <div class="card"><h3>How it plugs into AVA</h3><p>This is M4, "life rhythm": voice plus the calendar tools plus one-off reminders already exist. The overnight brief reuses the "AVA starts a conversation" pipeline, with the same limits: quiet hours, sources shown, off until you turn it on.</p></div>
+    <div class="card"><h3>Grounding</h3><p>OpenAI's <a href="https://openai.com/index/introducing-chatgpt-pulse/" target="_blank" rel="noopener">ChatGPT Pulse</a> did overnight personal briefs, and was later folded into scheduled tasks (reported June 2026). The lesson: proactive briefs are loved, but they must stay scheduled and under your control.</p><p class="faint" style="margin-top:6px">Effort: medium · Risk: low · Daily value: very high</p></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  var screen = document.getElementById("screen"), day = document.getElementById("day"), nudges = document.getElementById("nudges");
+  var START = 8, END = 20, H = 52;
+  for (var h = START; h <= END; h++) {
+    var row = document.createElement("div"); row.className = "hour";
+    row.innerHTML = "<span>" + String(h).padStart(2, "0") + ":00</span><i></i>"; day.appendChild(row);
+  }
+  var BLOCKS = [
+    { cls: "b-gym", from: 10, to: 11.25, title: "Gym · kickboxing", sub: "you said 'gym at 10'" },
+    { cls: "b-build", from: 11.5, to: 14, title: "Build AVA: auth", sub: "your top project · protected block" },
+    { cls: "b-lecture", from: 15, to: 16, title: "Lecture", sub: "already in your calendar" },
+    { cls: "b-run", from: 18, to: 18.75, title: "Run · 5k", sub: "you said 'run at 6'" },
+  ];
+  var NUDGES = [
+    ["09:45", "Gym in 15 minutes. Bag packed?", "time-based", ""],
+    ["11:40", "If the auth block hasn't started by 11:40, I'll ask what's in the way, not nag.", "if-then", ""],
+    ["After the lecture", "When you say you're out of the lecture, I'll remind you to buy the printer paper.", "observed · you tell me", "obs"],
+    ["17:45", "Run in 15. You planned 5k.", "time-based", ""],
+  ];
+  function say(cls, html) { var b = document.createElement("div"); b.className = "bubble " + cls; b.innerHTML = html; screen.appendChild(b); return b; }
+  async function morning() {
+    document.getElementById("go").disabled = true;
+    screen.querySelectorAll(".bubble,.brief,.wave").forEach(function (n) { n.remove(); });
+    day.querySelectorAll(".block").forEach(function (n) { n.remove(); }); nudges.innerHTML = "";
+    var b = say("ava", ""); await AVAF.type(b, "Morning Niko. Three things from overnight, then your plan.", 18);
+    await AVAF.sleep(400);
+    var brief = document.createElement("div"); brief.className = "brief"; screen.appendChild(brief);
+    var CARDS = [["Tabby", "Your pricing note has an open question: €2 per house or per person? Worth 5 minutes."], ["Calendar", "Your lecture moved to 15:00 (it was 14:00). The build block still fits."], ["Opportunity · unverified", "An AI agents hackathon closes this week. I'll show you the source before you decide."]];
+    for (var i = 0; i < CARDS.length; i++) {
+      var c = document.createElement("div"); c.className = "bcard";
+      c.innerHTML = '<div class="k">' + AVAF.esc(CARDS[i][0]) + "</div>" + AVAF.esc(CARDS[i][1]); brief.appendChild(c);
+      await AVAF.sleep(650);
+    }
+    var ask = say("ava", ""); await AVAF.type(ask, "What's the plan today?", 20);
+    var wave = document.createElement("div"); wave.className = "wave"; wave.innerHTML = "<i></i><i></i><i></i><i></i><i></i>"; screen.appendChild(wave);
+    await AVAF.sleep(1300); wave.remove();
+    var me = say("me", ""); await AVAF.type(me, "Gym at 10, then build AVA auth till 2, lecture at 3, run at 6.", 22);
+    await AVAF.sleep(500);
+    for (var k = 0; k < BLOCKS.length; k++) {
+      var bl = BLOCKS[k], el = document.createElement("div");
+      el.className = "block " + bl.cls;
+      el.style.top = ((bl.from - START) * H + 4) + "px"; el.style.height = ((bl.to - bl.from) * H - 6) + "px";
+      el.innerHTML = AVAF.esc(bl.title) + "<small>" + AVAF.esc(bl.sub) + "</small>";
+      day.appendChild(el);
+      document.getElementById("count").textContent = (k + 1) + " blocks · you confirm before anything is saved";
+      await AVAF.sleep(420);
+    }
+    for (var n = 0; n < NUDGES.length; n++) {
+      var d = document.createElement("div"); d.className = "nudge";
+      d.innerHTML = '<span class="tag ' + NUDGES[n][3] + '">' + AVAF.esc(NUDGES[n][2]) + '</span><div><b style="font-weight:600">' + AVAF.esc(NUDGES[n][0]) + "</b> · " + AVAF.esc(NUDGES[n][1]) + "</div>";
+      nudges.appendChild(d); await AVAF.sleep(300);
+    }
+    var done = say("ava", ""); await AVAF.type(done, "Done. Your day's laid out: 4 blocks and 4 nudges, all changeable. Have a good session at the gym.", 16);
+    document.getElementById("eve").disabled = false;
+    document.getElementById("go").disabled = false;
+  }
+  var STATES = {};
+  function evening() {
+    var box = document.getElementById("erows");
+    box.innerHTML = "";
+    BLOCKS.forEach(function (bl, i) {
+      STATES[i] = STATES[i] || "unknown";
+      var r = document.createElement("div"); r.className = "erow";
+      r.innerHTML = "<span>" + AVAF.esc(bl.title) + '</span><span class="seg" role="group" aria-label="' + AVAF.esc(bl.title) + '">' +
+        ["done", "moved", "skipped"].map(function (s) { return '<button type="button" data-i="' + i + '" data-s="' + s + '" aria-pressed="' + (STATES[i] === s) + '">' + s + "</button>"; }).join("") + "</span>";
+      box.appendChild(r);
+    });
+    box.querySelectorAll("button").forEach(function (b) { b.addEventListener("click", function () { STATES[b.dataset.i] = b.dataset.s; evening(); }); });
+    var vals = Object.keys(STATES).map(function (k) { return STATES[k]; });
+    var c = function (s) { return vals.filter(function (v) { return v === s; }).length; };
+    document.getElementById("esum").textContent = "Planned " + BLOCKS.length + " · done " + c("done") + " · moved " + c("moved") + " · skipped " + c("skipped") + " · not answered " + c("unknown") + ". Unanswered stays unknown, never 'done'.";
+    document.getElementById("evening").classList.add("show");
+  }
+  document.getElementById("go").addEventListener("click", morning);
+  document.getElementById("eve").addEventListener("click", evening);
+})();
+</script>
+</body>
+</html>

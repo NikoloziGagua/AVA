@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Future You · AVA Future</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .goals { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .map { position: relative; padding: 10px 8px 4px; overflow-x: auto; }
+  .map svg { width: 100%; min-width: 760px; height: 380px; display: block; }
+  .path { fill: none; stroke-width: 2.5; stroke-linecap: round; opacity: .35; transition: opacity .4s, stroke-width .4s; }
+  .path.focus { opacity: 1; stroke-width: 3.5; filter: drop-shadow(0 0 8px currentColor); }
+  .path.draw { stroke-dasharray: 1400; stroke-dashoffset: 1400; animation: draw 2.4s var(--ease) forwards; }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+  .yr { fill: var(--ink-3); font: 12px var(--mono); }
+  .ms { cursor: pointer; }
+  .ms circle { transition: r .3s; }
+  .ms text { fill: var(--ink-2); font: 12px var(--font); }
+  .ms:hover circle { r: 9; }
+  .cols { grid-template-columns: 1.1fr .9fr; align-items: start; margin-top: 16px; }
+  @media (max-width: 880px) { .cols { grid-template-columns: 1fr; } }
+  .branchcard h2 { display: flex; gap: 10px; align-items: center; }
+  .sw { width: 12px; height: 12px; border-radius: 50%; display: inline-block; box-shadow: 0 0 10px currentColor; }
+  .kv { display: grid; gap: 10px; margin-top: 8px; }
+  .kv div { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--glass); font-size: 14px; }
+  .kv b { display: block; font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 3px; }
+  .fit { font: 12px var(--mono); color: var(--good); }
+  .chat { display: grid; gap: 10px; }
+  .msg { max-width: 92%; padding: 10px 13px; border-radius: 16px; font-size: 14.5px; }
+  .msg.me { justify-self: end; background: var(--ink); color: #06080c; border-bottom-right-radius: 6px; }
+  .msg.them { justify-self: start; background: var(--glass-2); border: 1px solid var(--line); border-bottom-left-radius: 6px; }
+  .future-face { width: 54px; height: 54px; border-radius: 50%; background: radial-gradient(circle at 40% 35%, #e9eefc, #8fa2c9 45%, #2d3753 90%); box-shadow: 0 0 24px rgba(156,196,255,.4); display: grid; place-items: center; font-weight: 600; color: #0b0f18; }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <a class="back" href="index.html">← All concepts</a>
+    <span class="eyebrow">Concept 03 · Showpiece</span>
+    <span class="badge demo">HYPOTHETICAL · not a prediction</span>
+  </div>
+  <h1><span class="silver">Future You</span></h1>
+  <p class="lede">"If I do X now, where does it put me in 2–5 years?" AVA lays out a few branching paths from the goals <em>you confirm</em>: what each would ask of you, what must be true, and the early signs worth watching. Then you can talk it through with a version of yourself at 26.</p>
+
+  <div class="eyebrow" style="margin-bottom:8px">Goals you confirmed (tap to change)</div>
+  <div class="goals" id="goals"></div>
+
+  <section class="card map" aria-label="Branching paths, 2026 to 2031">
+    <svg viewBox="0 0 1000 380" id="svg" role="img" aria-label="Three hypothetical paths from now to 2031"></svg>
+  </section>
+
+  <section class="grid cols">
+    <article class="card glow branchcard" id="branch" aria-live="polite"></article>
+    <aside class="card">
+      <div class="row" style="gap:12px;margin-bottom:12px"><div class="future-face" aria-hidden="true">26</div><div><h3 style="margin:0">Niko at 26 (hypothetical)</h3><span class="faint">Speaks from the branch you selected, built only from your confirmed goals</span></div></div>
+      <div class="chat" id="chat"></div>
+      <div class="row" id="asks" style="margin-top:12px"></div>
+    </aside>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>The branches, milestones and the "26" conversation are scripted.</li><li>"Fit" is a toy score of overlap with the goals you ticked.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>Branches built only from goals you explicitly confirm; never inferred into memory.</li><li>Each milestone links to what you'd need (skills, money, time).</li><li>No probabilities presented as forecasts.</li></ul></div>
+    <div class="card"><h3>How it plugs into AVA</h3><p>It reads your confirmed goals and projects in Notes, and reviews them at goal check-ins. The conversation is an ordinary chat with a clearly labelled persona. Nothing it says is saved as fact about you.</p></div>
+    <div class="card"><h3>Grounding</h3><p>MIT Media Lab's <a href="https://www.media.mit.edu/projects/future-you/overview/" target="_blank" rel="noopener">Future You</a>: short chats with an AI future self reduced anxiety and increased "future self-continuity" in a controlled study. The authors are explicit: it creates plausible scenarios and cannot predict your life.</p><p class="faint" style="margin-top:6px">Effort: medium · Risk: medium (must stay honest) · Wow: very high</p></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  var GOALS = [
+    { id: "ship", label: "Ship a product people pay for", on: true },
+    { id: "ai", label: "Get really good at AI engineering", on: true },
+    { id: "money", label: "Understand finance and markets", on: false },
+    { id: "degree", label: "Finish the degree", on: true },
+    { id: "fit", label: "Keep kickboxing and running", on: true },
+  ];
+  var BRANCHES = [
+    { id: "builder", name: "Builder track", color: "#9cc4ff", serves: ["ship", "ai", "degree", "fit"],
+      pitch: "Finish the degree while shipping two small products, with AVA as your portfolio centrepiece.",
+      must: "You protect ~15 focused building hours a week, even in exam season.",
+      costs: "Slower money early; weekends go to shipping.",
+      watch: "By June 2027: one product with 10 paying users, or a clear reason why not.",
+      ms: [["2026", "AVA daily driver"], ["2027", "First paying users"], ["2028", "Degree + 2 shipped"], ["2029", "AI engineer role or own product"], ["2031", "Small profitable company?"]],
+      y: [190, 150, 120, 95, 70] },
+    { id: "founder", name: "Founder now", color: "#c6a8ff", serves: ["ship", "ai", "fit"],
+      pitch: "Pause or slow the degree to go all-in on one startup idea with a co-founder.",
+      must: "An idea with real pull (people asking to pay) and ~12 months of runway.",
+      costs: "Higher risk; the degree gets delayed; money gets tight.",
+      watch: "Within 3 months: users coming back without you chasing them.",
+      ms: [["2026", "Pick one idea"], ["2027", "Accelerator app"], ["2028", "Raise or pivot"], ["2029", "Scale or fold"], ["2031", "Founder, round 2"]],
+      y: [190, 210, 175, 250, 150] },
+    { id: "quant", name: "AI + finance", color: "#ffc07a", serves: ["ai", "money", "degree"],
+      pitch: "Add a finance minor or master's and aim for quant or AI-in-finance roles.",
+      must: "Strong maths and statistics, plus finance-specific projects that stand out.",
+      costs: "Less time for your own products; a competitive hiring funnel.",
+      watch: "By spring 2027: an internship interview, or a ranked finance project.",
+      ms: [["2026", "Stats + finance basics"], ["2027", "Internship hunt"], ["2028", "Finance master's"], ["2029", "Quant/AI analyst"], ["2031", "Senior role, higher pay"]],
+      y: [190, 268, 290, 305, 322] },
+  ];
+  var focus = "builder";
+  var X = [70, 290, 510, 730, 950];
+
+  function fitOf(b) {
+    var active = GOALS.filter(function (g) { return g.on; }).map(function (g) { return g.id; });
+    if (!active.length) return 0;
+    return Math.round(100 * active.filter(function (id) { return b.serves.indexOf(id) >= 0; }).length / active.length);
+  }
+  function drawGoals() {
+    var box = document.getElementById("goals");
+    box.innerHTML = "";
+    GOALS.forEach(function (g) {
+      var c = document.createElement("button");
+      c.type = "button"; c.className = "chip"; c.setAttribute("aria-pressed", String(g.on)); c.textContent = g.label;
+      c.addEventListener("click", function () { g.on = !g.on; drawGoals(); drawBranch(); });
+      box.appendChild(c);
+    });
+  }
+  function drawMap(animate) {
+    var svg = document.getElementById("svg"), out = "";
+    ["Now", "2027", "2028", "2029", "2031"].forEach(function (y, i) { out += '<text class="yr" x="' + (X[i] - 14) + '" y="366">' + y + "</text>"; });
+    BRANCHES.forEach(function (b) {
+      var d = "M " + X[0] + " " + b.y[0];
+      for (var i = 1; i < X.length; i++) { var cx = (X[i - 1] + X[i]) / 2; d += " C " + cx + " " + b.y[i - 1] + " " + cx + " " + b.y[i] + " " + X[i] + " " + b.y[i]; }
+      out += '<path class="path' + (animate ? " draw" : "") + (b.id === focus ? " focus" : "") + '" d="' + d + '" stroke="' + b.color + '" style="color:' + b.color + '" data-b="' + b.id + '"/>';
+      b.ms.forEach(function (m, i) {
+        if (i === 0) return;
+        out += '<g class="ms" data-b="' + b.id + '" tabindex="0" role="button" aria-label="' + AVAF.esc(b.name + ": " + m[1]) + '"><circle cx="' + X[i] + '" cy="' + b.y[i] + '" r="6" fill="' + b.color + '"/><text x="' + (X[i] - 40) + '" y="' + (b.y[i] - 14) + '">' + AVAF.esc(m[1]) + "</text></g>";
+      });
+    });
+    out += '<circle cx="' + X[0] + '" cy="190" r="10" fill="#f4f4f5"/><text class="yr" x="' + (X[0] - 20) + '" y="222" style="fill:#f4f4f5">You, 21</text>';
+    svg.innerHTML = out;
+    svg.querySelectorAll("[data-b]").forEach(function (el) {
+      var pick = function () { focus = el.dataset.b; drawMap(false); drawBranch(); resetChat(); };
+      el.addEventListener("click", pick);
+      el.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    });
+  }
+  function drawBranch() {
+    var b = BRANCHES.filter(function (x) { return x.id === focus; })[0];
+    document.getElementById("branch").innerHTML =
+      '<div class="eyebrow">Selected branch</div><h2><span class="sw" style="background:' + b.color + ";color:" + b.color + '"></span>' + AVAF.esc(b.name) + '</h2>' +
+      '<p class="muted" style="margin:0">' + AVAF.esc(b.pitch) + '</p><p class="fit" style="margin:8px 0 0">Overlap with your ticked goals: ' + fitOf(b) + '% · a toy score, not a forecast</p>' +
+      '<div class="kv"><div><b>What must be true</b>' + AVAF.esc(b.must) + '</div><div><b>What it costs you</b>' + AVAF.esc(b.costs) + '</div><div><b>Early sign to watch</b>' + AVAF.esc(b.watch) + "</div></div>" +
+      '<div class="row" style="margin-top:12px">' + BRANCHES.map(function (x) { return '<button class="chip' + (x.id === focus ? " on" : "") + '" data-pick="' + x.id + '">' + AVAF.esc(x.name) + "</button>"; }).join("") + "</div>";
+    document.querySelectorAll("[data-pick]").forEach(function (c) { c.addEventListener("click", function () { focus = c.dataset.pick; drawMap(false); drawBranch(); resetChat(); }); });
+  }
+  var TALK = {
+    builder: [["What did I get wrong at 21?", "Honestly? Starting four things in one term. The year it clicked was when AVA became the one serious project and everything else got a hard stop date."],
+      ["Was finishing the degree worth it?", "In this branch, yes, but mostly because shipping alongside it gave the degree something to point at. The projects got me the interviews."],
+      ["What should I do this week?", "Pick the one product you'd be embarrassed not to ship by June. Put two protected build blocks in the calendar. Guard them like training."]],
+    founder: [["Was dropping out scary?", "In this branch I slowed down rather than dropped out. What scared me was month five: users signed up but didn't come back. That was the real test, not the idea."],
+      ["What made it work?", "Talking to users every week and killing features fast. The thing that worked wasn't what I pitched."],
+      ["What should I do this week?", "Find five people who'd be upset if your idea disappeared. If you can't, it isn't pulling yet."]],
+    quant: [["Did I miss building?", "Sometimes. I kept one small side project alive so I didn't lose that muscle. It showed up in every interview."],
+      ["Was the maths hard?", "Statistics was the gate. Doing it through real market data instead of textbook drills made it stick."],
+      ["What should I do this week?", "Take one finance dataset and build something you can explain in two minutes. That's your first interview story."]],
+  };
+  function resetChat() {
+    var chat = document.getElementById("chat"), asks = document.getElementById("asks");
+    chat.innerHTML = '<div class="msg them">Hey. I\'m you, five years on, down this path. I only know what you told AVA about your goals, so treat me as a sparring partner, not a crystal ball.</div>';
+    asks.innerHTML = "";
+    TALK[focus].forEach(function (qa) {
+      var b = document.createElement("button");
+      b.className = "chip"; b.type = "button"; b.textContent = qa[0];
+      b.addEventListener("click", async function () {
+        b.disabled = true; b.style.opacity = .4;
+        var me = document.createElement("div"); me.className = "msg me"; me.textContent = qa[0]; chat.appendChild(me);
+        await AVAF.sleep(500);
+        var them = document.createElement("div"); them.className = "msg them"; chat.appendChild(them);
+        await AVAF.type(them, qa[1], 12);
+      });
+      asks.appendChild(b);
+    });
+  }
+  drawGoals(); drawMap(true); drawBranch(); resetChat();
+})();
+</script>
+</body>
+</html>

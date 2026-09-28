@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Challenge Room · AVA Future</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .arena { position: relative; display: grid; grid-template-columns: 1fr minmax(240px, 300px) 1fr; grid-template-rows: auto auto; gap: 18px 44px; margin: 10px 0 20px; }
+  #seats { display: contents; }
+  @media (max-width: 880px) { .arena { grid-template-columns: 1fr; gap: 12px; } .arena svg { display: none; } .plan, .seat { grid-column: auto !important; grid-row: auto !important; } }
+  .arena svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+  .arena line { stroke: rgba(255,255,255,.08); stroke-width: 1.2; transition: stroke .4s; }
+  .arena line.hot { stroke: url(#beam); stroke-width: 2; filter: drop-shadow(0 0 6px rgba(156,196,255,.8)); }
+  .plan { grid-column: 2; grid-row: 1 / 3; align-self: center; text-align: center; z-index: 2; }
+  .plan .orb { margin: 0 auto 10px; }
+  .plan h2 { font-size: 18px; margin: 0 0 6px; }
+  .seat { position: relative; z-index: 2; transition: transform .5s var(--ease), opacity .5s; }
+  .seat.s1 { grid-column: 1; grid-row: 1; } .seat.s2 { grid-column: 3; grid-row: 1; } .seat.s3 { grid-column: 1; grid-row: 2; } .seat.s4 { grid-column: 3; grid-row: 2; }
+  .seat .who { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-size: 16px; border: 1px solid var(--line-2); background: var(--glass-2); }
+  .seat.speaking { transform: scale(1.03); }
+  .seat.speaking .card { border-color: rgba(156,196,255,.5); box-shadow: 0 0 30px rgba(156,196,255,.18); }
+  .seat.waiting .card { opacity: .45; }
+  .field { font-size: 13.5px; color: var(--ink-2); margin: 6px 0 0; min-height: 1.2em; }
+  .field b { color: var(--ink); font-weight: 600; display: block; font-size: 12px; font-family: var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 2px; }
+  .verdict { display: none; } .verdict.show { display: block; animation: fadeIn .6s var(--ease) both; }
+  .saved { margin-top: 12px; font-size: 14px; color: var(--good); }
+  .mode { display: inline-flex; border: 1px solid var(--line-2); border-radius: 999px; padding: 3px; background: var(--glass); }
+  .mode button { border: 0; background: none; padding: 6px 12px; border-radius: 999px; cursor: pointer; color: var(--ink-2); font-size: 13px; }
+  .mode button[aria-pressed="true"] { background: var(--ink); color: #06080c; }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <a class="back" href="index.html">← All concepts</a>
+    <span class="eyebrow">Concept 02 · Top pick</span>
+    <span class="badge demo">DEMO · scripted panel</span>
+  </div>
+  <h1><span class="silver">Challenge Room</span></h1>
+  <p class="lede">Put any plan on the table and let four sharp minds attack it. Each gives its strongest objection, the assumption you haven't proved, and the cheapest experiment that could change your mind. "The reasoning holds" is a real possible answer.</p>
+  <div class="row" style="margin-bottom:6px">
+    <div class="mode" role="group" aria-label="Challenge mode">
+      <button type="button" aria-pressed="true" data-mode="panel">Four critics</button>
+      <button type="button" aria-pressed="false" data-mode="premortem">Premortem: "it failed. Why?"</button>
+    </div>
+    <button class="btn solid" id="start">Start the challenge</button>
+  </div>
+
+  <section class="arena" aria-live="polite">
+    <svg aria-hidden="true"><defs><linearGradient id="beam"><stop offset="0" stop-color="#9cc4ff"/><stop offset="1" stop-color="#c6a8ff"/></linearGradient></defs>
+      <line id="l1" x1="18%" y1="18%" x2="50%" y2="50%"/><line id="l2" x1="82%" y1="18%" x2="50%" y2="50%"/>
+      <line id="l3" x1="18%" y1="82%" x2="50%" y2="50%"/><line id="l4" x1="82%" y1="82%" x2="50%" y2="50%"/></svg>
+    <div class="plan card glow">
+      <div class="orb"></div>
+      <div class="eyebrow">The plan on the table</div>
+      <h2>Tabby: auto-chasing house bills, €2 per house per month</h2>
+      <p class="faint">Pilot with 4 student houses for two weeks · from your notes</p>
+    </div>
+    <div id="seats"></div>
+  </section>
+
+  <section class="card verdict" id="verdict">
+    <h2>Your call</h2>
+    <p class="muted">AVA records what you decided and why, next to the evidence. The challenge becomes part of the idea's history in Decision Replay.</p>
+    <div class="row">
+      <button class="btn" data-v="holds">The reasoning holds</button>
+      <button class="btn" data-v="revise">Revise the plan</button>
+      <button class="btn solid" data-v="test">Run the cheapest experiment first</button>
+    </div>
+    <div class="saved" id="saved" role="status"></div>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>The critics' words are scripted for the fictional "Tabby" plan.</li><li>Nothing is saved anywhere.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>Critiques bound to your actual note (exact ID and version).</li><li>Every objection must name the note it's reacting to.</li><li>Your verdict is stored as a decision event.</li></ul></div>
+    <div class="card"><h3>How it plugs into AVA</h3><p>An explicit "Challenge this" on a Note or plan. It's a source-bound review, not a generic skeptic prompt; the persona already challenges assumptions. It feeds Decision Replay.</p></div>
+    <div class="card"><h3>Grounding</h3><p>Role-based multi-agent critique (<a href="https://aclanthology.org/2025.coling-main.314.pdf" target="_blank" rel="noopener">persona debate, COLING 2025</a>) and the premortem technique (Gary Klein). It's a thinking aid, not a truth score.</p><p class="faint" style="margin-top:6px">Effort: medium · Risk: low · Fits your competitive streak</p></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  var PANEL = [
+    { icon: "💼", who: "Investor", role: "Cares about the size of the prize",
+      objection: "€2 per house is a tiny number. You need a lot of houses to make this worth your time.",
+      assumption: "That houses will pay at all once the free month ends.",
+      test: "Charge 5 houses €2 upfront this week. Count payments, not promises." },
+    { icon: "🛠", who: "Engineer", role: "Cares about what breaks",
+      objection: "Auto-chasing means reading bank payments. That's open banking, and it's months of work.",
+      assumption: "That you need live bank data for the MVP.",
+      test: "Fake it: housemates tap 'I paid'. See if chasing still works." },
+    { icon: "🙋", who: "Customer", role: "A tired housemate",
+      objection: "I don't want an app nagging my friends for me. That's awkward.",
+      assumption: "That automated reminders feel less awkward than a human asking.",
+      test: "Show 10 students two reminder styles and ask which one they'd forward." },
+    { icon: "⚔️", who: "Competitor", role: "Splitwise's product lead",
+      objection: "If this works, we add auto-reminders in a sprint.",
+      assumption: "That chasing is defensible on its own.",
+      test: "List what you'd have that a feature update can't copy in 30 days." },
+  ];
+  var PREMORTEM = [
+    { icon: "📉", who: "Growth", role: "Sept 2027: Tabby shut down",
+      objection: "Houses signed up for the free month, then nobody set up the second bill.",
+      assumption: "One good month builds a habit.", test: "Measure month-2 setup in the pilot, not sign-ups." },
+    { icon: "⏳", who: "Time", role: "What ate the year",
+      objection: "Open-banking integration took 5 months; the pilot never restarted.",
+      assumption: "The hard part is the product, not the plumbing.", test: "Timebox the integration to 2 weeks or cut it." },
+    { icon: "🧭", who: "Focus", role: "What got neglected",
+      objection: "AVA, uni and Tabby all half-done; nothing shipped properly.",
+      assumption: "Three serious projects fit in one semester.", test: "Pick one to be 'the' project for 6 weeks." },
+    { icon: "💬", who: "People", role: "What users said",
+      objection: "'It made our house group chat tense.'", assumption: "Friends want automation in money matters.",
+      test: "Interview 3 houses after week one about the vibe, not features." },
+  ];
+  var mode = "panel", running = false;
+  var seats = document.getElementById("seats");
+  function render(list) {
+    seats.innerHTML = list.map(function (p, i) {
+      return '<div class="seat s' + (i + 1) + ' waiting" id="seat' + i + '"><div class="card"><div class="who"><span class="avatar" aria-hidden="true">' + p.icon + '</span><div><h3 style="margin:0">' + AVAF.esc(p.who) + '</h3><span class="faint">' + AVAF.esc(p.role) + '</span></div></div>' +
+        '<p class="field"><b>Strongest objection</b><span data-f="objection"></span></p><p class="field"><b>Unproved assumption</b><span data-f="assumption"></span></p><p class="field"><b>Cheapest experiment</b><span data-f="test"></span></p></div></div>';
+    }).join("");
+  }
+  render(PANEL);
+  document.querySelectorAll(".mode button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      if (running) return;
+      mode = b.dataset.mode;
+      document.querySelectorAll(".mode button").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+      render(mode === "panel" ? PANEL : PREMORTEM);
+      document.getElementById("verdict").classList.remove("show");
+    });
+  });
+  document.getElementById("start").addEventListener("click", async function () {
+    if (running) return; running = true;
+    var list = mode === "panel" ? PANEL : PREMORTEM;
+    render(list);
+    document.getElementById("verdict").classList.remove("show");
+    for (var i = 0; i < list.length; i++) {
+      var seat = document.getElementById("seat" + i);
+      seat.classList.remove("waiting"); seat.classList.add("speaking");
+      document.getElementById("l" + (i + 1)).classList.add("hot");
+      for (var f of ["objection", "assumption", "test"]) {
+        await AVAF.type(seat.querySelector('[data-f="' + f + '"]'), list[i][f], 14);
+        await AVAF.sleep(180);
+      }
+      seat.classList.remove("speaking");
+      document.getElementById("l" + (i + 1)).classList.remove("hot");
+      await AVAF.sleep(250);
+    }
+    document.getElementById("verdict").classList.add("show");
+    running = false;
+  });
+  document.querySelectorAll("#verdict [data-v]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var text = { holds: "Recorded: the reasoning holds, challenged by 4 critics on 28 Sep. (Demo: nothing is stored.)",
+        revise: "Recorded: plan revised after the challenge. Replay will show this as a new turning point. (Demo)",
+        test: "Recorded: 'charge 5 houses upfront' becomes the next step, with a check-in in 7 days. (Demo)" }[b.dataset.v];
+      document.getElementById("saved").textContent = "✓ " + text;
+    });
+  });
+})();
+</script>
+</body>
+</html>

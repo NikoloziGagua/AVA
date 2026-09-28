@@ -63,7 +63,7 @@
   .citem { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,.03); }
   .citem .k { font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
   .citem .v { font-size: 14px; }
-  .citem .from { display: inline-block; margin-top: 2px; padding: 0; border: 0; background: none; font-size: 12px; color: var(--ink-3); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .citem .from { display: inline-block; margin-top: 2px; padding: 0; text-align: left; border: 0; background: none; font-size: 12px; color: var(--ink-3); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
   .citem .from:hover { color: var(--ink); }
   .cert { font: 12px var(--mono); letter-spacing: 0; text-transform: none; padding: 1px 7px; border-radius: 99px; border: 1px solid; margin-left: 4px; white-space: nowrap; }
   .cert.said { color: var(--good); border-color: rgba(134,227,190,.45); }
@@ -77,6 +77,8 @@
   .qs li .p { display: block; font-size: 13px; color: var(--ink-2); margin-top: 3px; }
   .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--ink); color: #06080c; padding: 9px 14px; border-radius: 12px; font-size: 13.5px; opacity: 0; pointer-events: none; transition: opacity .25s var(--ease); z-index: 5; max-width: calc(100% - 32px); }
   .toast.show { opacity: 1; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  @media (prefers-reduced-motion: reduce) { .tl { scroll-behavior: auto; } }
 </style>
 </head>
 <body>
@@ -93,7 +95,7 @@
   <div class="facts" aria-label="What your usage shows (counts only)">
     <div class="fact"><div class="n">94%</div><div class="l">of your turns since 24 Sep were voice (300 of 319)</div></div>
     <div class="fact"><div class="n">1–2</div><div class="l">conversations you touch on most days</div></div>
-    <div class="fact"><div class="n">~22K</div><div class="l">tokens AVA reads per model call today (instructions, tools, history)</div></div>
+    <div class="fact"><div class="n">~22K</div><div class="l">input tokens per model call in the typed chats we measured (27–28 Sep): instructions, tools, history. Voice calls not measured yet.</div></div>
   </div>
   <p class="faint" style="margin:0 0 22px">Counts only, from a read-only copy of AVA's database. No messages were read or copied into this page. Every line of conversation below is invented.</p>
 
@@ -105,7 +107,7 @@
             <div class="title"><span class="orb sm" aria-hidden="true"></span>AVA</div>
             <button class="hist" type="button" id="hist" aria-label="History and search (proposed)">History ⌕</button>
           </div>
-          <div class="tl" id="tl" role="log" aria-live="polite" aria-label="Conversation timeline"></div>
+          <div class="tl" id="tl" aria-label="Conversation timeline"></div>
           <div class="composer" id="composer">
             <button class="talk" type="button" id="talk"><span class="orb" aria-hidden="true"></span><span id="talkLabel">Tap to talk</span></button>
             <div class="typed" aria-hidden="true">Type to AVA…</div>
@@ -132,8 +134,8 @@
         <h2>How she remembers</h2>
         <p class="muted" style="margin:0">Three layers, so she doesn't have to re-read everything you've ever said. A shorter start is one way to make her faster; we'd measure it before promising a number.</p>
         <div class="layers">
-          <div class="layer" id="L1"><span class="num">1</span><div><b>This chapter, word for word</b><p>The recent turns of what you're talking about now. Bounded, so it never grows forever.</p></div></div>
-          <div class="layer" id="L2"><span class="num">2</span><div><b>Chapter summaries</b><p>A short summary written when a chapter ends, linked to its messages. Looked up only when it's relevant.</p></div></div>
+          <div class="layer" id="L1"><span class="num">1</span><div><b>Recent exact turns</b><p>The last several turns, exactly as said. A bounded window: the whole chapter stays stored, but she doesn't re-read all of it every time.</p></div></div>
+          <div class="layer" id="L2"><span class="num">2</span><div><b>Chapter summaries</b><p>A short summary written when a chapter ends, used to find the right past messages. She answers from those original messages, never from the summary alone.</p></div></div>
           <div class="layer" id="L3"><span class="num">3</span><div><b>What I'm carrying forward</b><p>Decisions, promises and preferences, each with where it came from. This is what she knows at the start of every call.</p></div></div>
         </div>
         <div class="used" id="used" aria-live="polite"></div>
@@ -141,7 +143,7 @@
 
       <article class="card">
         <div class="row" style="justify-content:space-between"><h2 style="margin:0">What I'm carrying forward</h2><span class="prop">proposed sheet</span></div>
-        <p class="muted" style="margin:6px 0 0">A small sheet you can open any time. Each item says whether you said it or AVA guessed, and links to where it came from. Confirm a guess, or remove anything that's wrong.</p>
+        <p class="muted" style="margin:6px 0 0">A small sheet you can open any time. Each item says whether you said it or AVA guessed, and links to where it came from. Confirm a guess, or tell her to stop carrying anything that's wrong. That doesn't delete your messages.</p>
         <div class="carry" id="carry"></div>
       </article>
 
@@ -149,7 +151,7 @@
         <h2>Decisions for you</h2>
         <ul class="qs">
           <li>Keep old chats under History, searchable?<span class="p">Proposed: yes. Nothing is deleted or merged; today's chats become chapters.</span></li>
-          <li>When should a new chapter start by itself?<span class="p">Proposed: after about 6 hours away, or whenever you say "new topic".</span></li>
+          <li>When should a new chapter start by itself?<span class="p">Proposed: after about 6 hours away, or whenever you say "new topic". It's a divider: nothing is split or lost, and open decisions carry over.</span></li>
           <li>Should ideas AVA starts appear in the same timeline?<span class="p">Proposed: yes, as their own short chapter you can answer or ignore.</span></li>
           <li>Voice and typing together?<span class="p">Proposed: one timeline. Spoken turns get a small voice mark.</span></li>
           <li>When you switch project, should AVA use only that project?<span class="p">Proposed: yes. Other projects stay out of that chapter unless you ask.</span></li>
@@ -160,12 +162,13 @@
 
   <section class="truth">
     <div class="card"><h3>What's demo</h3><ul><li>All conversation text, names and times are invented.</li><li>The talk button doesn't record anything.</li><li>The layer highlights explain the idea; they aren't a real trace.</li></ul></div>
-    <div class="card"><h3>What would be real</h3><ul><li>One Talk entry that always resumes, for both voice and typing.</li><li>Chapters are today's conversations, created automatically.</li><li>A compact start-of-call brief, plus look-ups on demand.</li><li>A carrying-forward sheet you can correct.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>One Talk entry that always resumes, for both voice and typing.</li><li>Chapters are today's conversations. Starting one automatically changes how voice resumes, so it needs a shared rule first.</li><li>A compact start-of-call brief, plus look-ups on demand.</li><li>A carrying-forward sheet you can correct.</li></ul></div>
     <div class="card"><h3>Honest limits</h3><ul><li>An iPhone web app can't listen for a wake word all the time. "Always there" means one tap from anywhere.</li><li>AVA only answers while your PC runs her.</li><li>Summaries can miss things, so each one links to the real messages.</li></ul></div>
-    <div class="card"><h3>If you like it: possible steps</h3><p>1. One timeline over today's conversations, with automatic chapters (UI only).<br>2. Chapter summaries and the start-of-call brief, sized by a benchmark.<br>3. The carrying-forward sheet with corrections.<br><span class="faint">Each step gets your OK and a mockup first. Nothing here is built.</span></p></div>
+    <div class="card"><h3>If you like it: possible steps</h3><p>1. One timeline over today's conversations, with dividers (display only).<br>2. Automatic chapter starts and resume rules, agreed as a contract first.<br>3. Chapter summaries and the start-of-call brief, sized by a benchmark.<br>4. The carrying-forward sheet with corrections.<br><span class="faint">Each step gets your OK and a mockup first. Nothing here is built.</span></p></div>
   </section>
 </main>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="sr" id="sr" aria-live="polite"></div>
 <script src="../ava-future-2026-09-28/shared.js"></script>
 <script>
 (function () {
@@ -188,7 +191,8 @@
     var t = document.createElement("span"); b.appendChild(t); add(b);
     return { el: b, text: t };
   }
-  async function say(who, text, voice, speed) { var b = bubble(who, text, voice); await AVAF.type(b.text, text, speed || 16); tl.scrollTop = tl.scrollHeight; return b; }
+  // Screen readers hear each finished bubble once, not every typed character.
+  async function say(who, text, voice, speed) { var b = bubble(who, text, voice); await AVAF.type(b.text, text, speed || 16); tl.scrollTop = tl.scrollHeight; document.getElementById("sr").textContent = (who === "me" ? "You: " : "AVA: ") + text; return b; }
   function light(ids, note) {
     ["L1", "L2", "L3"].forEach(function (id) { document.getElementById(id).classList.toggle("lit", ids.indexOf(id) >= 0); });
     used.textContent = note || "";
@@ -234,11 +238,11 @@
     row.firstChild.appendChild(from);
     var acts = document.createElement("div"); acts.className = "acts";
     if (!it.sure) acts.appendChild(mini("Confirm", "Confirm: " + it.v + " (proposed)", function () { it.sure = true; renderItem(row, it); toast("Confirmed. AVA now treats it as something you said."); }));
-    var rm = mini("Remove", "Remove: " + it.v + " (proposed)", function () {
+    var rm = mini("Stop carrying", "Stop carrying: " + it.v + " (proposed)", function () {
       var gone = row.classList.toggle("gone");
-      rm.textContent = gone ? "Undo" : "Remove";
-      rm.setAttribute("aria-label", (gone ? "Undo removing: " : "Remove: ") + it.v + " (proposed)");
-      toast(gone ? "AVA stops using this. Undo is right there." : "Restored.");
+      rm.textContent = gone ? "Undo" : "Stop carrying";
+      rm.setAttribute("aria-label", (gone ? "Undo stop carrying: " : "Stop carrying: ") + it.v + " (proposed)");
+      toast(gone ? "She stops carrying this and won't pick it up again from the same source. Your messages stay in History." : "Carrying it again.");
     });
     acts.appendChild(rm); row.appendChild(acts);
   }
@@ -270,7 +274,7 @@
     },
     past: async function () {
       await say("me", "What did we decide about pricing last week?", true, 22);
-      light(["L2", "L3"], "Used: a layer 2 look-up of the Pricing chapter, matched by layer 3's decision.");
+      light(["L2", "L3"], "Used: layer 3's decision and a layer 2 summary to find the Pricing chapter, then the original messages to answer.");
       await AVAF.sleep(400);
       var b = await say("ava", "Per-household pricing, on 21 Sep. Per-person felt hard to explain to parents.");
       var s = document.createElement("button"); s.type = "button"; s.className = "src"; s.textContent = "Source · Pricing chat, 21 Sep";

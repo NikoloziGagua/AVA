@@ -13,7 +13,10 @@ const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=
 const port = Number(process.argv[2] || 5180);
 
 createServer(async (req, res) => {
-  const path = decodeURIComponent(new URL(req.url ?? "/", "http://localhost").pathname);
+  let path;
+  // Malformed percent-encoding must not reject the listener and stop the server.
+  try { path = decodeURIComponent(new URL(req.url ?? "/", "http://localhost").pathname); }
+  catch { res.writeHead(400); res.end("Bad request"); return; }
   if (path === "/") { res.writeHead(302, { location: PREVIEW + "index.html" }); res.end(); return; }
   if (path === "/favicon.ico") { res.writeHead(204); res.end(); return; }
   const target = normalize(join(root, path));

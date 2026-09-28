@@ -5,7 +5,7 @@ A discussion preview for Niko's room message 1530: "maybe we should get rid of c
 **It is a proposal, not a feature.** Every new interaction is labelled "proposed". All conversation text, names and times are invented. The only real inputs are three aggregate counts, taken from a read-only copy of AVA's database:
 - the voice share of Niko's turns since 24 Sep;
 - how many conversations he touches per day;
-- the roughly 22K input tokens per model call.
+- the roughly 22K input tokens per model call, measured in the typed chats of 27–28 Sep (voice calls not measured yet).
 
 No message content was read into this page. Nothing imports AVA code, calls AVA or a provider, or changes live AVA.
 
@@ -22,11 +22,11 @@ Then open http://127.0.0.1:5181/. Opening `index.html` from disk also works, but
 ## What it shows
 
 - **One Talk screen.** Tapping the face always resumes the same conversation. Typing goes to the same place.
-- **Automatic chapters.** A new chapter starts after a long time away or when Niko says "new topic". Chapters are today's conversations; nothing is deleted or merged.
+- **Chapters.** A new chapter is shown after a long time away or when Niko says "new topic". Chapters are today's conversations; nothing is deleted, merged or lost. Grouping them on screen is display-only. Starting sessions automatically changes voice resume, so it would need a shared contract first.
 - **Three memory layers:**
-  1. the current chapter, word for word;
-  2. chapter summaries, linked to their messages and looked up when relevant;
-  3. a correctable "what I'm carrying forward" list of decisions, promises and preferences. Each item says whether Niko said it or AVA guessed, and links to its source. Guesses can be confirmed, and any item can be removed.
+  1. recent exact turns (a bounded window; the whole chapter stays stored);
+  2. chapter summaries, used to find the right past messages; answers come from those original messages;
+  3. a correctable "what I'm carrying forward" list of decisions, promises and preferences. Each item says whether Niko said it or AVA guessed, and links to its source. Guesses can be confirmed. "Stop carrying" stops AVA using an item without deleting any messages.
 - **An explicit project switch.** Saying "switch to the tutoring app" starts a chapter that uses only that project.
 - **Open decisions for Niko,** each with a proposed default.
 

@@ -97,6 +97,7 @@ beforeEach(() => {
   ideas.fetchInitiativeSummary.mockReset();
   ideas.fetchInboxSessions.mockReset();
   sessionStorage.setItem("ava:splash-seen", "1");
+  sessionStorage.removeItem("ava:open-idea");
   localStorage.setItem("ava:last-chat-session", "human_1");
   window.history.replaceState(null, "", "/");
 });
@@ -125,7 +126,7 @@ describe("readIdeaLink", () => {
 });
 
 describe("App with AVA's ideas", () => {
-  it("opens a push link's exact pair, then forgets the link, so a reload keeps the old chat", async () => {
+  it("opens a push link's exact pair and consumes the link; a reload returns to that idea, not the old chat", async () => {
     ideas.fetchInitiativeSummary.mockResolvedValue({ pending: 0, unopened: 0, newest: null });
     window.history.replaceState(null, "", "/?session=s_1&initiative=ini_1");
     render(<App />);
@@ -135,9 +136,57 @@ describe("App with AVA's ideas", () => {
 
     cleanup();
     render(<App />);
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_1-ini_1-true");
+    expect(window.location.search).toBe("");
+    expect(localStorage.getItem("ava:last-chat-session")).toBe("human_1");
+  });
+
+  it("forgets the open idea once Niko leaves it, so a later reload lands on Home", async () => {
+    ideas.fetchInitiativeSummary.mockResolvedValue(SUMMARY);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "home ideas 2" }));
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_9-ini_9-true");
+    fireEvent.click(screen.getByRole("button", { name: "Open menu, 2 ideas from AVA" }));
+    fireEvent.click(screen.getByRole("button", { name: "Home" }));
+    await screen.findByTestId("mock-home");
+
+    cleanup();
+    render(<App />);
     await screen.findByTestId("mock-home");
     expect(screen.queryByTestId("mock-chat")).toBeNull();
     expect(localStorage.getItem("ava:last-chat-session")).toBe("human_1");
+  });
+
+  it("keeps what Niko typed on an idea that is not confirmed, until he chooses a new chat", async () => {
+    ideas.fetchInitiativeSummary.mockResolvedValue({ pending: 0, unopened: 0, newest: null });
+    window.history.replaceState(null, "", "/?initiative=ini_1");
+    render(<App />);
+    await screen.findByRole("alert");
+    // Voice cannot fall through to the old chat either.
+    expect(screen.queryByRole("button", { name: "Talk to AVA" })).toBeNull();
+
+    const box = screen.getByRole("textbox", { name: "Message AVA" }) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "hello" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(screen.getByRole("alert").textContent).toContain("This idea is no longer available.");
+    expect(box.value).toBe("hello");
+    expect(screen.queryByTestId("mock-chat")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start a new conversation" }));
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-null-null-false");
+    expect((screen.getByRole("textbox", { name: "Message AVA" }) as HTMLTextAreaElement).value).toBe("hello");
+  });
+
+  it("holds the draft on a link that is still being checked, instead of starting another chat", async () => {
+    ideas.fetchInitiativeSummary.mockResolvedValue({ pending: 0, unopened: 0, newest: null });
+    window.history.replaceState(null, "", "/?session=s_1&initiative=ini_1");
+    render(<App />);
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_1-ini_1-true");
+    const box = screen.getByRole("textbox", { name: "Message AVA" }) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "is this about Acme?" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(screen.getByTestId("chat-route").textContent).toBe("chat-s_1-ini_1-true");
+    expect(box.value).toBe("is this about Acme?");
   });
 
   it("keeps the remembered chat while Niko moves between ideas, until voice binds one", async () => {

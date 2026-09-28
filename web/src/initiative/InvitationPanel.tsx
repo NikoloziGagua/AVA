@@ -140,7 +140,10 @@ export function IdeaUnavailable({ onOpenList, onNewChat }: { onOpenList?: () => 
   return (
     <div role="alert" className="mx-auto grid max-w-md flex-1 content-center justify-items-center gap-4 px-6 text-center">
       <p className="text-body-lg text-ink">{IDEA_UNAVAILABLE}</p>
-      <p className="text-body text-ink-2">It may have expired, or it was removed.</p>
+      <p className="text-body text-ink-2">
+        It may have expired, or it was removed. Anything you typed stays in the box below until you
+        choose where it goes.
+      </p>
       <div className="flex flex-wrap justify-center gap-2">
         {onOpenList && <Button variant="glass" onClick={onOpenList}>Your conversations</Button>}
         {onNewChat && <Button variant="quiet" onClick={onNewChat}>Start a new conversation</Button>}

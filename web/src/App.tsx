@@ -146,9 +146,26 @@ export function readIdeaLink(search: string): View | null {
   return { name: "chat", sessionId, initiativeId, verifyInitiative: true };
 }
 
+// The idea on screen in this tab, so a reload returns to it (ava-initiative v2).
+// It is separate from the remembered chat, which opening an idea never moves.
+const OPEN_IDEA_KEY = "ava:open-idea";
+
+function readOpenIdea(): View | null {
+  try {
+    const raw = window.sessionStorage.getItem(OPEN_IDEA_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as { sessionId?: unknown; initiativeId?: unknown };
+    return isInitiativeLinkId(value.sessionId) && isInitiativeLinkId(value.initiativeId)
+      ? { name: "chat", sessionId: value.sessionId, initiativeId: value.initiativeId, verifyInitiative: true }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function readInitialView(): View {
   if (typeof window === "undefined") return { name: "splash" };
-  const idea = readIdeaLink(window.location.search);
+  const idea = readIdeaLink(window.location.search) ?? readOpenIdea();
   if (idea) return idea;
   const params = new URLSearchParams(window.location.search);
   if (params.get("view") !== "watches" || params.get("from") !== "mission-control") {
@@ -394,12 +411,23 @@ export function App() {
     window.history.replaceState(window.history.state, "", clean || "/");
   }, []);
 
-  // Consume an idea link once, so a reload never reopens it (ava-initiative).
+  // Consume an idea link once; the open idea itself survives a reload below.
   useEffect(() => {
     if (!new URLSearchParams(window.location.search).has("initiative")) return;
     const clean = `${window.location.pathname}${window.location.hash}`;
     window.history.replaceState(window.history.state, "", clean || "/");
   }, []);
+
+  // Remember the idea on screen for this tab only; any other screen forgets it.
+  useEffect(() => {
+    try {
+      if (view.name === "chat" && view.verifyInitiative && view.sessionId && view.initiativeId) {
+        window.sessionStorage.setItem(OPEN_IDEA_KEY, JSON.stringify({ sessionId: view.sessionId, initiativeId: view.initiativeId }));
+      } else if (view.name !== "splash") {
+        window.sessionStorage.removeItem(OPEN_IDEA_KEY);
+      }
+    } catch { /* storage blocked: a reload lands on Home */ }
+  }, [view]);
 
   // ── Transition window: mark it so the always-on WebGL loops idle during the
   // overlap, and flag the deck panels so their glass tree drops backdrop-filter
@@ -488,12 +516,19 @@ export function App() {
   // One bar send becomes exactly one new conversation turn. The lock holds
   // until the resulting route commits, so a double press cannot start two.
   useEffect(() => { barSendLock.current = false; }, [view]);
+  // On an idea screen that has not lent the bar (still checking, or it matched
+  // nothing), neither sending nor voice may fall through to another chat.
+  const ideaHeld = (view.name === "chat" && view.verifyInitiative === true) || view.name === "idea-missing";
   const sendFromBar = (text: string) => {
     if (talkBar) {
       talkBar.onSend(text);
       setBarDraft("");
       return;
     }
+    // An idea still being checked, or one that matched nothing, never turns the
+    // words into a different conversation on its own: the draft waits until
+    // Niko chooses where it goes.
+    if (ideaHeld) return;
     if (barSendLock.current) return;
     barSendLock.current = true;
     setBarDraft("");
@@ -863,7 +898,7 @@ export function App() {
           draft={barDraft}
           onDraftChange={setBarDraft}
           onSend={sendFromBar}
-          onTalk={talkBar ? talkBar.onVoice : enterVoiceFromToday}
+          onTalk={talkBar ? talkBar.onVoice : ideaHeld ? undefined : enterVoiceFromToday}
           busy={talkBar?.busy ?? false}
           onStop={talkBar?.onStop}
           dictate={talkBar ? transcribeAudio : undefined}

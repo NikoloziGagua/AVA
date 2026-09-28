@@ -170,6 +170,18 @@ describe("Talk with one of AVA's ideas", () => {
     expect(core.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("never lends the bar to an idea it could not check", async () => {
+    core.fetchSession.mockResolvedValue(session());
+    ideas.fetchInitiative.mockRejectedValue({ code: "server_unreachable" });
+    const onNewConversation = vi.fn();
+    render(<TalkScreen sessionId="s_2" initiativeId="ini_2" verifyInitiative {...noNav} onNewConversation={onNewConversation} />);
+    await screen.findByText("Couldn't open this idea.");
+    const box = screen.getByRole("textbox", { name: "Message AVA" });
+    fireEvent.change(box, { target: { value: "hello" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(core.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("rejects a link whose idea differs from the conversation's own", async () => {
     core.fetchSession.mockResolvedValue(session({ initiativeId: "ini_9" }));
     render(<TalkScreen sessionId="s_2" initiativeId="ini_2" verifyInitiative {...noNav} />);

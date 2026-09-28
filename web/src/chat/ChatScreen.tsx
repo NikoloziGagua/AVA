@@ -543,9 +543,10 @@ export function ChatScreen({
     onVoice: () => latestRef.current.voice(),
     busy,
   }), [busy]);
-  // An idea link that is still being checked, or that matched nothing, never
-  // lends the bar: words typed there start a new conversation instead.
-  const lendComposer = !readOnly && !ideaUnavailable && !ideaChecking;
+  // An idea that is still being checked, could not be checked, or matched
+  // nothing never lends the bar: words typed there wait in the draft.
+  const ideaUnverified = verifyInitiative && (ideaUnavailable || ideaState.status === "loading" || ideaState.status === "error");
+  const lendComposer = !readOnly && !ideaUnverified;
   useEffect(() => {
     if (!lendComposer || !onComposer) return;
     onComposer(composer);

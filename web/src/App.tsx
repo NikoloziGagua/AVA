@@ -42,6 +42,11 @@ import { FaceStill } from "./design/face/FaceStill.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
 import { savedItemDestination, type SavedItem } from "./chat/saved-items.js";
+import { fetchInboxSessions, isInitiativeLinkId } from "./initiative/api.js";
+import { ideaCount } from "./initiative/copy.js";
+import { IdeaUnavailable } from "./initiative/InvitationPanel.js";
+import { useInitiativeSummary } from "./initiative/useInitiativeSummary.js";
+import type { InvitationRef } from "./initiative/useInvitation.js";
 
 // Measured heavyweight destinations load only at their real navigation
 // boundaries. Chat and Visuals intentionally move together: each reaches the
@@ -84,13 +89,17 @@ type View =
   // Mission Control inside AVA; the standalone ?mission-control=1 window remains.
   | { name: "activity" }
   // `audit` shows an automated run for reference without making it the current chat.
-  | { name: "chat"; sessionId: string | null; initialText?: string; audit?: boolean }
+  // `initiativeId` opens it as AVA's idea; `verifyInitiative` requires the pair to match.
+  | { name: "chat"; sessionId: string | null; initialText?: string; audit?: boolean; initiativeId?: string; verifyInitiative?: boolean }
+  // An idea link too malformed to name a conversation (ava-initiative).
+  | { name: "idea-missing" }
   | { name: "voice"; from: "today" | "chat"; sessionId: string | null; intent: ConversationIntent }
   | { name: "memory" }
   // `noteId` opens that exact note once; `handoff` makes each navigation distinct.
   | { name: "notes"; noteId?: string; handoff?: number }
   | { name: "ideas" }
-  | { name: "schedule" }
+  // `focusAt` opens the week of that moment (an idea's calendar source).
+  | { name: "schedule"; focusAt?: number; focusOccurrenceKey?: string }
   | { name: "watches"; focusWatchId?: string | null; navigationOrigin?: "mission-control" }
   | { name: "rules" }
   | { name: "self" }
@@ -105,7 +114,7 @@ type View =
 const VIEWS_WITH_ORB = ["splash", "today", "voice"];
 // Explicit presentation ownership, not a guess from background colour or theme.
 // Older workspaces retain dark surfaces even when the bar's look is Paper.
-const ATELIER_VIEWS: readonly View["name"][] = ["home", "today", "chat", "voice", "notes", "ideas", "schedule", "list"];
+const ATELIER_VIEWS: readonly View["name"][] = ["home", "today", "chat", "voice", "notes", "ideas", "schedule", "list", "idea-missing"];
 const LAST_CHAT_STORAGE_KEY = "ava:last-chat-session";
 // The intro plays once per browser tab; reloads go straight to Today.
 const SPLASH_SEEN_KEY = "ava:splash-seen";
@@ -123,8 +132,24 @@ function markSplashSeen(): void {
   try { window.sessionStorage.setItem(SPLASH_SEEN_KEY, "1"); } catch { /* non-critical */ }
 }
 
+/**
+ * A push opens `/?session=<id>&initiative=<id>` (contract ava-initiative). The
+ * pair is checked against the server before anything is shown; a link too
+ * malformed to name a conversation says so in place.
+ */
+export function readIdeaLink(search: string): View | null {
+  const params = new URLSearchParams(search);
+  if (!params.has("initiative")) return null;
+  const sessionId = params.get("session");
+  const initiativeId = params.get("initiative");
+  if (!isInitiativeLinkId(sessionId) || !isInitiativeLinkId(initiativeId)) return { name: "idea-missing" };
+  return { name: "chat", sessionId, initiativeId, verifyInitiative: true };
+}
+
 function readInitialView(): View {
   if (typeof window === "undefined") return { name: "splash" };
+  const idea = readIdeaLink(window.location.search);
+  if (idea) return idea;
   const params = new URLSearchParams(window.location.search);
   if (params.get("view") !== "watches" || params.get("from") !== "mission-control") {
     return shouldPlaySplash() ? { name: "splash" } : { name: "home" };
@@ -212,6 +237,7 @@ function destinationForView(v: View): string | null {
     // A brand-new composition is "New chat"; every existing conversation, and the list of them, is Talk.
     case "chat": return v.sessionId === null ? "new" : "talk";
     case "list": return "talk";
+    case "idea-missing": return "talk";
     case "schedule": return "calendar";
     case "notes": return "notes";
     case "ideas": return "ideas";
@@ -337,6 +363,11 @@ export function App() {
     setView({ name: "chat", sessionId, ...(options?.audit ? { audit: true } : {}) });
   }, []);
 
+  // One of AVA's ideas, opened by exact resume. The pair is always re-checked.
+  const openInvitation = useCallback((target: InvitationRef) => {
+    setView({ name: "chat", sessionId: target.sessionId, initiativeId: target.initiativeId, verifyInitiative: true });
+  }, []);
+
   const openNewChat = (initialText?: string) => {
     setNewChatRevision((revision) => revision + 1);
     setView({ name: "chat", sessionId: null, ...(initialText ? { initialText } : {}) });
@@ -359,6 +390,13 @@ export function App() {
   // view while preventing a later reload from repeatedly forcing Watches.
   useEffect(() => {
     if (view.name !== "watches" || view.navigationOrigin !== "mission-control") return;
+    const clean = `${window.location.pathname}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", clean || "/");
+  }, []);
+
+  // Consume an idea link once, so a reload never reopens it (ava-initiative).
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("initiative")) return;
     const clean = `${window.location.pathname}${window.location.hash}`;
     window.history.replaceState(window.history.state, "", clean || "/");
   }, []);
@@ -468,6 +506,20 @@ export function App() {
   // Talk the bar is the message box.
   const barCompact = view.name === "voice";
   const recents = useRecentConversations(lastChatSessionId, paired && barVisible);
+  const { summary: ideas, refresh: refreshIdeas } = useInitiativeSummary(paired && barVisible);
+  // The newest pending idea; without a summary entry, the inbox's first row.
+  const openNewestIdea = () => {
+    const newest = ideas?.newest;
+    if (newest) {
+      openInvitation({ sessionId: newest.sessionId, initiativeId: newest.initiativeId });
+      return;
+    }
+    void fetchInboxSessions(1).then((rows) => {
+      const first = rows[0];
+      if (first?.initiativeId) openInvitation({ sessionId: first.id, initiativeId: first.initiativeId });
+    }).catch(() => { /* nothing to open */ });
+  };
+  const pendingIdeas = ideas && ideas.pending > 0 ? ideas : null;
 
   // Shared entry timing — the previous screen is already unmounted.
   // A destination owns the stage exclusively. React removes the previous
@@ -520,6 +572,7 @@ export function App() {
               onOpenNote={openNote}
               onOpenCalendar={() => setView({ name: "schedule" })}
               onOpenReminders={() => setView({ name: "watches" })}
+              ideas={pendingIdeas ? { pending: pendingIdeas.pending, onOpen: () => withViewTransition(openNewestIdea) } : null}
             />
           </motion.div>
         )}
@@ -573,7 +626,7 @@ export function App() {
         )}
         {view.name === "schedule" && (
           <motion.div
-            key="schedule"
+            key={view.focusAt === undefined ? "schedule" : `schedule-${view.focusAt}`}
             data-view="schedule"
             data-deck-transition={deckTransition}
             className="absolute inset-0"
@@ -581,7 +634,7 @@ export function App() {
             animate={SCREEN.to}
             transition={enterT}
           >
-            <CalendarScreen onOpenTalk={openTalk} />
+            <CalendarScreen onOpenTalk={openTalk} focusAt={view.focusAt} focusOccurrenceKey={view.focusOccurrenceKey} />
           </motion.div>
         )}
         {view.name === "chat" && (
@@ -615,7 +668,26 @@ export function App() {
               onOpenSaved={openSavedItem}
               onComposer={setTalkBar}
               onDraft={putInBar}
+              initiativeId={view.initiativeId ?? null}
+              verifyInitiative={view.verifyInitiative === true}
+              onFocusComposer={() => setBarFocus((request) => request + 1)}
+              onOpenNote={openNote}
+              onOpenCalendarAt={(at, occurrenceKey) => setView({ name: "schedule", focusAt: at, focusOccurrenceKey: occurrenceKey })}
+              onOpenInvitation={(target) => withViewTransition(() => openInvitation(target))}
+              onInitiativeChange={refreshIdeas}
             />
+          </motion.div>
+        )}
+        {view.name === "idea-missing" && (
+          <motion.div
+            key="idea-missing"
+            data-view="idea-missing"
+            className="ds-root absolute inset-0 flex flex-col bg-canvas font-ui text-ink"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <IdeaUnavailable onOpenList={() => setView({ name: "list" })} onNewChat={() => openNewChat()} />
           </motion.div>
         )}
         {view.name === "voice" && (
@@ -799,6 +871,11 @@ export function App() {
           placeholder={talkBar ? "Message AVA…" : undefined}
           compact={barCompact}
           face={<FaceStill size={32} />}
+          ideas={pendingIdeas ? {
+            label: `${ideaCount(pendingIdeas.pending)} from AVA`,
+            fresh: pendingIdeas.unopened > 0,
+            onOpen: () => withViewTransition(openNewestIdea),
+          } : null}
         />
       )}
     </div>

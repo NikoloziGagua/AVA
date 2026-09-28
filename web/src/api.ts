@@ -11,6 +11,8 @@ export class ApiError extends Error {
   readonly name = "ApiError";
   /** A bounded validation code from the body, e.g. `{error:"bad_request", reasonCode}`. */
   reasonCode: string | null = null;
+  /** The parsed JSON failure body, e.g. the current version a 409 reports. */
+  detail: unknown = null;
 
   constructor(
     public status: number,
@@ -44,7 +46,8 @@ function handleUnauthorized(): void {
   }
 }
 
-async function request<T>(
+/** The authenticated JSON request every AVA API call shares. */
+export async function request<T>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
@@ -111,6 +114,7 @@ async function request<T>(
     if (typeof failure.reasonCode === "string" && /^[a-z0-9_]{1,64}$/.test(failure.reasonCode)) {
       error.reasonCode = failure.reasonCode;
     }
+    if (parsedJson) error.detail = body;
     throw error;
   }
   if (text && !parsedJson) {
@@ -185,7 +189,8 @@ export async function transcribeAudio(audio: Blob, signal?: AbortSignal): Promis
  * `continue` selects the latest conversation with genuine human activity.
  */
 export type ConversationIntent = "new" | "resume" | "continue";
-export type SessionOrigin = "human" | "automation" | "unknown";
+/** "assistant": a conversation AVA started (contract ava-initiative). */
+export type SessionOrigin = "human" | "automation" | "unknown" | "assistant";
 export type SessionBinding = {
   version: 1;
   sessionId: string;
@@ -193,7 +198,8 @@ export type SessionBinding = {
   resolution: "created" | "resumed_exact" | "continued";
   bindingRequestId?: string;
 };
-export type SessionScope = "human" | "automation" | "legacy" | "all";
+/** "inbox": AVA's unreplied, still-pending invitations, newest first. */
+export type SessionScope = "human" | "automation" | "legacy" | "all" | "inbox";
 
 export const api = {
   pair: (code: string, label: string) =>
@@ -245,6 +251,8 @@ export type SessionRow = {
   origin?: SessionOrigin;
   /** The last accepted human turn; maintenance and automation never move it. */
   last_human_activity_at?: number | null;
+  /** The initiative behind a conversation AVA started; null or absent otherwise. */
+  initiativeId?: string | null;
 };
 
 /** One bounded page of conversations. `nextCursor` is opaque; pass it back unchanged. */

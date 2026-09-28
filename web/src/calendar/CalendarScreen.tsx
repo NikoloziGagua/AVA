@@ -36,12 +36,19 @@ const planLabel = { undecided: "Plan undecided", attend: "Plan to attend", skip:
 const outcomeLabel = { unknown: "Attendance not recorded", attended: "Attended", skipped: "Intentionally skipped", missed: "Missed" };
 
 /** Server-authoritative events. This screen never turns reminders into events or infers attendance. */
-export function CalendarScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
-  const [date, setDate] = useState(() => localDate(Date.now(), ZONE));
+export function CalendarScreen({ onOpenTalk, focusAt, focusOccurrenceKey }: {
+  onOpenTalk: () => void;
+  /** Open on the week of this moment, e.g. a calendar entry an idea cites. */
+  focusAt?: number;
+  focusOccurrenceKey?: string;
+}) {
+  const [date, setDate] = useState(() => localDate(focusAt ?? Date.now(), ZONE));
+  // The first view scrolls to the focused entry's hour; later ones to 07:00.
+  const focusHour = useRef(focusAt === undefined ? 7 : Math.max(0, Number(clock(focusAt).slice(0, 2)) - 1));
   const [mode, setMode] = useState<Mode>("week"), [reminders, setReminders] = useState(false);
   const [data, setData] = useState<CalendarWorkspace | null>(null), [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null), [notice, setNotice] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(focusOccurrenceKey ?? null);
   const [editor, setEditor] = useState<{ date: string; base?: EventDefinition } | null>(null);
   const [attendance, setAttendance] = useState<CalendarOccurrence | null>(null);
   const generation = useRef(0), restoreFocus = useRef<HTMLElement | null>(null);
@@ -50,7 +57,10 @@ export function CalendarScreen({ onOpenTalk }: { onOpenTalk: () => void }) {
   const dates = useMemo(() => visibleDates(date, mode), [date, mode]);
   const range = queryWindow(dates);
   useEffect(() => {
-    if (mode !== "month" && timeGrid.current) timeGrid.current.scrollTop = 7 * HOUR - 20;
+    if (mode !== "month" && timeGrid.current) {
+      timeGrid.current.scrollTop = focusHour.current * HOUR - 20;
+      focusHour.current = 7;
+    }
   }, [mode, range.from, range.to]);
   const refresh = useCallback(async () => {
     const current = ++generation.current;

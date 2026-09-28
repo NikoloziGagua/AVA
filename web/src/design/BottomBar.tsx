@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { ArrowUp, AudioLines, LoaderCircle, Mic, Square, X } from "lucide-react";
+import { ArrowUp, AudioLines, Lightbulb, LoaderCircle, Mic, Square, X } from "lucide-react";
 import { cn } from "./cn.js";
 import { insertDictation, useDictation, type Transcribe } from "./dictation.js";
 import { LightTrace } from "./metal/LightTrace.js";
@@ -29,6 +29,18 @@ export type BarConversation = {
   onVoice: () => void;
 };
 
+/**
+ * Ideas AVA is waiting to share (contract ava-initiative): a dot on the mini
+ * face, brighter while one is unopened, and the menu's first entry.
+ */
+export type BarIdeas = {
+  /** e.g. "2 ideas from AVA"; also joins the menu button's name. */
+  label: string;
+  /** At least one has not been opened yet. */
+  fresh: boolean;
+  onOpen: () => void;
+};
+
 export type BottomBarProps = {
   destinations: readonly Destination[];
   current: string | null;
@@ -54,6 +66,7 @@ export type BottomBarProps = {
   placeholder?: string;
   /** The mini face: a static image, never a second WebGL canvas. */
   face?: ReactNode;
+  ideas?: BarIdeas | null;
   /**
    * On screens with their own controls (Voice) the bar shrinks to the round
    * menu button in the top-left corner. It is the same mounted component, and
@@ -75,7 +88,7 @@ const MAX_HEIGHT = 150;
 export function BottomBar({
   destinations, current, onNavigate, recents = [], onOpenRecent, onOpenAllConversations,
   draft, onDraftChange, onSend, onTalk, sending = false, busy = false, onStop, dictate, focusRequest = 0,
-  placeholder = "Ask AVA anything…", face, compact = false,
+  placeholder = "Ask AVA anything…", face, ideas, compact = false,
 }: BottomBarProps) {
   const [open, setOpen] = useState(false);
   const [multiline, setMultiline] = useState(false);
@@ -192,6 +205,9 @@ export function BottomBar({
 
   const primary = destinations.filter((d) => d.group === "primary");
   const system = destinations.filter((d) => d.group === "system");
+  const pendingIdeas = ideas ?? null;
+  const ideasLabel = pendingIdeas?.label ?? null;
+  const faceNode = face ?? <span aria-hidden="true" className="ds-orb h-8 w-8 rounded-full" />;
   const shownRecents = recents.slice(0, 5);
   const canSend = Boolean(draft.trim()) && !sending && !busy;
   // Never collapse a conversation, active operation, focused field or unsent words.
@@ -273,6 +289,18 @@ export function BottomBar({
         style={{ height: "min(560px, calc(100dvh - 7rem))" }}
       >
         <div className={cn("grid h-full content-start gap-5 overflow-y-auto px-3", compact ? "pb-4 pt-[68px]" : "pb-[76px] pt-4")}>
+          {pendingIdeas && (
+            <button
+              type="button"
+              data-menu-item=""
+              onClick={() => go(pendingIdeas.onOpen)}
+              className="ds-focus flex h-12 items-center gap-3 rounded-button bg-glass px-3 text-left text-body text-ink transition-colors duration-150 hover:bg-glass-strong"
+            >
+              <Lightbulb size={18} aria-hidden="true" className="text-ink-2" />
+              <span className="min-w-0 flex-1 truncate">{ideasLabel}</span>
+              {pendingIdeas.fresh && <span className="text-meta text-ink-3">New</span>}
+            </button>
+          )}
           <div className="grid gap-1">
             <h2 className="px-3 pb-1 font-ui-mono text-label uppercase text-ink-3">Go to</h2>
             <div className={cn("grid grid-cols-1 gap-1", !compact && "sm:grid-cols-2")}>{primary.map(item)}</div>
@@ -344,12 +372,24 @@ export function BottomBar({
           type="button"
           aria-expanded={open}
           aria-controls={menuId}
-          aria-label={open ? "Close menu" : "Open menu"}
+          aria-label={open ? "Close menu" : ideasLabel ? `Open menu, ${ideasLabel}` : "Open menu"}
           aria-describedby={compact && draft.length > 0 ? draftStatusId : undefined}
           onClick={() => (open ? close() : setOpen(true))}
           className="ds-focus grid h-11 w-11 shrink-0 place-items-center rounded-full transition-transform duration-240 ease-spring active:scale-95"
         >
-          {open ? <X size={20} aria-hidden="true" className="text-ink" /> : face ?? <span aria-hidden="true" className="ds-orb h-8 w-8 rounded-full" />}
+          {open ? <X size={20} aria-hidden="true" className="text-ink" /> : pendingIdeas ? (
+            <span className="relative grid place-items-center">
+              {faceNode}
+              <span
+                aria-hidden="true"
+                data-idea-dot={pendingIdeas.fresh ? "new" : "seen"}
+                className={cn(
+                  "absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-bar",
+                  pendingIdeas.fresh ? "bg-ink" : "bg-ink-3",
+                )}
+              />
+            </span>
+          ) : faceNode}
         </button>
         <textarea
           ref={inputRef}

@@ -16,6 +16,8 @@ import { ErrorState } from "../design/States.js";
 import { StatusIsland, type IslandMode } from "../design/StatusIsland.js";
 import { FaceStill } from "../design/face/FaceStill.js";
 import type { BarConversation } from "../design/BottomBar.js";
+import { useInvitation, type InvitationRef } from "../initiative/useInvitation.js";
+import { IdeaUnavailable, InvitationNav, InvitationPanel } from "../initiative/InvitationPanel.js";
 
 export interface ChatScreenProps {
   sessionId: string | null;
@@ -49,6 +51,18 @@ export interface ChatScreenProps {
   onComposer?: (bar: BarConversation | null) => void;
   /** Put text into the bar's draft (a suggestion, or words a failed send gives back). */
   onDraft?: (text: string) => void;
+  /** The idea behind this conversation, when it was opened as one (contract ava-initiative). */
+  initiativeId?: string | null;
+  /** Opened from a link or as an idea: show it only if this pair matches one idea. */
+  verifyInitiative?: boolean;
+  /** Put the cursor in the message box without touching the draft. */
+  onFocusComposer?: () => void;
+  onOpenNote?: (noteId: string) => void;
+  onOpenCalendarAt?: (at: number, occurrenceKey: string) => void;
+  /** Go to a newer or older pending idea. */
+  onOpenInvitation?: (target: InvitationRef) => void;
+  /** An idea was opened or answered, so the bar's count should refresh. */
+  onInitiativeChange?: () => void;
 }
 
 /**
@@ -86,11 +100,22 @@ export function ChatScreen({
   onOpenSaved,
   onComposer,
   onDraft,
+  initiativeId: linkedInitiativeId = null,
+  verifyInitiative = false,
+  onFocusComposer,
+  onOpenNote,
+  onOpenCalendarAt,
+  onOpenInvitation,
+  onInitiativeChange,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   // Creation provenance of the loaded conversation. Automated runs are shown
   // read-only; the server would refuse a human turn into them anyway.
   const [origin, setOrigin] = useState<SessionOrigin | undefined>(undefined);
+  // A conversation AVA started: its idea, and whether Niko has replied yet.
+  const [invite, setInvite] = useState<{ initiativeId: string | null; unreplied: boolean } | null>(null);
+  const inviteRef = useRef(invite);
+  inviteRef.current = invite;
   // The exact conversation asked for is gone. Nothing is switched silently.
   const [unavailable, setUnavailable] = useState(false);
   // One-time key for this screen's "new conversation", reused if the first
@@ -140,6 +165,7 @@ export function ChatScreen({
     setLoadError(null);
     if (requestedSessionId === null) {
       setSessionId(null);
+      setInvite(null);
       setHistory([]);
       setRunEpoch(0);
       setTaskId(null);
@@ -171,11 +197,19 @@ export function ChatScreen({
         setHistory(loaded);
         setSessionId(requestedSessionId);
         setOrigin(data.session.origin);
+        const unrepliedInvitation = data.session.origin === "assistant" && !data.session.last_human_activity_at;
+        setInvite(data.session.origin === "assistant"
+          ? { initiativeId: data.session.initiativeId ?? null, unreplied: unrepliedInvitation }
+          : { initiativeId: null, unreplied: false });
         setUnavailable(false);
         // Explicitly opening a conversation selects it, older unclassified ones
         // included. Automated runs, and anything opened for reference, never
-        // become the conversation Chat and Voice continue.
-        if (!audit && data.session.origin !== "automation") onSessionChange?.(requestedSessionId);
+        // become the conversation Chat and Voice continue. Neither does an idea
+        // AVA is still waiting on, or one opened from a link: the first reply
+        // selects it (ava-initiative v2).
+        if (!audit && !verifyInitiative && !unrepliedInvitation && data.session.origin !== "automation") {
+          onSessionChange?.(requestedSessionId);
+        }
         setRunEpoch(0);
         setTaskId(null);
         setVisualsByEpoch({});
@@ -194,7 +228,7 @@ export function ChatScreen({
         setLoadError(e);
       });
     return () => { cancelled = true; };
-  }, [audit, onSessionChange, onSessionUnavailable, requestedSessionId, reloadNonce]);
+  }, [audit, verifyInitiative, onSessionChange, onSessionUnavailable, requestedSessionId, reloadNonce]);
 
   // Promote a completed run's final into history exactly once.
   // Bug fix: previously the lastFinal lived in `events` only; on the next
@@ -317,6 +351,22 @@ export function ChatScreen({
   // Automated runs are evidence to read, not a conversation to continue.
   const readOnly = audit || origin === "automation";
 
+  // The conversation's own idea wins; a link naming a different one matches nothing.
+  const rowInitiativeId = invite?.initiativeId ?? null;
+  const pairedInitiativeId = rowInitiativeId && linkedInitiativeId && rowInitiativeId !== linkedInitiativeId
+    ? null
+    : rowInitiativeId ?? linkedInitiativeId;
+  const invitation = useInvitation({
+    sessionId: invite ? sessionId : null,
+    initiativeId: pairedInitiativeId,
+    unreplied: invite?.unreplied ?? false,
+    verify: verifyInitiative,
+    onChange: onInitiativeChange,
+  });
+  const ideaState = invitation.state;
+  const ideaUnavailable = verifyInitiative && (unavailable || ideaState.status === "unavailable");
+  const ideaChecking = verifyInitiative && !ideaUnavailable && !loadError && ideaState.status === "loading";
+
   const headerState: "idle" | "thinking" | "responding" =
     busy
       ? events.some((e) => e.runEpoch === runEpoch && e.kind === "final")
@@ -402,6 +452,11 @@ export function ChatScreen({
       setSessionId(bound);
       if (r.binding?.origin) setOrigin(r.binding.origin);
       onSessionChange?.(bound);
+      // A reply is the real answer to an idea: the server records it as engaged.
+      if (inviteRef.current?.unreplied) {
+        setInvite({ ...inviteRef.current, unreplied: false });
+        onInitiativeChange?.();
+      }
       setTaskId(r.taskId ?? null);
       setRunEpoch((n) => n + 1);
       if (visualContext && attachedVisualContext === visualContext) setAttachedVisualContext(null);
@@ -488,11 +543,14 @@ export function ChatScreen({
     onVoice: () => latestRef.current.voice(),
     busy,
   }), [busy]);
+  // An idea link that is still being checked, or that matched nothing, never
+  // lends the bar: words typed there start a new conversation instead.
+  const lendComposer = !readOnly && !ideaUnavailable && !ideaChecking;
   useEffect(() => {
-    if (readOnly || !onComposer) return;
+    if (!lendComposer || !onComposer) return;
     onComposer(composer);
     return () => onComposer(null);
-  }, [composer, readOnly, onComposer]);
+  }, [composer, lendComposer, onComposer]);
 
   return (
     <div className="ds-root ds-quiet-conversation relative flex h-full flex-col bg-canvas font-ui text-ink">
@@ -511,11 +569,22 @@ export function ChatScreen({
             {steps.length}
           </Chip>
         )}
+        {ideaState.status === "open" && ideaState.position && onOpenInvitation && (
+          <InvitationNav position={ideaState.position} onOpen={onOpenInvitation} />
+        )}
       </header>
       <StepsSheet open={stepsOpen} onOpenChange={setStepsOpen} steps={steps} executing={executing} />
 
       <main className="relative flex min-h-0 flex-1 flex-col">
-        {unavailable ? (
+        {ideaUnavailable ? (
+          <IdeaUnavailable onOpenList={onOpenList} onNewChat={onNewChat} />
+        ) : ideaChecking ? (
+          <div role="status" className="grid flex-1 place-items-center text-meta text-ink-3">Opening AVA's idea…</div>
+        ) : verifyInitiative && ideaState.status === "error" ? (
+          <div className="mx-auto grid w-full max-w-md flex-1 content-center px-6">
+            <ErrorState title="Couldn't open this idea." body="Check your connection and try again." onRetry={invitation.retry} />
+          </div>
+        ) : unavailable ? (
           <div role="alert" className="mx-auto grid max-w-md flex-1 content-center justify-items-center gap-4 px-6 text-center">
             <p className="text-body-lg text-ink">This conversation is unavailable.</p>
             <p className="text-body text-ink-2">
@@ -570,7 +639,18 @@ export function ChatScreen({
               <Button variant="quiet" size="sm" onClick={() => setAttachedVisualContext(null)} aria-label="Remove attached visual context">Remove</Button>
             </div>
           )}
-          {readOnly ? (
+          {!readOnly && !ideaUnavailable && (ideaState.status === "open" || ideaState.status === "closed") ? (
+            <InvitationPanel
+              state={ideaState}
+              notice={invitation.notice}
+              busy={invitation.busy}
+              onTalk={() => onFocusComposer?.()}
+              onLater={() => { void invitation.later(); }}
+              onNotUseful={() => { void invitation.notUseful(); }}
+              onOpenNote={onOpenNote}
+              onOpenCalendarAt={onOpenCalendarAt}
+            />
+          ) : readOnly ? (
             <div role="note" className="flex flex-wrap items-center justify-between gap-3 rounded-card bg-glass px-4 py-3 text-meta text-ink-2">
               <span>This is an automated run AVA did on its own, shown for reference. It never becomes your current chat. Anything you type below starts a new conversation.</span>
               {onNewChat && <Button variant="glass" size="sm" onClick={onNewChat}>Start a new conversation</Button>}

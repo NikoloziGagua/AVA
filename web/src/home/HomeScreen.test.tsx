@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../design/face/FaceStage.js", () => ({ FaceStage: () => <div data-testid="face" /> }));
@@ -18,5 +18,17 @@ describe("HomeScreen", () => {
     expect(screen.queryByText("A few starting points")).toBeNull();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("counts AVA's pending ideas on the island and opens the newest (ava-initiative)", () => {
+    const onOpen = vi.fn();
+    render(<HomeScreen ideas={{ pending: 2, onOpen }} />);
+    const count = screen.getByRole("button", { name: "Open AVA's newest idea (2 ideas waiting)" });
+    expect(count.textContent).toBe("2 ideas");
+    fireEvent.click(count);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    cleanup();
+    render(<HomeScreen ideas={{ pending: 0, onOpen }} />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 });

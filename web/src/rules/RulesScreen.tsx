@@ -10,6 +10,7 @@ import { enablePush } from "../push/register.js";
 import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
 import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { DevRoomSection } from "./DevRoomSection.js";
+import { IdeasSettingsSection } from "../initiative/IdeasSettingsSection.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { getMotionPref, setMotionPref, type MotionPref } from "../lib/motionPref.js";
@@ -268,6 +269,8 @@ export function RulesScreen(_props: { onClose?: () => void }) {
             <div className="text-xs text-white/55">Asking permission…</div>
           )}
         </PanelSection>
+
+        <IdeasSettingsSection />
 
         <PanelSection
           title="Autonomy rules"

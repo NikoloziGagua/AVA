@@ -18,13 +18,15 @@ const DEFAULT_TEXT: Record<IslandMode, string> = {
  * little when there is more to say (speaking shows live voice bars; working
  * names the task). Announced politely to screen readers.
  */
-export function StatusIsland({ mode, text, detail, time, sampleLevel, className }: {
+export function StatusIsland({ mode, text, detail, time, action, sampleLevel, className }: {
   mode: IslandMode;
   /** Replaces the default word for the mode. */
   text?: string;
   /** A short extra, e.g. the task AVA is working on. */
   detail?: string;
   time?: string;
+  /** One small control inside the island, e.g. "1 idea" on Home. */
+  action?: { label: string; description?: string; onPress: () => void };
   /**
    * While speaking, read on every animation frame so the bars follow AVA's
    * measured voice without re-rendering. Null keeps the gentle rhythm.
@@ -52,6 +54,16 @@ export function StatusIsland({ mode, text, detail, time, sampleLevel, className 
       )}
       <span>{label}</span>
       {detail && <span className="min-w-0 truncate opacity-70">· {detail}</span>}
+      {action && (
+        <button
+          type="button"
+          onClick={action.onPress}
+          aria-label={action.description}
+          className="ds-focus -my-1.5 rounded-full bg-on-solid/15 px-3 py-1.5 text-meta font-medium text-on-solid transition-colors duration-150 hover:bg-on-solid/25"
+        >
+          {action.label}
+        </button>
+      )}
       {time && <span className="font-ui-mono text-label opacity-60">{time}</span>}
     </div>
   );

@@ -4,6 +4,7 @@ import { StatusIsland } from "../design/index.js";
 import { LazyFace } from "../design/face/LazyFace.js";
 import { Atmosphere } from "../design/metal/Atmosphere.js";
 import { LazyStarfield } from "../design/metal/LazyStarfield.js";
+import { ideaCount } from "../initiative/copy.js";
 
 function greeting(now: Date, timeZone: string): string {
   const hour = Number(new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(now));
@@ -17,14 +18,16 @@ function clock(at: number, timeZone: string): string {
 
 /**
  * Home: AVA's face, a greeting and the bottom bar, nothing else (Niko,
- * 2026-09-27: no "one thing" card and no starting points).
+ * 2026-09-27: no "one thing" card and no starting points). When AVA has ideas
+ * waiting, the island counts them and opens the newest (ava-initiative).
  */
-export function HomeScreen({ timeZone = DEFAULT_TIME_ZONE }: {
+export function HomeScreen({ timeZone = DEFAULT_TIME_ZONE, ideas }: {
   onStartChat?: (text: string) => void;
   onOpenNote?: (noteId: string) => void;
   onOpenCalendar?: () => void;
   onOpenReminders?: () => void;
   timeZone?: string;
+  ideas?: { pending: number; onOpen: () => void } | null;
 }) {
   const [now, setNow] = useState(() => Date.now());
 
@@ -38,7 +41,15 @@ export function HomeScreen({ timeZone = DEFAULT_TIME_ZONE }: {
       <Atmosphere kind="nocturne" still />
       <LazyStarfield />
       <main className="ds-home-composition relative mx-auto grid w-full max-w-xl grid-cols-[minmax(0,1fr)] justify-items-center gap-3 px-4 text-center">
-        <StatusIsland mode="idle" time={clock(now, timeZone)} />
+        <StatusIsland
+          mode="idle"
+          time={clock(now, timeZone)}
+          action={ideas && ideas.pending > 0 ? {
+            label: ideaCount(ideas.pending),
+            description: `Open AVA's newest idea (${ideaCount(ideas.pending)} waiting)`,
+            onPress: ideas.onOpen,
+          } : undefined}
+        />
         <div className="ds-home-face ds-backlight relative w-full">
           <LazyFace label="AVA" className="relative" />
         </div>

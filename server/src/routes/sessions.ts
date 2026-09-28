@@ -14,7 +14,7 @@ export function sessionsRoutes(db: Db, auth: RequestHandler): Router {
       res.json({ sessions: listSessions(db) });
       return;
     }
-    if (typeof scope !== "string" || !["human", "automation", "legacy", "all"].includes(scope)
+    if (typeof scope !== "string" || !["human", "automation", "legacy", "all", "inbox"].includes(scope)
       || limit !== undefined && (typeof limit !== "string" || !/^(?:[1-9]\d?|100)$/.test(limit))
       || cursor !== undefined && typeof cursor !== "string") {
       res.status(400).json({ error: "bad_request" });

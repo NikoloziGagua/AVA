@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 import Database from "better-sqlite3";
+import { Worker } from "node:worker_threads";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { openDb } from "./db.js";
 
 const TEST_DB = "./test-state.db";
@@ -123,6 +126,142 @@ describe("openDb", () => {
     expect(indexes.some((index) => index.name === "idx_strategy_rooms_source_snapshot")).toBe(true);
     migrated.close();
   });
+
+  it("rebuilds the old origin constraint losslessly, preserving rowids, dependants and schema objects", () => {
+    const legacy = new Database(TEST_DB);
+    legacy.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE sessions (
+        id TEXT PRIMARY KEY, title TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        origin TEXT NOT NULL DEFAULT 'unknown' CHECK (origin IN ('human', 'automation', 'unknown')),
+        last_human_activity_at INTEGER, summary TEXT, summary_through_message_id INTEGER,
+        deleted_at INTEGER, pinned INTEGER NOT NULL DEFAULT 0, custom_value TEXT DEFAULT 'retained'
+      );
+      CREATE TABLE messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        role TEXT NOT NULL, content TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL
+      );
+      CREATE TABLE extra_child (session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, value TEXT);
+      CREATE TABLE title_audit (session_id TEXT, title TEXT);
+      CREATE INDEX custom_session_index ON sessions(title) WHERE deleted_at IS NULL;
+      CREATE TRIGGER title_change AFTER UPDATE OF title ON sessions
+        BEGIN INSERT INTO title_audit VALUES (new.id, new.title); END;
+      CREATE VIEW session_view AS SELECT id, title FROM sessions;
+      CREATE TRIGGER session_view_title INSTEAD OF UPDATE OF title ON session_view
+        BEGIN UPDATE sessions SET title = new.title WHERE id = old.id; END;
+      INSERT INTO sessions (rowid, id, title, created_at, updated_at, origin, last_human_activity_at,
+        summary, summary_through_message_id, deleted_at, pinned, custom_value)
+        VALUES (47, 'old-human', 'Original', 10, 900, 'human', 100, 'Kept summary', 9, NULL, 1, 'owner extension');
+      INSERT INTO sessions (rowid, id, title, created_at, updated_at, origin, deleted_at)
+        VALUES (92, 'old-audit', 'Unchanged audit', 20, 999, 'automation', 1000);
+      INSERT INTO messages (id, session_id, role, content, created_at) VALUES (9, 'old-human', 'user', 'Retain exact text', 100);
+      INSERT INTO extra_child VALUES ('old-human', 'keep');
+    `);
+    const rows = legacy.prepare("SELECT rowid, * FROM sessions ORDER BY rowid").all();
+    const objects = legacy.prepare("SELECT name, sql FROM sqlite_schema WHERE name IN ('custom_session_index', 'title_change', 'session_view', 'session_view_title') ORDER BY name").all();
+    legacy.close();
+    const db = openDb(TEST_DB);
+    try {
+      expect(db.prepare("SELECT rowid, * FROM sessions ORDER BY rowid").all()).toEqual(rows);
+      expect(db.prepare("SELECT name, sql FROM sqlite_schema WHERE name IN ('custom_session_index', 'title_change', 'session_view', 'session_view_title') ORDER BY name").all()).toEqual(objects);
+      expect(db.prepare("SELECT id, session_id, content FROM messages").all()).toEqual([{ id: 9, session_id: "old-human", content: "Retain exact text" }]);
+      expect(db.prepare("SELECT * FROM extra_child").all()).toEqual([{ session_id: "old-human", value: "keep" }]);
+      expect(db.prepare("SELECT * FROM title_audit").all()).toEqual([]);
+      db.prepare("UPDATE session_view SET title = 'After migration' WHERE id = 'old-human'").run();
+      expect(db.prepare("SELECT * FROM title_audit").all()).toEqual([{ session_id: "old-human", title: "After migration" }]);
+      db.prepare("INSERT INTO sessions (id, created_at, updated_at, origin) VALUES ('new-idea', 1, 1, 'assistant')").run();
+      expect(() => db.prepare("UPDATE sessions SET origin = 'invented' WHERE id = 'new-idea'").run()).toThrow(/CHECK/);
+      expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
+      expect(db.pragma("legacy_alter_table", { simple: true })).toBe(0);
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+    } finally { db.close(); }
+    const reopened = openDb(TEST_DB);
+    try {
+      expect(reopened.prepare("SELECT origin FROM sessions WHERE id = 'new-idea'").get()).toEqual({ origin: "assistant" });
+      expect(reopened.prepare("SELECT rowid FROM sessions WHERE id = 'old-human'").get()).toEqual({ rowid: 47 });
+      expect(reopened.prepare("SELECT COUNT(*) n FROM title_audit").get()).toEqual({ n: 1 });
+      expect(reopened.pragma("foreign_key_check")).toEqual([]);
+    } finally { reopened.close(); }
+  });
+
+  it("fails a blocked rebuild clearly without deleting or changing existing session history", () => {
+    const legacy = new Database(TEST_DB);
+    legacy.exec(`CREATE TABLE sessions (
+      id TEXT PRIMARY KEY, title TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      origin TEXT NOT NULL DEFAULT 'unknown' CHECK (origin IN ('human', 'automation', 'unknown')),
+      last_human_activity_at INTEGER, summary TEXT, summary_through_message_id INTEGER,
+      deleted_at INTEGER, pinned INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO sessions (id, title, created_at, updated_at) VALUES ('keep', 'Exact', 1, 2);
+    CREATE TABLE sessions_origin_v2 (owner_data TEXT);
+    INSERT INTO sessions_origin_v2 VALUES ('do not overwrite');`);
+    const original = legacy.prepare("SELECT rowid, * FROM sessions").all();
+    legacy.close();
+    expect(() => openDb(TEST_DB)).toThrow(/sessions_origin_v2.*already exists/);
+    const check = new Database(TEST_DB);
+    try {
+      expect(check.prepare("SELECT rowid, * FROM sessions").all()).toEqual(original);
+      expect(check.prepare("SELECT * FROM sessions_origin_v2").all()).toEqual([{ owner_data: "do not overwrite" }]);
+      expect(() => check.prepare("UPDATE sessions SET origin = 'assistant'").run()).toThrow(/CHECK/);
+    } finally { check.close(); }
+  });
+
+  it("enforces unique publication references and bounded ledger fields without a transcript column", () => {
+    const db = openDb(TEST_DB);
+    try {
+      const insert = db.prepare(`INSERT INTO initiatives
+        (id, occurrence_key, scope_kind, state, created_at, disposition_updated_at)
+        VALUES (?, ?, 'general', 'claimed', 100, 100)`);
+      insert.run('ini_a', 'daily:2026-09-28');
+      expect(() => insert.run('ini_b', 'daily:2026-09-28')).toThrow(/UNIQUE/);
+      expect(() => db.prepare("UPDATE initiatives SET attempt_count = 3").run()).toThrow(/CHECK/);
+      expect(() => db.prepare("UPDATE initiatives SET sources = ?").run(JSON.stringify(Array(9).fill({})))).toThrow(/CHECK/);
+      expect(() => db.prepare("UPDATE initiatives SET title = ?").run('x'.repeat(81))).toThrow(/CHECK/);
+      expect(() => db.prepare("UPDATE initiatives SET reason_now = ?").run('x'.repeat(301))).toThrow(/CHECK/);
+      const columns = db.pragma("table_info(initiatives)") as Array<{ name: string }>;
+      expect(columns.map(row => row.name)).not.toContain('content');
+      expect(columns.map(row => row.name)).not.toContain('prompt');
+    } finally { db.close(); }
+  });
+
+  it("serializes concurrent origin upgrades from independent connections", async () => {
+    const legacy = new Database(TEST_DB);
+    // AVA's existing databases already use WAL; do not conflate this upgrade
+    // with simultaneous first-ever journal-mode changes on a foreign database.
+    legacy.exec(`PRAGMA journal_mode = WAL;
+    CREATE TABLE sessions (
+      id TEXT PRIMARY KEY, title TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      origin TEXT NOT NULL DEFAULT 'unknown' CHECK (origin IN ('human', 'automation', 'unknown')),
+      last_human_activity_at INTEGER, summary TEXT, summary_through_message_id INTEGER,
+      deleted_at INTEGER, pinned INTEGER NOT NULL DEFAULT 0
+    ); INSERT INTO sessions (rowid, id, title, created_at, updated_at) VALUES (51, 'keep', 'Exact', 1, 2);`);
+    legacy.close();
+    const workers: Worker[] = [];
+    try {
+      await Promise.all(Array.from({ length: 3 }, () => new Promise<void>((done, reject) => {
+        const worker = new Worker(`
+          const { workerData } = require('node:worker_threads');
+          require('tsx/cjs');
+          const { openDb } = require(workerData.module);
+          const db = openDb(workerData.path);
+          if (db.prepare("SELECT rowid FROM sessions WHERE id = 'keep'").get().rowid !== 51) throw Error('lost rowid');
+          db.close();
+        `, { eval: true, workerData: { path: resolve(TEST_DB), module: fileURLToPath(new URL('./db.ts', import.meta.url)) } });
+        workers.push(worker);
+        worker.once('error', reject);
+        worker.once('exit', code => code === 0 ? done() : reject(new Error(`migration worker exited ${code}`)));
+      })));
+      const check = openDb(TEST_DB);
+      try {
+        expect(check.prepare("SELECT rowid, id, title, origin FROM sessions").all())
+          .toEqual([{ rowid: 51, id: 'keep', title: 'Exact', origin: 'unknown' }]);
+        expect(check.pragma('foreign_key_check')).toEqual([]);
+      } finally { check.close(); }
+    } finally { await Promise.all(workers.map(worker => worker.terminate())); }
+  }, 20_000);
 
   it("migrates a Phase 2 memory index before creating the checkpoint-sequence index", () => {
     const legacy = new Database(TEST_DB);

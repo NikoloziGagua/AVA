@@ -48,6 +48,10 @@ GPT-Live's bounded delegation queue, result continuity, replay/Stop semantics,
 and local Calendar policy are documented in
 [`features/voice-live-continuity.md`](features/voice-live-continuity.md).
 
+The assistant-origin session/inbox foundation (not yet an enabled initiative
+engine) is documented in
+[`features/ava-initiative.md`](features/ava-initiative.md).
+
 ```mermaid
 flowchart LR
   pc[Browser on your PC]:::client

@@ -113,6 +113,32 @@ describe("resolveConversation", () => {
     expect(getSession(db, automated.sessionId)?.last_human_activity_at).toBeNull();
   });
 
+  it("resumes an exact invitation without hijacking continue, across reconnect and restart", () => {
+    const path = diskPath();
+    db.close();
+    db = openDb(path);
+    const human = createSession(db, { origin: "human" });
+    markHumanActivity(db, human.id, 100);
+    const invitation = createSession(db, { origin: "assistant" });
+    setPinned(db, invitation.id, true);
+    for (let restart = 0; restart < 2; restart++) {
+      for (const actor of ["human", "voice_action"] as const) {
+        expect(resolveConversation(db, request({ actor, intent: "resume", sessionId: invitation.id })))
+          .toMatchObject({ sessionId: invitation.id, origin: "assistant", resolution: "resumed_exact" });
+      }
+      expect(getSession(db, invitation.id)?.last_human_activity_at).toBeNull();
+      expect(resolveConversation(db, request({ intent: "continue" })).sessionId).toBe(human.id);
+      db.close(); db = openDb(path);
+    }
+    markHumanActivity(db, invitation.id, 200);
+    expect(resolveConversation(db, request({ intent: "continue" })))
+      .toMatchObject({ sessionId: invitation.id, origin: "assistant", resolution: "continued" });
+    softDeleteSession(db, invitation.id);
+    expect(() => resolveConversation(db, request({ intent: "resume", sessionId: invitation.id })))
+      .toThrow("This conversation is unavailable.");
+    expect(resolveConversation(db, request({ intent: "continue" })).sessionId).toBe(human.id);
+  });
+
   it("voice actions require an exact human/legacy target and never stamp activity", () => {
     const human = createSession(db, { origin: "human" });
     markHumanActivity(db, human.id, 100);

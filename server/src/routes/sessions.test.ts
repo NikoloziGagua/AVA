@@ -102,6 +102,51 @@ describe("sessionsRoutes", () => {
 });
 
 describe("scoped sessions history", () => {
+  it("serves the same exact invitation identity through inbox, history and reload; reply promotes it", async () => {
+    const { app, db } = setup();
+    try {
+      const s = createSession(db, { origin: "assistant" });
+      const m = appendMessage(db, { sessionId: s.id, role: "assistant", content: "An isolated test invitation" });
+      const now = Date.now();
+      db.prepare(`INSERT INTO initiatives
+        (id, occurrence_key, scope_kind, state, created_at, published_at, expires_at,
+         session_id, message_id, disposition_updated_at)
+        VALUES ('ini_route', 'fixture:route', 'general', 'published', ?, ?, ?, ?, ?, ?)`)
+        .run(now, now, now + 72 * 3600_000, s.id, m.id, now);
+      await request(app).patch(`/api/sessions/${s.id}`).send({ pinned: true }).expect(204);
+      for (const url of ["/api/sessions", "/api/sessions?scope=all", "/api/sessions?scope=inbox&limit=1"]) {
+        const response = await request(app).get(url).expect(200);
+        expect(response.body.sessions).toHaveLength(1);
+        expect(response.body.sessions[0]).toMatchObject({ id: s.id, initiativeId: "ini_route", last_human_activity_at: null });
+        expect(response.body.sessions[0]).not.toHaveProperty("publicationTime");
+      }
+      expect((await request(app).get("/api/sessions?scope=human").expect(200)).body.sessions).toEqual([]);
+      const snapshot = db.serialize();
+      for (let reload = 0; reload < 2; reload++) {
+        const exact = await request(app).get(`/api/sessions/${s.id}`).expect(200);
+        expect(exact.body.session).toMatchObject({ origin: "assistant", initiativeId: "ini_route", last_human_activity_at: null });
+        expect(exact.body.messages.map((row: { id: number }) => row.id)).toEqual([m.id]);
+      }
+      expect(db.serialize().equals(snapshot)).toBe(true);
+      markHumanActivity(db, s.id, now + 1);
+      expect((await request(app).get("/api/sessions?scope=inbox").expect(200)).body.sessions).toEqual([]);
+      expect((await request(app).get("/api/sessions?scope=human").expect(200)).body.sessions[0])
+        .toMatchObject({ id: s.id, initiativeId: "ini_route", last_human_activity_at: now + 1 });
+    } finally { db.close(); }
+  });
+
+  it("requires authentication for inbox and exact assistant history", async () => {
+    const db = openDb(":memory:");
+    const app = express();
+    app.use("/api/sessions", sessionsRoutes(db, (_req, res) => { res.status(401).json({ error: "unauthorized" }); }));
+    try {
+      const s = createSession(db, { origin: "assistant" });
+      for (const url of ["/api/sessions?scope=inbox", `/api/sessions/${s.id}`]) {
+        expect((await request(app).get(url).expect(401)).body).toEqual({ error: "unauthorized" });
+      }
+    } finally { db.close(); }
+  });
+
   it("preserves the no-query response and includes provenance in exact reads", async () => {
     const { app, db } = setup();
     const human = createSession(db, { origin: "human" });
@@ -175,6 +220,7 @@ describe("scoped sessions history", () => {
     "scope=human&limit=-1", "scope=human&limit=1.5", "scope=human&limit=01",
     "scope=human&limit=1e1", "scope=human&limit=", "scope=human&limit=1&limit=2",
     "scope=human&cursor=", "scope=human&cursor=???", "scope=human&cursor=a&cursor=b",
+    "scope=inbox&limit=101", "scope=inbox&cursor=not-a-cursor", "scope=inbox&scope=all",
   ])("rejects malformed list query %s", async (query) => {
     const { app, db } = setup();
     const response = await request(app).get(`/api/sessions?${query}`).expect(400);

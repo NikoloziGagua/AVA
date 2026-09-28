@@ -1,7 +1,154 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { openDb, type Db } from "./db.js";
 import { createSession, getMostRecentSession, getSession, getSessionFull, listByStatus, listSessions, purgeDeletedSessions, setPinned, setStatus, softDeleteSession, touchSession, updateSummary, updateTitle } from "./sessions.js";
 import { getMostRecentHumanSession, listSessionsPage, markHumanActivity, SessionListError, type SessionScope } from "./sessions.js";
+import { appendMessage } from "./messages.js";
+
+describe("assistant initiative sessions", () => {
+  let db: Db;
+  beforeEach(() => { db = openDb(":memory:"); });
+  afterEach(() => db.close());
+  function invitation(publishedAt = Date.now()) {
+    const session = createSession(db, { origin: "assistant", title: "A grounded idea" });
+    const message = appendMessage(db, { sessionId: session.id, role: "assistant", content: "An invitation, not a human fact." });
+    const initiativeId = `ini_${session.id}`;
+    db.prepare(`INSERT INTO initiatives
+      (id, occurrence_key, scope_kind, state, created_at, published_at, expires_at,
+       session_id, message_id, disposition_updated_at)
+      VALUES (?, ?, 'general', 'published', ?, ?, ?, ?, ?, ?)`)
+      .run(initiativeId, `fixture:${session.id}`, publishedAt, publishedAt, Date.now() + 72 * 3600_000,
+        session.id, message.id, publishedAt);
+    return { ...session, initiativeId, messageId: message.id };
+  }
+  const ids = (scope: SessionScope) => listSessionsPage(db, { scope }).sessions.map(row => row.id);
+
+  it("projects exact initiative identity in all reads without exposing internal ledger fields", () => {
+    const s = invitation();
+    const human = createSession(db, { origin: "human" });
+    db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(Date.now() + 1000, s.id);
+    for (const row of [getSession(db, s.id), getSessionFull(db, s.id), getMostRecentSession(db),
+      listSessions(db).find(row => row.id === s.id), listByStatus(db, "active").find(row => row.id === s.id),
+      listSessionsPage(db, { scope: "inbox" }).sessions[0], listSessionsPage(db, { scope: "all" }).sessions.find(row => row.id === s.id)]) {
+      expect(row).toMatchObject({ id: s.id, origin: "assistant", initiativeId: s.initiativeId, last_human_activity_at: null });
+      expect(row).not.toHaveProperty("publicationTime");
+      expect(row).not.toHaveProperty("attempt_token");
+    }
+    expect(getSession(db, human.id)?.initiativeId).toBeNull();
+    markHumanActivity(db, s.id, 100);
+    expect(listSessionsPage(db, { scope: "human" }).sessions[0]?.initiativeId).toBe(s.initiativeId);
+    expect(getMostRecentHumanSession(db)?.initiativeId).toBe(s.initiativeId);
+  });
+
+  it("publication, pinning, opening and maintenance never hijack human recency", () => {
+    const human = createSession(db, { origin: "human" });
+    markHumanActivity(db, human.id, 100);
+    const s = invitation();
+    setPinned(db, s.id, true);
+    touchSession(db, s.id);
+    updateTitle(db, s.id, "Same title as a human conversation");
+    db.prepare("UPDATE initiatives SET opened_at = ? WHERE id = ?").run(Date.now(), s.initiativeId);
+    expect(ids("human")).toEqual([human.id]);
+    expect(ids("inbox")).toEqual([s.id]);
+    expect(getMostRecentHumanSession(db)?.id).toBe(human.id);
+    expect(getSession(db, s.id)?.last_human_activity_at).toBeNull();
+    expect(ids("automation")).toEqual([]);
+    expect(ids("legacy")).toEqual([]);
+  });
+
+  it("filters expiry, dismissal, deletion, archive and non-published rows, retaining exact/all history", () => {
+    const open = invitation(10), later = invitation(20), expired = invitation(30), dismissed = invitation(40);
+    const archived = invitation(50), deleted = invitation(60), generating = invitation(70), replied = invitation(80);
+    const orphan = createSession(db, { origin: "assistant" });
+    db.prepare("UPDATE initiatives SET disposition_state = 'later' WHERE id = ?").run(later.initiativeId);
+    db.prepare("UPDATE initiatives SET expires_at = 0 WHERE id = ?").run(expired.initiativeId);
+    db.prepare("UPDATE initiatives SET disposition_state = 'not_useful' WHERE id = ?").run(dismissed.initiativeId);
+    db.prepare("UPDATE initiatives SET state = 'generating' WHERE id = ?").run(generating.initiativeId);
+    setStatus(db, archived.id, "archived");
+    softDeleteSession(db, deleted.id);
+    markHumanActivity(db, replied.id, 100);
+    expect(ids("inbox")).toEqual([later.id, open.id]);
+    for (const s of [expired, dismissed, archived, replied]) {
+      expect(getSession(db, s.id)?.initiativeId).toBe(s.initiativeId);
+      expect(ids("all")).toContain(s.id);
+    }
+    expect(getSession(db, deleted.id)).toBeNull();
+    expect(getSession(db, orphan.id)?.initiativeId).toBeNull();
+    expect(getSession(db, generating.id)?.initiativeId).toBeNull();
+  });
+
+  it("never borrows an unrelated message's publication identity", () => {
+    const a = invitation(), b = invitation();
+    db.prepare("UPDATE initiatives SET message_id = NULL WHERE id = ?").run(b.initiativeId);
+    db.prepare("UPDATE initiatives SET message_id = ? WHERE id = ?").run(b.messageId, a.initiativeId);
+    expect(ids("inbox")).toEqual([]);
+    expect(getSession(db, a.id)?.initiativeId).toBeNull();
+  });
+
+  it("moves accepted replies to human history and engages once without changing provenance", () => {
+    const s = invitation();
+    db.prepare("UPDATE initiatives SET disposition_state = 'later', disposition_version = 3 WHERE id = ?").run(s.initiativeId);
+    markHumanActivity(db, s.id, 200);
+    const first = db.prepare("SELECT * FROM initiatives WHERE id = ?").get(s.initiativeId);
+    expect(first).toMatchObject({ disposition_state: "engaged", disposition_version: 4, disposition_updated_at: 200, revision: 2 });
+    markHumanActivity(db, s.id, 200);
+    markHumanActivity(db, s.id, 100);
+    markHumanActivity(db, s.id, 300);
+    expect(db.prepare("SELECT * FROM initiatives WHERE id = ?").get(s.initiativeId)).toEqual(first);
+    expect(ids("inbox")).toEqual([]);
+    expect(ids("human")).toEqual([s.id]);
+    expect(getSession(db, s.id)).toMatchObject({ origin: "assistant", last_human_activity_at: 300, updated_at: s.updated_at });
+  });
+
+  it("rolls back recency if recording engagement fails", () => {
+    const s = invitation();
+    db.exec("CREATE TRIGGER reject_engagement BEFORE UPDATE ON initiatives BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+    expect(() => markHumanActivity(db, s.id, 100)).toThrow("test failure");
+    expect(getSession(db, s.id)?.last_human_activity_at).toBeNull();
+    expect(ids("inbox")).toEqual([s.id]);
+  });
+
+  it("paginates 253 invitations by publication and ID despite ties, pins and updated timestamps", () => {
+    for (let n = 0; n < 253; n++) {
+      const s = invitation(100 + n % 5);
+      setPinned(db, s.id, n % 3 === 0);
+      db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(10_000 - n, s.id);
+    }
+    const expected = (db.prepare("SELECT session_id FROM initiatives ORDER BY published_at DESC, session_id DESC").all() as Array<{ session_id: string }>).map(row => row.session_id);
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = listSessionsPage(db, { scope: "inbox", limit: 17, cursor });
+      seen.push(...page.sessions.map(row => row.id));
+      cursor = page.nextCursor ?? undefined;
+      if (cursor) expect(JSON.parse(Buffer.from(cursor, "base64url").toString())).toMatchObject({ order: "published", pinned: 0 });
+    } while (cursor);
+    expect(seen).toEqual(expected);
+    expect(new Set(seen).size).toBe(253);
+  });
+
+  it("rejects cross-scope, wrong-order, nullable or pinned inbox cursors", () => {
+    invitation(); invitation();
+    const cursor = listSessionsPage(db, { scope: "inbox", limit: 1 }).nextCursor!;
+    expect(() => listSessionsPage(db, { scope: "human", cursor })).toThrow(SessionListError);
+    const base = JSON.parse(Buffer.from(cursor, "base64url").toString());
+    for (const change of [{ order: "updated" }, { at: null }, { pinned: 1 }, { scope: "all" }]) {
+      const invalid = Buffer.from(JSON.stringify({ ...base, ...change })).toString("base64url");
+      expect(() => listSessionsPage(db, { scope: "inbox", cursor: invalid })).toThrow(SessionListError);
+    }
+  });
+
+  it("does not mutate state on discovery; retains the occurrence after session purge", () => {
+    const s = invitation();
+    const snapshot = db.serialize();
+    listSessionsPage(db, { scope: "inbox" }); getSession(db, s.id); getMostRecentHumanSession(db);
+    expect(db.serialize().equals(snapshot)).toBe(true);
+    softDeleteSession(db, s.id);
+    purgeDeletedSessions(db, Date.now() + 1);
+    expect(db.prepare("SELECT session_id, message_id, state FROM initiatives WHERE id = ?").get(s.initiativeId))
+      .toEqual({ session_id: null, message_id: null, state: "published" });
+    expect(db.pragma("foreign_key_check")).toEqual([]);
+  });
+});
 
 describe("sessions repo", () => {
   let db: Db;

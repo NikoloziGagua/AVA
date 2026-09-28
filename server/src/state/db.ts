@@ -17,8 +17,14 @@ export function openDb(path: string): Db {
   tryAddColumn(db, "sessions", "pinned", "INTEGER NOT NULL DEFAULT 0");
   // Historical provenance is unknown: message roles, pins and maintenance
   // timestamps are not evidence of actual human activity.
-  tryAddColumn(db, "sessions", "origin", "TEXT NOT NULL DEFAULT 'unknown' CHECK (origin IN ('human', 'automation', 'unknown'))");
+  tryAddColumn(db, "sessions", "origin", "TEXT NOT NULL DEFAULT 'unknown' CHECK (origin IN ('human', 'automation', 'unknown', 'assistant'))");
   tryAddColumn(db, "sessions", "last_human_activity_at", "INTEGER");
+  try {
+    migrateAssistantOrigin(db);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   db.exec(`CREATE INDEX IF NOT EXISTS idx_sessions_human_activity
     ON sessions(last_human_activity_at DESC, id DESC) WHERE deleted_at IS NULL`);
   tryAddColumn(db, "messages", "metadata", "TEXT NOT NULL DEFAULT '{}'");
@@ -247,5 +253,59 @@ function tryAddColumn(db: Db, table: string, column: string, ddl: string) {
   const existing = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!existing.some((c) => c.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
+
+/** SQLite's table-rebuild migration, not writable_schema or rename-old-first.
+ * Preserve rowids, every column and all dependent rows/indexes/triggers/views.
+ * The write lock rechecks the DDL, so a second opener cannot rebuild stale state.
+ */
+function migrateAssistantOrigin(db: Db): void {
+  const readDdl = () => (db.prepare("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'sessions'")
+    .get() as { sql: string }).sql;
+  const originCheck = /CHECK\s*\(\s*origin\s+IN\s*\(([^)]*)\)\s*\)/i;
+  const needsMigration = (ddl: string) => {
+    const check = originCheck.exec(ddl);
+    if (!check) throw new Error("Cannot migrate sessions: unrecognized origin constraint");
+    if (check[1]!.includes("'assistant'")) return false;
+    const values = check[1]!.split(",").map(value => value.trim()).sort().join(",");
+    if (values !== "'automation','human','unknown'") {
+      throw new Error("Cannot migrate sessions: unrecognized origin constraint");
+    }
+    return true;
+  };
+  if (!needsMigration(readDdl())) return;
+  const foreignKeys = db.pragma("foreign_keys", { simple: true });
+  const legacyAlter = db.pragma("legacy_alter_table", { simple: true });
+  // Required outside the transaction. Legacy ALTER avoids validating unchanged
+  // views during the brief drop/rename gap; foreign references keep 'sessions'.
+  db.pragma("foreign_keys = OFF");
+  db.pragma("legacy_alter_table = ON");
+  try {
+    db.transaction(() => {
+      const ddl = readDdl();
+      if (!needsMigration(ddl)) return;
+      const nextDdl = ddl.replace(originCheck,
+        "CHECK (origin IN ('human', 'automation', 'unknown', 'assistant'))")
+        .replace(/^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(?:sessions|"sessions"|`sessions`|\[sessions\])/i,
+          'CREATE TABLE "sessions_origin_v2"');
+      if (nextDdl === ddl || !nextDdl.startsWith('CREATE TABLE "sessions_origin_v2"')) {
+        throw new Error("Cannot migrate sessions: unrecognized table definition");
+      }
+      const objects = db.prepare(`SELECT sql FROM sqlite_schema
+        WHERE tbl_name = 'sessions' AND type IN ('index', 'trigger') AND sql IS NOT NULL
+        ORDER BY type, name`).all() as Array<{ sql: string }>;
+      const columns = db.prepare("PRAGMA table_xinfo(sessions)").all() as Array<{ name: string; hidden: number }>;
+      const names = columns.filter(column => column.hidden === 0)
+        .map(column => `"${column.name.replaceAll('"', '""')}"`).join(", ");
+      db.exec(nextDdl);
+      db.exec(`INSERT INTO sessions_origin_v2 (rowid, ${names}) SELECT rowid, ${names} FROM sessions`);
+      db.exec('DROP TABLE sessions; ALTER TABLE sessions_origin_v2 RENAME TO sessions;');
+      for (const object of objects) db.exec(object.sql);
+      if ((db.pragma("foreign_key_check") as unknown[]).length) throw new Error("Session migration failed foreign-key verification");
+    }).immediate();
+  } finally {
+    db.pragma(`legacy_alter_table = ${legacyAlter ? "ON" : "OFF"}`);
+    db.pragma(`foreign_keys = ${foreignKeys ? "ON" : "OFF"}`);
   }
 }

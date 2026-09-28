@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
-  origin TEXT NOT NULL DEFAULT 'unknown' CHECK (origin IN ('human', 'automation', 'unknown')),
+  origin TEXT NOT NULL DEFAULT 'unknown' CHECK (origin IN ('human', 'automation', 'unknown', 'assistant')),
   last_human_activity_at INTEGER
 );
 
@@ -33,6 +33,43 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
+
+-- Initiative publication points at ordinary conversation data, never a second
+-- transcript. Keep the occurrence/budget receipt when a conversation is purged.
+CREATE TABLE IF NOT EXISTS initiatives (
+  id TEXT PRIMARY KEY CHECK (id GLOB 'ini_*'),
+  occurrence_key TEXT NOT NULL UNIQUE,
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('general', 'project')),
+  scope_folder_id TEXT,
+  sources TEXT NOT NULL DEFAULT '[]'
+    CHECK (json_valid(sources) AND json_type(sources) = 'array' AND json_array_length(sources) <= 8),
+  reason_now TEXT NOT NULL DEFAULT '' CHECK (length(reason_now) <= 300),
+  title TEXT NOT NULL DEFAULT '' CHECK (length(title) <= 80),
+  state TEXT NOT NULL CHECK (state IN ('claimed', 'generating', 'generated', 'publishing', 'published', 'suppressed', 'failed')),
+  suppression_reason TEXT CHECK (suppression_reason IN ('disabled', 'quiet_hours', 'budget', 'no_grounded_idea', 'stale_source', 'duplicate', 'out_of_window', 'no_eligible_scope')),
+  failure_reason TEXT CHECK (failure_reason IN ('generation_failed', 'publication_failed')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count BETWEEN 0 AND 2),
+  attempt_token TEXT,
+  lease_until INTEGER,
+  created_at INTEGER NOT NULL,
+  published_at INTEGER,
+  expires_at INTEGER,
+  session_id TEXT UNIQUE REFERENCES sessions(id) ON DELETE SET NULL,
+  message_id INTEGER UNIQUE REFERENCES messages(id) ON DELETE SET NULL,
+  notification_state TEXT NOT NULL DEFAULT 'none'
+    CHECK (notification_state IN ('none', 'sending', 'accepted', 'rejected', 'unknown', 'no_subscription')),
+  notification_send_token TEXT,
+  notification_attempted_at INTEGER,
+  notification_reason_code TEXT,
+  opened_at INTEGER,
+  disposition_state TEXT NOT NULL DEFAULT 'open' CHECK (disposition_state IN ('open', 'later', 'not_useful', 'engaged')),
+  disposition_version INTEGER NOT NULL DEFAULT 1 CHECK (disposition_version >= 1),
+  disposition_updated_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
+  CHECK ((scope_kind = 'general' AND scope_folder_id IS NULL)
+    OR (scope_kind = 'project' AND scope_folder_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_initiatives_inbox ON initiatives(state, disposition_state, published_at DESC, session_id);
 
 -- Semantic memory is a compact discovery index, not a transcript duplicate.
 -- Entries contain only bounded sanitized summaries; sources retain exact

@@ -47,7 +47,9 @@ lifecycle reason codes go through the existing server logger.
   explicitly active folder subtree. This is a bounded candidate set, not a
   comprehensive scan of everything Niko knows.
 - Pick one scope: the newest eligible note's folder (or its nearest active
-  ancestor), otherwise an existing active folder, otherwise General. An active
+  ancestor), otherwise an existing active folder. Without either, suppress
+  `no_eligible_scope` before calling the model. General requires a recent General
+  capture; unlinked calendar occurrences cannot make it eligible. An active
   descendant is excluded from its parent's scope. Recent edits alone do not
   make a project active. General contains only unfiled/built-in General notes
   and calendar events without a linked Notes folder.
@@ -128,6 +130,8 @@ An interrupted `sending` receipt becomes `unknown` after 25 seconds and is
 never resent, even if its old promise later reports success. Unclaimed `none`
 receipts can recover after restart while unexpired and still unopened/open;
 quiet hours and disabling prevent new sends. Later and opening never repush.
+An unclaimed `none` receipt can therefore send later (for example the next
+morning) while still within the original 72-hour expiry; it is not a new idea.
 This is at-most-one transport attempt, not exactly-once phone delivery.
 
 The canonical conversation remains `sessions` plus `messages` in SQLite.

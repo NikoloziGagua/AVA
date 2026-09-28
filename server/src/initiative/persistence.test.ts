@@ -121,4 +121,30 @@ describe("durable initiative recovery and source evidence", () => {
     await f.engine.tick(); expect(f.complete).not.toHaveBeenCalled();
     expect(f.rows()[0]).toMatchObject({ state: "suppressed", suppression_reason: "no_eligible_scope" });
   });
+  it.each(["old general note", "no notes"])("an unlinked calendar occurrence cannot make a scope eligible with %s", async (mode) => {
+    const f = initiativeFixture(connect());
+    updateInitiativeSettings(f.db, { version: 2, activeProjectFolderIds: [] });
+    if (mode === "no notes") f.db.prepare("DELETE FROM notes").run();
+    else f.db.prepare("UPDATE notes SET folder_id=NULL,updated_at=?").run(NOW - 7 * DAY);
+    createCalendarEvent(f.db, { title: "Unlinked lecture", kind: "lecture", anchorLocalDate: "2026-09-29",
+      startLocalTime: "10:00:00", durationMinutes: 60, source: "manual" }, NOW);
+    expect(gatherSources(f.db, getInitiativeSettings(f.db), NOW)).toBeNull();
+    await f.engine.tick();
+    expect(f.complete).not.toHaveBeenCalled();
+    expect(f.rows()[0]).toMatchObject({ state: "suppressed", suppression_reason: "no_eligible_scope" });
+    expect(f.db.prepare("SELECT count(*) n FROM sessions").get()).toEqual({ n: 0 });
+  });
+  it.each(["recent general capture", "active project"])("calendar remains usable within a scope made eligible by %s", (mode) => {
+    const f = initiativeFixture(connect());
+    if (mode === "recent general capture") {
+      updateInitiativeSettings(f.db, { version: 2, activeProjectFolderIds: [] });
+      f.db.prepare("UPDATE notes SET folder_id=NULL,updated_at=?").run(NOW);
+    } else f.db.prepare("DELETE FROM notes").run();
+    const event = createCalendarEvent(f.db, { title: "Eligible lecture", kind: "lecture", anchorLocalDate: "2026-09-29",
+      startLocalTime: "10:00:00", durationMinutes: 60, source: "manual",
+      notesFolderId: mode === "active project" ? f.folder.id : null }, NOW);
+    const gathered = gatherSources(f.db, getInitiativeSettings(f.db), NOW)!;
+    expect(gathered.scope.kind).toBe(mode === "active project" ? "project" : "general");
+    expect(gathered.sources).toEqual(expect.arrayContaining([expect.objectContaining({ type: "calendar_occurrence", occurrenceKey: `${event.id}:2026-09-29` })]));
+  });
 });

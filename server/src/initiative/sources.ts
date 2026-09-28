@@ -47,8 +47,9 @@ export function gatherSources(db: Db, settings: InitiativeSettings, now: number,
     ORDER BY updated_at DESC, id LIMIT 200`).all(now - 3 * DAY, ...activeIds) as { id: string }[];
   const notes = ids.map(({ id }) => getNote(db, id)).filter((n): n is Note => !!n && n.status !== "archived");
   const scope = preferred ?? (notes[0] ? folderScope(db, notes[0].folderId, settings) : null)
-    ?? (settings.activeProjectFolderIds.map(id => folderScope(db, id, settings)).find(Boolean)) ?? { kind: "general" as const };
-  if (scope.kind === "project" && !getNoteFolder(db, scope.folderId)) return null;
+    ?? (settings.activeProjectFolderIds.map(id => folderScope(db, id, settings)).find(Boolean));
+  // Calendar supports an eligible capture/project; it cannot opt a scope in.
+  if (!scope || scope.kind === "project" && !getNoteFolder(db, scope.folderId)) return null;
   const sources: InitiativeSource[] = notes.filter(n => inScope(db, n.folderId, scope, settings)).slice(0, 4).map(noteSource);
   // A bounded current/near-future calendar window. queryCalendar fails honestly
   // on oversized expansion; we never silently pick an arbitrary partial page.

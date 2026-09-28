@@ -6,3 +6,6 @@ export function ideaCount(pending: number): string {
 }
 
 export const IDEA_UNAVAILABLE = "This idea is no longer available.";
+
+/** A source edited since AVA wrote the idea (contract ava-initiative v2). */
+export const SOURCE_CHANGED = "Changed since AVA wrote this";

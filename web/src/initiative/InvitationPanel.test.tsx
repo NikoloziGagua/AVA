@@ -21,9 +21,9 @@ function view(overrides: Partial<InitiativeView> = {}): InitiativeView {
     disposition: { state: "open", version: 1, updatedAt: 1 },
     notification: { state: "accepted" },
     sources: [
-      { type: "note", id: "n_1", title: "Landing page ideas", available: true },
-      { type: "calendar_occurrence", occurrenceKey: "e_1:2026-09-29", title: "Investor call", startsAt: CALL_AT, endsAt: CALL_AT + 3_600_000, available: true },
-      { type: "note", id: "n_2", title: null, available: false },
+      { type: "note", id: "n_1", status: "current", title: "Landing page ideas" },
+      { type: "calendar_occurrence", occurrenceKey: "e_1:2026-09-29", status: "current", title: "Investor call", startsAt: CALL_AT, endsAt: CALL_AT + 3_600_000 },
+      { type: "note", id: "n_2", status: "unavailable", title: null },
     ],
     ...overrides,
   };
@@ -63,6 +63,24 @@ describe("InvitationPanel", () => {
     expect(props.onTalk).toHaveBeenCalledTimes(1);
     expect(props.onLater).toHaveBeenCalledTimes(1);
     expect(props.onNotUseful).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a source edited since AVA wrote the idea openable, and says so", () => {
+    const props = panel({
+      state: {
+        status: "open",
+        view: view({ sources: [
+          { type: "note", id: "n_3", status: "changed", title: "Pricing test" },
+          { type: "calendar_occurrence", occurrenceKey: "e_1:2026-09-29", status: "changed", title: "Investor call", startsAt: CALL_AT, endsAt: CALL_AT + 3_600_000 },
+        ] }),
+        position: null,
+      },
+    });
+    const note = screen.getByRole("button", { name: "Open note: Pricing test. Changed since AVA wrote this" });
+    expect(note.textContent).toContain("Changed since AVA wrote this");
+    fireEvent.click(note);
+    expect(props.onOpenNote).toHaveBeenCalledWith("n_3");
+    expect(screen.getByRole("button", { name: /^Open in Calendar: Investor call · .+\. Changed since AVA wrote this$/ })).toBeTruthy();
   });
 
   it("shows a Later answer as saved, and holds the answers while one is saving", () => {

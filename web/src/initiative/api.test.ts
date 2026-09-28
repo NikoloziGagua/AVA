@@ -36,9 +36,11 @@ const VIEW = {
   disposition: { state: "open", version: 1, updatedAt: 1_000 },
   notification: { state: "accepted" },
   sources: [
-    { type: "note", id: "n_1", title: "Landing page ideas", available: true },
-    { type: "note", id: "n_2", title: "Should not leak", available: false },
-    { type: "calendar_occurrence", occurrenceKey: "e_1:2026-09-29", title: "Investor call", startsAt: 5_000, endsAt: 6_000, available: true },
+    { type: "note", id: "n_1", status: "current", title: "Landing page ideas" },
+    { type: "note", id: "n_2", status: "unavailable", title: "Should not leak" },
+    { type: "note", id: "n_3", status: "changed", title: "Pricing test" },
+    { type: "calendar_occurrence", occurrenceKey: "e_1:2026-09-29", status: "current", title: "Investor call", startsAt: 5_000, endsAt: 6_000 },
+    { type: "calendar_occurrence", occurrenceKey: "e_2:2026-09-30", status: "unavailable", title: "Also private", startsAt: 7, endsAt: 8 },
   ],
 };
 
@@ -56,16 +58,23 @@ describe("initiative API", () => {
     await expect(fetchInitiativeSummary()).rejects.toMatchObject({ code: "invalid_api_response" });
   });
 
-  it("reads an idea and never shows a title for a source that is no longer available", async () => {
+  it("reads each source's status and never shows details of an unavailable one", async () => {
     const fetchMock = respond([200, VIEW]);
     const view = await fetchInitiative("ini_1");
     expect(fetchMock.mock.calls[0]![0]).toBe("/api/initiatives/ini_1");
     expect(view.scope).toEqual({ kind: "project", folderId: "f_acme", name: "Acme" });
     expect(view.sources).toEqual([
-      { type: "note", id: "n_1", title: "Landing page ideas", available: true },
-      { type: "note", id: "n_2", title: null, available: false },
-      { type: "calendar_occurrence", occurrenceKey: "e_1:2026-09-29", title: "Investor call", startsAt: 5_000, endsAt: 6_000, available: true },
+      { type: "note", id: "n_1", status: "current", title: "Landing page ideas" },
+      { type: "note", id: "n_2", status: "unavailable", title: null },
+      { type: "note", id: "n_3", status: "changed", title: "Pricing test" },
+      { type: "calendar_occurrence", occurrenceKey: "e_1:2026-09-29", status: "current", title: "Investor call", startsAt: 5_000, endsAt: 6_000 },
+      { type: "calendar_occurrence", occurrenceKey: "e_2:2026-09-30", status: "unavailable", title: null, startsAt: null, endsAt: null },
     ]);
+  });
+
+  it("refuses a source whose status it does not know", async () => {
+    respond([200, { ...VIEW, sources: [{ type: "note", id: "n_1", status: "maybe", title: "x" }] }]);
+    await expect(fetchInitiative("ini_1")).rejects.toMatchObject({ code: "invalid_api_response" });
   });
 
   it("turns any missing idea into one unavailable answer that names nothing", async () => {

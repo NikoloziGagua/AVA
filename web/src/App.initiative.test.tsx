@@ -42,11 +42,35 @@ vi.mock("./initiative/api.js", async () => ({
 vi.mock("./components/ava/GlassFilter.js", () => ({ GlassFilter: () => null }));
 vi.mock("./auth/PairingScreen.js", () => ({ PairingScreen: () => null }));
 vi.mock("./splash/Splash.js", () => ({ Splash: () => null }));
+type ChatProps = {
+  sessionId: string | null;
+  initiativeId?: string | null;
+  verifyInitiative?: boolean;
+  onOpenInvitation?: (target: { sessionId: string; initiativeId: string }) => void;
+  onEnterVoice?: (sessionId: string | null) => void;
+  onSessionChange?: (sessionId: string) => void;
+};
 vi.mock("./chat/ChatScreen.js", () => ({
-  ChatScreen: (props: Record<string, unknown>) => {
-    seen.chat.push(props);
-    return <div data-testid="mock-chat">chat-{String(props.sessionId)}-{String(props.initiativeId)}-{String(props.verifyInitiative)}</div>;
+  ChatScreen: (props: ChatProps) => {
+    seen.chat.push(props as unknown as Record<string, unknown>);
+    return (
+      <div data-testid="mock-chat">
+        <span data-testid="chat-route">chat-{String(props.sessionId)}-{String(props.initiativeId)}-{String(props.verifyInitiative)}</span>
+        <button type="button" onClick={() => props.onOpenInvitation?.({ sessionId: "s_3", initiativeId: "ini_3" })}>mock older idea</button>
+        <button type="button" onClick={() => props.onEnterVoice?.(props.sessionId)}>mock voice</button>
+        <button type="button" onClick={() => props.sessionId && props.onSessionChange?.(props.sessionId)}>mock reply</button>
+      </div>
+    );
   },
+}));
+vi.mock("./voice/VoiceScreen.js", () => ({
+  VoiceScreen: (props: { initialSessionId: string | null; intent: string; onSessionBound: (id: string) => void; onExit: (id: string | null) => void }) => (
+    <div data-testid="mock-voice">
+      <span data-testid="voice-route">voice-{String(props.initialSessionId)}-{props.intent}</span>
+      <button type="button" onClick={() => props.initialSessionId && props.onSessionBound(props.initialSessionId)}>mock voice ack</button>
+      <button type="button" onClick={() => props.onExit(props.initialSessionId)}>mock voice exit</button>
+    </div>
+  ),
 }));
 vi.mock("./home/HomeScreen.js", () => ({
   HomeScreen: (props: { ideas?: { pending: number; onOpen: () => void } | null }) => {
@@ -101,13 +125,51 @@ describe("readIdeaLink", () => {
 });
 
 describe("App with AVA's ideas", () => {
-  it("opens a push link's exact pair, then forgets the link", async () => {
+  it("opens a push link's exact pair, then forgets the link, so a reload keeps the old chat", async () => {
     ideas.fetchInitiativeSummary.mockResolvedValue({ pending: 0, unopened: 0, newest: null });
     window.history.replaceState(null, "", "/?session=s_1&initiative=ini_1");
     render(<App />);
-    expect((await screen.findByTestId("mock-chat")).textContent).toBe("chat-s_1-ini_1-true");
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_1-ini_1-true");
     await waitFor(() => expect(window.location.search).toBe(""));
     expect(localStorage.getItem("ava:last-chat-session")).toBe("human_1");
+
+    cleanup();
+    render(<App />);
+    await screen.findByTestId("mock-home");
+    expect(screen.queryByTestId("mock-chat")).toBeNull();
+    expect(localStorage.getItem("ava:last-chat-session")).toBe("human_1");
+  });
+
+  it("keeps the remembered chat while Niko moves between ideas, until voice binds one", async () => {
+    ideas.fetchInitiativeSummary.mockResolvedValue(SUMMARY);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open menu, 2 ideas from AVA" }));
+    fireEvent.click(screen.getByRole("button", { name: /^2 ideas from AVA/ }));
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_9-ini_9-true");
+
+    fireEvent.click(screen.getByRole("button", { name: "mock older idea" }));
+    await waitFor(() => expect(screen.getByTestId("chat-route").textContent).toBe("chat-s_3-ini_3-true"));
+    expect(localStorage.getItem("ava:last-chat-session")).toBe("human_1");
+
+    // Voice from an idea binds that exact conversation; only its acknowledgement moves the pointer.
+    fireEvent.click(screen.getByRole("button", { name: "mock voice" }));
+    expect((await screen.findByTestId("voice-route")).textContent).toBe("voice-s_3-resume");
+    expect(localStorage.getItem("ava:last-chat-session")).toBe("human_1");
+    fireEvent.click(screen.getByRole("button", { name: "mock voice ack" }));
+    expect(localStorage.getItem("ava:last-chat-session")).toBe("s_3");
+
+    fireEvent.click(screen.getByRole("button", { name: "mock voice exit" }));
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_3-null-false");
+  });
+
+  it("lets the first reply select the idea's conversation", async () => {
+    ideas.fetchInitiativeSummary.mockResolvedValue(SUMMARY);
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: "home ideas 2" }));
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_9-ini_9-true");
+    expect(localStorage.getItem("ava:last-chat-session")).toBe("human_1");
+    fireEvent.click(screen.getByRole("button", { name: "mock reply" }));
+    expect(localStorage.getItem("ava:last-chat-session")).toBe("s_9");
   });
 
   it("says a malformed link's idea is unavailable in place", async () => {
@@ -126,7 +188,7 @@ describe("App with AVA's ideas", () => {
 
     fireEvent.click(face);
     fireEvent.click(screen.getByRole("button", { name: /^2 ideas from AVA/ }));
-    expect((await screen.findByTestId("mock-chat")).textContent).toBe("chat-s_9-ini_9-true");
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_9-ini_9-true");
     const chat = seen.chat.at(-1)!;
     expect(typeof chat.onFocusComposer).toBe("function");
     expect(typeof chat.onOpenInvitation).toBe("function");
@@ -134,7 +196,7 @@ describe("App with AVA's ideas", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open menu, 2 ideas from AVA" }));
     fireEvent.click(screen.getByRole("button", { name: "Home" }));
     fireEvent.click(await screen.findByRole("button", { name: "home ideas 2" }));
-    expect((await screen.findByTestId("mock-chat")).textContent).toBe("chat-s_9-ini_9-true");
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_9-ini_9-true");
   });
 
   it("falls back to the inbox when the summary names no newest idea", async () => {
@@ -142,7 +204,7 @@ describe("App with AVA's ideas", () => {
     ideas.fetchInboxSessions.mockResolvedValue([{ id: "s_4", initiativeId: "ini_4" }]);
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "home ideas 1" }));
-    expect((await screen.findByTestId("mock-chat")).textContent).toBe("chat-s_4-ini_4-true");
+    expect((await screen.findByTestId("chat-route")).textContent).toBe("chat-s_4-ini_4-true");
     expect(document.querySelector<HTMLElement>("[data-idea-dot]")?.dataset.ideaDot).toBe("seen");
   });
 

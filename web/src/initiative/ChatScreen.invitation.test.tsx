@@ -60,7 +60,7 @@ function view(overrides: Record<string, unknown> = {}) {
     id: "ini_2", sessionId: "s_2", title: "Pricing test as proof", reasonNow: "You saved new landing page ideas yesterday.",
     scope: { kind: "project", folderId: "f_acme", name: "Acme" }, publishedAt: 1, expiresAt: Date.now() + 86_400_000,
     openedAt: null, disposition: { state: "open", version: 1, updatedAt: 1 }, notification: { state: "accepted" },
-    sources: [{ type: "note", id: "n_1", title: "Landing page ideas", available: true }],
+    sources: [{ type: "note", id: "n_1", status: "current", title: "Landing page ideas" }],
     ...overrides,
   };
 }

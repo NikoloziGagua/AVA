@@ -26,15 +26,21 @@ export type InitiativeDispositionState = "open" | "later" | "not_useful" | "enga
 export type InitiativeDisposition = { state: InitiativeDispositionState; version: number; updatedAt: number | null };
 export type InitiativeNotificationState = "none" | "sending" | "accepted" | "rejected" | "unknown" | "no_subscription";
 
+/**
+ * current: the version AVA read; changed: edited since she wrote the idea;
+ * unavailable: deleted, archived, inaccessible or out of scope (no details).
+ */
+export type InitiativeSourceStatus = "current" | "changed" | "unavailable";
+
 export type InitiativeSourceView =
-  | { type: "note"; id: string; title: string | null; available: boolean }
+  | { type: "note"; id: string; status: InitiativeSourceStatus; title: string | null }
   | {
     type: "calendar_occurrence";
     occurrenceKey: string;
+    status: InitiativeSourceStatus;
     title: string | null;
     startsAt: number | null;
     endsAt: number | null;
-    available: boolean;
   };
 
 export type InitiativeView = {
@@ -62,6 +68,7 @@ export type InitiativeSettings = {
 };
 
 const DISPOSITIONS = new Set<InitiativeDispositionState>(["open", "later", "not_useful", "engaged"]);
+const SOURCE_STATUSES = new Set<InitiativeSourceStatus>(["current", "changed", "unavailable"]);
 const NOTIFICATIONS = new Set<InitiativeNotificationState>(["none", "sending", "accepted", "rejected", "unknown", "no_subscription"]);
 
 function invalid(path: string): ApiError {
@@ -108,18 +115,21 @@ function readDisposition(raw: unknown): InitiativeDisposition | null {
 
 function readSource(raw: unknown): InitiativeSourceView | null {
   const value = record(raw);
-  if (!value || typeof value.available !== "boolean") return null;
+  if (!value || !SOURCE_STATUSES.has(value.status as InitiativeSourceStatus)) return null;
+  const status = value.status as InitiativeSourceStatus;
+  // An unavailable source never shows anything about the record, whatever arrives.
+  const shown = status !== "unavailable";
   if (value.type === "note" && typeof value.id === "string") {
-    return { type: "note", id: value.id, title: value.available ? text(value.title) : null, available: value.available };
+    return { type: "note", id: value.id, status, title: shown ? text(value.title) : null };
   }
   if (value.type === "calendar_occurrence" && typeof value.occurrenceKey === "string") {
     return {
       type: "calendar_occurrence",
       occurrenceKey: value.occurrenceKey,
-      title: value.available ? text(value.title) : null,
-      startsAt: value.available ? time(value.startsAt) : null,
-      endsAt: value.available ? time(value.endsAt) : null,
-      available: value.available,
+      status,
+      title: shown ? text(value.title) : null,
+      startsAt: shown ? time(value.startsAt) : null,
+      endsAt: shown ? time(value.endsAt) : null,
     };
   }
   return null;

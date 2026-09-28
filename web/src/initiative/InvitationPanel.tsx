@@ -2,7 +2,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, NotebookPen } from "lucide-rea
 import { Button } from "../design/Button.js";
 import { Chip } from "../design/Chip.js";
 import type { InitiativeSourceView } from "./api.js";
-import { IDEA_UNAVAILABLE } from "./copy.js";
+import { IDEA_UNAVAILABLE, SOURCE_CHANGED } from "./copy.js";
 import type { InvitationPosition, InvitationRef, InvitationState } from "./useInvitation.js";
 
 const ZONE = "Europe/Dublin";
@@ -20,14 +20,19 @@ function SourceChip({ source, onOpenNote, onOpenCalendarAt }: {
 }) {
   const note = source.type === "note";
   const icon = note ? <NotebookPen size={14} aria-hidden="true" /> : <CalendarDays size={14} aria-hidden="true" />;
-  if (!source.available) {
+  if (source.status === "unavailable") {
     return <Chip leading={icon} disabled aria-disabled="true" className="opacity-60">No longer available</Chip>;
   }
+  // Edited since AVA wrote the idea: still openable, never presented as what she read.
+  const changed = source.status === "changed";
+  const mark = changed ? <span className="shrink-0 text-ink-3">· {SOURCE_CHANGED}</span> : null;
+  const suffix = changed ? `. ${SOURCE_CHANGED}` : "";
   if (source.type === "note") {
     const title = source.title?.trim() || "Untitled note";
     return (
-      <Chip leading={icon} onClick={() => onOpenNote?.(source.id)} aria-label={`Open note: ${title}`} className="max-w-full">
+      <Chip leading={icon} onClick={() => onOpenNote?.(source.id)} aria-label={`Open note: ${title}${suffix}`} className="max-w-full">
         <span className="truncate">{title}</span>
+        {mark}
       </Chip>
     );
   }
@@ -39,10 +44,11 @@ function SourceChip({ source, onOpenNote, onOpenCalendarAt }: {
       leading={icon}
       onClick={at === null ? undefined : () => onOpenCalendarAt?.(at, source.occurrenceKey)}
       disabled={at === null}
-      aria-label={`Open in Calendar: ${label}`}
+      aria-label={`Open in Calendar: ${label}${suffix}`}
       className="max-w-full"
     >
       <span className="truncate">{label}</span>
+      {mark}
     </Chip>
   );
 }

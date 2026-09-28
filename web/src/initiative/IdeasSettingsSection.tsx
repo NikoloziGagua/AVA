@@ -163,7 +163,14 @@ export function IdeasSettingsSection() {
 /** A local time that saves when the field is left, not on every keystroke. */
 function TimeInput({ value, label, onCommit }: { value: string; label: string; onCommit: (value: string) => void }) {
   const [draft, setDraft] = useState(value);
-  useEffect(() => { setDraft(value); }, [value]);
+  // Follow a new saved value (a change elsewhere) during render, only when it
+  // actually changes. A mount effect here could run after a fast first edit
+  // and silently put the old time back.
+  const [followed, setFollowed] = useState(value);
+  if (value !== followed) {
+    setFollowed(value);
+    setDraft(value);
+  }
   return (
     <input
       type="time"

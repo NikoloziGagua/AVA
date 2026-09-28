@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>One Conversation · AVA</title>
+<link rel="stylesheet" href="../ava-future-2026-09-28/shared.css" />
+<style>
+  .cols { grid-template-columns: 390px 1fr; align-items: start; }
+  @media (max-width: 960px) { .cols { grid-template-columns: 1fr; } }
+  .sticky { position: sticky; top: 16px; }
+  @media (max-width: 960px) { .sticky { position: static; } }
+  .phone { border-radius: 38px; padding: 12px; border: 1px solid var(--line-2); background: linear-gradient(180deg, #0c1018, #06080d); box-shadow: 0 30px 80px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.04); }
+  .screen { border-radius: 28px; height: 660px; display: flex; flex-direction: column; overflow: hidden;
+    background: radial-gradient(ellipse at 50% -10%, rgba(126,156,255,.2), transparent 60%), #05070b; }
+  .top { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 8px; }
+  .top .title { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
+  .top .hist { font-size: 12.5px; color: var(--ink-3); border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; background: none; cursor: pointer; }
+  .tl { flex: 1; overflow-y: auto; padding: 4px 14px 12px; display: flex; flex-direction: column; gap: 8px; scroll-behavior: smooth; }
+  .dayline { align-self: center; font: 12px var(--mono); letter-spacing: .08em; color: var(--ink-3); margin: 10px 0 2px; }
+  .chapter { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--ink-2); margin: 8px 0 2px; animation: fadeIn .4s var(--ease) both; }
+  .chapter::before, .chapter::after { content: ""; flex: 1; height: 1px; background: var(--line-2); }
+  .chapter b { font-weight: 600; color: var(--ink); }
+  .chapter.ava b { color: var(--accent); }
+  .why { display: block; text-align: center; font-size: 12px; color: var(--ink-3); margin-top: -4px; animation: fadeIn .4s var(--ease) both; }
+  .bubble { padding: 9px 12px; border-radius: 16px; font-size: 14px; max-width: 88%; animation: fadeIn .35s var(--ease) both; }
+  .bubble.ava { background: var(--glass-2); border: 1px solid var(--line); align-self: flex-start; border-bottom-left-radius: 6px; }
+  .bubble.me { background: var(--ink); color: #06080c; align-self: flex-end; border-bottom-right-radius: 6px; }
+  .bubble .how { display: flex; align-items: center; gap: 6px; font: 12px var(--mono); opacity: .62; margin-bottom: 2px; }
+  .bubble .how.v::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #3b5bdb; box-shadow: 0 0 0 3px rgba(59,91,219,.18); }
+  .kbd svg { width: 20px; height: 20px; }
+  .citem.fresh { border-color: rgba(134,227,190,.55); background: rgba(134,227,190,.07); }
+  .src { display: inline-flex; margin-top: 6px; font-size: 12px; border: 1px solid var(--line-2); border-radius: 99px; padding: 3px 9px; background: none; color: var(--ink-2); cursor: pointer; }
+  .src:hover { color: var(--ink); }
+  .composer { display: flex; align-items: center; gap: 10px; padding: 10px 14px 16px; border-top: 1px solid var(--line); }
+  .talk { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; border-radius: 16px; border: 1px solid var(--line-2); background: var(--glass-2); cursor: pointer; font-weight: 600; font-size: 14px; }
+  .talk .orb { width: 26px; height: 26px; }
+  .talk.live { border-color: rgba(156,196,255,.6); box-shadow: 0 0 24px rgba(126,156,255,.25); }
+  .kbd { width: 48px; height: 48px; border-radius: 16px; border: 1px solid var(--line-2); background: none; cursor: pointer; font-size: 18px; }
+  .typed { flex: 1; display: none; min-height: 48px; border-radius: 16px; border: 1px solid var(--line-2); background: rgba(255,255,255,.04); color: var(--ink-3); align-items: center; padding: 0 14px; font-size: 14px; }
+  .composer.typing .talk { display: none; } .composer.typing .typed { display: flex; }
+
+  .prop { font: 12px var(--mono); letter-spacing: .06em; padding: 2px 7px; border-radius: 99px; border: 1px solid rgba(255,192,122,.45); color: var(--warm); white-space: nowrap; }
+  .sims { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-top: 12px; }
+  .sim { text-align: left; display: grid; gap: 4px; padding: 12px; border-radius: 14px; border: 1px solid var(--line-2); background: var(--glass); cursor: pointer; transition: all .2s var(--ease); }
+  .sim:hover { background: var(--glass-2); }
+  .sim:disabled { opacity: .45; cursor: default; }
+  .sim b { font-weight: 600; font-size: 14px; } .sim span { font-size: 13px; color: var(--ink-2); }
+  .facts { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin: 4px 0 6px; }
+  .fact { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; background: rgba(255,255,255,.03); }
+  .fact .n { font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
+  .fact .l { font-size: 13px; color: var(--ink-2); }
+
+  .layers { display: grid; gap: 8px; margin-top: 8px; }
+  .layer { display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: start; padding: 11px 12px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,.03); transition: all .35s var(--ease); }
+  .layer .num { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font: 600 13px var(--mono); border: 1px solid var(--line-2); }
+  .layer p { margin: 2px 0 0; font-size: 13.5px; color: var(--ink-2); }
+  .layer.lit { border-color: rgba(156,196,255,.7); background: rgba(156,196,255,.08); box-shadow: 0 0 0 1px rgba(156,196,255,.25); }
+  .layer.lit .num { background: var(--accent); color: #06080c; border-color: var(--accent); }
+  .used { min-height: 20px; font-size: 13px; color: var(--accent); margin-top: 8px; }
+
+  .carry { display: grid; gap: 8px; margin-top: 8px; }
+  .citem { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,.03); }
+  .citem .k { font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+  .citem .v { font-size: 14px; }
+  .citem .from { font-size: 12px; color: var(--ink-3); }
+  .citem.gone .v { text-decoration: line-through; color: var(--ink-3); }
+  .mini { min-height: 32px; padding: 0 11px; border-radius: 10px; font-size: 13px; }
+
+  .qs { display: grid; gap: 10px; margin: 8px 0 0; padding: 0; list-style: none; }
+  .qs li { padding: 11px 12px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,.03); font-size: 14px; }
+  .qs li .p { display: block; font-size: 13px; color: var(--ink-2); margin-top: 3px; }
+  .toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--ink); color: #06080c; padding: 9px 14px; border-radius: 12px; font-size: 13.5px; opacity: 0; pointer-events: none; transition: opacity .25s var(--ease); z-index: 5; max-width: calc(100% - 32px); }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <span class="eyebrow">Discussion preview · your message 1530</span>
+    <span class="badge demo">PROPOSED · not built</span>
+    <span class="badge">invented conversation</span>
+  </div>
+  <h1><span class="silver">One conversation with AVA</span></h1>
+  <p class="lede">You mostly talk to AVA out loud. So instead of a list of chats, there's one place: tap her face and you're back in the same conversation. Typing lands in the same place. AVA keeps track of what matters, and you can see it and correct it.</p>
+
+  <div class="facts" aria-label="What your usage shows (counts only)">
+    <div class="fact"><div class="n">94%</div><div class="l">of your turns since 24 Sep were voice (300 of 319)</div></div>
+    <div class="fact"><div class="n">1–2</div><div class="l">conversations you touch on most days</div></div>
+    <div class="fact"><div class="n">~22K</div><div class="l">tokens AVA reads per model call today (instructions, tools, history)</div></div>
+  </div>
+  <p class="faint" style="margin:0 0 22px">Counts only, from a read-only copy of AVA's database. No messages were read or copied into this page. Every line of conversation below is invented.</p>
+
+  <section class="grid cols">
+    <div class="sticky">
+      <div class="phone" aria-label="Phone preview of the proposed Talk screen">
+        <div class="screen">
+          <div class="top">
+            <div class="title"><span class="orb sm" aria-hidden="true"></span>AVA</div>
+            <button class="hist" type="button" id="hist" aria-label="History and search (proposed)">History ⌕</button>
+          </div>
+          <div class="tl" id="tl" role="log" aria-live="polite" aria-label="Conversation timeline"></div>
+          <div class="composer" id="composer">
+            <button class="talk" type="button" id="talk"><span class="orb" aria-hidden="true"></span><span id="talkLabel">Tap to talk</span></button>
+            <div class="typed" aria-hidden="true">Type to AVA…</div>
+            <button class="kbd" type="button" id="kbd" aria-label="Switch to typing (proposed)" aria-pressed="false"></button>
+          </div>
+        </div>
+      </div>
+      <p class="faint" style="text-align:center;margin-top:10px">No "new chat" button, and no list to pick from. History is still one tap away.</p>
+    </div>
+
+    <div class="grid">
+      <article class="card glow">
+        <div class="row" style="justify-content:space-between"><h2 style="margin:0">Try it</h2><span class="prop">proposed interactions</span></div>
+        <p class="muted" style="margin:6px 0 0">Each button plays a short scripted moment in the phone. Watch the left side, and which memory layer lights up below.</p>
+        <div class="sims">
+          <button class="sim" type="button" data-sim="away"><b>Come back 7 hours later</b><span>A new chapter starts by itself, and AVA picks up where you left off.</span></button>
+          <button class="sim" type="button" data-sim="topic"><b>Say "new topic"</b><span>You start a chapter out loud. No menus.</span></button>
+          <button class="sim" type="button" data-sim="past"><b>Ask about last week</b><span>AVA looks it up and shows where the answer came from.</span></button>
+          <button class="sim" type="button" data-sim="type"><b>Type instead</b><span>The same conversation. Spoken turns just carry a small voice mark.</span></button>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>How she remembers</h2>
+        <p class="muted" style="margin:0">Three layers, so she doesn't have to re-read everything you've ever said. A shorter start is one way to make her faster; we'd measure it before promising a number.</p>
+        <div class="layers">
+          <div class="layer" id="L1"><span class="num">1</span><div><b>This chapter, word for word</b><p>The recent turns of what you're talking about now. Bounded, so it never grows forever.</p></div></div>
+          <div class="layer" id="L2"><span class="num">2</span><div><b>Chapter summaries</b><p>A short summary written when a chapter ends, linked to its messages. Looked up only when it's relevant.</p></div></div>
+          <div class="layer" id="L3"><span class="num">3</span><div><b>What I'm carrying forward</b><p>Decisions, promises and preferences, each with where it came from. This is what she knows at the start of every call.</p></div></div>
+        </div>
+        <div class="used" id="used" aria-live="polite"></div>
+      </article>
+
+      <article class="card">
+        <div class="row" style="justify-content:space-between"><h2 style="margin:0">What I'm carrying forward</h2><span class="prop">proposed sheet</span></div>
+        <p class="muted" style="margin:6px 0 0">A small sheet you can open any time. If something's wrong, remove it and she stops using it.</p>
+        <div class="carry" id="carry"></div>
+      </article>
+
+      <article class="card">
+        <h2>Decisions for you</h2>
+        <ul class="qs">
+          <li>Keep old chats under History, searchable?<span class="p">Proposed: yes. Nothing is deleted or merged; today's chats become chapters.</span></li>
+          <li>When should a new chapter start by itself?<span class="p">Proposed: after about 6 hours away, or whenever you say "new topic".</span></li>
+          <li>Should ideas AVA starts appear in the same timeline?<span class="p">Proposed: yes, as their own short chapter you can answer or ignore.</span></li>
+          <li>Voice and typing together?<span class="p">Proposed: one timeline. Spoken turns get a small voice mark.</span></li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>All conversation text, names and times are invented.</li><li>The talk button doesn't record anything.</li><li>The layer highlights explain the idea; they aren't a real trace.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>One Talk entry that always resumes, for both voice and typing.</li><li>Chapters are today's conversations, created automatically.</li><li>A compact start-of-call brief, plus look-ups on demand.</li><li>A carrying-forward sheet you can correct.</li></ul></div>
+    <div class="card"><h3>Honest limits</h3><ul><li>An iPhone web app can't listen for a wake word all the time. "Always there" means one tap from anywhere.</li><li>AVA only answers while your PC runs her.</li><li>Summaries can miss things, so each one links to the real messages.</li></ul></div>
+    <div class="card"><h3>If you like it: possible steps</h3><p>1. One timeline over today's conversations, with automatic chapters (UI only).<br>2. Chapter summaries and the start-of-call brief, sized by a benchmark.<br>3. The carrying-forward sheet with corrections.<br><span class="faint">Each step gets your OK and a mockup first. Nothing here is built.</span></p></div>
+  </section>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="../ava-future-2026-09-28/shared.js"></script>
+<script>
+(function () {
+  var tl = document.getElementById("tl"), used = document.getElementById("used");
+  var busy = false;
+  var SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+  var ICON_KBD = SVG + '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M10 10h.01M14 10h.01M17.5 10h.01M7.5 14h9"/></svg>';
+  var ICON_MIC = SVG + '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>';
+  document.getElementById("kbd").innerHTML = ICON_KBD;
+  function add(el) { tl.appendChild(el); tl.scrollTop = tl.scrollHeight; return el; }
+  function day(text) { var d = document.createElement("div"); d.className = "dayline"; d.textContent = text; return add(d); }
+  function chapter(title, time, why, byAva) {
+    var c = document.createElement("div"); c.className = "chapter" + (byAva ? " ava" : "");
+    c.innerHTML = "<span><b>" + AVAF.esc(title) + "</b> · " + AVAF.esc(time) + "</span>"; add(c);
+    if (why) { var w = document.createElement("span"); w.className = "why"; w.textContent = why; add(w); }
+  }
+  function bubble(who, text, voice) {
+    var b = document.createElement("div"); b.className = "bubble " + who;
+    if (who === "me") { var h = document.createElement("span"); h.className = voice ? "how v" : "how"; h.textContent = voice ? "said" : "typed"; b.appendChild(h); }
+    var t = document.createElement("span"); b.appendChild(t); add(b);
+    return { el: b, text: t };
+  }
+  async function say(who, text, voice, speed) { var b = bubble(who, text, voice); await AVAF.type(b.text, text, speed || 16); tl.scrollTop = tl.scrollHeight; return b; }
+  function light(ids, note) {
+    ["L1", "L2", "L3"].forEach(function (id) { document.getElementById(id).classList.toggle("lit", ids.indexOf(id) >= 0); });
+    used.textContent = note || "";
+  }
+  function toast(msg) { var t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show"); setTimeout(function () { t.classList.remove("show"); }, 2600); }
+
+  // Invented history the timeline starts with.
+  day("YESTERDAY · SUN 27 SEP");
+  chapter("Weekend catch-up", "21:14", "new chapter · you'd been away 9 hours");
+  bubble("me", "", true).text.textContent = "What did I promise Luka for Tuesday?";
+  bubble("ava").text.textContent = "The pitch deck draft, by Tuesday evening. Want a reminder at 18:00?";
+  bubble("me", "", true).text.textContent = "Yes please.";
+  bubble("ava").text.textContent = "Set for Tuesday at 18:00.";
+  day("TODAY · MON 28 SEP");
+  chapter("AVA had an idea", "11:02", "started by AVA · from your saved notes", true);
+  var idea = bubble("ava"); idea.text.textContent = "Your pricing note weighs two options for the tutoring app. Want to settle it in five minutes?";
+  var chip = document.createElement("button"); chip.type = "button"; chip.className = "src"; chip.textContent = "From your note · Pricing ideas";
+  chip.addEventListener("click", function () { toast("Would open that exact note (proposed)."); }); idea.el.appendChild(document.createElement("br")); idea.el.appendChild(chip);
+  bubble("me", "", false).text.textContent = "Later, after the gym";
+  chapter("Hackathon plan", "14:30");
+  bubble("me", "", true).text.textContent = "Let's plan the hackathon entry.";
+  bubble("ava").text.textContent = "Your note has two ideas. Last time you leaned towards voice notes for students. Start there?";
+
+  var CARRY = [
+    ["Decision", "Tutoring app: per-household pricing", "Pricing chat · 21 Sep"],
+    ["Promise", "Send Luka the pitch deck draft by Tuesday evening", "Weekend catch-up · yesterday"],
+    ["Preference", "Keep nudges short; no reminders after 22:30", "Settings chat · 24 Sep"],
+    ["Open question", "Hackathon: voice notes or study planner?", "Hackathon plan · today"],
+  ];
+  var carry = document.getElementById("carry");
+  CARRY.forEach(function (c) {
+    var row = document.createElement("div"); row.className = "citem"; row.dataset.k = c[0];
+    row.innerHTML = '<div><div class="k">' + AVAF.esc(c[0]) + '</div><div class="v">' + AVAF.esc(c[1]) + '</div><div class="from">from ' + AVAF.esc(c[2]) + '</div></div>';
+    var b = document.createElement("button"); b.type = "button"; b.className = "btn mini"; b.textContent = "Remove";
+    b.setAttribute("aria-label", "Remove: " + c[1] + " (proposed)");
+    b.addEventListener("click", function () {
+      var gone = row.classList.toggle("gone");
+      b.textContent = gone ? "Undo" : "Remove";
+      b.setAttribute("aria-label", (gone ? "Undo removing: " : "Remove: ") + row.querySelector(".v").textContent + " (proposed)");
+      toast(gone ? "AVA stops using this. Undo is right there." : "Restored.");
+    });
+    row.appendChild(b); carry.appendChild(row);
+  });
+
+  var SIMS = {
+    away: async function () {
+      light(["L3", "L2"], "Used: layer 3 (what she's carrying) and layer 2 (the Hackathon chapter summary).");
+      chapter("Evening", "21:40", "new chapter · you'd been away 7 hours");
+      await AVAF.sleep(300);
+      await say("ava", "Welcome back. We left the hackathon plan at: choose between two ideas by Wednesday. Carry on, or something new?");
+      await AVAF.sleep(500);
+      await say("me", "Carry on. Voice notes it is.", true, 22);
+      light(["L1"], "Used: layer 1. The live chapter is enough for the reply.");
+      await say("ava", "Noted as a decision. I'll draft the three-sentence pitch next.");
+      // The open question becomes a decision in the carrying-forward sheet.
+      var open = carry.querySelector('[data-k="Open question"]');
+      if (open) {
+        open.dataset.k = "Decision"; open.classList.add("fresh");
+        open.querySelector(".k").textContent = "Decision · just now";
+        open.querySelector(".v").textContent = "Hackathon entry: voice notes for students";
+        open.querySelector(".from").textContent = "from Evening · today";
+        open.querySelector("button").setAttribute("aria-label", "Remove: Hackathon entry: voice notes for students (proposed)");
+        used.textContent += " The open question in 'What I'm carrying forward' is now a decision.";
+      }
+    },
+    topic: async function () {
+      await say("me", "AVA, new topic.", true, 24);
+      chapter("New topic", "21:52", "started by you, out loud");
+      light(["L3"], "Used: layer 3 only. A fresh chapter starts light and still knows your decisions.");
+      await say("ava", "Sure. What's on your mind?");
+    },
+    past: async function () {
+      await say("me", "What did we decide about pricing last week?", true, 22);
+      light(["L2", "L3"], "Used: a layer 2 look-up of the Pricing chapter, matched by layer 3's decision.");
+      await AVAF.sleep(400);
+      var b = await say("ava", "Per-household pricing, on 21 Sep. Per-person felt hard to explain to parents.");
+      var s = document.createElement("button"); s.type = "button"; s.className = "src"; s.textContent = "Source · Pricing chat, 21 Sep";
+      s.addEventListener("click", function () { toast("Would jump to that exact chapter in History (proposed)."); });
+      b.el.appendChild(document.createElement("br")); b.el.appendChild(s); tl.scrollTop = tl.scrollHeight;
+    },
+    type: async function () {
+      setTyping(true);
+      await AVAF.sleep(300);
+      await say("me", "also ask Luka about the logo", false, 26);
+      light(["L1"], "Used: layer 1. Typed or spoken, it's the same conversation.");
+      await say("ava", "Added to Tuesday: ask Luka about the logo.");
+      await AVAF.sleep(700); setTyping(false);
+    },
+  };
+  function setTyping(on) {
+    document.getElementById("composer").classList.toggle("typing", on);
+    document.getElementById("kbd").setAttribute("aria-pressed", String(on));
+    document.getElementById("kbd").innerHTML = on ? ICON_MIC : ICON_KBD;
+    document.getElementById("kbd").setAttribute("aria-label", on ? "Switch to talking (proposed)" : "Switch to typing (proposed)");
+  }
+  document.querySelectorAll(".sim").forEach(function (btn) {
+    btn.addEventListener("click", async function () {
+      if (busy) return; busy = true;
+      document.querySelectorAll(".sim").forEach(function (b) { b.disabled = true; });
+      try { await SIMS[btn.dataset.sim](); } finally {
+        busy = false; document.querySelectorAll(".sim").forEach(function (b) { b.disabled = false; });
+      }
+    });
+  });
+  document.getElementById("kbd").addEventListener("click", function () { setTyping(!document.getElementById("composer").classList.contains("typing")); });
+  document.getElementById("talk").addEventListener("click", function () {
+    var t = document.getElementById("talk"), live = t.classList.toggle("live");
+    document.getElementById("talkLabel").textContent = live ? "Listening… (demo, not recording)" : "Tap to talk";
+  });
+  document.getElementById("hist").addEventListener("click", function () { toast("History: every past chapter, searchable (proposed)."); });
+})();
+</script>
+</body>
+</html>

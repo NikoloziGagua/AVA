@@ -21,6 +21,8 @@ import { authRoutes } from "./routes/auth.js";
 import { chatRoutes, type AgentDeps } from "./routes/chat.js";
 import { healthRoutes } from "./routes/health.js";
 import { sessionsRoutes } from "./routes/sessions.js";
+import { initiativesRoutes } from "./routes/initiatives.js";
+import { InitiativeEngine } from "./initiative/engine.js";
 import { statusRoutes } from "./routes/status.js";
 import { pushRoutes } from "./routes/push.js";
 import { rulesRoutes } from "./routes/rules.js";
@@ -789,6 +791,7 @@ app.use("/api", healthRoutes(startedAt, {
 app.use("/api/auth", authRoutes(db, requireToken(db)));
 app.use("/api/chat", chatRoutes(db, runs, requireToken(db), agentDeps, { anthropic, openai }));
 app.use("/api/sessions", sessionsRoutes(db, requireToken(db)));
+app.use("/api/initiatives", initiativesRoutes(db, requireToken(db)));
 app.use("/api/push", pushRoutes(db, requireToken(db), { vapidPublicKey: cfg.vapidPublicKey }));
 app.use("/api/rules", rulesRoutes(db, requireToken(db), { provider, log }));
 app.use("/api/approvals", approvalsRoutes(db, requireToken(db)));
@@ -865,6 +868,8 @@ async function shutdown(reason: string) {
   log.info({ reason }, "shutting down");
   // Stop accepting new connections first so the port frees promptly for the
   // next process (tsx watch / self-dev restart) instead of racing EADDRINUSE.
+  clearInterval(initiativeTimer);
+  initiativeEngine.stop();
   try { httpServer.close(); } catch { /* may not be listening yet */ }
   if (chromePromise) {
     try {
@@ -895,6 +900,9 @@ process.on("uncaughtException", (err) => {
   log.error({ err: err.stack ?? err.message }, "uncaughtException — continuing (state may be degraded)");
 });
 
+const initiativeEngine = new InitiativeEngine({ db, provider, deliver: deliverer?.deliverInitiativePush,
+  report: event => log.info(event, "initiative lifecycle") });
+let initiativeTimer: ReturnType<typeof setInterval> | undefined;
 const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
   // Rotate only after this process successfully owns the port. A losing hot-
   // reload process must not revoke the live server's loopback credentials.
@@ -908,6 +916,12 @@ const httpServer = app.listen(cfg.port, cfg.bindAddr, () => {
     log.info({ retired: internalTokens.retiredWatch }, "auth: revoked stale watch-internal tokens at boot");
   }
   log.info({ port: cfg.port, bind: cfg.bindAddr }, "ava server listening");
+  // Awake-PC pilot only. Installation never opts the owner in. SQLite claims
+  // prevent duplicate generation across ticks and processes.
+  const initiativeTick = () => { void initiativeEngine.tick().catch(() => log.warn({}, "initiative tick unavailable")); };
+  initiativeTimer = setInterval(initiativeTick, 60_000);
+  initiativeTimer.unref();
+  initiativeTick();
   // Long-term monitoring: re-checks standing watches through this server's own
   // /api/chat (full toolset + audit trail in each watch's session). Started
   // only once the port is live, since checks call back over HTTP.

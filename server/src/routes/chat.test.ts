@@ -11,6 +11,7 @@ import { chatRoutes } from "./chat.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
 import { SseBuffer } from "../sse/buffer.js";
+import { initiativeFixture } from "../initiative/fixture.test-helper.js";
 
 describe("authoritative chat conversation binding", () => {
   let db: Db;
@@ -60,6 +61,18 @@ describe("authoritative chat conversation binding", () => {
     const replay = await send({ bindingRequestId: "chat-new-1", text: "A second accepted turn in that conversation" });
     expect(replay.body.sessionId).toBe(id);
     expect(listSessions(db)).toHaveLength(1);
+  });
+
+  it("an accepted reply engages the exact assistant invitation once, not delegated audit turns", async () => {
+    const f = initiativeFixture(db); await f.engine.tick();
+    const row = f.rows()[0]!;
+    await send({ sessionId: row.session_id, intent: "resume", persist: false }, "voice_action");
+    expect(f.rows()[0]!.disposition_state).toBe("open");
+    await send({ sessionId: row.session_id, intent: "resume", text: "Let's compare the two options." });
+    expect(f.rows()[0]).toMatchObject({ disposition_state: "engaged", disposition_version: 2 });
+    expect(listMessages(db, row.session_id!).filter(m => m.role === "user")).toHaveLength(1);
+    await send({ sessionId: row.session_id, intent: "resume", text: "Focus on the pilot." });
+    expect(f.rows()[0]!.disposition_version).toBe(2);
   });
 
   it("preserves legacy exact selection, including typed exact voice characters and modality", async () => {

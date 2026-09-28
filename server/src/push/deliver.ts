@@ -2,6 +2,7 @@ import webpush from "web-push";
 import type { Db } from "../state/db.js";
 import type { Approval } from "../state/approvals.js";
 import { listSubscriptions, deleteSubscription } from "../state/push.js";
+import { scrubSecrets } from "../security/scrub.js";
 
 export type Vapid = { publicKey: string; privateKey: string; subject: string };
 
@@ -11,6 +12,10 @@ export type ReminderDeliveryRequest = {
   occurrenceId: string;
   summary: string;
   expiresAt: number;
+};
+
+export type InitiativeDeliveryRequest = {
+  initiativeId: string; sessionId: string; title: string; body: string; expiresAt: number;
 };
 
 export type ReminderDeliveryResult = {
@@ -31,6 +36,7 @@ export type Deliverer = {
   deliverDonePush: (summary: string) => Promise<DeliveryResult>;
   /** Await bounded transport evidence; acceptance never proves phone receipt. */
   deliverReminderPush: (request: ReminderDeliveryRequest) => Promise<ReminderDeliveryResult>;
+  deliverInitiativePush: (request: InitiativeDeliveryRequest) => Promise<ReminderDeliveryResult>;
 };
 
 // Minimal send signature: accepts subscription + payload, returns any promise.
@@ -124,25 +130,44 @@ export function buildDeliverer(args: DelivererArgs): Deliverer {
         data: { deepLink: "/" },
       }));
     },
-    async deliverReminderPush(request) {
+    deliverReminderPush(request) {
       const startedAt = now();
       if (!request || typeof request.occurrenceId !== "string" || !/^[A-Za-z0-9:_-]{1,160}$/.test(request.occurrenceId)
         || typeof request.summary !== "string" || !request.summary.trim()
         || !Number.isSafeInteger(request.expiresAt) || !Number.isSafeInteger(startedAt)
-        || request.expiresAt <= startedAt) throw new Error("invalid_reminder_request");
-      const subs = listSubscriptions(args.db);
-      const subscriptions = { total: subs.length, accepted: 0, rejectedTransient: 0, rejectedPermanent: 0, unknown: 0 };
-      if (!subs.length) return { subscriptions, reasonCode: "no_subscriptions" };
+        || request.expiresAt <= startedAt) return Promise.reject(new Error("invalid_reminder_request"));
       const payload = JSON.stringify({
         title: "Ava — reminder",
         body: request.summary,
         tag: `ava-reminder-${request.occurrenceId}`,
         data: { occurrenceId: request.occurrenceId, deepLink: "/" },
       });
-      const deadlineAt = Math.min(request.expiresAt, startedAt + reminderTimeoutMs);
+      return boundedFanOut(payload, request.expiresAt);
+    },
+    deliverInitiativePush(request) {
+      if (!/^ini_[A-Za-z0-9_-]{1,124}$/.test(request.initiativeId)
+        || !/^[A-Za-z0-9_-]{1,128}$/.test(request.sessionId)
+        || typeof request.title !== "string" || request.title.length > 80
+        || typeof request.body !== "string" || request.body.length > 90
+        || !Number.isSafeInteger(request.expiresAt) || request.expiresAt <= now()) {
+        return Promise.reject(new Error("invalid_initiative_request"));
+      }
+      return boundedFanOut(JSON.stringify({ title: scrubSecrets(request.title), body: scrubSecrets(request.body),
+        tag: `initiative-${request.initiativeId}`, data: { kind: "initiative", initiativeId: request.initiativeId,
+          sessionId: request.sessionId,
+          deepLink: `/?session=${encodeURIComponent(request.sessionId)}&initiative=${encodeURIComponent(request.initiativeId)}` } }), request.expiresAt);
+    },
+  };
+
+  async function boundedFanOut(payload: string, expiresAt: number): Promise<ReminderDeliveryResult> {
+      const startedAt = now();
+      const subs = listSubscriptions(args.db);
+      const subscriptions = { total: subs.length, accepted: 0, rejectedTransient: 0, rejectedPermanent: 0, unknown: 0 };
+      if (!subs.length) return { subscriptions, reasonCode: "no_subscriptions" };
+      const deadlineAt = Math.min(expiresAt, startedAt + reminderTimeoutMs);
       const outcomes = await Promise.all(subs.map((s) => {
         const dispatchedAt = now();
-        const remainingMs = request.expiresAt - dispatchedAt;
+        const remainingMs = expiresAt - dispatchedAt;
         const budgetMs = deadlineAt - dispatchedAt;
         // No new send after expiry, including when dispatch itself took time.
         if (!Number.isFinite(budgetMs) || budgetMs <= 0) return Promise.resolve<ReminderOutcome>("timeout");
@@ -190,8 +215,7 @@ export function buildDeliverer(args: DelivererArgs): Deliverer {
         : outcomes.includes("gone") ? "subscription_gone"
         : outcomes.includes("permanent") ? "permanent_rejection" : null;
       return { subscriptions, reasonCode };
-    },
-  };
+  }
 }
 
 // Convenience standalones — call buildDeliverer once and use:

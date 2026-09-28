@@ -71,6 +71,16 @@ CREATE TABLE IF NOT EXISTS initiatives (
 );
 CREATE INDEX IF NOT EXISTS idx_initiatives_inbox ON initiatives(state, disposition_state, published_at DESC, session_id);
 
+CREATE TABLE IF NOT EXISTS initiative_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  delivery_local_time TEXT NOT NULL,
+  quiet_start TEXT NOT NULL,
+  quiet_end TEXT NOT NULL,
+  active_project_folder_ids TEXT NOT NULL CHECK (json_valid(active_project_folder_ids)),
+  version INTEGER NOT NULL CHECK (version >= 1)
+);
+
 -- Semantic memory is a compact discovery index, not a transcript duplicate.
 -- Entries contain only bounded sanitized summaries; sources retain exact
 -- conversation-range references and a content fingerprint so retrieval can be

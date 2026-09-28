@@ -2044,11 +2044,14 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         // an action. HYBRID only: transcribe-only persists via /api/chat, so
         // storing here too would double the user turn.
         if (hybrid && sessionId) {
-          const stored = appendMessage(deps.db, { sessionId, role: "user", content: acceptedText, metadata: { inputModality: "voice" } });
+          const stored = deps.db.transaction(() => {
+            const message = appendMessage(deps.db, { sessionId: sessionId!, role: "user", content: acceptedText, metadata: { inputModality: "voice" } });
+            markHumanActivity(deps.db, sessionId!, message.created_at);
+            touchSession(deps.db, sessionId!);
+            return message;
+          })();
           persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
           lastAcceptedUserMessageId = stored.id;
-          markHumanActivity(deps.db, sessionId);
-          touchSession(deps.db, sessionId);
         }
         // Send the caption first. Because upstream and browser are different
         // sockets, this ordering arms the browser's new-turn audio gate before
@@ -2415,11 +2418,14 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             return;
           }
           if (hybrid && sessionId) {
-            const stored = appendMessage(deps.db, { sessionId, role: "user", content: decision.text, metadata: { inputModality: "voice" } });
+            const stored = deps.db.transaction(() => {
+              const message = appendMessage(deps.db, { sessionId: sessionId!, role: "user", content: decision.text, metadata: { inputModality: "voice" } });
+              markHumanActivity(deps.db, sessionId!, message.created_at);
+              touchSession(deps.db, sessionId!);
+              return message;
+            })();
             lastAcceptedUserMessageId = stored.id;
             currentTurnMemoryEligible = true;
-            markHumanActivity(deps.db, sessionId);
-            touchSession(deps.db, sessionId);
           }
           try {
             if (client.readyState === WebSocket.OPEN) {

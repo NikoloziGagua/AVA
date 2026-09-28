@@ -370,6 +370,17 @@ function projectOccurrence(event: CalendarEvent, originalDate: string, exception
   };
 }
 
+/** Exact source lookup, sharing the same occurrence projection as Calendar. */
+export function getCalendarOccurrence(db: Db, key: string): CalendarOccurrence | null {
+  const match = /^([A-Za-z0-9_-]{1,128}):(\d{4}-\d{2}-\d{2})$/.exec(key);
+  if (!match) return null;
+  try {
+    const event = getCalendarEvent(db, match[1]!);
+    if (!event || event.archivedAt !== null || !occurrenceBelongs(event, match[2]!)) return null;
+    return projectOccurrence(event, match[2]!, getCalendarException(db, event.id, match[2]!));
+  } catch (error) { if (error instanceof CalendarError) return null; throw error; }
+}
+
 export function queryCalendar(
   db: Db, from: number, to: number, displayTimeZone = "Europe/Dublin", fetchedAt = Date.now(),
 ): CalendarQueryResult {

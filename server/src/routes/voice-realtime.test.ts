@@ -7,6 +7,7 @@ import { issueToken } from "../auth/tokens.js";
 import { createSession, getSession, markHumanActivity, softDeleteSession } from "../state/sessions.js";
 import { resolveConversation } from "../state/session-binding.js";
 import { listMessages } from "../state/messages.js";
+import { initiativeFixture } from "../initiative/fixture.test-helper.js";
 import { setVoiceEngine } from "../state/voice-engine-pref.js";
 import { resolveVoiceProvider } from "./voice-provider-config.js";
 import {
@@ -1029,6 +1030,21 @@ describe("voice conversation binding ingress", () => {
       && message.metadata?.roomPosts?.items.some((item) => item.correlationId === roomPost.correlationId)
     ))).toBe(true);
     expect(sessionCount()).toBe(2);
+  });
+
+  it.each([false, true])("engages an exact invitation only on accepted speech (Hume=%s)", async (hume) => {
+    const f = initiativeFixture(db); await f.engine.tick(); const row = f.rows()[0]!;
+    const { client, upstream } = await connect(`intent=resume&sessionId=${row.session_id}`, { hume });
+    await open(upstream);
+    expect(hello(client).sessionId).toBe(row.session_id);
+    expect(f.rows()[0]!.disposition_state).toBe("open");
+    const say = (text: string) => receive(upstream, hume
+      ? { type: "user_message", message: { role: "user", content: text } }
+      : transcriptEvt(text, { item_id: `initiative-${now}` }));
+    say("Thank you."); expect(f.rows()[0]!.disposition_state).toBe("open");
+    now = 20_000; say("compare the launch options"); await settle();
+    expect(f.rows()[0]).toMatchObject({ disposition_state: "engaged", disposition_version: 2 });
+    expect(listMessages(db, row.session_id!).filter(m => m.role === "user")).toHaveLength(1);
   });
 });
 

@@ -23,6 +23,30 @@ function addSub(endpoint: string) {
   upsertSubscription(db, { endpoint, p256dh: "p", auth: "a", deviceLabel: null, deviceTokenId: null });
 }
 
+describe("initiative push boundary", () => {
+  it("uses the exact encoded pair and tag, bounded receipt and redaction", async () => {
+    addSub("https://example.test/initiative");
+    const send = vi.fn().mockResolvedValue({ statusCode: 201 });
+    const deliver = buildDeliverer({ db, vapid: VAPID, send });
+    const result = await deliver.deliverInitiativePush({ initiativeId: "ini_fixture", sessionId: "session-fixture",
+      title: "AVA has a thought for you", body: "password=fixture-secret-value", expiresAt: Date.now() + 60_000 });
+    expect(result.subscriptions.accepted).toBe(1);
+    const raw = send.mock.calls[0]![1];
+    expect(raw).not.toContain("fixture-secret-value");
+    expect(JSON.parse(raw)).toMatchObject({ tag: "initiative-ini_fixture", data: { kind: "initiative",
+      initiativeId: "ini_fixture", sessionId: "session-fixture", deepLink: "/?session=session-fixture&initiative=ini_fixture" } });
+    await expect(deliver.deliverInitiativePush({ initiativeId: "../bad", sessionId: "s", title: "x", body: "x", expiresAt: Date.now() + 1000 })).rejects.toThrow("invalid_initiative_request");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+  it("a hanging initiative transport has the same finite timeout as reminders", async () => {
+    vi.useFakeTimers(); addSub("https://example.test/hang");
+    const deliver = buildDeliverer({ db, vapid: VAPID, reminderTimeoutMs: 100, send: () => new Promise(() => {}) });
+    const pending = deliver.deliverInitiativePush({ initiativeId: "ini_fixture", sessionId: "session-fixture", title: "AVA", body: "A thought", expiresAt: Date.now() + 60_000 });
+    await vi.advanceTimersByTimeAsync(101);
+    expect(await pending).toMatchObject({ subscriptions: { unknown: 1 }, reasonCode: "transport_timeout" });
+  });
+});
+
 describe("deliverApprovalPush", () => {
   it("sends to all subscriptions, returns sent count", async () => {
     addSub("https://fcm.googleapis.com/x/1");

@@ -63,7 +63,12 @@
   .citem { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,.03); }
   .citem .k { font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
   .citem .v { font-size: 14px; }
-  .citem .from { font-size: 12px; color: var(--ink-3); }
+  .citem .from { display: inline-block; margin-top: 2px; padding: 0; border: 0; background: none; font-size: 12px; color: var(--ink-3); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .citem .from:hover { color: var(--ink); }
+  .cert { font: 12px var(--mono); letter-spacing: 0; text-transform: none; padding: 1px 7px; border-radius: 99px; border: 1px solid; margin-left: 4px; white-space: nowrap; }
+  .cert.said { color: var(--good); border-color: rgba(134,227,190,.45); }
+  .cert.guess { color: var(--warm); border-color: rgba(255,192,122,.45); }
+  .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
   .citem.gone .v { text-decoration: line-through; color: var(--ink-3); }
   .mini { min-height: 32px; padding: 0 11px; border-radius: 10px; font-size: 13px; }
 
@@ -117,7 +122,7 @@
         <p class="muted" style="margin:6px 0 0">Each button plays a short scripted moment in the phone. Watch the left side, and which memory layer lights up below.</p>
         <div class="sims">
           <button class="sim" type="button" data-sim="away"><b>Come back 7 hours later</b><span>A new chapter starts by itself, and AVA picks up where you left off.</span></button>
-          <button class="sim" type="button" data-sim="topic"><b>Say "new topic"</b><span>You start a chapter out loud. No menus.</span></button>
+          <button class="sim" type="button" data-sim="topic"><b>Switch project out loud</b><span>The new chapter uses only that project. Or just say "new topic".</span></button>
           <button class="sim" type="button" data-sim="past"><b>Ask about last week</b><span>AVA looks it up and shows where the answer came from.</span></button>
           <button class="sim" type="button" data-sim="type"><b>Type instead</b><span>The same conversation. Spoken turns just carry a small voice mark.</span></button>
         </div>
@@ -136,7 +141,7 @@
 
       <article class="card">
         <div class="row" style="justify-content:space-between"><h2 style="margin:0">What I'm carrying forward</h2><span class="prop">proposed sheet</span></div>
-        <p class="muted" style="margin:6px 0 0">A small sheet you can open any time. If something's wrong, remove it and she stops using it.</p>
+        <p class="muted" style="margin:6px 0 0">A small sheet you can open any time. Each item says whether you said it or AVA guessed, and links to where it came from. Confirm a guess, or remove anything that's wrong.</p>
         <div class="carry" id="carry"></div>
       </article>
 
@@ -147,6 +152,7 @@
           <li>When should a new chapter start by itself?<span class="p">Proposed: after about 6 hours away, or whenever you say "new topic".</span></li>
           <li>Should ideas AVA starts appear in the same timeline?<span class="p">Proposed: yes, as their own short chapter you can answer or ignore.</span></li>
           <li>Voice and typing together?<span class="p">Proposed: one timeline. Spoken turns get a small voice mark.</span></li>
+          <li>When you switch project, should AVA use only that project?<span class="p">Proposed: yes. Other projects stay out of that chapter unless you ask.</span></li>
         </ul>
       </article>
     </div>
@@ -206,26 +212,37 @@
   bubble("me", "", true).text.textContent = "Let's plan the hackathon entry.";
   bubble("ava").text.textContent = "Your note has two ideas. Last time you leaned towards voice notes for students. Start there?";
 
+  // sure: Niko said it explicitly; otherwise it's AVA's guess and asks to be checked.
   var CARRY = [
-    ["Decision", "Tutoring app: per-household pricing", "Pricing chat · 21 Sep"],
-    ["Promise", "Send Luka the pitch deck draft by Tuesday evening", "Weekend catch-up · yesterday"],
-    ["Preference", "Keep nudges short; no reminders after 22:30", "Settings chat · 24 Sep"],
-    ["Open question", "Hackathon: voice notes or study planner?", "Hackathon plan · today"],
+    { k: "Decision", v: "Tutoring app: per-household pricing", from: "Pricing chat · 21 Sep", sure: true },
+    { k: "Promise", v: "Send Luka the pitch deck draft by Tuesday evening", from: "Weekend catch-up · yesterday", sure: true },
+    { k: "Preference", v: "Short nudges, and nothing after 22:30", from: "Settings chat · 24 Sep", sure: false },
+    { k: "Open question", v: "Hackathon: voice notes or study planner?", from: "Hackathon plan · today", sure: true },
   ];
   var carry = document.getElementById("carry");
-  CARRY.forEach(function (c) {
-    var row = document.createElement("div"); row.className = "citem"; row.dataset.k = c[0];
-    row.innerHTML = '<div><div class="k">' + AVAF.esc(c[0]) + '</div><div class="v">' + AVAF.esc(c[1]) + '</div><div class="from">from ' + AVAF.esc(c[2]) + '</div></div>';
-    var b = document.createElement("button"); b.type = "button"; b.className = "btn mini"; b.textContent = "Remove";
-    b.setAttribute("aria-label", "Remove: " + c[1] + " (proposed)");
-    b.addEventListener("click", function () {
+  function mini(label, aria, onClick) {
+    var b = document.createElement("button"); b.type = "button"; b.className = "btn mini"; b.textContent = label;
+    b.setAttribute("aria-label", aria); b.addEventListener("click", onClick); return b;
+  }
+  function renderItem(row, it) {
+    row.dataset.k = it.k; row.classList.remove("gone");
+    row.innerHTML = '<div><div class="k">' + AVAF.esc(it.k) + ' <span class="cert ' + (it.sure ? "said" : "guess") + '">' +
+      (it.sure ? "you said it" : "AVA's guess · check it") + '</span></div><div class="v">' + AVAF.esc(it.v) + "</div></div>";
+    var from = document.createElement("button"); from.type = "button"; from.className = "from"; from.textContent = "from " + it.from + " ↗";
+    from.setAttribute("aria-label", "Why AVA remembers this: open " + it.from + " (proposed)");
+    from.addEventListener("click", function () { toast("Would open " + it.from + " at the exact message (proposed)."); });
+    row.firstChild.appendChild(from);
+    var acts = document.createElement("div"); acts.className = "acts";
+    if (!it.sure) acts.appendChild(mini("Confirm", "Confirm: " + it.v + " (proposed)", function () { it.sure = true; renderItem(row, it); toast("Confirmed. AVA now treats it as something you said."); }));
+    var rm = mini("Remove", "Remove: " + it.v + " (proposed)", function () {
       var gone = row.classList.toggle("gone");
-      b.textContent = gone ? "Undo" : "Remove";
-      b.setAttribute("aria-label", (gone ? "Undo removing: " : "Remove: ") + row.querySelector(".v").textContent + " (proposed)");
+      rm.textContent = gone ? "Undo" : "Remove";
+      rm.setAttribute("aria-label", (gone ? "Undo removing: " : "Remove: ") + it.v + " (proposed)");
       toast(gone ? "AVA stops using this. Undo is right there." : "Restored.");
     });
-    row.appendChild(b); carry.appendChild(row);
-  });
+    acts.appendChild(rm); row.appendChild(acts);
+  }
+  CARRY.forEach(function (it) { var row = document.createElement("div"); row.className = "citem"; carry.appendChild(row); renderItem(row, it); it.row = row; });
 
   var SIMS = {
     away: async function () {
@@ -238,21 +255,18 @@
       light(["L1"], "Used: layer 1. The live chapter is enough for the reply.");
       await say("ava", "Noted as a decision. I'll draft the three-sentence pitch next.");
       // The open question becomes a decision in the carrying-forward sheet.
-      var open = carry.querySelector('[data-k="Open question"]');
-      if (open) {
-        open.dataset.k = "Decision"; open.classList.add("fresh");
-        open.querySelector(".k").textContent = "Decision · just now";
-        open.querySelector(".v").textContent = "Hackathon entry: voice notes for students";
-        open.querySelector(".from").textContent = "from Evening · today";
-        open.querySelector("button").setAttribute("aria-label", "Remove: Hackathon entry: voice notes for students (proposed)");
+      var open = CARRY[3];
+      if (open.k === "Open question") {
+        open.k = "Decision"; open.v = "Hackathon entry: voice notes for students"; open.from = "Evening · today"; open.sure = true;
+        renderItem(open.row, open); open.row.classList.add("fresh");
         used.textContent += " The open question in 'What I'm carrying forward' is now a decision.";
       }
     },
     topic: async function () {
-      await say("me", "AVA, new topic.", true, 24);
-      chapter("New topic", "21:52", "started by you, out loud");
-      light(["L3"], "Used: layer 3 only. A fresh chapter starts light and still knows your decisions.");
-      await say("ava", "Sure. What's on your mind?");
+      await say("me", "AVA, switch to the tutoring app.", true, 24);
+      chapter("Tutoring app", "21:52", "project switch · you said it out loud");
+      light(["L3", "L2"], "Used: layer 3 and layer 2, but only for the Tutoring app. The hackathon stays out of this chapter.");
+      await say("ava", "Tutoring app. Your last decision was per-household pricing. Pick up the landing page copy next?");
     },
     past: async function () {
       await say("me", "What did we decide about pricing last week?", true, 22);

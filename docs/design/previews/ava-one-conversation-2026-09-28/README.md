@@ -26,7 +26,8 @@ Then open http://127.0.0.1:5181/. Opening `index.html` from disk also works, but
 - **Three memory layers:**
   1. the current chapter, word for word;
   2. chapter summaries, linked to their messages and looked up when relevant;
-  3. a correctable "what I'm carrying forward" list of decisions, promises and preferences, each with its source.
+  3. a correctable "what I'm carrying forward" list of decisions, promises and preferences. Each item says whether Niko said it or AVA guessed, and links to its source. Guesses can be confirmed, and any item can be removed.
+- **An explicit project switch.** Saying "switch to the tutoring app" starts a chapter that uses only that project.
 - **Open decisions for Niko,** each with a proposed default.
 
 ## Boundaries

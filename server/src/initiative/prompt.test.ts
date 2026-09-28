@@ -296,6 +296,20 @@ describe("parseInitiativeReply", () => {
     expect(parseInitiativeReply(reply({ message: asking, citations: ["S1"] }), build([occurrence()])).kind).toBe("idea");
   });
 
+  it("stays conservative when attendance wording meets any unrecorded plan (a deliberate limit)", () => {
+    // S1 records the gym as attended; S2 is only a plan. The claim is about S1
+    // and is true, but the check cannot tell which source a sentence is about,
+    // so it suppresses rather than risk presenting a plan as something that happened.
+    const prompt = build([
+      occurrence({ occurrenceKey: "evt_gym:2026-09-27", title: "Gym", attendanceOutcome: "attended",
+        startsAt: Date.parse("2026-09-27T08:00:00Z"), endsAt: Date.parse("2026-09-27T09:00:00Z") }),
+      occurrence(),
+    ]);
+    const message = "You attended the gym yesterday. The investor call is planned for tomorrow.";
+    expect(parseInitiativeReply(reply({ message, citations: ["S1", "S2"] }), prompt)).toEqual({ kind: "invalid", reason: "attendance_claim" });
+    expect(parseInitiativeReply(reply({ message, citations: ["S1"] }), prompt).kind).toBe("idea");
+  });
+
   it("rejects a reply that repeats something secret-looking", () => {
     const message = "Your Stripe setup note still has api_key=abc123 in it. That is worth rotating.";
     expect(parseInitiativeReply(reply({ message }), build())).toEqual({ kind: "invalid", reason: "secret_like" });
@@ -320,6 +334,27 @@ describe("invitation and push copy", () => {
   it("keeps an abbreviation inside the first sentence", () => {
     expect(initiativePushCopy({ message: "Your U.S. launch note lines up with the call. More soon." }, ACME).body)
       .toBe("Your U.S. launch note lines up with the call.");
+  });
+
+  it("does not end the first sentence at a title, an initial or a dotted acronym", () => {
+    const body = (message: string) => initiativePushCopy({ message }, ACME).body;
+    expect(body("Dr. Smith is on your calendar tomorrow. The prep note might help."))
+      .toBe("Dr. Smith is on your calendar tomorrow.");
+    expect(body("J. Doe replied about the pilot. Worth a look."))
+      .toBe("J. Doe replied about the pilot.");
+    expect(body("The U.S. Senate hearing is on Tuesday. It touches your pricing."))
+      .toBe("The U.S. Senate hearing is on Tuesday.");
+    expect(body("You wrote three versions. The third is the strongest.")).toBe("You wrote three versions.");
+  });
+
+  it("never puts secret-looking text into a notification, even outside the validated path", () => {
+    const leaky = initiativePushCopy(
+      { message: "Your setup note still has api_key=abc123 in it. Worth rotating." },
+      { kind: "project", folderId: "f_x", name: "password=synthetic-demo-secret", active: false },
+    );
+    expect(leaky).toEqual({ title: "AVA has a thought for you", body: "Open AVA to read it." });
+    expect(JSON.stringify(leaky)).not.toContain("synthetic-demo-secret");
+    expect(JSON.stringify(leaky)).not.toContain("abc123");
   });
 
   it("clips a long preview and project name at a word boundary", () => {

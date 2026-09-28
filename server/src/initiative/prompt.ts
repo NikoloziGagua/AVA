@@ -1,14 +1,25 @@
 /**
- * "AVA starts a conversation" (contract ava-initiative v1): the generation
+ * "AVA starts a conversation" (contract ava-initiative v2): the generation
  * prompt, the validator for the model's single candidate, and the invitation
  * and push copy.
  *
  * Pure: no I/O, no provider and no ambient clock (callers pass `now`). The
  * engine gathers exact in-scope sources, sends { system, user } to one
  * tool-free provider.complete() call, and passes the raw reply to
- * parseInitiativeReply. Anything not grounded in the gathered sources is
- * rejected here, before publication. Saved note and calendar text reaches the
- * model as JSON data, never as instructions.
+ * parseInitiativeReply. Citations outside the gathered sources are rejected
+ * here, before publication. Saved note and calendar text reaches the model as
+ * JSON data, never as instructions.
+ *
+ * Limits, stated plainly: the citation rule and the claim checks below are
+ * heuristics. They reject unknown citations and common false claims (actions
+ * AVA never took, "working on", attendance a plan cannot show, secret-like
+ * text), but they cannot prove that accepted prose is actually supported by
+ * the sources it cites. The engine's re-read checks versions and scope, not
+ * meaning, so an accepted candidate is "passed the checks", never "verified".
+ * The attendance check is deliberately conservative: attendance wording is
+ * rejected whenever any cited calendar entry lacks a recorded "attended",
+ * even when the claim concerns a different, recorded source. Suppressing a
+ * true idea is preferred to publishing a false one.
  */
 import { localDateDistance } from "../calendar/time.js";
 import type { CalendarOccurrence } from "../calendar/types.js";
@@ -350,9 +361,21 @@ export function invitationText(candidate: Pick<InitiativeCandidate, "message" | 
   return `${candidate.message}\n\n${candidate.nextStep}`;
 }
 
+// Words that end in a full stop without ending the sentence ("Dr. Smith").
+const ABBREVIATIONS = new Set(["dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st", "mt", "vs", "approx", "dept"]);
+
 function firstSentence(text: string): string {
   const flat = inline(text);
-  return /^.+?[.!?…](?=\s+["“‘(]?[\p{Lu}\d]|$)/u.exec(flat)?.[0] ?? flat;
+  for (const match of flat.matchAll(/[.!?…](?=\s+["“‘(]?[\p{Lu}\d]|$)/gu)) {
+    const end = match.index + 1;
+    if (match[0] === "." && end < flat.length) {
+      const word = (/(\S+)\.$/u.exec(flat.slice(0, end))?.[1] ?? "").replace(/^["“‘(]+/u, "").toLowerCase();
+      // An initial ("J."), a dotted acronym ("U.S.") or a title ("Dr.") continues the sentence.
+      if (/^\p{L}$/u.test(word) || /^(?:\p{L}\.)+\p{L}$/u.test(word) || ABBREVIATIONS.has(word)) continue;
+    }
+    return flat.slice(0, end);
+  }
+  return flat;
 }
 
 function clipWords(text: string, max: number): string {
@@ -363,14 +386,26 @@ function clipWords(text: string, max: number): string {
   return `${base.replace(/[\s,;:.!?…-]+$/u, "")}…`;
 }
 
-/** Push copy: the title names the project; the body previews the first sentence. */
+/** A notification leaves AVA: secret-looking text is left out, never shown. */
+function safeForPush(text: string): boolean {
+  return scrubSecrets(text) === text;
+}
+
+/**
+ * Push copy: the title names the project; the body previews the first
+ * sentence. Both are checked here at the output boundary, whether or not the
+ * candidate came through parseInitiativeReply: a secret-like project name
+ * falls back to the general title, and a secret-like sentence to generic copy.
+ */
 export function initiativePushCopy(
   candidate: Pick<InitiativeCandidate, "message">,
   scope: InitiativeScope,
 ): { title: string; body: string } {
-  const project = scope.kind === "project" ? clipWords(inline(scope.name), L.pushProject) : "";
+  const name = scope.kind === "project" ? inline(scope.name) : "";
+  const project = name && safeForPush(name) ? clipWords(name, L.pushProject) : "";
+  const sentence = firstSentence(candidate.message);
   return {
     title: project ? `AVA had an idea about ${project}` : "AVA has a thought for you",
-    body: clipWords(firstSentence(candidate.message), L.pushBody),
+    body: sentence && safeForPush(sentence) ? clipWords(sentence, L.pushBody) : "Open AVA to read it.",
   };
 }

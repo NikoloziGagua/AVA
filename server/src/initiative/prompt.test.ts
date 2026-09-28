@@ -357,6 +357,16 @@ describe("invitation and push copy", () => {
     expect(JSON.stringify(leaky)).not.toContain("abc123");
   });
 
+  it("checks the clipped copy too, so clipping cannot cut off a mask and expose a value", () => {
+    // A trailing "***" makes the whole value look already masked; clipping would remove it.
+    const marked = `password=${"synthetic-demo-secret-".repeat(3)}***`;
+    const title = initiativePushCopy({ message: "Short and clean." }, { kind: "project", folderId: "f_x", name: marked, active: false });
+    expect(title.title).toBe("AVA has a thought for you");
+    const body = initiativePushCopy({ message: `Your note says password=${"synthetic-demo-secret-".repeat(6)}*** there.` }, ACME);
+    expect(body.body).toBe("Open AVA to read it.");
+    for (const copy of [title, body]) expect(JSON.stringify(copy)).not.toContain("synthetic-demo-secret");
+  });
+
   it("clips a long preview and project name at a word boundary", () => {
     const long = "I kept thinking about the landing page ideas you saved next to the pricing test notes from last week and the call.";
     const copy = initiativePushCopy({ message: long }, { ...ACME, name: "A very long project name for the next big launch" });

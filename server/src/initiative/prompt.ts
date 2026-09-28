@@ -362,6 +362,9 @@ export function invitationText(candidate: Pick<InitiativeCandidate, "message" | 
 }
 
 // Words that end in a full stop without ending the sentence ("Dr. Smith").
+// A heuristic: an initial or acronym that really does end a sentence
+// ("option A. Next…") joins two sentences in the preview, which stays
+// within its character bound.
 const ABBREVIATIONS = new Set(["dr", "mr", "mrs", "ms", "prof", "sr", "jr", "st", "mt", "vs", "approx", "dept"]);
 
 function firstSentence(text: string): string {
@@ -392,6 +395,17 @@ function safeForPush(text: string): boolean {
 }
 
 /**
+ * Clipped text for a notification, or "" if the text is secret-like before
+ * or after clipping. Both checks matter: clipping can cut off a "***" mask
+ * that made the whole value look already redacted.
+ */
+function clipForPush(text: string, max: number): string {
+  if (!text || !safeForPush(text)) return "";
+  const clipped = clipWords(text, max);
+  return safeForPush(clipped) ? clipped : "";
+}
+
+/**
  * Push copy: the title names the project; the body previews the first
  * sentence. Both are checked here at the output boundary, whether or not the
  * candidate came through parseInitiativeReply: a secret-like project name
@@ -401,11 +415,10 @@ export function initiativePushCopy(
   candidate: Pick<InitiativeCandidate, "message">,
   scope: InitiativeScope,
 ): { title: string; body: string } {
-  const name = scope.kind === "project" ? inline(scope.name) : "";
-  const project = name && safeForPush(name) ? clipWords(name, L.pushProject) : "";
-  const sentence = firstSentence(candidate.message);
+  const project = scope.kind === "project" ? clipForPush(inline(scope.name), L.pushProject) : "";
+  const preview = clipForPush(firstSentence(candidate.message), L.pushBody);
   return {
     title: project ? `AVA had an idea about ${project}` : "AVA has a thought for you",
-    body: sentence && safeForPush(sentence) ? clipWords(sentence, L.pushBody) : "Open AVA to read it.",
+    body: preview || "Open AVA to read it.",
   };
 }

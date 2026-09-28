@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   fetchInboxSessions,
   fetchInitiative,
@@ -73,12 +73,16 @@ export function useInvitation(input: InvitationInput) {
   // The pair already confirmed to match: a reply then only hides the answers,
   // without re-checking (which would blank the conversation mid-reply).
   const verified = useRef<string | null>(null);
-  // Advances during render whenever a different idea is shown, so an answer
+  // Advances when a different idea is committed to the screen, so an answer
   // still in flight for the previous one can never touch this one's panel,
-  // even after a round trip back to the same pair.
-  const shown = `${sessionId}\n${initiativeId}`;
-  const epoch = useRef({ shown, value: 0 });
-  if (epoch.current.shown !== shown) epoch.current = { shown, value: epoch.current.value + 1 };
+  // even after a round trip back to the same pair. It moves in a layout
+  // effect, not during render: a render React discards never counts, and no
+  // promise can resolve between a commit and its layout effects.
+  const epoch = useRef(0);
+  useLayoutEffect(() => { epoch.current += 1; }, [sessionId, initiativeId]);
+  // The state last committed to the screen, for completions to compare against.
+  const committed = useRef(state);
+  useLayoutEffect(() => { committed.current = state; });
 
   // A notice and a pending answer belong to one idea; a reload after a stale
   // answer keeps the notice.
@@ -126,18 +130,23 @@ export function useInvitation(input: InvitationInput) {
   const answer = useCallback(async (choice: "later" | "not_useful") => {
     if (state.status !== "open" || busy) return;
     const { view } = state;
-    // Every completion below applies only while this same idea is on screen.
-    const mine = epoch.current.value;
-    const stillShown = () => epoch.current.value === mine;
+    // Every completion below applies only while this same idea is on screen,
+    // and only onto the exact version it answered: a newer read (a reload
+    // after a change elsewhere) is never overwritten by an older answer.
+    const mine = epoch.current;
+    const basedOn = view.disposition.version;
     const sameIdea = (current: InvitationState) =>
-      (current.status === "open" || current.status === "closed") && current.view.id === view.id;
+      (current.status === "open" || current.status === "closed")
+      && current.view.id === view.id && current.view.disposition.version === basedOn;
+    // Still this idea on screen, still showing the version this answer was about.
+    const current = () => epoch.current === mine && sameIdea(committed.current);
     setBusy(true);
     setNotice(null);
     try {
-      const result = await setInitiativeDisposition(view.id, choice, view.disposition.version);
+      const result = await setInitiativeDisposition(view.id, choice, basedOn);
       // The server's state changed, so the bar's count may refresh wherever Niko is now.
       if (result.ok) onChangeRef.current?.();
-      if (!stillShown()) return;
+      if (!current()) return;
       if (!result.ok) {
         setNotice("This idea changed on another device. Here is where it stands now.");
         retry();
@@ -145,18 +154,19 @@ export function useInvitation(input: InvitationInput) {
       }
       const next = { ...view, disposition: result.disposition };
       if (choice === "not_useful") {
-        setState((current) => sameIdea(current) ? { status: "closed", view: next, reason: "not_useful" } : current);
+        setState((latest) => sameIdea(latest) ? { status: "closed", view: next, reason: "not_useful" } : latest);
         setNotice("Marked not useful. AVA will take that into account.");
       } else {
-        setState((current) => current.status === "open" && current.view.id === view.id ? { ...current, view: next } : current);
+        setState((latest) => latest.status === "open" && sameIdea(latest) ? { ...latest, view: next } : latest);
         setNotice("Saved for later. It stays in your ideas for up to three days.");
       }
     } catch (error) {
-      if (!stillShown()) return;
-      if (isInitiativeUnavailable(error)) setState((current) => sameIdea(current) ? { status: "unavailable" } : current);
+      if (!current()) return;
+      if (isInitiativeUnavailable(error)) setState((latest) => sameIdea(latest) ? { status: "unavailable" } : latest);
       else setNotice("That didn't save. Check the connection and try again.");
     } finally {
-      if (stillShown()) setBusy(false);
+      // Busy belongs to this idea: moving to another one already cleared it.
+      if (epoch.current === mine) setBusy(false);
     }
   }, [busy, retry, state]);
 

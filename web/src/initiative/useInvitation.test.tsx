@@ -159,6 +159,35 @@ describe("useInvitation", () => {
       expect(hook.result.current.notice).toBeNull();
     });
 
+    it("never lets an older answer overwrite a newer read of the same idea", async () => {
+      // Later on version 1 is in flight; a reload meanwhile shows version 3
+      // (it changed elsewhere). The old answer must not regress the panel.
+      api.fetchInitiative.mockResolvedValueOnce(view({ openedAt: 5 }));
+      const pending = deferred<unknown>();
+      api.setInitiativeDisposition.mockReturnValue(pending.promise);
+      const { result } = run();
+      await waitFor(() => expect(result.current.state.status).toBe("open"));
+      act(() => { void result.current.later(); });
+      api.fetchInitiative.mockResolvedValueOnce(view({ openedAt: 5, disposition: { state: "open", version: 3, updatedAt: 7 } }));
+      act(() => { result.current.retry(); });
+      await waitFor(() => expect(result.current.state).toMatchObject({ status: "open", view: { disposition: { version: 3 } } }));
+      await act(async () => { pending.resolve({ ok: true, disposition: { state: "later", version: 2, updatedAt: 9 } }); });
+      expect(result.current.state).toMatchObject({ status: "open", view: { disposition: { state: "open", version: 3 } } });
+      expect(result.current.notice).toBeNull();
+      expect(result.current.busy).toBe(false);
+    });
+
+    it("keeps each idea's answer separate across a round trip back to the same idea", async () => {
+      const { hook, pending } = await moveToB("notUseful");
+      hook.rerender({ sessionId: "s_2", initiativeId: "ini_2", unreplied: true, verify: true, now: () => NOW });
+      await waitFor(() => expect(hook.result.current.state).toMatchObject({ status: "open", view: { id: "ini_2" } }));
+      await act(async () => { pending.resolve({ ok: true, disposition: { state: "not_useful", version: 2, updatedAt: 9 } }); });
+      // The answer began on an earlier showing of this idea; the fresh read stands.
+      expect(hook.result.current.state).toMatchObject({ status: "open", view: { id: "ini_2", disposition: { state: "open" } } });
+      expect(hook.result.current.notice).toBeNull();
+      expect(hook.result.current.busy).toBe(false);
+    });
+
     it("ignores a late failure or a late stale answer for the old idea", async () => {
       const failed = await moveToB("notUseful");
       await act(async () => { failed.pending.reject({ code: "initiative_unavailable" }); });

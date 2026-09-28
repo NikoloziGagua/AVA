@@ -244,45 +244,135 @@ const HISTORICAL_PATCH_KEYS = new Set<keyof CalendarEventPatch>([
   "durationMinutes", "recurrenceKind", "recurrenceUntilDate", "dstPolicy", "attendanceIntent", "notesFolderId",
 ]);
 
-function hasStarted(event: CalendarEvent, now: number): boolean {
-  return resolveLocalDateTime(event.anchorLocalDate, event.startLocalTime, event.timeZone, event.dstPolicy) < now;
+function guardedEvent(db: Db, id: string, expectedVersion: number, allowArchived = false): CalendarEvent {
+  const event = getCalendarEvent(db, id);
+  if (!event) throw new CalendarError("not_found");
+  if (event.version !== expectedVersion) throw new CalendarError("stale_version");
+  if (!allowArchived && event.archivedAt !== null) throw new CalendarError("archived");
+  return event;
+}
+
+function originalDates(event: CalendarEvent, until = event.recurrenceUntilDate ?? event.anchorLocalDate): string[] {
+  const dates: string[] = [];
+  for (let date = event.anchorLocalDate; date <= until; date = addLocalDays(date, 7)) {
+    dates.push(date);
+    if (event.recurrenceKind === "none") break;
+  }
+  return dates;
+}
+
+function historyEvidence(event: CalendarEvent, date: string, exception: CalendarEventException | null, now: number): boolean {
+  if (exception && exception.attendanceOutcome !== "unknown") return true;
+  if (exception?.cancelled) return false;
+  const original = resolveLocalDateTime(date, event.startLocalTime, event.timeZone, event.dstPolicy);
+  return original <= now || projectOccurrence(event, date, exception).startsAt <= now;
+}
+
+function hasHistory(db: Db, event: CalendarEvent, now: number, dates = originalDates(event)): boolean {
+  return dates.some((date) => historyEvidence(event, date, getCalendarException(db, event.id, date), now));
+}
+
+function normalizedDefinitionPatch(db: Db, current: CalendarEvent, patch: CalendarEventPatch): CalendarEventPatch {
+  const value = validateDefinition(db, definitionInput(current, patch));
+  return Object.fromEntries(Object.keys(patch)
+    .filter((key) => value[key as keyof CalendarEventPatch] !== current[key as keyof CalendarEventPatch])
+    .map((key) => [key, value[key as keyof CalendarEventPatch]])) as CalendarEventPatch;
 }
 
 export function updateCalendarEvent(
   db: Db, id: string, expectedVersion: number, patch: CalendarEventPatch, now = Date.now(),
 ): CalendarEvent {
-  if (Object.keys(patch).length === 0) throw new CalendarError("bad_request");
-  const current = getCalendarEvent(db, id);
-  if (!current) throw new CalendarError("not_found");
-  if (current.version !== expectedVersion) throw new CalendarError("stale_version");
-  if (current.archivedAt !== null) throw new CalendarError("bad_request");
-  if (hasStarted(current, now) && Object.keys(patch).some((key) => HISTORICAL_PATCH_KEYS.has(key as keyof CalendarEventPatch))) {
-    // Once history exists, semantic edits must use an occurrence exception or
-    // this-and-following split; otherwise earlier projections would be rewritten.
-    throw new CalendarError("bad_request");
-  }
-  const value = validateDefinition(db, definitionInput(current, patch));
-  const result = db.prepare(`UPDATE calendar_events SET
-    title=?,description=?,location=?,kind=?,time_zone=?,anchor_local_date=?,start_local_time=?,duration_minutes=?,
-    recurrence_kind=?,recurrence_until_date=?,dst_policy=?,attendance_intent=?,notes_folder_id=?,reminder_minutes_before=?,
-    version=version+1,updated_at=? WHERE id=? AND version=?`).run(
-    value.title, value.description, value.location, value.kind, value.timeZone, value.anchorLocalDate,
-    value.startLocalTime, value.durationMinutes, value.recurrenceKind, value.recurrenceUntilDate, value.dstPolicy,
-    value.attendanceIntent, value.notesFolderId, value.reminderMinutesBefore, now, id, expectedVersion,
-  );
-  if (result.changes !== 1) throw new CalendarError("stale_version");
-  return getCalendarEvent(db, id)!;
+  return db.transaction(() => {
+    const current = guardedEvent(db, id, expectedVersion);
+    const changes = normalizedDefinitionPatch(db, current, patch);
+    if (!Object.keys(changes).length) return current;
+    if (Object.keys(changes).some((key) => HISTORICAL_PATCH_KEYS.has(key as keyof CalendarEventPatch)) && hasHistory(db, current, now)) {
+      // Once history exists, semantic edits must use an occurrence exception or
+      // this-and-following split; otherwise earlier projections would be rewritten.
+      throw new CalendarError("series_started");
+    }
+    const value = validateDefinition(db, definitionInput(current, changes));
+    const result = db.prepare(`UPDATE calendar_events SET
+      title=?,description=?,location=?,kind=?,time_zone=?,anchor_local_date=?,start_local_time=?,duration_minutes=?,
+      recurrence_kind=?,recurrence_until_date=?,dst_policy=?,attendance_intent=?,notes_folder_id=?,reminder_minutes_before=?,
+      version=version+1,updated_at=? WHERE id=? AND version=?`).run(
+      value.title, value.description, value.location, value.kind, value.timeZone, value.anchorLocalDate,
+      value.startLocalTime, value.durationMinutes, value.recurrenceKind, value.recurrenceUntilDate, value.dstPolicy,
+      value.attendanceIntent, value.notesFolderId, value.reminderMinutesBefore, now, id, expectedVersion,
+    );
+    if (result.changes !== 1) throw new CalendarError("stale_version");
+    return getCalendarEvent(db, id)!;
+  }).immediate();
 }
 
-export function archiveCalendarEvent(db: Db, id: string, expectedVersion: number, now = Date.now()): CalendarEvent {
-  const current = getCalendarEvent(db, id);
-  if (!current) throw new CalendarError("not_found");
-  if (current.version !== expectedVersion) throw new CalendarError("stale_version");
-  if (current.archivedAt !== null) return current;
-  const result = db.prepare(`UPDATE calendar_events
-    SET archived_at=?,updated_at=?,version=version+1 WHERE id=? AND version=?`).run(now, now, id, expectedVersion);
-  if (result.changes !== 1) throw new CalendarError("stale_version");
-  return getCalendarEvent(db, id)!;
+export function archiveCalendarEvent(db: Db, id: string, expectedVersion: number, now = Date.now(), includeHistory = false): CalendarEvent {
+  return db.transaction(() => {
+    const current = guardedEvent(db, id, expectedVersion, true);
+    if (current.archivedAt !== null) return current;
+    if (!includeHistory && hasHistory(db, current, now)) throw new CalendarError("series_started");
+    const result = db.prepare(`UPDATE calendar_events
+      SET archived_at=?,updated_at=?,version=version+1 WHERE id=? AND version=?`).run(now, now, id, expectedVersion);
+    if (result.changes !== 1) throw new CalendarError("stale_version");
+    return getCalendarEvent(db, id)!;
+  }).immediate();
+}
+
+export function restoreCalendarEvent(db: Db, id: string, expectedVersion: number, now = Date.now()): { event: CalendarEvent } {
+  return db.transaction(() => {
+    const current = guardedEvent(db, id, expectedVersion, true);
+    if (current.archivedAt === null) throw new CalendarError("not_archived");
+    const result = db.prepare(`UPDATE calendar_events SET archived_at=NULL,updated_at=?,version=version+1
+      WHERE id=? AND version=?`).run(now, id, expectedVersion);
+    if (result.changes !== 1) throw new CalendarError("stale_version");
+    return { event: getCalendarEvent(db, id)! };
+  }).immediate();
+}
+
+export function endCalendarSeries(db: Db, id: string, expectedVersion: number, fromOriginalDate: string, now = Date.now()): {
+  event: CalendarEvent; endedFromOriginalDate: string; previousRecurrenceUntilDate: string;
+} {
+  return db.transaction(() => {
+    const current = guardedEvent(db, id, expectedVersion);
+    if (current.recurrenceKind !== "weekly") throw new CalendarError("not_weekly");
+    if (!occurrenceBelongs(current, fromOriginalDate) || fromOriginalDate === current.anchorLocalDate) {
+      throw new CalendarError("occurrence_not_found");
+    }
+    if (resolveLocalDateTime(fromOriginalDate, current.startLocalTime, current.timeZone, current.dstPolicy) <= now) {
+      throw new CalendarError("occurrence_started");
+    }
+    if (hasHistory(db, current, now, originalDates(current).filter((date) => date >= fromOriginalDate))) {
+      throw new CalendarError("history_conflict");
+    }
+    const result = db.prepare(`UPDATE calendar_events SET recurrence_until_date=?,updated_at=?,version=version+1
+      WHERE id=? AND version=?`).run(addLocalDays(fromOriginalDate, -7), now, id, expectedVersion);
+    if (result.changes !== 1) throw new CalendarError("stale_version");
+    return { event: getCalendarEvent(db, id)!, endedFromOriginalDate: fromOriginalDate,
+      previousRecurrenceUntilDate: current.recurrenceUntilDate! };
+  }).immediate();
+}
+
+export function extendCalendarSeries(db: Db, id: string, expectedVersion: number, recurrenceUntilDate: string, now = Date.now()): {
+  event: CalendarEvent; previousRecurrenceUntilDate: string;
+} {
+  return db.transaction(() => {
+    const current = guardedEvent(db, id, expectedVersion);
+    if (current.recurrenceKind !== "weekly") throw new CalendarError("not_weekly");
+    parseLocalDate(recurrenceUntilDate);
+    if (recurrenceUntilDate <= current.recurrenceUntilDate!) throw new CalendarError("no_occurrence_added");
+    validateDefinition(db, definitionInput(current, { recurrenceUntilDate }));
+    const dates = originalDates(current, recurrenceUntilDate).filter((date) => date > current.recurrenceUntilDate!);
+    if (!dates.length) throw new CalendarError("no_occurrence_added");
+    for (const date of dates) {
+      const exception = getCalendarException(db, id, date);
+      if (resolveLocalDateTime(date, current.startLocalTime, current.timeZone, current.dstPolicy) <= now ||
+          projectOccurrence(current, date, exception).startsAt <= now ||
+          exception && exception.attendanceOutcome !== "unknown") throw new CalendarError("history_conflict");
+    }
+    const result = db.prepare(`UPDATE calendar_events SET recurrence_until_date=?,updated_at=?,version=version+1
+      WHERE id=? AND version=?`).run(recurrenceUntilDate, now, id, expectedVersion);
+    if (result.changes !== 1) throw new CalendarError("stale_version");
+    return { event: getCalendarEvent(db, id)!, previousRecurrenceUntilDate: current.recurrenceUntilDate! };
+  }).immediate();
 }
 
 export function occurrenceBelongs(event: CalendarEvent, originalDate: string): boolean {
@@ -300,56 +390,70 @@ export function upsertCalendarException(
   expectedExceptionVersion: number | null,
   patch: CalendarExceptionPatch,
   now = Date.now(),
-): CalendarEventException {
-  if (Object.keys(patch).length === 0) throw new CalendarError("bad_request");
-  const event = getCalendarEvent(db, eventId);
-  if (!event) throw new CalendarError("not_found");
-  if (event.version !== expectedEventVersion) throw new CalendarError("stale_version");
-  if (!occurrenceBelongs(event, originalDate)) throw new CalendarError("occurrence_not_found");
-  const current = getCalendarException(db, eventId, originalDate);
-  if (current ? current.version !== expectedExceptionVersion : expectedExceptionVersion !== null && expectedExceptionVersion !== 0) {
-    throw new CalendarError("stale_version");
-  }
-  const originalStart = resolveLocalDateTime(originalDate, event.startLocalTime, event.timeZone, event.dstPolicy);
-  const changesPastSchedule = ["movedLocalDate", "movedLocalTime", "movedDurationMinutes", "cancelled"]
-    .some((key) => Object.prototype.hasOwnProperty.call(patch, key));
-  if (originalStart < now && changesPastSchedule) throw new CalendarError("bad_request");
-  const movedLocalDate = patch.movedLocalDate === undefined ? current?.movedLocalDate ?? null : patch.movedLocalDate;
-  const movedLocalTime = patch.movedLocalTime === undefined ? current?.movedLocalTime ?? null : patch.movedLocalTime;
-  const movedDurationMinutes = patch.movedDurationMinutes === undefined
-    ? current?.movedDurationMinutes ?? null : patch.movedDurationMinutes;
-  const cancelled = patch.cancelled ?? current?.cancelled ?? false;
-  const attendanceIntentOverride = patch.attendanceIntentOverride === undefined
-    ? current?.attendanceIntentOverride ?? null : patch.attendanceIntentOverride;
-  const attendanceOutcome = patch.attendanceOutcome ?? current?.attendanceOutcome ?? "unknown";
-  if (movedLocalDate !== null) parseLocalDate(movedLocalDate);
-  if (movedLocalTime !== null) parseLocalTime(movedLocalTime);
-  if (movedDurationMinutes !== null &&
-      (!Number.isSafeInteger(movedDurationMinutes) || movedDurationMinutes < 1 || movedDurationMinutes > 10_080)) {
-    throw new CalendarError("bad_request");
-  }
-  if (attendanceIntentOverride !== null) oneOf(attendanceIntentOverride, CALENDAR_ATTENDANCE_INTENTS);
-  oneOf(attendanceOutcome, CALENDAR_ATTENDANCE_OUTCOMES);
-  resolveLocalDateTime(movedLocalDate ?? originalDate, movedLocalTime ?? event.startLocalTime, event.timeZone, event.dstPolicy);
-  if (current) {
-    const result = db.prepare(`UPDATE calendar_event_exceptions SET
-      moved_local_date=?,moved_local_time=?,moved_duration_minutes=?,cancelled=?,attendance_intent_override=?,
-      attendance_outcome=?,version=version+1,updated_at=?
-      WHERE event_id=? AND occurrence_local_date=? AND version=?`).run(
-      movedLocalDate, movedLocalTime, movedDurationMinutes, cancelled ? 1 : 0, attendanceIntentOverride,
-      attendanceOutcome, now, eventId, originalDate, current.version,
-    );
-    if (result.changes !== 1) throw new CalendarError("stale_version");
-  } else {
-    db.prepare(`INSERT INTO calendar_event_exceptions (
-      event_id,occurrence_local_date,moved_local_date,moved_local_time,moved_duration_minutes,cancelled,
-      attendance_intent_override,attendance_outcome,version,created_at,updated_at
-    ) VALUES (?,?,?,?,?,?,?,?,1,?,?)`).run(
-      eventId, originalDate, movedLocalDate, movedLocalTime, movedDurationMinutes, cancelled ? 1 : 0,
-      attendanceIntentOverride, attendanceOutcome, now, now,
-    );
-  }
-  return getCalendarException(db, eventId, originalDate)!;
+): CalendarEventException | null {
+  return db.transaction(() => {
+    const event = guardedEvent(db, eventId, expectedEventVersion);
+    if (!occurrenceBelongs(event, originalDate)) throw new CalendarError("occurrence_not_found");
+    const current = getCalendarException(db, eventId, originalDate);
+    if (current ? current.version !== expectedExceptionVersion : expectedExceptionVersion !== null && expectedExceptionVersion !== 0) {
+      throw new CalendarError("stale_version");
+    }
+    const movedLocalDate = patch.movedLocalDate === undefined ? current?.movedLocalDate ?? null : patch.movedLocalDate;
+    const movedLocalTime = patch.movedLocalTime === undefined ? current?.movedLocalTime ?? null : patch.movedLocalTime;
+    const movedDurationMinutes = patch.movedDurationMinutes === undefined
+      ? current?.movedDurationMinutes ?? null : patch.movedDurationMinutes;
+    const cancelled = patch.cancelled ?? current?.cancelled ?? false;
+    let attendanceIntentOverride = patch.attendanceIntentOverride === undefined
+      ? current?.attendanceIntentOverride ?? null : patch.attendanceIntentOverride;
+    const attendanceOutcome = patch.attendanceOutcome ?? current?.attendanceOutcome ?? "unknown";
+    if (movedLocalDate !== null) parseLocalDate(movedLocalDate);
+    if (movedLocalTime !== null) parseLocalTime(movedLocalTime);
+    if (movedDurationMinutes !== null &&
+        (!Number.isSafeInteger(movedDurationMinutes) || movedDurationMinutes < 1 || movedDurationMinutes > 10_080)) {
+      throw new CalendarError("bad_request");
+    }
+    if (attendanceIntentOverride !== null) oneOf(attendanceIntentOverride, CALENDAR_ATTENDANCE_INTENTS);
+    if (typeof cancelled !== "boolean") throw new CalendarError("bad_request");
+    oneOf(attendanceOutcome, CALENDAR_ATTENDANCE_OUTCOMES);
+    resolveLocalDateTime(movedLocalDate ?? originalDate, movedLocalTime ?? event.startLocalTime, event.timeZone, event.dstPolicy);
+    // An echoed effective intent must not pin an inherited value. An explicit
+    // null still clears a real override, even when it equals the series value.
+    if (attendanceIntentOverride !== null && attendanceIntentOverride === (current?.attendanceIntentOverride ?? event.attendanceIntent)) {
+      attendanceIntentOverride = current?.attendanceIntentOverride ?? null;
+    }
+    const before = { movedLocalDate: current?.movedLocalDate ?? null, movedLocalTime: current?.movedLocalTime ?? null,
+      movedDurationMinutes: current?.movedDurationMinutes ?? null, cancelled: current?.cancelled ?? false,
+      attendanceIntentOverride: current?.attendanceIntentOverride ?? null, attendanceOutcome: current?.attendanceOutcome ?? "unknown" };
+    const candidate = { movedLocalDate, movedLocalTime, movedDurationMinutes, cancelled, attendanceIntentOverride, attendanceOutcome };
+    const changes = (Object.keys(candidate) as Array<keyof typeof candidate>).filter((key) => candidate[key] !== before[key]);
+    if (!changes.length) return current;
+    const scheduleChanged = changes.some((key) => ["movedLocalDate", "movedLocalTime", "movedDurationMinutes", "cancelled"].includes(key));
+    if (scheduleChanged && historyEvidence(event, originalDate, current, now)) throw new CalendarError("occurrence_started");
+    // A previously cancelled past occurrence cannot be reintroduced as history.
+    if (scheduleChanged && before.cancelled && !cancelled &&
+        resolveLocalDateTime(originalDate, event.startLocalTime, event.timeZone, event.dstPolicy) <= now) {
+      throw new CalendarError("occurrence_started");
+    }
+    if (current) {
+      const result = db.prepare(`UPDATE calendar_event_exceptions SET
+        moved_local_date=?,moved_local_time=?,moved_duration_minutes=?,cancelled=?,attendance_intent_override=?,
+        attendance_outcome=?,version=version+1,updated_at=?
+        WHERE event_id=? AND occurrence_local_date=? AND version=?`).run(
+        movedLocalDate, movedLocalTime, movedDurationMinutes, cancelled ? 1 : 0, attendanceIntentOverride,
+        attendanceOutcome, now, eventId, originalDate, current.version,
+      );
+      if (result.changes !== 1) throw new CalendarError("stale_version");
+    } else {
+      db.prepare(`INSERT INTO calendar_event_exceptions (
+        event_id,occurrence_local_date,moved_local_date,moved_local_time,moved_duration_minutes,cancelled,
+        attendance_intent_override,attendance_outcome,version,created_at,updated_at
+      ) VALUES (?,?,?,?,?,?,?,?,1,?,?)`).run(
+        eventId, originalDate, movedLocalDate, movedLocalTime, movedDurationMinutes, cancelled ? 1 : 0,
+        attendanceIntentOverride, attendanceOutcome, now, now,
+      );
+    }
+    return getCalendarException(db, eventId, originalDate)!;
+  }).immediate();
 }
 
 function projectOccurrence(event: CalendarEvent, originalDate: string, exception: CalendarEventException | null): CalendarOccurrence {
@@ -400,15 +504,12 @@ export function queryCalendar(
   const occurrences: CalendarOccurrence[] = [];
   const included = new Map<string, CalendarEvent>();
   for (const event of events) {
+    if (event.archivedAt !== null) continue;
     const last = event.recurrenceKind === "weekly" ? event.recurrenceUntilDate! : event.anchorLocalDate;
     for (let date = event.anchorLocalDate; date <= last; date = addLocalDays(date, 7)) {
       const exception = byEvent.get(event.id)?.get(date) ?? null;
       const occurrence = projectOccurrence(event, date, exception);
       const referenceStart = occurrence.startsAt;
-      if (event.archivedAt !== null && referenceStart >= event.archivedAt) {
-        if (event.recurrenceKind === "none") break;
-        continue;
-      }
       if (referenceStart < to && occurrence.endsAt > from) {
         occurrences.push(occurrence);
         included.set(event.id, event);
@@ -434,21 +535,25 @@ export function splitCalendarEvent(
   splitOriginalDate: string,
   patch: CalendarEventPatch,
   now = Date.now(),
-): { previous: CalendarEvent; next: CalendarEvent } {
-  if (Object.keys(patch).length === 0) throw new CalendarError("bad_request");
+): { previous: CalendarEvent; next: CalendarEvent; changed: true } {
   const transaction = db.transaction(() => {
-    const current = getCalendarEvent(db, id);
-    if (!current) throw new CalendarError("not_found");
-    if (current.version !== expectedVersion) throw new CalendarError("stale_version");
-    if (current.recurrenceKind !== "weekly" || !occurrenceBelongs(current, splitOriginalDate) ||
+    const current = guardedEvent(db, id, expectedVersion);
+    if (current.recurrenceKind !== "weekly") throw new CalendarError("not_weekly");
+    if (!occurrenceBelongs(current, splitOriginalDate) ||
         splitOriginalDate === current.anchorLocalDate) throw new CalendarError("occurrence_not_found");
+    const changes = normalizedDefinitionPatch(db, current, patch);
+    if (changes.anchorLocalDate !== undefined || changes.recurrenceKind !== undefined) throw new CalendarError("field_not_in_scope");
+    if (!Object.keys(changes).length) throw new CalendarError("bad_request");
     const splitStart = resolveLocalDateTime(splitOriginalDate, current.startLocalTime, current.timeZone, current.dstPolicy);
-    if (splitStart < now) throw new CalendarError("bad_request");
+    if (splitStart <= now) throw new CalendarError("occurrence_started");
+    if (hasHistory(db, current, now, originalDates(current).filter((date) => date >= splitOriginalDate))) {
+      throw new CalendarError("history_conflict");
+    }
     const nextInput = definitionInput(current, {
-      ...patch,
+      ...changes,
       anchorLocalDate: splitOriginalDate,
       recurrenceKind: "weekly",
-      recurrenceUntilDate: patch.recurrenceUntilDate === undefined ? current.recurrenceUntilDate : patch.recurrenceUntilDate,
+      recurrenceUntilDate: changes.recurrenceUntilDate === undefined ? current.recurrenceUntilDate : changes.recurrenceUntilDate,
     });
     nextInput.splitFromEventId = current.id;
     const validatedNext = validateDefinition(db, nextInput);
@@ -462,7 +567,7 @@ export function splitCalendarEvent(
     // Their original local dates and row history remain unchanged.
     db.prepare(`UPDATE calendar_event_exceptions SET event_id=?
       WHERE event_id=? AND occurrence_local_date>=?`).run(next.id, id, splitOriginalDate);
-    return { previous: getCalendarEvent(db, id)!, next };
+    return { previous: getCalendarEvent(db, id)!, next, changed: true as const };
   });
-  return transaction();
+  return transaction.immediate();
 }

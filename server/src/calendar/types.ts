@@ -20,7 +20,16 @@ export type CalendarErrorCode =
   | "nonexistent_local_time"
   | "ambiguous_local_time"
   | "recurrence_too_long"
-  | "occurrence_not_found";
+  | "occurrence_not_found"
+  | "series_started"
+  | "occurrence_started"
+  | "history_conflict"
+  | "cancel_scope_unsupported"
+  | "field_not_in_scope"
+  | "not_weekly"
+  | "archived"
+  | "not_archived"
+  | "no_occurrence_added";
 
 const ERROR_MESSAGES: Record<CalendarErrorCode, string> = {
   bad_request: "The calendar request is invalid.",
@@ -32,6 +41,15 @@ const ERROR_MESSAGES: Record<CalendarErrorCode, string> = {
   ambiguous_local_time: "That local time occurs twice. Choose the earlier or later occurrence.",
   recurrence_too_long: "A weekly series must end within one year of its first date.",
   occurrence_not_found: "That occurrence does not belong to the current event series.",
+  series_started: "This series has history. Change future occurrences, or explicitly include history when removing it.",
+  occurrence_started: "That occurrence has already started; its schedule cannot be rewritten.",
+  history_conflict: "That change would hide or reintroduce past occurrence evidence. Choose a later boundary.",
+  cancel_scope_unsupported: "Cancel one occurrence, end the series going forward, or explicitly remove the whole series.",
+  field_not_in_scope: "That field belongs to a different calendar editing scope.",
+  not_weekly: "That operation requires a weekly series.",
+  archived: "That calendar event is archived. Restore it before editing.",
+  not_archived: "That calendar event is not archived.",
+  no_occurrence_added: "That end date adds no weekly occurrences. Choose a later date.",
 };
 
 /** Bounded public errors: codes/messages never echo schedule content. */
@@ -113,4 +131,3 @@ export type CalendarQueryResult = {
   occurrences: CalendarOccurrence[];
   complete: true;
 };
-

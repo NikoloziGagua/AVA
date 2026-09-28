@@ -145,7 +145,7 @@
         <div class="says">
           <div class="say" id="s-dup"><span class="orb" aria-hidden="true"></span><div><small>you: "remove the duplicate Monday lecture"</small>"There are two Software Design lectures at 10 on Mondays. Remove the one added on 28 Sep? It has already started, so its past ones will be hidden too."<br><small style="margin-top:6px">you: "yes"</small>"Done. The original stays. You can undo it in Calendar."</div></div>
           <div class="say" id="s-end"><span class="orb" aria-hidden="true"></span><div><small>you: "I dropped Maths tutorials, stop them"</small>"Maths tutorial now ends after Mon 28 Sep. The past ones and what you recorded stay. You can undo it in Calendar."</div></div>
-          <div class="say" id="s-conflict"><span class="orb" aria-hidden="true"></span><div><small>you: "end Maths tutorials from tomorrow"</small>"I can't end it from tomorrow: the 12 Oct tutorial was moved to Saturday and already happened, so ending would hide it. Shall I end it from 19 Oct instead?"</div></div>
+          <div class="say" id="s-conflict"><span class="orb" aria-hidden="true"></span><div><small>you: "end Maths tutorials from tomorrow"</small>"I can't end it from tomorrow: the 12 Oct tutorial was moved to Saturday and already happened, so ending would hide it. Want me to try ending it from 19 Oct? I'll check that one first."</div></div>
           <div class="say" id="s-noop"><span class="orb" aria-hidden="true"></span><div><small>you: "set the lecture to 10 o'clock" (it already is)</small>"It's already at 10. Nothing to change."</div></div>
         </div>
       </article>
@@ -234,8 +234,8 @@
     document.getElementById("cEndTitle").textContent = conflictMode ? "Can't end it from Mon 5 Oct" : "End this series from Mon 5 Oct?";
     text.hidden = conflictMode; c.hidden = !conflictMode;
     text.textContent = "The last one will be Mon 28 Sep. Every " + s.title + " before that, and what you recorded, stays. You can undo this.";
-    c.textContent = "The tutorial on 12 Oct was moved to Sat 3 Oct and has already happened, so ending from here would hide it. Ending from 19 Oct keeps it.";
-    document.getElementById("doEnd").textContent = conflictMode ? "End from 19 Oct instead" : "End series";
+    c.textContent = "The tutorial on 12 Oct was moved to Sat 3 Oct and has already happened, so ending from here would hide it. Choose a later tutorial to end from.";
+    document.getElementById("doEnd").textContent = conflictMode ? "Choose a later date" : "End series";
     show("end");
   });
   document.getElementById("rmBtn").addEventListener("click", function () {
@@ -246,7 +246,8 @@
   document.getElementById("doEnd").addEventListener("click", function () {
     var id = current; closeSheet();
     // From 19 Oct, today's (5 Oct) occurrence stays; from here, it goes.
-    if (conflictMode) { toast(SERIES[id].title + " now ends after Mon 12 Oct.", function () { toast("Back as it was.", null); }); return; }
+    // The client never guesses a safe date: Niko picks a later occurrence, and the server checks it again.
+    if (conflictMode) { toast("Open a later " + SERIES[id].title + " in Week view and end the series from there. AVA checks it again.", null); return; }
     els[id].classList.add("gone");
     toast(SERIES[id].title + " now ends after Mon 28 Sep.", function () { els[id].classList.remove("gone"); toast("Back as it was.", null); });
   });

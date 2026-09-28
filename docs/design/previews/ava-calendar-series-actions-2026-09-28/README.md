@@ -19,7 +19,7 @@ Then open http://127.0.0.1:5186/.
 - **The event sheet gains a "Whole series" section** with two actions:
   - **End series from here:** this occurrence and every later one stop, and past ones stay. This maps to `POST …/end`. Undo calls `extend`.
   - **Remove series…:** for a duplicate or a mistake. For a series that has started, the confirmation says plainly that its past occurrences are hidden too. This maps to `DELETE …?includeHistory=true`. Undo calls `restore`.
-- **A history conflict is explained in plain words.** For example, a later tutorial was moved earlier and has already happened, so ending would hide it. The page suggests a safe date instead of showing a generic failure.
+- **A history conflict is explained in plain words.** For example, a later tutorial was moved earlier and has already happened, so ending would hide it. The page asks Niko to choose a later occurrence instead of showing a generic failure. It never promises that a date is safe; the server checks every attempt (Codex, room message 1613). Undo uses the returned event version and previousRecurrenceUntilDate; restore uses the archived event's version.
 - **What AVA says by voice** for removing, ending, a conflict, and a request that changes nothing.
 - **Three decisions for Niko,** each with a proposed default.
 

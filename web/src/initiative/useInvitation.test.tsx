@@ -117,6 +117,62 @@ describe("useInvitation", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
+  describe("an answer that finishes after Niko moved to another idea", () => {
+    const B = { sessionId: "s_3", initiativeId: "ini_3" };
+    function deferred<T>() {
+      let resolve!: (value: T) => void;
+      let reject!: (error: unknown) => void;
+      const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+      return { promise, resolve, reject };
+    }
+
+    async function moveToB(answer: "later" | "notUseful") {
+      api.fetchInitiative.mockImplementation(async (id: string) =>
+        id === "ini_3" ? view({ id: "ini_3", sessionId: "s_3", openedAt: 5 }) : view({ openedAt: 5 }));
+      const pending = deferred<unknown>();
+      api.setInitiativeDisposition.mockReturnValue(pending.promise);
+      const onChange = vi.fn();
+      const props: InvitationInput = { sessionId: "s_2", initiativeId: "ini_2", unreplied: true, verify: true, now: () => NOW, onChange };
+      const hook = renderHook((current: InvitationInput) => useInvitation(current), { initialProps: props });
+      await waitFor(() => expect(hook.result.current.state.status).toBe("open"));
+      act(() => { void hook.result.current[answer](); });
+      expect(hook.result.current.busy).toBe(true);
+      hook.rerender({ ...props, ...B });
+      await waitFor(() => expect(hook.result.current.state).toMatchObject({ status: "open", view: { id: "ini_3" } }));
+      return { hook, pending, onChange };
+    }
+
+    it("leaves the new idea's panel alone when Not useful for the old one lands", async () => {
+      const { hook, pending, onChange } = await moveToB("notUseful");
+      await act(async () => { pending.resolve({ ok: true, disposition: { state: "not_useful", version: 2, updatedAt: 9 } }); });
+      expect(hook.result.current.state).toMatchObject({ status: "open", view: { id: "ini_3", disposition: { state: "open" } } });
+      expect(hook.result.current.notice).toBeNull();
+      expect(hook.result.current.busy).toBe(false);
+      // The server did change, so the bar's count may still refresh.
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("never swaps the old idea's Later result into the new idea's panel", async () => {
+      const { hook, pending } = await moveToB("later");
+      await act(async () => { pending.resolve({ ok: true, disposition: { state: "later", version: 2, updatedAt: 9 } }); });
+      expect(hook.result.current.state).toMatchObject({ status: "open", view: { id: "ini_3", disposition: { state: "open" } } });
+      expect(hook.result.current.notice).toBeNull();
+    });
+
+    it("ignores a late failure or a late stale answer for the old idea", async () => {
+      const failed = await moveToB("notUseful");
+      await act(async () => { failed.pending.reject({ code: "initiative_unavailable" }); });
+      expect(failed.hook.result.current.state).toMatchObject({ status: "open", view: { id: "ini_3" } });
+      expect(failed.hook.result.current.notice).toBeNull();
+      cleanup();
+      const stale = await moveToB("later");
+      const fetches = api.fetchInitiative.mock.calls.length;
+      await act(async () => { stale.pending.resolve({ ok: false, current: { state: "later", version: 2 } }); });
+      expect(stale.hook.result.current.notice).toBeNull();
+      expect(api.fetchInitiative.mock.calls.length).toBe(fetches);
+    });
+  });
+
   it("dismisses on Not useful, and shows the latest state when it changed elsewhere", async () => {
     api.fetchInitiative.mockResolvedValue(view({ openedAt: 5 }));
     api.setInitiativeDisposition.mockResolvedValueOnce({ ok: false, current: { state: "later", version: 2 } });

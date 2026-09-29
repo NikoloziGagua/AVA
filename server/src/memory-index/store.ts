@@ -833,14 +833,27 @@ export class MemoryIndexService {
       includeHistory?: boolean;
       /** Give up on the embedding after this long and match by keywords only (voice turns). */
       semanticBudgetMs?: number;
+      /**
+       * false skips the embedding call entirely (no network round trip) and matches by
+       * keywords only. Used for turns that don't reach into the past.
+       */
+      semantic?: boolean;
+      /**
+       * Kinds left out before ranking, so they can't take the result slots. Filtering
+       * afterwards would let hundreds of development-log records crowd out personal ones.
+       */
+      excludeKinds?: readonly MemoryIndexKind[];
     } = {},
   ): Promise<MemorySearchResponse> {
     const cleanQuery = cleanInline(query, 1_000);
     if (!cleanQuery) throw new Error("memory search query is required");
     const limit = Math.max(1, Math.min(20, Math.floor(options.limit ?? 8)));
+    const excluded = new Set<string>(options.excludeKinds ?? []);
     let queryEmbedding: MemoryEmbedding | null = null;
     let notice: string | null = null;
-    if (this.embedder) {
+    if (options.semantic === false) {
+      // A deliberate keyword-only lookup is the normal fast path, not a degradation.
+    } else if (this.embedder) {
       try {
         const embedding = this.embedder.embed(cleanQuery);
         queryEmbedding = options.semanticBudgetMs === undefined
@@ -862,6 +875,7 @@ export class MemoryIndexService {
     // Open the iterator only after the asynchronous embed call. Do not hold a
     // SQLite cursor across an await, or materialize/source-verify while it is open.
     for (const row of this.candidateRows(options.project, options.latestOnly === true)) {
+      if (excluded.has(row.kind)) continue;
       const governed = this.governance.view(entryFromRow(row), { includeHistory: false });
       const entry = governed.entry;
       const lexical = lexicalEvidence(cleanQuery, entry);

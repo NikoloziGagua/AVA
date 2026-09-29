@@ -146,8 +146,9 @@ describe("automatic source-verified memory retrieval", () => {
     const f = fixture(embedder);
     await capture(f);
     embedder.failQuery = true;
+    // A recall turn is one that tries the embedding (plain requests are keyword-only).
     const decision = await retrieveAutomaticMemory(f.service, {
-      query: "recollection query about the aurora plan",
+      query: "remember the recollection query about the aurora plan",
       channel: "hume_voice",
       currentSessionId: "voice-session",
     });
@@ -305,6 +306,57 @@ describe("automatic source-verified memory retrieval", () => {
       expect(decision.prompt).toContain(`Git commit: ${sha}`);
       expect(decision.prompt).toContain("immutable committed improvement records");
     }
+  });
+
+  it("keeps AVA's development log out of personal turns, even when it would crowd the result slots", async () => {
+    const embedder = new TopicEmbedder();
+    const db = openInMemoryDb();
+    // Distinct from the first character: record ids use the first 20 characters of the sha.
+    const shas = Array.from({ length: 30 }, (_, i) => (i + 16).toString(16).repeat(20));
+    const service = new MemoryIndexService(db, embedder, (candidate) => shas.includes(candidate));
+    for (const sha of shas) {
+      await service.captureImprovement({
+        commitSha: sha, sourceKind: "git_commit", actor: "codex",
+        title: `AVA aurora planner build ${sha.slice(-2)}`,
+        summary: "AVA changed the aurora planner feature code.",
+        capabilities: ["aurora planner"], verification: ["Tests passed."],
+      });
+    }
+    const f = { db, service, session: createSession(db, { title: "Trip" }) };
+    await capture(f);
+    let embeds = 0;
+    const embed = embedder.embed.bind(embedder);
+    embedder.embed = (text: string) => { embeds++; return embed(text); };
+
+    // An ordinary request: keywords only (no network call) and no development log.
+    const plain = await retrieveAutomaticMemory(service, { query: "Plan the aurora observation trip for Iceland", channel: "openai_voice", currentSessionId: "fresh" });
+    expect(embeds).toBe(0);
+    expect(plain).toMatchObject({ status: "used", mode: "lexical" });
+    // The one personal memory wins its slot; none of the 30 matching log records do.
+    expect(plain.selected).toHaveLength(1);
+    expect(plain.selected.some((s) => s.kind === "improvement" || s.kind === "artifact")).toBe(false);
+
+    // His decision history about AVA is not the code changelog.
+    const decided = await retrieveAutomaticMemory(service, { query: "What did I decide about the aurora planner in AVA?", channel: "chat", currentSessionId: "fresh" });
+    expect(decided.selected.every((s) => s.kind !== "improvement")).toBe(true);
+
+    // What changed in AVA's code is exactly what the log is for.
+    const changed = await retrieveAutomaticMemory(service, { query: "What changed in AVA's aurora planner code?", channel: "chat", currentSessionId: "fresh" });
+    expect(changed.selected.some((s) => s.kind === "improvement")).toBe(true);
+  });
+
+  it("pays for the semantic lookup only when the turn points at the past", async () => {
+    const embedder = new TopicEmbedder();
+    const f = fixture(embedder);
+    await capture(f);
+    let embeds = 0;
+    const embed = embedder.embed.bind(embedder);
+    embedder.embed = (text: string) => { embeds++; return embed(text); };
+    await retrieveAutomaticMemory(f.service, { query: "Add a lecture on Monday at 10", channel: "chat", currentSessionId: "fresh" });
+    expect(embeds).toBe(0);
+    const recalled = await retrieveAutomaticMemory(f.service, { query: "What did we say about seeing the northern lights?", channel: "chat", currentSessionId: "fresh" });
+    expect(embeds).toBe(1);
+    expect(recalled).toMatchObject({ status: "used", semanticAvailable: true });
   });
 
   it("records one idempotent privacy-bounded Mission Control explanation", async () => {

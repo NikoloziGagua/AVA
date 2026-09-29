@@ -96,6 +96,27 @@ export function isExplicitMemoryRecall(query: string): boolean {
   return EXPLICIT_RECALL.test(query);
 }
 
+// Phrasing that reaches into the shared past. Only these turns pay for the semantic
+// (embedding) lookup, a 200-950 ms network call measured on real turns; a plain request
+// such as "add a lecture on Monday" is matched by keywords only.
+const PAST_REFERENCE = /\b(?:(?:did|were|had|have) we|we (?:discussed|decided|talked|said|agreed|planned|were)|you (?:said|told me|suggested|mentioned)|i (?:told you|said|mentioned)|our (?:idea|plan|decision)|that (?:idea|plan|research)|previous(?:ly)?|earlier|last (?:week|month|night|year)|yesterday|the other day|back then|again)\b/i;
+/** The turn points at something said or decided before. */
+export function referencesPast(query: string): boolean {
+  return EXPLICIT_RECALL.test(query) || PAST_REFERENCE.test(query);
+}
+
+// AVA's own development log (committed improvements and build artifacts) answers
+// "what changed in AVA?", not questions about Niko's life or decisions. Kept narrow on
+// purpose: AVA is Niko's main project, so "about AVA" alone must not qualify.
+// "What did I decide about AVA?" is his decision history; "what changed in AVA's code?"
+// is the log.
+const DEVELOPMENT_LOG_KINDS = ["improvement", "artifact"] as const;
+const AVA_CHANGE_QUESTION = /\b(?:what(?:'s| is| has)? (?:changed|new|different)|what (?:changes|updates?|improvements?|fixes)|which (?:update|change|commit|fix)|what did (?:you|claude|codex|they) (?:build|change|fix|add|ship|improve|update)|(?:has|have|was|were) (?:you|ava|she|it|the app) (?:been )?(?:updated|changed|improved|fixed)|latest (?:update|version|changes?|release|build)|recent (?:changes|updates|improvements|fixes|commits)|change ?log|release notes|what(?:'s| has) been (?:built|fixed|added|shipped|done)|(?:got|been|was|were) (?:added|fixed|shipped|deployed)|new (?:features?|version|build)|commits?)\b/i;
+/** Sir is asking what changed in AVA itself, so the development log is relevant. */
+export function isAvaChangeQuestion(query: string): boolean {
+  return AVA_CHANGE_QUESTION.test(query);
+}
+
 const MAX_SELECTED = 2;
 const MAX_SOURCE_CHARS = 2_200;
 const MAX_PROMPT_CHARS = 9_000;
@@ -160,10 +181,13 @@ export async function retrieveAutomaticMemory(
   }
 
   try {
+    const changeQuestion = isAvaChangeQuestion(query);
     const response = await index.search(query, {
       project: input.project ?? null,
       limit: 12,
       latestOnly: true,
+      semantic: changeQuestion || referencesPast(query),
+      ...(changeQuestion ? {} : { excludeKinds: DEVELOPMENT_LOG_KINDS }),
       ...(input.semanticBudgetMs === undefined ? {} : { semanticBudgetMs: input.semanticBudgetMs }),
     });
     const explicitRecall = EXPLICIT_RECALL.test(query);

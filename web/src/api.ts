@@ -214,7 +214,8 @@ export const api = {
     conversationIntent?: ConversationIntent;
     bindingRequestId?: string;
   }) =>
-    request<{ sessionId: string; taskId?: string; binding?: SessionBinding }>("/api/chat", {
+    // userMessageId: the accepted turn's exact stored row; null when nothing was stored, absent on older servers.
+    request<{ sessionId: string; taskId?: string; binding?: SessionBinding; userMessageId?: number | null }>("/api/chat", {
       method: "POST",
       body: JSON.stringify({
         sessionId,
@@ -281,6 +282,8 @@ export type SessionMessage = {
   visualMessages?: VisualMessage[];
   metadata?: {
     visualContext?: VisualMessageContext;
+    /** How an accepted human turn arrived (I1). Exact text from the voice UI is "text". */
+    inputModality?: "text" | "voice";
     inputSource?: "voice_exact_text";
     memoryContext?: MemoryContext;
     savedItems?: SavedItems;

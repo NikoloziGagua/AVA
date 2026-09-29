@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { cn } from "../design/cn.js";
 import { ThinkingIndicator, type ThinkingState } from "./ThinkingIndicator.js";
@@ -18,12 +18,45 @@ import { validRoomPosts, type RoomPosts } from "./room-posts.js";
 import type { SavedItem, SavedItems } from "./saved-items.js";
 import type { MemoryContext } from "./memory-context.js";
 
+// createdAt (epoch ms) places a message under its Dublin day divider; a message
+// without one (a live reply) sits under the divider before it.
 export type ChatMessage =
-  | { role: "user"; text: string; id: string; visualContext?: VisualMessageContext; inputSource?: "voice_exact_text" }
-  | { role: "assistant"; text: string; id: string; visualMessages?: VisualMessage[]; memoryContext?: MemoryContext; savedItems?: SavedItems; roomPosts?: RoomPosts }
+  | { role: "user"; text: string; id: string; createdAt?: number; visualContext?: VisualMessageContext; inputSource?: "voice_exact_text"; inputModality?: "text" | "voice" }
+  | { role: "assistant"; text: string; id: string; createdAt?: number; visualMessages?: VisualMessage[]; memoryContext?: MemoryContext; savedItems?: SavedItems; roomPosts?: RoomPosts }
   // `system` rows are server notices (e.g. the "Server restarted…" recovery
   // message) — rendered as a centered notice, never attributed to Ava.
-  | { role: "system"; text: string; id: string };
+  | { role: "system"; text: string; id: string; createdAt?: number };
+
+const DUBLIN_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Dublin", year: "numeric", month: "2-digit", day: "2-digit" });
+const DUBLIN_LABEL = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Dublin", weekday: "short", day: "numeric", month: "short" });
+
+/** The Europe/Dublin calendar day of an instant, as YYYY-MM-DD (one-conversation v1). */
+export function dublinDay(at: number): string {
+  return DUBLIN_DAY.format(at);
+}
+
+/** "Today", "Yesterday" or "Mon 28 Sep", all in Dublin time. */
+export function dayLabel(at: number, now = Date.now()): string {
+  const day = dublinDay(at);
+  if (day === dublinDay(now)) return "Today";
+  // Noon UTC of the previous date is that same date in Dublin (UTC+0 or +1), DST or not.
+  const [y, m, d] = dublinDay(now).split("-").map(Number) as [number, number, number];
+  if (day === dublinDay(Date.UTC(y, m - 1, d - 1, 12))) return "Yesterday";
+  return DUBLIN_LABEL.format(at).replace(",", "").replace("Sept", "Sep");
+}
+
+/** Where a day divider goes: before each message whose Dublin day differs from the last dated one. */
+export function dayBreaks(history: ChatMessage[], now = Date.now()): Map<string, string> {
+  const breaks = new Map<string, string>();
+  let lastDay: string | null = null;
+  for (const message of history) {
+    if (message.createdAt === undefined) continue;
+    const day = dublinDay(message.createdAt);
+    if (day !== lastDay) breaks.set(message.id, dayLabel(message.createdAt, now));
+    lastDay = day;
+  }
+  return breaks;
+}
 
 export interface MessageListProps {
   history: ChatMessage[];
@@ -149,6 +182,7 @@ export function MessageList({
 
   // Thinking row shows from send until the final reply arrives.
   const showThinking = optimisticThinking && !lastFinal && !runTerminated;
+  const breaks = useMemo(() => dayBreaks(history), [history]);
 
 
   return (
@@ -157,19 +191,21 @@ export function MessageList({
           one scrolls, with endRef keeping the newest line in view. */}
       <div className="ds-quiet-thread mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-end gap-7">
       {history.map((m) => {
-        if (m.role === "system") {
-          return (
-            <div key={m.id} className={cn("flex justify-center", arrived(m.id))}>
+        const divider = breaks.get(m.id);
+        return (
+        <Fragment key={m.id}>
+        {divider && <h2 className="text-center font-ui-mono text-label uppercase text-ink-3">{divider}</h2>}
+        {m.role === "system" ? (
+            <div className={cn("flex justify-center", arrived(m.id))}>
               <SystemNotice text={m.text} />
             </div>
-          );
-        }
-        return (
-        <div key={m.id} className={cn(m.role === "user" ? "flex justify-end" : "flex justify-start", arrived(m.id))}>
+        ) : (
+        <div className={cn(m.role === "user" ? "flex justify-end" : "flex justify-start", arrived(m.id))}>
           {m.role === "user" ? (
             <div className="flex max-w-[85%] flex-col items-end gap-1.5">
               <OwnerBubble text={m.text} />
               {m.inputSource === "voice_exact_text" && <MessageTag>Exact text · entered in voice</MessageTag>}
+              {m.inputModality === "voice" && m.inputSource !== "voice_exact_text" && <MessageTag>Said</MessageTag>}
               {m.visualContext && (
                 <MessageTag>
                   Visual context · rev {m.visualContext.revision} · {m.visualContext.selectedElementIds.length || "scene"}
@@ -196,6 +232,8 @@ export function MessageList({
             </AvaMessage>
           )}
         </div>
+        )}
+        </Fragment>
         );
       })}
 

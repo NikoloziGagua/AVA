@@ -18,7 +18,6 @@ import {
   CalendarDays,
   House,
   Lightbulb,
-  MessageSquarePlus,
   MessageSquareText,
   NotebookPen,
   Presentation,
@@ -90,7 +89,8 @@ type View =
   | { name: "activity" }
   // `audit` shows an automated run for reference without making it the current chat.
   // `initiativeId` opens it as AVA's idea; `verifyInitiative` requires the pair to match.
-  | { name: "chat"; sessionId: string | null; initialText?: string; audit?: boolean; initiativeId?: string; verifyInitiative?: boolean }
+  // `continueLatest`: Talk with nothing remembered; the first send lets the server continue the latest conversation.
+  | { name: "chat"; sessionId: string | null; initialText?: string; audit?: boolean; initiativeId?: string; verifyInitiative?: boolean; continueLatest?: boolean }
   // An idea link too malformed to name a conversation (ava-initiative).
   | { name: "idea-missing" }
   | { name: "voice"; from: "today" | "chat"; sessionId: string | null; intent: ConversationIntent }
@@ -251,8 +251,8 @@ function destinationForView(v: View): string | null {
   switch (v.name) {
     case "home": return "home";
     case "today": return "today";
-    // A brand-new composition is "New chat"; every existing conversation, and the list of them, is Talk.
-    case "chat": return v.sessionId === null ? "new" : "talk";
+    // One conversation (one-conversation v1): a new topic, the latest conversation and History are all Talk.
+    case "chat": return "talk";
     case "list": return "talk";
     case "idea-missing": return "talk";
     case "schedule": return "calendar";
@@ -270,7 +270,6 @@ function destinationForView(v: View): string | null {
 }
 
 const DESTINATIONS: Destination[] = [
-  { id: "new", label: "New chat", icon: <MessageSquarePlus size={18} />, group: "primary" },
   { id: "home", label: "Home", icon: <House size={18} />, group: "primary" },
   { id: "today", label: "Today", icon: <Sun size={18} />, group: "primary" },
   { id: "talk", label: "Talk", icon: <MessageSquareText size={18} />, group: "primary" },
@@ -473,9 +472,11 @@ export function App() {
     try { flipStateRef.current = Flip.getState(orb); } catch { flipStateRef.current = null; }
   }, [view.name, reduced]);
 
-  // Talk continues the remembered conversation exactly; with none it shows
-  // Nika's conversations.
-  const openTalk = () => (lastChatSessionId ? openChat(lastChatSessionId) : setView({ name: "list" }));
+  // Talk continues the remembered conversation exactly. With none, its first
+  // send asks the server to continue the latest one; it never lands on a list.
+  const openTalk = () => (lastChatSessionId
+    ? openChat(lastChatSessionId)
+    : setView({ name: "chat", sessionId: null, continueLatest: true }));
   const openNote = (noteId: string) => setView({ name: "notes", noteId, handoff: Date.now() });
   const openSavedItem = (item: SavedItem) => {
     const target = savedItemDestination(item);
@@ -495,7 +496,6 @@ export function App() {
 
   const navigate = (id: string) => {
     switch (id) {
-      case "new": openNewChat(); break;
       case "home": goHome(); break;
       case "today": setView({ name: "today" }); break;
       case "talk": openTalk(); break;
@@ -674,7 +674,7 @@ export function App() {
         )}
         {view.name === "chat" && (
           <motion.div
-            key={view.sessionId ? `chat-${view.sessionId}` : `chat-new-${newChatRevision}`}
+            key={view.sessionId ? `chat-${view.sessionId}` : `chat-${view.continueLatest ? "continue" : "new"}-${newChatRevision}`}
             data-view="chat"
             className="absolute inset-0"
             initial={SCREEN.from}
@@ -685,19 +685,22 @@ export function App() {
               sessionId={view.sessionId}
               initialText={view.initialText}
               audit={view.audit === true}
+              continueLatest={view.continueLatest === true}
               onSessionChange={rememberChat}
               onSessionUnavailable={forgetUnavailableChat}
               onNewChat={() => openNewChat()}
+              onOpenChat={(id) => openChat(id)}
               onOpenSessions={goHome}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenMemory={() => setView({ name: "memory" })}
               onOpenList={() => setView({ name: "list" })}
-              // A blank chat is an explicit new conversation, never "resume latest".
+              // A blank New topic is an explicit new conversation; blank Talk
+              // (nothing remembered) continues the latest, like its first send.
               onEnterVoice={(sessionId) => setView({
                 name: "voice",
                 from: "chat",
                 sessionId,
-                intent: sessionId ? "resume" : "new",
+                intent: sessionId ? "resume" : view.continueLatest ? "continue" : "new",
               })}
               onOpenVisual={(visualId) => setView({ name: "visuals", visualId })}
               onOpenSaved={openSavedItem}

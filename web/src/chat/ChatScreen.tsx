@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ListChecks } from "lucide-react";
-import { api, fetchSession, fetchSuggestedChips, ApiError, type SessionOrigin, type SuggestedChip } from "../api.js";
+import { History, ListChecks, SquarePen } from "lucide-react";
+import { api, fetchSession, fetchSuggestedChips, ApiError, type SessionMessage, type SessionOrigin, type SuggestedChip } from "../api.js";
 import { isSessionUnavailable, mintBindingRequestId } from "./conversation-binding.js";
 import { MessageList, type ChatMessage } from "./MessageList.js";
 import { useChatStream } from "./useChatStream.js";
@@ -40,7 +40,16 @@ export interface ChatScreenProps {
   onSessionUnavailable?: (sessionId: string) => void;
   /** Show this conversation for reference only (an automated run opened from Watches). */
   audit?: boolean;
+  /**
+   * Talk opened with no remembered conversation (one-conversation v1 Phase A):
+   * the first send asks the server to continue Nika's most recent conversation
+   * instead of guessing it here.
+   */
+  continueLatest?: boolean;
+  /** "New topic": a fresh conversation, exactly what New chat was. */
   onNewChat?: () => void;
+  /** Reopen this exact conversation from the server (a clean reload of its whole history). */
+  onOpenChat?: (sessionId: string) => void;
   onOpenVisual?: (visualId: string) => void;
   /** Open something AVA saved during a reply (a Saved card row). */
   onOpenSaved?: (item: SavedItem) => void;
@@ -74,6 +83,41 @@ export interface ChatScreenProps {
  * last such bubble, which never matched the server's strict-assistant replay and
  * duplicated the final on reopen.
  */
+/** Stored rows → bubbles. Shared by opening a conversation and by continue-intent hydration. */
+function toChatMessages(rows: SessionMessage[]): ChatMessage[] {
+  return rows.map((m) => ({
+    id: `s-${m.id}`,
+    createdAt: m.created_at,
+    // `system` rows stay `system` (rendered as a notice) — collapsing them
+    // into assistant bubbles both misattributed them to Ava AND broke the
+    // reopen dedupe below.
+    role: m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant",
+    text: m.content,
+    ...(m.role === "user" && m.metadata?.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
+    ...(m.role === "user" && m.metadata?.inputModality ? { inputModality: m.metadata.inputModality } : {}),
+    ...(m.role === "user" && m.metadata?.visualContext ? { visualContext: m.metadata.visualContext } : {}),
+    ...(m.role === "assistant" && m.visualMessages?.length ? { visualMessages: m.visualMessages } : {}),
+    ...(m.role === "assistant" && m.metadata?.memoryContext ? { memoryContext: m.metadata.memoryContext } : {}),
+    ...(m.role === "assistant" && m.metadata?.savedItems ? { savedItems: m.metadata.savedItems } : {}),
+    ...(m.role === "assistant" && validRoomPosts(m.metadata?.roomPosts) ? { roomPosts: validRoomPosts(m.metadata?.roomPosts)! } : {}),
+  }) as ChatMessage);
+}
+
+/**
+ * The rows before a just-sent turn, for continue-intent hydration
+ * (one-conversation v2). The server reports the accepted turn's exact stored
+ * row id; rows before that row are ours to show, and it and everything after
+ * are not (the screen already shows that turn and streams its reply). Equal
+ * text, times and order never identify a turn. Anything but exactly one user
+ * row with that id means nothing is prepended rather than guessing.
+ */
+export function rowsBeforeTurn(rows: SessionMessage[], userMessageId: number | null | undefined): SessionMessage[] | null {
+  if (typeof userMessageId !== "number") return null;
+  const hits = rows.map((row, index) => (row.id === userMessageId ? index : -1)).filter((index) => index >= 0);
+  if (hits.length !== 1 || rows[hits[0]!]!.role !== "user") return null;
+  return rows.slice(0, hits[0]!);
+}
+
 function latestAssistantAfterLastUser(
   messages: Array<{ role: string; content: string }>,
 ): string | null {
@@ -95,7 +139,9 @@ export function ChatScreen({
   onSessionChange,
   onSessionUnavailable,
   audit = false,
+  continueLatest = false,
   onNewChat,
+  onOpenChat,
   onOpenList,
   onOpenSaved,
   onComposer,
@@ -109,6 +155,9 @@ export function ChatScreen({
   onInitiativeChange,
 }: ChatScreenProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
+  // The conversation this screen is in right now, readable from async callbacks.
+  const sessionIdRef = useRef<string | null>(null);
+  sessionIdRef.current = sessionId;
   // Creation provenance of the loaded conversation. Automated runs are shown
   // read-only; the server would refuse a human turn into them anyway.
   const [origin, setOrigin] = useState<SessionOrigin | undefined>(undefined);
@@ -177,20 +226,7 @@ export function ChatScreen({
     fetchSession(requestedSessionId)
       .then((data) => {
         if (cancelled) return;
-        const loaded: ChatMessage[] = data.messages.map((m) => ({
-          id: `s-${m.id}`,
-          // `system` rows stay `system` (rendered as a notice) — collapsing them
-          // into assistant bubbles both misattributed them to Ava AND broke the
-          // reopen dedupe below.
-          role: m.role === "user" ? "user" : m.role === "system" ? "system" : "assistant",
-          text: m.content,
-          ...(m.role === "user" && m.metadata?.inputSource === "voice_exact_text" ? { inputSource: "voice_exact_text" as const } : {}),
-          ...(m.role === "user" && m.metadata?.visualContext ? { visualContext: m.metadata.visualContext } : {}),
-          ...(m.role === "assistant" && m.visualMessages?.length ? { visualMessages: m.visualMessages } : {}),
-          ...(m.role === "assistant" && m.metadata?.memoryContext ? { memoryContext: m.metadata.memoryContext } : {}),
-          ...(m.role === "assistant" && m.metadata?.savedItems ? { savedItems: m.metadata.savedItems } : {}),
-          ...(m.role === "assistant" && validRoomPosts(m.metadata?.roomPosts) ? { roomPosts: validRoomPosts(m.metadata?.roomPosts)! } : {}),
-        }));
+        const loaded = toChatMessages(data.messages);
         // Dedupe target = server's replay rule over the RAW rows (not the last
         // mapped bubble), so a trailing `system` row can't shadow the real final.
         seededLastAssistantRef.current = latestAssistantAfterLastUser(data.messages);
@@ -421,6 +457,32 @@ export function ChatScreen({
         ? headerState === "responding" ? { mode: "thinking", text: "Writing" } : { mode: "thinking" }
         : { mode: "idle" };
 
+  // The conversation a continue-intent send landed in already had messages:
+  // show them above this turn, once. Dropped if this screen has since moved
+  // to another conversation or unmounted; a failed fetch loses nothing, as
+  // the next open shows the whole conversation.
+  const hydratedRef = useRef<string | null>(null);
+  function hydrateContinued(bound: string, userMessageId: number | null | undefined) {
+    if (hydratedRef.current !== null) return;
+    hydratedRef.current = bound;
+    fetchSession(bound).then((data) => {
+      // An abandoned screen or a different conversation is dropped silently; a response for the
+      // wrong session on this screen is unsafe history and gets the honest note.
+      if (unmountedRef.current || sessionIdRef.current !== bound) return;
+      const before = data.session.id === bound ? rowsBeforeTurn(data.messages, userMessageId) : null;
+      if (before === null) { setHistoryNote(true); return; }
+      const earlier = toChatMessages(before);
+      setOrigin(data.session.origin);
+      if (!earlier.length) return;
+      setHistory((prev) => {
+        const shown = new Set(prev.map((message) => message.id));
+        return [...earlier.filter((message) => !shown.has(message.id)), ...prev];
+      });
+    }).catch(() => setHistoryNote(true));
+  }
+  // Earlier messages couldn't be shown safely. The current turn is unaffected.
+  const [historyNote, setHistoryNote] = useState(false);
+
   function retryLast() {
     const lastUser = [...history].reverse().find((m) => m.role === "user");
     if (lastUser) void send(lastUser.text, lastUser.visualContext);
@@ -433,23 +495,29 @@ export function ChatScreen({
       role: "user",
       text,
       id: optimisticId,
+      createdAt: Date.now(),
       ...(visualContext ? { visualContext } : {}),
     }]);
     setPending(true); // optimistic — same frame as send, before the awaited POST
     // While a reopened conversation is still loading, the requested id is
     // already canonical; never let a quick send turn it into a new conversation.
     const current = sessionId ?? requestedSessionId;
-    if (!current && !newConversationKeyRef.current) newConversationKeyRef.current = mintBindingRequestId();
+    // Talk with nothing remembered lets the server's resolver choose (I1
+    // `continue`); only an explicit New topic mints a new-conversation key.
+    const continuing = !current && continueLatest;
+    if (!current && !continuing && !newConversationKeyRef.current) newConversationKeyRef.current = mintBindingRequestId();
     try {
       const r = await api.sendMessage(current, text, {
         visualContext,
-        conversationIntent: current ? "resume" : "new",
-        ...(current ? {} : { bindingRequestId: newConversationKeyRef.current! }),
+        conversationIntent: current ? "resume" : continuing ? "continue" : "new",
+        ...(current || continuing ? {} : { bindingRequestId: newConversationKeyRef.current! }),
       });
       if (unmountedRef.current) return;
       const bound = r.binding?.sessionId ?? r.sessionId;
       newConversationKeyRef.current = null;
+      sessionIdRef.current = bound;
       setSessionId(bound);
+      if (continuing && r.binding?.resolution === "continued") hydrateContinued(bound, r.userMessageId);
       if (r.binding?.origin) setOrigin(r.binding.origin);
       onSessionChange?.(bound);
       // A reply is the real answer to an idea: the server records it as engaged.
@@ -556,9 +624,19 @@ export function ChatScreen({
   return (
     <div className="ds-root ds-quiet-conversation relative flex h-full flex-col bg-canvas font-ui text-ink">
       <header
-        className="flex shrink-0 items-center justify-center gap-2 px-4 pb-2"
+        className="grid shrink-0 grid-cols-[1fr_auto_1fr] items-center gap-2 px-3 pb-2"
         style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
       >
+        {/* One conversation (one-conversation v1): History browses the past;
+            New topic is the only way to start fresh. */}
+        <div className="justify-self-start">
+          {onOpenList && (
+            <Button variant="quiet" size="sm" onClick={onOpenList} leading={<History size={16} aria-hidden="true" />}>
+              <span className="max-[380px]:sr-only">History</span>
+            </Button>
+          )}
+        </div>
+        <div className="flex items-center justify-center gap-2">
         <StatusIsland mode={island.mode} text={island.text} detail={island.detail} />
         {steps.length > 0 && (
           <Chip
@@ -573,6 +651,14 @@ export function ChatScreen({
         {ideaState.status === "open" && ideaState.position && onOpenInvitation && (
           <InvitationNav position={ideaState.position} onOpen={onOpenInvitation} />
         )}
+        </div>
+        <div className="justify-self-end">
+          {onNewChat && (
+            <Button variant="quiet" size="sm" onClick={onNewChat} leading={<SquarePen size={16} aria-hidden="true" />}>
+              <span className="max-[380px]:sr-only">New topic</span>
+            </Button>
+          )}
+        </div>
       </header>
       <StepsSheet open={stepsOpen} onOpenChange={setStepsOpen} steps={steps} executing={executing} />
 
@@ -610,10 +696,26 @@ export function ChatScreen({
         ) : isEmpty ? (
           <div className="ds-rise mx-auto grid flex-1 content-center justify-items-center gap-4 px-6 text-center">
             <FaceStill size={112} />
-            <h1 className="text-title text-ink">What's on your mind?</h1>
-            <p className="max-w-xs text-body text-ink-2">Type below, pick a suggestion, or tap the mic to talk.</p>
+            {continueLatest && !sessionId ? (
+              <>
+                <h1 className="text-title text-ink">Pick up where you left off.</h1>
+                <p className="max-w-xs text-body text-ink-2">Your next message continues your most recent conversation.</p>
+              </>
+            ) : (
+              <>
+                <h1 className="text-title text-ink">What's on your mind?</h1>
+                <p className="max-w-xs text-body text-ink-2">Type below, pick a suggestion, or tap the mic to talk.</p>
+              </>
+            )}
           </div>
         ) : (
+          <>
+          {historyNote && sessionId && (
+            <div role="status" className="mx-auto flex w-full max-w-[720px] flex-wrap items-center justify-between gap-3 px-4 pt-3 text-meta text-ink-2">
+              <span>Earlier messages in this conversation couldn't be shown safely. Your message and AVA's reply are fine.</span>
+              <Button variant="quiet" size="sm" onClick={() => { setHistoryNote(false); onOpenChat?.(sessionId); }}>Reload conversation</Button>
+            </div>
+          )}
           <MessageList
             history={history}
             liveEvents={liveEvents}
@@ -626,6 +728,7 @@ export function ChatScreen({
             headerState={headerState}
             onVisualSemanticAction={handleVisualSemanticAction}
           />
+          </>
         )}
       </main>
         {/* The message box is the app's bottom bar; this keeps the last lines,

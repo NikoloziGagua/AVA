@@ -348,7 +348,7 @@ export function BottomBar({
       )}
 
       {!compact && <div aria-hidden={open || undefined} inert={open ? true : undefined} style={{ visibility: open ? "hidden" : undefined }}>
-        <LightTrace items={primary.filter((item) => item.id !== "new")} current={current} onNavigate={onNavigate} />
+        <LightTrace items={primary} current={current} onNavigate={onNavigate} />
       </div>}
 
       <form

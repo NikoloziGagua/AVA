@@ -48,10 +48,13 @@ vi.mock("./chat/ChatScreen.js", async () => {
   state.chatLoads += 1;
   const React = await vi.importActual<typeof import("react")>("react");
   return {
-    ChatScreen: ({ sessionId, initialText, audit, onOpenStrategy, onOpenVisual, onEnterVoice, onSessionChange, onOpenSaved, onComposer, onDraft }: {
+    ChatScreen: ({ sessionId, initialText, audit, continueLatest, onNewChat, onOpenList, onOpenStrategy, onOpenVisual, onEnterVoice, onSessionChange, onOpenSaved, onComposer, onDraft }: {
       sessionId?: string | null;
       initialText?: string;
       audit?: boolean;
+      continueLatest?: boolean;
+      onNewChat?: () => void;
+      onOpenList?: () => void;
       onOpenStrategy?: (sessionId: string) => void;
       onOpenVisual?: (visualId: string) => void;
       onEnterVoice?: (sessionId: string | null) => void;
@@ -77,9 +80,11 @@ vi.mock("./chat/ChatScreen.js", async () => {
       React.useEffect(() => { state.chatMounts.push(initialText ?? ""); }, []);
       return (
         <div data-testid="mock-chat">
-          session-{sessionId ?? "new"}-draft-{draftRevision}-audit-{String(!!audit)}
+          session-{sessionId ?? "new"}-draft-{draftRevision}-audit-{String(!!audit)}-continue-{String(!!continueLatest)}
           <span>initial-{initialText ?? "none"}</span>
           <button onClick={() => setDraftRevision((value) => value + 1)}>mock change draft</button>
+          <button onClick={() => onNewChat?.()}>mock new topic</button>
+          <button onClick={() => onOpenList?.()}>mock history</button>
           <button onClick={() => setBusy((value) => !value)}>mock toggle busy</button>
           <button onClick={() => onDraft?.("words given back")}>mock give words back</button>
           <button onClick={() => onSessionChange?.("internal-chat-17")}>mock establish session</button>
@@ -212,6 +217,15 @@ function go(label: string) {
   fireEvent.click(within(openMenu()).getByRole("button", { name: label }));
 }
 
+/** Starts a new topic the way Nika now does: from Talk's header (one-conversation v1). */
+async function newTopic() {
+  if (!screen.queryByTestId("mock-chat")) {
+    go("Talk");
+    await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
+  }
+  fireEvent.click(screen.getByRole("button", { name: "mock new topic" }));
+}
+
 describe("App navigation", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -282,8 +296,12 @@ describe("App navigation", () => {
     expect(screen.getByTestId("mock-home")).toBeTruthy();
     expect(document.querySelector('[data-view="home"]')).toBeTruthy();
 
-    // Every destination but Home and Today loads on first use.
+    // Every destination but Home and Today loads on first use. With nothing
+    // remembered, Talk continues the latest conversation; it never lands on a list.
     go("Talk");
+    expect((await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE)).textContent).toContain("session-new-draft-0-audit-false-continue-true");
+    expect(screen.queryByText("chat-list-screen")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "mock history" }));
     expect(await screen.findByText("chat-list-screen", undefined, LAZY_ROUTE)).toBeTruthy();
     go("Calendar");
     expect(await screen.findByText("schedule-screen", undefined, LAZY_ROUTE)).toBeTruthy();
@@ -291,8 +309,9 @@ describe("App navigation", () => {
     expect(await screen.findByText("notes-initial-none", undefined, LAZY_ROUTE)).toBeTruthy();
     go("Ideas");
     expect(await screen.findByText("ideas-screen", undefined, LAZY_ROUTE)).toBeTruthy();
-    go("New chat");
-    expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-new");
+    expect(within(openMenu()).queryByRole("button", { name: "New chat" })).toBeNull();
+    await newTopic();
+    expect((await screen.findByTestId("mock-chat")).textContent).toContain("session-new-draft-0-audit-false-continue-false");
     go("Today");
     expect(document.querySelector('[data-view="today"]')).toBeTruthy();
     go("Home");
@@ -370,15 +389,23 @@ describe("App navigation", () => {
     consoleError.mockRestore();
   });
 
-  it("mounts a clean ChatScreen every time New is pressed", async () => {
+  it("mounts a clean ChatScreen every time New topic is pressed", async () => {
     render(<App />);
-    go("New chat");
+    await newTopic();
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock change draft" }));
     expect(screen.getByTestId("mock-chat").textContent).toContain("draft-1");
 
-    go("New chat");
+    await newTopic();
     await waitFor(() => expect(screen.getByTestId("mock-chat").textContent).toContain("draft-0"));
+  });
+
+  it("lets voice from a blank Talk continue the latest conversation, like its first send", async () => {
+    render(<App />);
+    go("Talk");
+    await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
+    fireEvent.click(screen.getByRole("button", { name: "mock enter blank voice" }));
+    expect(await screen.findByText(/voice-session-none-intent-continue/, undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
   it("carries a Home suggestion into a new chat", async () => {
@@ -409,7 +436,7 @@ describe("App navigation", () => {
   it("has retired the legacy Strategy Room: no destination and no chat handoff", async () => {
     render(<App />);
     expect(within(openMenu()).queryByRole("button", { name: "Strategy Room" })).toBeNull();
-    go("New chat");
+    await newTopic();
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock take to room" }));
     expect(screen.queryByText(/room-source-/)).toBeNull();
@@ -418,7 +445,7 @@ describe("App navigation", () => {
 
   it("opens the exact AVA visual emitted by the chat tool path", async () => {
     render(<App />);
-    go("New chat");
+    await newTopic();
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock open visual" }));
     expect(await screen.findByText("visual-id-visual_abcdefgh")).toBeTruthy();
@@ -427,7 +454,7 @@ describe("App navigation", () => {
   it("opens each kind of item from a reply's Saved card in its own place", async () => {
     render(<App />);
     const openChat = async () => {
-      go("New chat");
+      await newTopic();
       await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
     };
     await openChat();
@@ -449,15 +476,15 @@ describe("App navigation", () => {
 
   it("hands voice the session ChatScreen actually created, not the stale null route value", async () => {
     render(<App />);
-    go("New chat");
+    await newTopic();
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock enter voice" }));
     expect(await screen.findByText(/voice-session-internal-chat-17-intent-resume/, undefined, LAZY_ROUTE)).toBeTruthy();
   });
 
-  it("marks voice entry from a blank New chat as a fresh conversation", async () => {
+  it("marks voice entry from a blank New topic as a fresh conversation", async () => {
     render(<App />);
-    go("New chat");
+    await newTopic();
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock enter blank voice" }));
     expect(await screen.findByText(/voice-session-none-intent-new/, undefined, LAZY_ROUTE)).toBeTruthy();
@@ -520,7 +547,7 @@ describe("App navigation", () => {
     fireEvent.click(screen.getByRole("button", { name: "mock voice exit" }));
     // A different conversation becomes current, then a new voice visit finds it
     // unavailable before binding anything.
-    go("New chat");
+    await newTopic();
     fireEvent.click(await screen.findByRole("button", { name: "mock establish session" }));
     expect(window.localStorage.getItem("ava:last-chat-session")).toBe("internal-chat-17");
     go("Today");
@@ -589,7 +616,7 @@ describe("App navigation", () => {
 
   it("Talk returns directly to the same chat after visiting another workspace", async () => {
     render(<App />);
-    go("New chat");
+    await newTopic();
     await screen.findByTestId("mock-chat");
     fireEvent.click(screen.getByRole("button", { name: "mock establish session" }));
     go("Explore AVA");
@@ -643,7 +670,7 @@ describe("App navigation", () => {
     it("is Talk's message box: sends go into that conversation, never a new one", async () => {
       render(<App />);
       const bar = screen.getByRole("navigation", { name: "AVA" });
-      go("New chat");
+      await newTopic();
       await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
       const mountsBefore = state.chatMounts.length;
       expect(bar.hasAttribute("data-compact")).toBe(false);
@@ -661,7 +688,7 @@ describe("App navigation", () => {
 
     it("turns Send into Stop while AVA replies, and keeps voice one tap away", async () => {
       render(<App />);
-      go("New chat");
+      await newTopic();
       await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
       fireEvent.click(screen.getByRole("button", { name: "mock toggle busy" }));
       const bar = screen.getByRole("navigation", { name: "AVA" });
@@ -677,7 +704,7 @@ describe("App navigation", () => {
     it("gives words back into the bar and keeps a draft across Talk, Voice and Home", async () => {
       render(<App />);
       const bar = screen.getByRole("navigation", { name: "AVA" });
-      go("New chat");
+      await newTopic();
       await screen.findByTestId("mock-chat", undefined, LAZY_ROUTE);
       fireEvent.click(screen.getByRole("button", { name: "mock give words back" }));
       const box = within(bar).getByRole("textbox", { name: "Message AVA" }) as HTMLTextAreaElement;

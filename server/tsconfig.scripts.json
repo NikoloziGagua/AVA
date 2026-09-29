@@ -14,6 +14,7 @@
     "scripts/install-ufo-runtime.ts",
     "scripts/ufo-runtime-smoke.ts",
     "scripts/computer-execution-smoke.ts",
-    "scripts/memory-backfill.ts"
+    "scripts/memory-backfill.ts",
+    "scripts/memory-eval.ts"
   ]
 }

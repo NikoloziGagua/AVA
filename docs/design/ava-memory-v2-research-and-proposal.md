@@ -291,11 +291,29 @@ upkeep is unlikely to pay off. That is my judgement, not a measurement.
    database: 7% of turns would call the embedding; keyword lookup takes 25 ms at the median and 36 ms at
    p95; development-log injections fall to 0 (they were 147 of the 165 items injected since 1 Sep).
    Whether the personal memories it now picks are the right ones is what the evaluation set will judge.
-2. **The one complete loop.** Typed archive with validity and tombstones; the immediate path for explicit
-   requests, including a live voice session; the batched background writer with kinds of statement;
-   FTS5; deep recall with sources; the first Brief; the "What AVA knows" screen after its mockup is
-   approved. Gate: the evaluation score goes up, no category gets worse, and the voice and recall latency
-   budgets hold.
+2. **The one complete loop: built, off by default (`AVA_MEMORY_V2=on` switches it on).** Commits `db0c084`,
+   `7b24d4e`, `6d939b7`, `de3b0ac`:
+   - the archive (`server/src/memory-archive/`): typed records with speech acts, validity, history and
+     FTS5 search. Forget leaves only tombstones (fingerprints and message ids);
+   - the Brief, which replaces the preferences and observations blocks in the shared system prompt;
+   - the background writer: an idle-triggered server job plus `scripts/memory-backfill.ts`, which runs on a
+     copy by default. Deterministic rules decide what a model proposal may write;
+   - tools: recall with source messages, list, remember, correct, forget, stop carrying and read. Explicit
+     changes reach a live GPT-Live call at once;
+   - the v2 tool rubric, the evaluation harness (`scripts/memory-eval.ts`) and the import of a reviewed
+     archive into the live database (`scripts/memory-import.ts`).
+
+   The first backfill trial read 29 of 88 conversations before the OpenAI credits ran out. It kept real
+   facts with their history and no background-audio junk. It also stored AVA feature requests as personal
+   memory and a one-off "turn that watcher off" as a standing rule; the extraction rules were tightened for
+   both. Still to do:
+   - rerun the backfill;
+   - Niko reviews what it learned and confirms the evaluation answers;
+   - score old against new;
+   - import and switch on;
+   - the "What AVA knows" screen after its mockup is approved.
+
+   Gate: the evaluation score goes up, no category gets worse, and the voice and recall latency budgets hold.
 3. Recent digest and compression of the long conversation, dreaming, stale checks said out loud,
    commitments into follow-ups.
 4. Only if the evaluation shows a need: local embeddings and prefetch.

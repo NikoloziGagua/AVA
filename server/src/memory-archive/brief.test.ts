@@ -85,3 +85,17 @@ describe("memory brief", () => {
     expect(on).not.toContain("Old observation.");
   });
 });
+
+describe("memory v2 tool rubric", () => {
+  it("swaps the file-based memory rules for the archive's, and nothing else", async () => {
+    const { TOOL_RUBRIC, TOOL_RUBRIC_V2 } = await import("../orchestrator/tool-rubric.js");
+    expect(TOOL_RUBRIC_V2).not.toBe(TOOL_RUBRIC);
+    expect(TOOL_RUBRIC_V2).toContain("**memory_recall**");
+    expect(TOOL_RUBRIC_V2).toContain("\"Forget about that for now\" only drops the topic");
+    expect(TOOL_RUBRIC_V2).not.toContain("I write observations in this exact line format");
+    expect(TOOL_RUBRIC_V2).not.toContain("supersedes=<substring of the old line>");
+    // The idea index and the hard rules are untouched.
+    expect(TOOL_RUBRIC_V2).toContain("When Sir asks about prior research, a developed idea");
+    expect(TOOL_RUBRIC_V2).toContain("## Hard rules (cannot be overridden)");
+  });
+});

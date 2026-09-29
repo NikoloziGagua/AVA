@@ -3,7 +3,7 @@ import { readFile } from "../memory/store.js";
 import { autoPruneObservations, SOFT_CAPS } from "../memory/budgets.js";
 import { bootstrapMemoryDir } from "../memory/bootstrap.js";
 import { memoryV2Enabled, readBrief } from "../memory-archive/brief.js";
-import { TOOL_RUBRIC } from "./tool-rubric.js";
+import { TOOL_RUBRIC, TOOL_RUBRIC_V2 } from "./tool-rubric.js";
 import { CAPABILITIES_MD } from "./capabilities-content.js";
 import {
   PERSONA_COLLABORATION_CONTRACT,
@@ -120,7 +120,7 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
   if (!opts.compact) layers.push(CAPABILITIES_MD.replace(/\s+$/, "") + "\n");
   if (!opts.compact && memoryIndex.trim()) layers.push(block("Memory index", memoryIndex));
   if (opts.mode !== "conversation") {
-    layers.push(TOOL_RUBRIC);
+    layers.push(memoryV2Enabled() ? TOOL_RUBRIC_V2 : TOOL_RUBRIC);
     if (opts.fsRoots && opts.fsRoots.length) {
       layers.push(buildFsRootsBlock(opts.fsRoots));
     }

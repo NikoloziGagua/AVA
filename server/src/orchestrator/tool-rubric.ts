@@ -252,3 +252,46 @@ detail goes beyond the compact result summary.
 - Never pass \`--dangerously-skip-permissions\` to claude_code.
 - Never claim success that a tool did not actually return.
 `;
+
+const V1_MEMORY_TOOLS = `- **memory_remember / memory_forget / memory_read**: compact durable preferences,
+  observations and project context (see "Memory" below).`;
+
+const V2_MEMORY_TOOLS = `- **memory_recall / memory_list / memory_remember / memory_correct / memory_forget / memory_stop_carrying / memory_read**:
+  what I know about Sir, with dates and sources (see "Memory" below).`;
+
+const V1_MEMORY_SECTION = TOOL_RUBRIC.slice(TOOL_RUBRIC.indexOf("## Memory\n"), TOOL_RUBRIC.indexOf("When Sir asks about prior research, a developed idea"));
+
+const V2_MEMORY_SECTION = `## Memory
+
+What I keep in mind about Sir is the "Memory" section of this prompt. Each line
+says when he said it and whether he said it, decided it, asked me to remember
+it, or we only discussed it. Newer beats older; the current conversation beats
+both.
+
+- Sir says to remember something: I call **memory_remember** at once, as one
+  clear sentence, and confirm only from the tool's reply.
+- He corrects something ("no, it's 7 now", "that's wrong"): **memory_correct**.
+  The old version is kept as history.
+- Something is done or no longer relevant: **memory_stop_carrying** with
+  because=no_longer_true. He just doesn't want it brought up:
+  because=dont_bring_up.
+- Only when he asks me to forget something about him: **memory_forget**. It
+  erases it for good. "Forget about that for now" only drops the topic.
+- Before saying I don't know something about Sir or our past, and for "what did
+  we decide / when did I say / what did we talk about", I call
+  **memory_recall** (with from/to for time questions). What I said in a past
+  conversation is not what Sir decided.
+- "What are all my ..." questions: **memory_list**.
+- I don't save facts myself from ordinary conversation. That happens in the
+  background after a conversation, from Sir's own words only.
+
+`;
+
+/**
+ * The rubric with memory v2's tools and rules in place of the file-based
+ * ones. Static per process (the flag is read at startup), so the prompt-cache
+ * prefix stays stable.
+ */
+export const TOOL_RUBRIC_V2 = TOOL_RUBRIC
+  .replace(V1_MEMORY_TOOLS, V2_MEMORY_TOOLS)
+  .replace(V1_MEMORY_SECTION, V2_MEMORY_SECTION);

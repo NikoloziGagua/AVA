@@ -75,6 +75,10 @@ import { bootstrapMemoryDir } from "./memory/bootstrap.js";
 import { MemoryIndexService } from "./memory-index/store.js";
 import { OpenAIMemoryEmbedder } from "./memory-index/embedding.js";
 import { AutoMemoryCaptureCoordinator } from "./memory-index/auto-capture.js";
+import { MemoryArchive } from "./memory-archive/archive.js";
+import { keepBriefCurrent, memoryV2Enabled } from "./memory-archive/brief.js";
+import { openAIExtractionModel } from "./memory-archive/extractor.js";
+import { startMemoryExtraction } from "./memory-archive/scheduler.js";
 import { ActivepiecesWebhookExecutor } from "./automations/activepieces.js";
 import { AutomationPlaybookService, buildAutomationWorkflowRegistrations } from "./automations/playbooks.js";
 import { GeneratedPlaybookService } from "./automations/generated-playbooks.js";
@@ -680,6 +684,25 @@ void improvementIndex.reconcileRecent(1_000).then((result) => {
 const memoryAutoCapture = provider
   ? new AutoMemoryCaptureCoordinator(db, provider, memoryIndex).consider
   : undefined;
+// Memory v2 (docs/design/ava-memory-v2-research-and-proposal.md). The archive
+// always exists so its tables and history stay intact; it drives the Brief,
+// the memory tools and the background writer only when AVA_MEMORY_V2=on.
+const memoryArchive = new MemoryArchive(db);
+const stopMemoryV2: Array<() => void> = [];
+if (memoryV2Enabled()) {
+  stopMemoryV2.push(keepBriefCurrent(cfg.memoryDir, memoryArchive));
+  if (openai) {
+    const extraction = startMemoryExtraction({
+      db,
+      archive: memoryArchive,
+      model: openAIExtractionModel(openai, process.env.AVA_MEMORY_MODEL?.trim() || "gpt-5.6",
+        (process.env.AVA_MEMORY_EFFORT?.trim() as "low" | "medium" | "high" | undefined) || "medium"),
+      log: { info: (obj, msg) => log.info(obj as object, msg), warn: (obj, msg) => log.warn(obj as object, msg) },
+    });
+    stopMemoryV2.push(extraction.stop);
+  }
+  log.info({ counts: memoryArchive.counts() }, "memory v2: on (brief, archive tools, background writer)");
+}
 
 const agentDeps: AgentDeps = {
   pidfiles,
@@ -687,6 +710,7 @@ const agentDeps: AgentDeps = {
   memoryDir: cfg.memoryDir,
   memoryIndex,
   memoryAutoCapture,
+  memoryArchive,
   dataDir: cfg.dataDir,
   agentroom: agentroomService,
   getChrome,
@@ -870,6 +894,7 @@ async function shutdown(reason: string) {
   // next process (tsx watch / self-dev restart) instead of racing EADDRINUSE.
   clearInterval(initiativeTimer);
   initiativeEngine.stop();
+  for (const stop of stopMemoryV2) { try { stop(); } catch { /* best-effort */ } }
   try { httpServer.close(); } catch { /* may not be listening yet */ }
   if (chromePromise) {
     try {
@@ -1110,6 +1135,7 @@ const realtimeProxy = buildRealtimeProxy({
   runAction: runVoiceAction,
   memoryIndex,
   memoryAutoCapture,
+  memoryArchive,
   observability,
   voice: process.env.REALTIME_VOICE || undefined,
   providerConfig: resolveVoiceProvider(),

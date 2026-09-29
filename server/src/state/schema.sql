@@ -954,3 +954,115 @@ CREATE TABLE IF NOT EXISTS calendar_event_exceptions (
 
 CREATE INDEX IF NOT EXISTS idx_calendar_exceptions_event
   ON calendar_event_exceptions(event_id, occurrence_local_date);
+
+-- Memory archive (memory v2): typed, dated records of what Niko has told AVA.
+-- A change never overwrites: the old record becomes history with valid_to and
+-- superseded_by_id set. Only "forget" deletes, and it leaves a tombstone so
+-- extraction and backfill can never recreate the fact. seq is the stable
+-- rowid the full-text index follows (a TEXT primary key's rowid can change
+-- on VACUUM).
+CREATE TABLE IF NOT EXISTS memory_records (
+  seq INTEGER PRIMARY KEY,
+  id TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL CHECK (kind IN ('fact','person','project','decision','commitment','preference','event')),
+  topic TEXT NOT NULL,
+  text TEXT NOT NULL,
+  speech_act TEXT NOT NULL CHECK (speech_act IN ('stated','decided','requested','discussed','inferred')),
+  status TEXT NOT NULL CHECK (status IN ('active','history','unconfirmed')),
+  carry INTEGER NOT NULL DEFAULT 1 CHECK (carry IN (0,1)),
+  sensitive INTEGER NOT NULL DEFAULT 0 CHECK (sensitive IN (0,1)),
+  confidence TEXT NOT NULL CHECK (confidence IN ('high','medium','low')),
+  origin TEXT NOT NULL CHECK (origin IN ('explicit','conversation','backfill','migration')),
+  source_session_id TEXT,
+  source_message_ids TEXT NOT NULL DEFAULT '[]',
+  said_at INTEGER NOT NULL,
+  valid_from INTEGER NOT NULL,
+  valid_to INTEGER,
+  due_at INTEGER,
+  supersedes_id TEXT,
+  superseded_by_id TEXT,
+  text_fingerprint TEXT NOT NULL,
+  topic_fingerprint TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_records_current
+  ON memory_records(status, kind, said_at);
+CREATE INDEX IF NOT EXISTS idx_memory_records_topic
+  ON memory_records(topic_fingerprint, kind, status);
+CREATE INDEX IF NOT EXISTS idx_memory_records_text
+  ON memory_records(text_fingerprint);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_records_fts USING fts5(
+  topic, text, content='memory_records', content_rowid='seq',
+  tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS memory_records_fts_insert AFTER INSERT ON memory_records BEGIN
+  INSERT INTO memory_records_fts(rowid, topic, text) VALUES (new.seq, new.topic, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_records_fts_delete AFTER DELETE ON memory_records BEGIN
+  INSERT INTO memory_records_fts(memory_records_fts, rowid, topic, text) VALUES ('delete', old.seq, old.topic, old.text);
+END;
+CREATE TRIGGER IF NOT EXISTS memory_records_fts_update AFTER UPDATE OF topic, text ON memory_records BEGIN
+  INSERT INTO memory_records_fts(memory_records_fts, rowid, topic, text) VALUES ('delete', old.seq, old.topic, old.text);
+  INSERT INTO memory_records_fts(rowid, topic, text) VALUES (new.seq, new.topic, new.text);
+END;
+
+-- What "forget" leaves behind: fingerprints and message ids, never the text.
+-- A candidate matching any of them is refused, and recall skips the messages.
+CREATE TABLE IF NOT EXISTS memory_tombstones (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  text_fingerprint TEXT NOT NULL,
+  topic_fingerprint TEXT NOT NULL,
+  reason TEXT NOT NULL CHECK (reason IN ('forgotten','rejected','forgotten_index_entry')),
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_tombstones_text ON memory_tombstones(text_fingerprint);
+CREATE INDEX IF NOT EXISTS idx_memory_tombstones_topic ON memory_tombstones(topic_fingerprint, kind);
+
+CREATE TABLE IF NOT EXISTS memory_tombstone_messages (
+  message_id INTEGER NOT NULL,
+  tombstone_id TEXT NOT NULL REFERENCES memory_tombstones(id) ON DELETE CASCADE,
+  PRIMARY KEY (message_id, tombstone_id)
+);
+
+-- Append-only log of every memory change: the "just learned" feed and the
+-- audit trail. A forgotten record's events keep no summary.
+CREATE TABLE IF NOT EXISTS memory_record_events (
+  seq INTEGER PRIMARY KEY,
+  record_id TEXT NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('added','updated','ended','stopped_carrying','carried','confirmed','forgotten')),
+  actor TEXT NOT NULL CHECK (actor IN ('niko','ava','extractor','backfill','migration')),
+  summary TEXT,
+  session_id TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_record_events_created
+  ON memory_record_events(created_at DESC, seq DESC);
+
+-- How far the background extractor has read each conversation.
+CREATE TABLE IF NOT EXISTS memory_extraction_state (
+  session_id TEXT PRIMARY KEY,
+  through_message_id INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS memory_extraction_runs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  from_message_id INTEGER NOT NULL,
+  through_message_id INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('running','completed','failed')),
+  model TEXT,
+  proposed INTEGER NOT NULL DEFAULT 0,
+  applied INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER
+);

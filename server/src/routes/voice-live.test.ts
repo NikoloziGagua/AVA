@@ -4,6 +4,7 @@ import { WebSocket } from "ws";
 import { openInMemoryDb } from "../state/db.js";
 import { createSession } from "../state/sessions.js";
 import { listMessages } from "../state/messages.js";
+import { MemoryArchive } from "../memory-archive/archive.js";
 import {
   startLiveSession, LIVE_MAX_PENDING_JOBS, LIVE_MAX_DELEGATION_IDS,
   LIVE_RESULT_HISTORY, LIVE_RESULT_CHARS, type LiveRunAction,
@@ -176,5 +177,40 @@ describe("GPT-Live delegated work continuity", () => {
     expect(f.calls).toHaveBeenCalledTimes(1);
     expect(f.calls.mock.calls[0]![1]).toContain("Exact Name_150 / path?x=1");
     expect(listMessages(f.db, f.sessionId)).toMatchObject([{ role: "user", content: "Exact Name_150 / path?x=1" }]);
+  });
+});
+
+describe("GPT-Live memory updates during a call", () => {
+  it("pushes Sir's own memory changes in this conversation at once, and never a forget's content", async () => {
+    const db = openInMemoryDb();
+    const sessionId = createSession(db, { title: "Synthetic voice test", origin: "human" }).id;
+    const archive = new MemoryArchive(db);
+    const client = new Socket(), upstream = new Socket();
+    const started = startLiveSession({
+      client: client as unknown as WebSocket, db,
+      binding: { version: 1, sessionId, origin: "human", resolution: "resumed_exact" },
+      apiKey: "not-a-real-key", instructions: "Synthetic fixture", memoryArchive: archive,
+      hello: () => JSON.stringify({ type: "ava.session", sessionId }),
+      connect: () => upstream as unknown as WebSocket,
+    });
+    upstream.emit("open");
+    upstream.emit("message", Buffer.from(JSON.stringify({ type: "session.started" })));
+    await started;
+    cleanups.push(() => { client.close(); upstream.close(); db.close(); });
+    const appended = () => upstream.frames.filter((frame) => frame.type === "session.instructions.append").map((frame) => frame.content as string);
+    const base = { kind: "fact" as const, speechAct: "requested" as const, confidence: "high" as const, origin: "explicit" as const, saidAt: Date.now() };
+    const mine = archive.add({ ...base, topic: "gym time", text: "Sir trains at 7 pm now." }, "niko", sessionId);
+    archive.add({ ...base, topic: "other", text: "From another conversation." }, "niko", "some-other-session");
+    archive.add({ ...base, topic: "background", text: "Learned in the background.", origin: "conversation" }, "extractor", sessionId);
+    expect(appended()).toEqual([expect.stringContaining("Memory update just now: Sir trains at 7 pm now.")]);
+    if (!mine.ok) throw new Error("setup failed");
+    archive.forget(mine.record.id, "niko", { sessionId });
+    expect(appended()).toHaveLength(2);
+    expect(appended()[1]).toContain("asked me to forget something");
+    expect(appended()[1]).not.toContain("7 pm");
+    client.close();
+    await tick();
+    archive.add({ ...base, topic: "late", text: "After the call ended." }, "niko", sessionId);
+    expect(appended()).toHaveLength(2);
   });
 });

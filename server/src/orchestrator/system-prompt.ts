@@ -2,6 +2,7 @@ import { memoryPaths } from "../memory/paths.js";
 import { readFile } from "../memory/store.js";
 import { autoPruneObservations, SOFT_CAPS } from "../memory/budgets.js";
 import { bootstrapMemoryDir } from "../memory/bootstrap.js";
+import { memoryV2Enabled, readBrief } from "../memory-archive/brief.js";
 import { TOOL_RUBRIC } from "./tool-rubric.js";
 import { CAPABILITIES_MD } from "./capabilities-content.js";
 import {
@@ -125,8 +126,16 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
     }
     layers.push(buildRemindersBlock(opts.timeZone ?? pcTimeZone()));
   }
-  if (preferences.trim()) layers.push(block("Preferences", preferences));
-  if (observations.trim()) layers.push(block("Observations", observations));
+  if (memoryV2Enabled()) {
+    // Memory v2: the Brief, rendered from the memory archive, replaces the
+    // preferences and observations files. Reading both would bring back the
+    // two-stores problem (a fact forgotten in one place, alive in the other).
+    const brief = readBrief(opts.memoryDir);
+    if (brief.trim()) layers.push(brief.replace(/\s+$/, "") + "\n");
+  } else {
+    if (preferences.trim()) layers.push(block("Preferences", preferences));
+    if (observations.trim()) layers.push(block("Observations", observations));
+  }
   if (opts.projectContext && opts.projectContext.trim()) {
     layers.push(block("Project context", opts.projectContext));
   }

@@ -37,6 +37,7 @@ import type { ObservabilityService } from "../observability/store.js";
 import type { ObservabilityParentContext, ObservabilityRunStatus } from "../observability/types.js";
 import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
 import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
+import type { MemoryArchive } from "../memory-archive/archive.js";
 import type { MemoryIndexService } from "../memory-index/store.js";
 import {
   memoryContextFromDecision,
@@ -920,6 +921,8 @@ export interface RealtimeProxyDeps {
   observability?: ObservabilityService;
   /** Shared post-turn durable-memory gate used by chat and both voice providers. */
   memoryAutoCapture?: AutoMemoryCapture;
+  /** Memory v2 archive: explicit changes during a GPT-Live call are pushed to it at once. */
+  memoryArchive?: MemoryArchive;
   /** Shared source-verified retrieval gate used before chat/voice model replies. */
   memoryIndex?: MemoryIndexService;
   /** Test seam: open the GPT-Live upstream socket. */
@@ -1027,6 +1030,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         runAction: deps.runAction,
         memoryIndex: deps.memoryIndex,
         memoryAutoCapture: deps.memoryAutoCapture,
+        memoryArchive: deps.memoryArchive,
         observability: deps.observability,
         log,
         hello: (mode) => JSON.stringify({ type: "ava.session", sessionId: binding.sessionId, mode, binding }),

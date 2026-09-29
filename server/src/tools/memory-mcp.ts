@@ -9,12 +9,17 @@ import type { Db } from "../state/db.js";
 import { listMessages } from "../state/messages.js";
 import { MemoryIndexService } from "../memory-index/store.js";
 import { CONVERSATION_MEMORY_KINDS, MEMORY_PRIVACY_LEVELS, type ConversationMemoryKind, type MemoryPrivacyLevel } from "../memory-index/types.js";
+import type { MemoryArchive } from "../memory-archive/archive.js";
+import { memoryV2Enabled } from "../memory-archive/brief.js";
+import { buildMemoryArchiveTools } from "./memory-archive-mcp.js";
 
 export type MemoryToolDeps = {
   memoryDir: string;
   db?: Db;
   index?: MemoryIndexService;
   sessionId?: string | null;
+  /** Memory v2 archive; its tools replace the file-based ones when AVA_MEMORY_V2=on. */
+  archive?: MemoryArchive;
 };
 
 function buildMemoryRead(deps: MemoryToolDeps): ToolDef {
@@ -607,6 +612,15 @@ export function buildMemoryIndexTools(deps: MemoryToolDeps): ToolDef[] {
 }
 
 export function buildMemoryTools(deps: MemoryToolDeps): ToolDef[] {
+  // Memory v2: the archive owns facts about Niko, so the file-based
+  // remember/forget/read tools are replaced rather than offered alongside
+  // (two writable stores is how a forget left a live copy behind).
+  if (memoryV2Enabled() && deps.archive && deps.db) {
+    return [
+      ...buildMemoryArchiveTools({ db: deps.db, archive: deps.archive, memoryDir: deps.memoryDir, sessionId: deps.sessionId }),
+      ...buildMemoryIndexTools(deps),
+    ];
+  }
   return [
     buildMemoryRead(deps),
     buildMemoryRemember(deps),

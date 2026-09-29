@@ -79,6 +79,8 @@ import { getReasoningLevel } from "../state/reasoning-pref.js";
 import { mapReasoning } from "../orchestrator/reasoning.js";
 import { detectCorrection, formatCorrection } from "../orchestrator/correction-detector.js";
 import { rememberObservation } from "../memory/remember.js";
+import type { MemoryArchive } from "../memory-archive/archive.js";
+import { memoryV2Enabled } from "../memory-archive/brief.js";
 import { maybeCapture } from "../playbooks/capture.js";
 import { matchPlaybook } from "../playbooks/match.js";
 import { loadPlaybookIndex, readPlaybook } from "../playbooks/store.js";
@@ -216,6 +218,8 @@ export type AgentDeps = {
   memoryIndex?: MemoryIndexService;
   /** Best-effort post-turn research/idea capture; never delays or changes chat delivery. */
   memoryAutoCapture?: AutoMemoryCapture;
+  /** Memory v2 archive (typed records about Niko); used only when AVA_MEMORY_V2=on. */
+  memoryArchive?: MemoryArchive;
   dataDir: string;
   getChrome: () => Promise<Chrome>;
   pushDeliver?: (a: Approval) => Promise<void>;
@@ -339,8 +343,10 @@ export function chatRoutes(
     const createdNew = binding.resolution === "created" && listMessages(db, sessionId).length === 0;
     // Auto-learn from corrections: if the user is pushing back on the previous
     // assistant turn within 5 minutes, capture it as a low-confidence preference
-    // observation. Fire-and-forget; never blocks dispatch.
-    if (actor === "human" && parsed.data.persist !== false) {
+    // observation. Fire-and-forget; never blocks dispatch. With memory v2 the
+    // background extractor reads corrections in context instead: this pasted
+    // "AVA said ... / Sir: ..." pairs into a file the Brief no longer reads.
+    if (actor === "human" && parsed.data.persist !== false && !memoryV2Enabled()) {
       const prior = listMessages(db, sessionId).at(-1);
       const corrected = detectCorrection({
         userText: parsed.data.text,
@@ -933,6 +939,7 @@ export function chatRoutes(
           db,
           index: agentDeps.memoryIndex,
           sessionId: sid,
+          archive: agentDeps.memoryArchive,
         });
         // Notes stay available in both routing modes: "put this in Notes" is a
         // lightweight conversational instruction, but it must still persist a

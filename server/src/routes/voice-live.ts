@@ -29,6 +29,8 @@ import {
   type AutomaticMemoryDecision,
 } from "../memory-index/auto-retrieve.js";
 import type { MemoryIndexService } from "../memory-index/store.js";
+import type { MemoryArchive } from "../memory-archive/archive.js";
+import type { MemoryChange } from "../memory-archive/types.js";
 import type { ObservabilityService } from "../observability/store.js";
 import type { ObservabilityParentContext } from "../observability/types.js";
 import { voiceMemoryBudget, withinBudget } from "./voice-memory-budget.js";
@@ -147,6 +149,28 @@ export function compactMemoryNote(decision: AutomaticMemoryDecision): string | n
   );
 }
 
+/**
+ * What GPT-Live is told when Sir changes his memory mid-call, so the rest of
+ * the call uses it without reconnecting. A forget never carries its content.
+ */
+export function liveMemoryUpdate(change: MemoryChange): string | null {
+  const text = change.record?.text;
+  switch (change.action) {
+    case "added":
+    case "updated":
+    case "confirmed":
+      return text ? clipForLive(`Memory update just now: ${text} Use this from now on; it replaces anything older on the same subject.`) : null;
+    case "ended":
+      return text ? clipForLive(`Memory update just now: this is no longer current: ${text}`) : null;
+    case "stopped_carrying":
+      return text ? clipForLive(`Memory update just now: Sir asked me not to bring this up again: ${text}`) : null;
+    case "forgotten":
+      return "Memory update just now: Sir asked me to forget something he told me. Do not repeat it or refer to it.";
+    default:
+      return null;
+  }
+}
+
 type HistoryItem = {
   type: "message";
   role: "user" | "assistant";
@@ -241,6 +265,8 @@ export type LiveSessionContext = {
   runAction?: LiveRunAction;
   memoryIndex?: MemoryIndexService;
   memoryAutoCapture?: (input: { sessionId: string; userMessageId: number; assistantMessageId: number; channel: "voice" }) => Promise<unknown>;
+  /** Memory v2: explicit changes Sir makes during the call are pushed to GPT-Live at once. */
+  memoryArchive?: MemoryArchive;
   observability?: ObservabilityService;
   log?: Log;
   /** Frames the browser sent before the upstream was ready. */
@@ -315,6 +341,19 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
   const sendUpstream = (event: Record<string, unknown>) => {
     try { if (upstream.readyState === WebSocket.OPEN) upstream.send(JSON.stringify(event)); } catch { /* upstream closed */ }
   };
+
+  // Only Sir's own explicit changes in this conversation travel mid-call; the
+  // background writer's changes reach the next session through the Brief.
+  let lastForgetNote = 0;
+  const stopMemoryUpdates = ctx.memoryArchive?.subscribe((change) => {
+    if (closed || change.actor !== "niko" || !sessionId || change.sessionId !== sessionId) return;
+    if (change.action === "forgotten") {
+      if (Date.now() - lastForgetNote < 2_000) return; // one note for all erased versions
+      lastForgetNote = Date.now();
+    }
+    const content = liveMemoryUpdate(change);
+    if (content) sendUpstream({ type: "session.instructions.append", event_id: `memory_${nanoid(6)}`, delegation_id: null, content });
+  });
 
   const lookupMemory = (text: string) => {
     if (!ctx.memoryIndex || !sessionId) return;
@@ -460,6 +499,7 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
   const finish = (reason: string) => {
     if (closed) return;
     closed = true;
+    stopMemoryUpdates?.();
     flushTurn();
     cancelActions();
     record({

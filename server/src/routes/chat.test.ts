@@ -63,6 +63,25 @@ describe("authoritative chat conversation binding", () => {
     expect(listSessions(db)).toHaveLength(1);
   });
 
+  it("reports the exact stored row of the accepted turn, even when the same words repeat", async () => {
+    const first = await send({ text: "same words" });
+    const id = first.body.sessionId;
+    const second = await send({ sessionId: id, text: "same words" });
+    const rows = listMessages(db, id).filter((m) => m.role === "user");
+    expect(rows).toHaveLength(2);
+    expect(first.body.userMessageId).toBe(rows[0]!.id);
+    expect(second.body.userMessageId).toBe(rows[1]!.id);
+    expect(second.body.userMessageId).not.toBe(first.body.userMessageId);
+  });
+
+  it("reports no accepted-turn row when nothing was stored (persist:false), and adds no writes", async () => {
+    const session = createSession(db, { origin: "human" });
+    const before = listMessages(db, session.id).length;
+    const result = await send({ sessionId: session.id, voice: true, persist: false }, "voice_action");
+    expect(result.body.userMessageId).toBeNull();
+    expect(listMessages(db, session.id).filter((m) => m.role === "user")).toHaveLength(before);
+  });
+
   it("an accepted reply engages the exact assistant invitation once, not delegated audit turns", async () => {
     const f = initiativeFixture(db); await f.engine.tick();
     const row = f.rows()[0]!;

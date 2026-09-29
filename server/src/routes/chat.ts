@@ -1190,7 +1190,9 @@ export function chatRoutes(
       }
     })();
 
-    res.json({ sessionId, taskId: runId, binding });
+    // userMessageId is the accepted turn's exact stored row (null when nothing was stored,
+    // e.g. persist:false), so a client can tell which row is its own turn without matching text.
+    res.json({ sessionId, taskId: runId, binding, userMessageId: persistedUserMessageId });
   });
 
   r.get("/:sessionId/stream", auth, (req, res) => {

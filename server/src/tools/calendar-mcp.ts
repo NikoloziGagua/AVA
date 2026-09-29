@@ -15,7 +15,10 @@ import {
   type CalendarSource,
 } from "../calendar/types.js";
 import {
+  archiveCalendarEvent,
   createCalendarEvent,
+  endCalendarSeries,
+  getCalendarEvent,
   queryCalendar,
   splitCalendarEvent,
   updateCalendarEvent,
@@ -82,9 +85,51 @@ function exceptionPatchFromArgs(args: Record<string, unknown>): CalendarExceptio
   return patch;
 }
 
+const NOTHING_CHANGED = "Nothing changed; the calendar already matches.";
+const NO_REPEAT = "Do not repeat the same call.";
+// One sentence naming the correct next call, so a refusal is recovered in one round.
+const RECOVERY: Record<string, string> = {
+  bad_request: "Check the arguments against the tool description.",
+  not_found: "That event no longer exists; call calendar_query for the current list.",
+  stale_version: "The event changed; call calendar_query again and use its current version.",
+  invalid_range: "Ask for a window of at most 90 days.",
+  invalid_timezone: "Use a valid named IANA time zone, such as Europe/Dublin.",
+  nonexistent_local_time: "That local time does not exist because the clocks change; choose another time.",
+  ambiguous_local_time: "That local time occurs twice; choose another time or set dst_policy to earlier or later.",
+  recurrence_too_long: "End the weekly series within one year of its first date.",
+  occurrence_not_found: "Call calendar_query and use an exact original_local_date of that series.",
+  series_started: "This series already has history, so its past can't change. To stop it, call calendar_end_series from a future occurrence; to change future ones, use scope 'following'; to remove a duplicate or mistake, call calendar_remove.",
+  occurrence_started: "That occurrence has already started, so its schedule can't change; pick a later occurrence.",
+  history_conflict: "That would hide or bring back an occurrence that already happened or was recorded; choose a later occurrence.",
+  cancel_scope_unsupported: "To cancel one occurrence use scope 'occurrence'; to stop the series call calendar_end_series; to remove the whole thing call calendar_remove.",
+  field_not_in_scope: "moved_local_date, moved_local_time and moved_duration_minutes only apply to scope 'occurrence'; leave them out for series or following.",
+  not_weekly: "Only a weekly series can be ended; use calendar_remove to remove a one-off event.",
+  archived: "That event was removed; ask Sir before doing anything else with it.",
+  not_archived: "That event isn't removed.",
+  no_occurrence_added: "That end date adds no weekly occurrences; choose a later date.",
+};
 function errorText(error: unknown): string {
-  return error instanceof CalendarError ? `${error.code}: ${error.message}` : "calendar request failed";
+  if (!(error instanceof CalendarError)) return `calendar request failed. ${NO_REPEAT}`;
+  return `${error.code}: ${RECOVERY[error.code] ?? error.message} ${NO_REPEAT}`;
 }
+const badRequest = (detail: string) => ({ ok: false as const, text: `bad_request: ${detail} ${NO_REPEAT}` });
+
+/** v3 guards run before any refusal or no-op, so a stale echo can never look like success. */
+function guardEvent(db: Db, id: string, expected: number) {
+  const event = getCalendarEvent(db, id);
+  if (!event) throw new CalendarError("not_found");
+  if (event.version !== expected) throw new CalendarError("stale_version");
+  if (event.archivedAt !== null) throw new CalendarError("archived");
+}
+/** Occurrence-only fields with a real value can't ride along a series or following update. */
+function refuseOutOfScope(args: Record<string, unknown>): CalendarError | null {
+  if (args.cancelled === true) return new CalendarError("cancel_scope_unsupported");
+  if (args.moved_local_date != null || args.moved_local_time != null || args.moved_duration_minutes != null) {
+    return new CalendarError("field_not_in_scope");
+  }
+  return null;
+}
+const unchanged = (extra: Record<string, unknown>) => JSON.stringify({ changed: false, ...extra, message: NOTHING_CHANGED });
 
 const commonProperties = {
   title: { type: "string", maxLength: 160 },
@@ -185,7 +230,7 @@ export function buildCalendarTools(options: {
     {
       tool: {
         name: "calendar_update",
-        description: "Update a future series, one occurrence, or this-and-following. Query first and pass exact event/occurrence IDs and versions; no fuzzy title matching.",
+        description: "Update a future series, one occurrence, or this-and-following. Query first and pass exact event/occurrence IDs and versions; no fuzzy title matching. cancelled and moved_* apply only to scope 'occurrence'. To stop a series use calendar_end_series; to remove a duplicate use calendar_remove.",
         inputSchema: {
           type: "object",
           properties: {
@@ -206,23 +251,29 @@ export function buildCalendarTools(options: {
       run: async (args) => {
         const id = typeof args.event_id === "string" ? args.event_id : "";
         const expected = finiteInt(args.expected_version);
-        if (!id || expected === undefined) return { ok: false, text: "event_id and expected_version are required" };
+        if (!id || expected === undefined) return badRequest("event_id and expected_version are required.");
         try {
+          if (args.scope === "series" || args.scope === "following") {
+            guardEvent(options.db, id, expected);
+            const refusal = refuseOutOfScope(args);
+            if (refusal) throw refusal;
+          }
           if (args.scope === "series") {
             const event = updateCalendarEvent(options.db, id, expected, patchFromArgs(args), now());
-            return { ok: true, text: JSON.stringify({ event }) };
+            return { ok: true, text: event.version === expected ? unchanged({ event }) : JSON.stringify({ changed: true, event }) };
           }
-          if (typeof args.original_local_date !== "string") return { ok: false, text: "original_local_date is required" };
+          if (typeof args.original_local_date !== "string") return badRequest("original_local_date is required.");
           if (args.scope === "following") {
             const result = splitCalendarEvent(options.db, id, expected, args.original_local_date, patchFromArgs(args), now());
             return { ok: true, text: JSON.stringify(result) };
           }
-          if (args.scope !== "occurrence") return { ok: false, text: "scope must be series, occurrence or following" };
+          if (args.scope !== "occurrence") return badRequest("scope must be series, occurrence or following.");
           const expectedException = args.expected_exception_version === null ? null : finiteInt(args.expected_exception_version) ?? null;
           const exception = upsertCalendarException(
             options.db, id, args.original_local_date, expected, expectedException, exceptionPatchFromArgs(args), now(),
           );
-          return { ok: true, text: JSON.stringify({ exception }) };
+          const changed = (exception?.version ?? 0) !== (expectedException ?? 0);
+          return { ok: true, text: changed ? JSON.stringify({ changed: true, exception }) : unchanged({ exception }) };
         } catch (error) { return { ok: false, text: errorText(error) }; }
       },
     },
@@ -245,23 +296,70 @@ export function buildCalendarTools(options: {
       run: async (args) => {
         const id = typeof args.event_id === "string" ? args.event_id : "";
         const expected = finiteInt(args.expected_version);
-        if (!id || expected === undefined) return { ok: false, text: "event_id and expected_version are required" };
+        if (!id || expected === undefined) return badRequest("event_id and expected_version are required.");
         try {
           if (args.scope === "series") {
             const intent = enumValue(args.attendance_intent, CALENDAR_ATTENDANCE_INTENTS);
-            if (!intent) return { ok: false, text: "attendance_intent is required for a series" };
-            return { ok: true, text: JSON.stringify({
-              event: updateCalendarEvent(options.db, id, expected, { attendanceIntent: intent }, now()),
-            }) };
+            if (!intent) return badRequest("attendance_intent is required for a series.");
+            const event = updateCalendarEvent(options.db, id, expected, { attendanceIntent: intent }, now());
+            return { ok: true, text: event.version === expected ? unchanged({ event }) : JSON.stringify({ changed: true, event }) };
           }
           if (args.scope !== "occurrence" || typeof args.original_local_date !== "string") {
-            return { ok: false, text: "original_local_date is required for an occurrence" };
+            return badRequest("original_local_date is required for an occurrence.");
           }
           const expectedException = args.expected_exception_version === null ? null : finiteInt(args.expected_exception_version) ?? null;
-          return { ok: true, text: JSON.stringify({ exception: upsertCalendarException(
+          const exception = upsertCalendarException(
             options.db, id, args.original_local_date, expected, expectedException,
             exceptionPatchFromArgs(args), now(),
-          ) }) };
+          );
+          const changed = (exception?.version ?? 0) !== (expectedException ?? 0);
+          return { ok: true, text: changed ? JSON.stringify({ changed: true, exception }) : unchanged({ exception }) };
+        } catch (error) { return { ok: false, text: errorText(error) }; }
+      },
+    },
+    {
+      tool: {
+        name: "calendar_end_series",
+        description: "Stop a weekly series from one future occurrence onward while keeping everything before it and anything recorded. Use this when Sir is done with a real series. Query first and pass the exact event id, its current version and the original date of the first occurrence to drop. It is versioned and can be undone in the Calendar screen; you cannot undo it yourself, so say only what was done.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            event_id: { type: "string" }, expected_version: { type: "integer", minimum: 1 },
+            from_original_date: { type: "string", description: "YYYY-MM-DD: the first occurrence that no longer happens." },
+          },
+          required: ["event_id", "expected_version", "from_original_date"],
+        },
+      },
+      run: async (args) => {
+        const id = typeof args.event_id === "string" ? args.event_id : "";
+        const expected = finiteInt(args.expected_version);
+        if (!id || expected === undefined || expected < 1 || typeof args.from_original_date !== "string") {
+          return badRequest("event_id, expected_version (at least 1) and from_original_date are required.");
+        }
+        try { return { ok: true, text: JSON.stringify({ changed: true, ...endCalendarSeries(options.db, id, expected, args.from_original_date, now()) }) }; }
+        catch (error) { return { ok: false, text: errorText(error) }; }
+      },
+    },
+    {
+      tool: {
+        name: "calendar_remove",
+        description: "Remove a whole event or series that is a duplicate or a mistake (nothing is deleted; it can be restored in the Calendar screen). To stop a real series going forward use calendar_end_series instead. Ask Sir to confirm before calling. A series with past occurrences is refused unless include_history is true, which also hides those past occurrences; use it only when Sir wants them gone too. You cannot restore it yourself, so say only what was done.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            event_id: { type: "string" }, expected_version: { type: "integer", minimum: 1 },
+            include_history: { type: "boolean", description: "Also hide past occurrences of a series that has started." },
+          },
+          required: ["event_id", "expected_version"],
+        },
+      },
+      run: async (args) => {
+        const id = typeof args.event_id === "string" ? args.event_id : "";
+        const expected = finiteInt(args.expected_version);
+        if (!id || expected === undefined || expected < 1) return badRequest("event_id and expected_version (at least 1) are required.");
+        try {
+          const event = archiveCalendarEvent(options.db, id, expected, now(), args.include_history === true);
+          return { ok: true, text: JSON.stringify({ changed: event.version !== expected, event }) };
         } catch (error) { return { ok: false, text: errorText(error) }; }
       },
     },

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchCalendarWorkspace, saveCalendarEvent, updateOccurrence } from "./workspace-api.js";
+import { endSeries, extendSeries, fetchCalendarWorkspace, removeEvent, restoreEvent, saveCalendarEvent, updateOccurrence } from "./workspace-api.js";
 import { event, occurrence, workspace } from "./fixtures.test-helper.js";
 const fetcher = vi.fn();
 vi.mock("../auth/tokens.js", () => ({ getToken: () => "fixture-only-token", clearToken: vi.fn() }));
@@ -57,5 +57,55 @@ describe("Existing authenticated calendar contract", () => {
   it("does not issue a mutation for malformed identity", async () => {
     await expect(saveCalendarEvent(event, { ...event, id: "../secret" })).rejects.toThrow("identity");
     expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("calendar-events v3 client", () => {
+  const weeklyEvent = { ...event, recurrenceKind: "weekly" as const, recurrenceUntilDate: "2030-12-27" };
+  it("accepts a real no-op edit (changed:false, same version) and rejects an inconsistent one", async () => {
+    fetcher.mockResolvedValueOnce(response({ event, changed: false })).mockResolvedValueOnce(response({ event: { ...event, version: 2 }, changed: false }));
+    expect(await saveCalendarEvent(event, event)).toEqual(event);
+    await expect(saveCalendarEvent(event, event)).rejects.toMatchObject({ status: 502 });
+  });
+  it("accepts a no-op occurrence update only for a matching row or an expected missing one", async () => {
+    const withRow = { ...occurrence, exceptionVersion: 4 };
+    fetcher.mockResolvedValueOnce(response({ exception: null, changed: false }))
+      .mockResolvedValueOnce(response({ exception: null, changed: false }))
+      .mockResolvedValueOnce(response({ exception: { eventId: event.id, occurrenceLocalDate: occurrence.originalLocalDate, version: 4 }, changed: false }))
+      .mockResolvedValueOnce(response({ exception: { eventId: event.id, occurrenceLocalDate: occurrence.originalLocalDate, version: 5 }, changed: false }));
+    await expect(updateOccurrence(occurrence, { attendanceOutcome: "unknown" })).resolves.toBeUndefined();
+    await expect(updateOccurrence(withRow, { attendanceOutcome: "unknown" })).rejects.toMatchObject({ status: 502 });
+    await expect(updateOccurrence(withRow, { attendanceOutcome: "unknown" })).resolves.toBeUndefined();
+    await expect(updateOccurrence(withRow, { attendanceOutcome: "unknown" })).rejects.toMatchObject({ status: 502 });
+  });
+  it("ends, extends, removes and restores with the exact guarded requests", async () => {
+    const ended = { ...weeklyEvent, version: 2, recurrenceUntilDate: "2030-10-04" };
+    const removed = { ...weeklyEvent, version: 2, archivedAt: 5 };
+    fetcher.mockResolvedValueOnce(response({ event: ended, endedFromOriginalDate: "2030-10-11", previousRecurrenceUntilDate: "2030-12-27" }))
+      .mockResolvedValueOnce(response({ event: { ...weeklyEvent, version: 3 }, previousRecurrenceUntilDate: "2030-10-04" }))
+      .mockResolvedValueOnce(response({ event: removed }))
+      .mockResolvedValueOnce(response({ event: { ...weeklyEvent, version: 3 } }));
+    const done = await endSeries(weeklyEvent, "2030-10-11");
+    expect(done.previousRecurrenceUntilDate).toBe("2030-12-27");
+    await extendSeries(ended, "2030-12-27");
+    await removeEvent(weeklyEvent, true);
+    await restoreEvent(removed);
+    const calls = fetcher.mock.calls.map(([url, init]) => [init.method, url, init.body ? JSON.parse(init.body) : null]);
+    expect(calls).toEqual([
+      ["POST", "/api/calendar/events/cal_fixture/end", { expectedVersion: 1, fromOriginalDate: "2030-10-11" }],
+      ["POST", "/api/calendar/events/cal_fixture/extend", { expectedVersion: 2, recurrenceUntilDate: "2030-12-27" }],
+      ["DELETE", "/api/calendar/events/cal_fixture?expectedVersion=1&includeHistory=true", null],
+      ["POST", "/api/calendar/events/cal_fixture/restore", { expectedVersion: 2 }],
+    ]);
+  });
+  it("omits includeHistory when the series hasn't started, and rejects an unconfirmed removal", async () => {
+    fetcher.mockResolvedValueOnce(response({ event: { ...weeklyEvent, version: 2, archivedAt: 5 } })).mockResolvedValueOnce(response({ event: { ...weeklyEvent, version: 2 } }));
+    await removeEvent(weeklyEvent, false);
+    expect(fetcher.mock.calls[0]![0]).toBe("/api/calendar/events/cal_fixture?expectedVersion=1");
+    await expect(removeEvent(weeklyEvent, false)).rejects.toMatchObject({ status: 502 });
+  });
+  it("shows specific copy for the new refusals", async () => {
+    fetcher.mockResolvedValueOnce(response({ error: "history_conflict" }, 400));
+    await expect(endSeries(weeklyEvent, "2030-10-11")).rejects.toMatchObject({ status: 400, message: expect.stringContaining("Choose a later occurrence") });
   });
 });

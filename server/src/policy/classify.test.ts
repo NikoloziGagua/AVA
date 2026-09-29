@@ -7,7 +7,7 @@ describe("classifyRisk", () => {
     for (const recurrence_kind of ["none", "weekly"]) {
       expect(classifyRisk("calendar_add", { recurrence_kind }).tier).toBe("low");
     }
-    for (const tool of ["calendar_update", "calendar_set_attendance"]) {
+    for (const tool of ["calendar_update", "calendar_set_attendance", "calendar_end_series", "calendar_remove"]) {
       expect(classifyRisk(tool, {}).tier).toBe("low");
     }
     for (const tool of ["calendar_remind", "unknown_calendar_tool"]) {

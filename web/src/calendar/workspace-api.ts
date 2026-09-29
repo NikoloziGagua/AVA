@@ -30,6 +30,15 @@ const errors: Record<string, string> = {
   ambiguous_local_time: "This time occurs twice when the clocks change. Choose earlier or later in Clock changes.",
   recurrence_too_long: "A weekly series must end within one year of its first date.",
   bad_request: "The event could not be saved. Check its fields; past series cannot be rewritten.",
+  series_started: "This series already has history, so its past can't be changed. Use End series to stop it, or Remove for a duplicate or mistake.",
+  occurrence_started: "That occurrence has already started, so its schedule can't change.",
+  history_conflict: "That would hide or bring back an occurrence that already happened or was recorded. Choose a later occurrence.",
+  cancel_scope_unsupported: "Cancel one occurrence, end the series, or remove the whole series.",
+  field_not_in_scope: "That change belongs somewhere else. Edit the series or a single occurrence.",
+  not_weekly: "Only a weekly series can be ended.",
+  archived: "This event was removed. Restore it before changing it.",
+  not_archived: "This event isn't removed.",
+  no_occurrence_added: "That end date adds no weekly occurrences. Choose a later date.",
 };
 async function request(path: string, init?: RequestInit): Promise<Record<string, unknown>> {
   const headers = new Headers(init?.headers);
@@ -91,7 +100,12 @@ export async function saveCalendarEvent(input: EventInput, base?: EventDefinitio
   const body = await request(`/api/calendar/events${base ? `/${encodeURIComponent(base.id)}` : ""}`, {
     method: base ? "PATCH" : "POST", body: JSON.stringify({ ...input, ...(base ? { expectedVersion: base.version } : {}) }),
   });
-  if (!definitionValid(body.event) || (base && (body.event.id !== base.id || body.event.version <= base.version))) throw new ApiError(502, "The save result is unconfirmed. Close and refresh before making another change.", "invalid_response", null, "/api/calendar/events");
+  // calendar-events v3: an unchanged edit is a real success with the same version and changed:false.
+  const unchanged = base && body.changed === false;
+  if (!definitionValid(body.event) || (base && (body.event.id !== base.id
+    || (unchanged ? body.event.version !== base.version : body.event.version <= base.version)))) {
+    throw new ApiError(502, "The save result is unconfirmed. Close and refresh before making another change.", "invalid_response", null, "/api/calendar/events");
+  }
   return body.event;
 }
 export async function updateOccurrence(base: CalendarOccurrence, patch: OccurrencePatch): Promise<void> {
@@ -99,8 +113,47 @@ export async function updateOccurrence(base: CalendarOccurrence, patch: Occurren
   const body = await request(`/api/calendar/events/${encodeURIComponent(base.eventId)}/occurrences/${base.originalLocalDate}`, {
     method: "PUT", body: JSON.stringify({ ...patch, expectedEventVersion: base.eventVersion, expectedExceptionVersion: base.exceptionVersion }),
   });
-  const result = body.exception as { eventId?: string; occurrenceLocalDate?: string; version?: number } | undefined;
+  const result = body.exception as { eventId?: string; occurrenceLocalDate?: string; version?: number } | null | undefined;
+  // calendar-events v3: nothing changed. Either no exception row exists (null, and none was expected)
+  // or the same row and version come back; anything else is unconfirmed.
+  if (body.changed === false) {
+    const same = result === null ? base.exceptionVersion === null
+      : result?.eventId === base.eventId && result.occurrenceLocalDate === base.originalLocalDate && result.version === base.exceptionVersion;
+    if (!same) throw new ApiError(502, "The update result is unconfirmed. Close and refresh before making another change.", "invalid_response", null, "/api/calendar/events");
+    return;
+  }
   if (result?.eventId !== base.eventId || result.occurrenceLocalDate !== base.originalLocalDate || !Number.isSafeInteger(result.version) || result.version! <= (base.exceptionVersion ?? 0)) {
     throw new ApiError(502, "The update result is unconfirmed. Close and refresh before making another change.", "invalid_response", null, "/api/calendar/events");
   }
+}
+
+const eventPath = (id: string) => `/api/calendar/events/${encodeURIComponent(id)}`;
+function confirmedEvent(value: unknown, base: EventDefinition, archived: boolean | null): EventDefinition {
+  const event = value as EventDefinition;
+  if (!definitionValid(event) || event.id !== base.id || event.version <= base.version || (archived !== null && (event.archivedAt !== null) !== archived)) {
+    throw new ApiError(502, "The result is unconfirmed. Close and refresh before making another change.", "invalid_response", null, "/api/calendar/events");
+  }
+  return event;
+}
+/** End a weekly series from one future occurrence; its past stays. Undo is extendSeries. */
+export async function endSeries(base: EventDefinition, fromOriginalDate: string): Promise<{ event: EventDefinition; previousRecurrenceUntilDate: string }> {
+  const body = await request(`${eventPath(base.id)}/end`, { method: "POST", body: JSON.stringify({ expectedVersion: base.version, fromOriginalDate }) });
+  if (!dateValid(body.previousRecurrenceUntilDate) || body.endedFromOriginalDate !== fromOriginalDate) {
+    throw new ApiError(502, "The result is unconfirmed. Close and refresh before making another change.", "invalid_response", null, "/api/calendar/events");
+  }
+  return { event: confirmedEvent(body.event, base, false), previousRecurrenceUntilDate: body.previousRecurrenceUntilDate as string };
+}
+export async function extendSeries(base: EventDefinition, recurrenceUntilDate: string): Promise<EventDefinition> {
+  const body = await request(`${eventPath(base.id)}/extend`, { method: "POST", body: JSON.stringify({ expectedVersion: base.version, recurrenceUntilDate }) });
+  return confirmedEvent(body.event, base, false);
+}
+/** Hide a whole event or series (nothing is deleted). Undo is restoreEvent. */
+export async function removeEvent(base: EventDefinition, includeHistory: boolean): Promise<EventDefinition> {
+  const query = `expectedVersion=${base.version}${includeHistory ? "&includeHistory=true" : ""}`;
+  const body = await request(`${eventPath(base.id)}?${query}`, { method: "DELETE" });
+  return confirmedEvent(body.event, base, true);
+}
+export async function restoreEvent(base: EventDefinition): Promise<EventDefinition> {
+  const body = await request(`${eventPath(base.id)}/restore`, { method: "POST", body: JSON.stringify({ expectedVersion: base.version }) });
+  return confirmedEvent(body.event, base, false);
 }

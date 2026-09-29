@@ -68,6 +68,9 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   // v3: versioned, validated local edits with stale-write guards. Update may cancel an
   // occurrence or split a series locally; nothing is hard-deleted, sent or dispatched.
   if (tool === "calendar_update" || tool === "calendar_set_attendance") return { tier: "low", reason: "versioned local calendar edit" };
+  // Ending a series or removing an event only hides it: nothing is hard-deleted, both are
+  // versioned, and each can be undone in the Calendar screen. Their descriptions make AVA ask first.
+  if (tool === "calendar_end_series" || tool === "calendar_remove") return { tier: "low", reason: "versioned, reversible local calendar change" };
 
   if (
     tool === "chrome_open" ||

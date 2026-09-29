@@ -3,6 +3,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Atmosphere } from "../design/metal/Atmosphere.js";
 import { ApiError } from "../api.js";
 import { AttendanceEditor, EventEditor } from "./EventEditor.js";
+import { SeriesActions, type Undo } from "./SeriesActions.js";
 import { fetchCalendarWorkspace, type CalendarWorkspace, type EventDefinition } from "./workspace-api.js";
 import { addDays, eventsOnDay, localDate, placeDay, queryWindow, visibleDates } from "./layout.js";
 import { DEFAULT_TIME_ZONE, type CalendarOccurrence } from "./api.js";
@@ -51,6 +52,9 @@ export function CalendarScreen({ onOpenTalk, focusAt, focusOccurrenceKey }: {
   const [selected, setSelected] = useState<string | null>(focusOccurrenceKey ?? null);
   const [editor, setEditor] = useState<{ date: string; base?: EventDefinition } | null>(null);
   const [attendance, setAttendance] = useState<CalendarOccurrence | null>(null);
+  // The last series action's Undo. It stays until dismissed or replaced; it is
+  // this screen's memory only, so a reload or another device won't have it.
+  const [undo, setUndo] = useState<Undo | null>(null), [undoBusy, setUndoBusy] = useState(false), [undoError, setUndoError] = useState<string | null>(null);
   const generation = useRef(0), restoreFocus = useRef<HTMLElement | null>(null);
   const loadedRange = useRef<string | null>(null);
   const timeGrid = useRef<HTMLDivElement>(null);
@@ -95,6 +99,18 @@ export function CalendarScreen({ onOpenTalk, focusAt, focusOccurrenceKey }: {
     close(); setNotice("Saved to your calendar.");
     if (nextDate && nextDate !== date) setDate(nextDate);
   };
+  const seriesDone = (next: Undo) => {
+    // The Undo bar carries the result, so the header notice stays clear.
+    void refresh();
+    setUndo(next); setUndoError(null); setSelected(null);
+  };
+  const runUndo = async () => {
+    if (!undo || undoBusy) return;
+    setUndoBusy(true); setUndoError(null);
+    try { await undo.run(); setUndo(null); void refresh(); setNotice("Back as it was."); }
+    catch (failure) { setUndoError(failure instanceof ApiError ? failure.message : "Undo could not be confirmed. Refresh before trying again."); }
+    finally { setUndoBusy(false); }
+  };
   const move = (direction: number) => {
     if (mode === "month") {
       const next = new Date(`${date.slice(0, 7)}-01T12:00:00Z`);
@@ -132,6 +148,12 @@ export function CalendarScreen({ onOpenTalk, focusAt, focusOccurrenceKey }: {
           <button className="ds-focus ds-calendar-primary" onClick={() => open(() => setEditor({ date }))}><Plus size={17} aria-hidden />New event</button>
         </div>
       </header>
+      {undo && <div role="status" className="ds-calendar-undo flex flex-wrap items-center gap-3 py-3">
+        <span>{undo.text} Undo is available until you leave this screen.</span>
+        <button type="button" disabled={undoBusy} className="ds-focus ds-calendar-quiet" onClick={() => void runUndo()}>{undoBusy ? "Undoing…" : "Undo"}</button>
+        <button type="button" disabled={undoBusy} className="ds-focus ds-calendar-link" onClick={() => setUndo(null)}>Dismiss</button>
+        {undoError && <span role="alert" className="text-danger">{undoError}</span>}
+      </div>}
       {error && <div role="alert" className="flex flex-wrap items-center gap-3 py-5"><p>{error}</p><button className="ds-focus ds-calendar-quiet" onClick={() => void refresh()}>Refresh calendar</button></div>}
       <div className="ds-calendar-panel" aria-busy={loading}>
         <div className="ds-calendar-rail">
@@ -214,7 +236,8 @@ export function CalendarScreen({ onOpenTalk, focusAt, focusOccurrenceKey }: {
             <div className="flex flex-wrap gap-2"><button disabled={loading} className="ds-focus ds-calendar-quiet" onClick={() => open(() => setAttendance(chosen))}>Attendance / this occurrence</button>
               {canEditSeries(definition) && <button disabled={loading} className="ds-focus ds-calendar-quiet" onClick={() => open(() => setEditor({ date, base: definition }))}>Edit event series</button>}
             </div>
-            {!canEditSeries(definition) && <p className="text-meta text-ink-2">This series has started. Whole-series editing is unavailable here to preserve past history; attendance remains editable.</p>}
+            {!canEditSeries(definition) && <p className="text-meta text-ink-2">This series has started. Editing its details is unavailable here to preserve past history; attendance remains editable, and you can end or remove it below.</p>}
+            <SeriesActions key={`${definition.id}:${definition.version}:${chosen.occurrenceKey}`} occurrence={chosen} definition={definition} started={!canEditSeries(definition)} disabled={loading} onDone={seriesDone} />
           </section>}
           {selected && !chosen && data && <p role="status" className="text-meta text-ink-2">Select an event from the current day to see its latest details.</p>}
           <button className="ds-focus ds-calendar-link ds-calendar-make" onClick={() => open(() => setEditor({ date }))}>Make room for something <Plus size={15} aria-hidden /></button>

@@ -91,12 +91,34 @@ HTTP schemas return `{error:"bad_request"}` without reflecting input. Writes
 roll back together on failure. Nothing in these operations schedules a push,
 changes a standing policy rule, or modifies standalone reminders.
 
-**Integration boundary:** this commit supplies services/routes only. The agent
-tool expansion, human-facing recovery copy and Calendar action/Undo controls
-are a separately reviewed follow-up. Until those land, the old tool layer does
-not expose end/remove, and the existing Calendar UI does not expose these new
-actions. Restore/extend are intended to remain HTTP/UI-only in v3. Source
-completion is not evidence that the running server has been promoted.
+**Tools and screen (follow-up increment).** Two AVA tools and Calendar controls
+now use the routes above. Source completion is not evidence that the running
+server has been promoted.
+
+- `calendar_end_series {event_id, expected_version, from_original_date}` and
+  `calendar_remove {event_id, expected_version, include_history}` mirror
+  `POST …/end` and `DELETE`. Both are policy tier `low`: versioned, local and
+  hiding rather than deleting. Their descriptions tell AVA to ask Niko before
+  removing and never to claim an undo she cannot perform. Restore and extend
+  stay HTTP/Calendar-screen only.
+- `calendar_update` checks existence, archive and version first, then refuses
+  `cancelled:true` with `cancel_scope_unsupported` and any non-null `moved_*`
+  field with `field_not_in_scope` on the series and following scopes, so a strict
+  echo can never turn a failed cancellation into a split or a false success.
+  Results carry `changed`; an unchanged call returns `changed:false` and "Nothing
+  changed; the calendar already matches." (`calendar_set_attendance` does the same.)
+- Every tool error reads `<code>: <one sentence naming the next call> Do not repeat
+  the same call.`, so a refusal is recovered in one round instead of blind retries.
+- The event details panel gains a **Whole series** section: *End series from here*
+  (weekly series, future occurrence after the first) and *Remove series…* /
+  *Remove event…*, each behind one confirmation. Removing a started series says
+  plainly that its past occurrences are hidden too. Each returns a versioned
+  **Undo** (`extend` / `restore`, using the version the action returned). The Undo
+  bar stays until dismissed and says it lasts only while the screen is open: it is
+  this screen's memory, so a tool-driven removal has no Undo here. The client no
+  longer treats a correct `changed:false` or null no-op reply as an invalid
+  response, and shows specific copy for each new refusal. It never suggests an
+  alternative date as safe; the server checks each attempt.
 
 Tests cover started-series full echoes, nullable no-row echoes, stale writers,
 history/moved/outcome guards, end/extend/restore/replay, weekday/DST boundaries,

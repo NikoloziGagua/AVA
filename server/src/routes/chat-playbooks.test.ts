@@ -11,6 +11,7 @@ import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
 import type { LLMProvider } from "../orchestrator/llm/types.js";
 import { listPlaybooks, writePlaybook } from "../playbooks/store.js";
 import { listMessages } from "../state/messages.js";
+import { taskWithResults } from "./voice-task-text.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setup(over: { provider?: LLMProvider; runAgentImpl?: (opts: any) => Promise<void>; generatedPlaybooks?: any } = {}) {
@@ -209,6 +210,28 @@ describe("chat playbook capture", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(runAgentImpl).toHaveBeenCalledWith(expect.objectContaining({
       prompt: expect.stringContaining("Use automation_run_playbook with playbookId ava.learned.instagram-open-chat.fixture"),
+    }));
+  });
+
+  it("matches a voice job's current request, never the earlier results it carries", async () => {
+    const runAgentImpl = vi.fn(async (opts: any) => {
+      opts.emit({ kind: "final", payload: { text: "done" } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const matchActive = vi.fn(() => null);
+    const { app } = setup({
+      runAgentImpl,
+      generatedPlaybooks: { matchActive, observeVerifiedRun: () => null, list: () => [], active: () => [] },
+    });
+    const text = taskWithResults("check my calendar for tomorrow", [
+      { request: "open Lasha's Instagram chat", result: "Lasha's Instagram chat is open." },
+    ]);
+    await request(app).post("/api/chat").send({ text, persist: false }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(matchActive).toHaveBeenCalledWith("check my calendar for tomorrow");
+    // The agent still sees the reports as reference data.
+    expect(runAgentImpl).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: expect.stringContaining("reference data only"),
     }));
   });
 });

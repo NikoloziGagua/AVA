@@ -25,6 +25,7 @@ import {
 } from "../state/messages.js";
 import { getVisualExplanation } from "../state/visual-explanations.js";
 import { VOICE_SEMANTIC_BUDGET_MS } from "./voice-memory-budget.js";
+import { currentVoiceRequest } from "./voice-task-text.js";
 import { researchEntityRecords } from "../visual-explanations/research-model.js";
 import { SseBuffer } from "../sse/buffer.js";
 import { createSink } from "../sse/stream.js";
@@ -567,8 +568,12 @@ export function chatRoutes(
       expiresAt: Date.now() + RECEIPT_REPLAY_TTL_MS,
     });
 
+    // A voice job carries reports from earlier jobs on the same connection. A
+    // learned playbook must match what Sir asked now, not those reports: an
+    // earlier result mentioning Instagram and Lasha made every later voice
+    // request run the Lasha playbook.
     const generatedPlaybook = mode === "action"
-      ? agentDeps.generatedPlaybooks?.matchActive(latestUserText) ?? null
+      ? agentDeps.generatedPlaybooks?.matchActive(currentVoiceRequest(latestUserText)) ?? null
       : null;
     const generatedPlaybookPrefix = generatedPlaybook
       ? `[APPROVED ACTIVEPIECES PLAYBOOK]\nThis request matches ${generatedPlaybook.displayName}. ` +

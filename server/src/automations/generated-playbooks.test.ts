@@ -79,6 +79,26 @@ describe("approval-gated generated automation playbooks", () => {
     await rm(f.root, { recursive: true, force: true }); f.db.close();
   });
 
+  it("claims only requests that name the learned target, never long or unrelated text", async () => {
+    const f = await fixture();
+    f.service.observeVerifiedRun({ taskId: "task-one", goal: "Open Lasha's Instagram chat", steps: verifiedStep, outcome: "verified" });
+    const proposed = f.service.observeVerifiedRun({ taskId: "task-two", goal: "Open Instagram chat with Lasha", steps: verifiedStep, outcome: "verified" })!;
+    const active = await f.service.activate({ candidateId: proposed.id, expectedVersion: proposed.version });
+    for (const request of ["open lasha's chat", "Open @_princi150's Instagram chat", "open lash's instagram chat"]) {
+      expect(f.service.matchActive(request), request).toMatchObject({ id: active.id });
+    }
+    // Each of these used to run the Lasha playbook.
+    for (const request of ["open instagram", "open instagram chat", "open Luka's chat in Instagram", "chat",
+      "message Lasha on Instagram saying hi"]) {
+      expect(f.service.matchActive(request), request).toBeNull();
+    }
+    // Repeated words no longer add up: a long text that mentions Lasha's chat is not a request to open it.
+    const brief = "Plan the next step for AVA, run the tests, check the build. ".repeat(20)
+      + "Earlier result: Lasha's Instagram chat was opened.";
+    expect(f.service.matchActive(brief)).toBeNull();
+    await rm(f.root, { recursive: true, force: true }); f.db.close();
+  });
+
   it("compiles, approves, and runs a heterogeneous ordered sequence", async () => {
     const f = await fixture();
     const steps = [

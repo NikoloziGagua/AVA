@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
 import type { RunStep } from "../playbooks/distill.js";
 import type { PlaybookLearningOutcome } from "../playbooks/learning.js";
-import { listPeople, resolvePerson } from "../apps/people.js";
+import { listPeople, resolvePerson, type Person } from "../apps/people.js";
 import { scrubSecrets } from "../security/scrub.js";
 import type { Db } from "../state/db.js";
 import type { AutomationPlaybookService } from "./playbooks.js";
@@ -199,6 +199,50 @@ function mapCandidate(row: CandidateRow): GeneratedPlaybookCandidate {
 
 function normalize(value: string): string {
   return value.toLowerCase().replace(/[^\p{L}\p{N}@._]+/gu, " ").trim();
+}
+
+// Words that name no target: fillers, pronouns, politeness and the connectives
+// that only say "several steps". Counting them (with repeats) let any long text,
+// such as a voice job carrying earlier results or a pasted brief, outscore a
+// real request.
+const MATCH_FILLER = new Set([
+  "about", "after", "again", "also", "an", "and", "at", "ava", "be", "can", "could", "do", "eva",
+  "followed", "for", "from", "go", "hey", "hi", "in", "into", "is", "it", "its", "just", "me", "my",
+  "now", "of", "ok", "okay", "on", "onto", "please", "so", "that", "the", "then", "this", "to", "uh",
+  "um", "up", "want", "with", "would", "you", "your",
+]);
+
+function contentWords(text: string): Set<string> {
+  return new Set(normalize(text).split(" ")
+    .map((word) => word.replace(/^\.+|\.+$/g, ""))
+    .filter((word) => word.length > 1 && !MATCH_FILLER.has(word)));
+}
+
+/**
+ * A learned playbook may only claim a request that names its targets: the
+ * person it messages, most of what it searches, the site it opens. Without
+ * this, "open instagram" or a request for someone else's chat ran the learned
+ * Lasha playbook.
+ */
+function namesTargets(definition: GeneratedPlaybookDefinition, words: Set<string>, people: Person[]): boolean {
+  const hasAll = (text: string) => {
+    const needed = [...contentWords(text)];
+    return needed.length > 0 && needed.every((word) => words.has(word));
+  };
+  return generatedDefinitionSteps(definition).every((step) => {
+    if ("expectedUsername" in step) {
+      const username = step.expectedUsername.toLowerCase().replace(/^@/, "");
+      const aliases = people.find((person) => person.id === step.personId)?.aliases ?? [];
+      return words.has(username) || words.has(`@${username}`) || [step.displayName, ...aliases].some(hasAll);
+    }
+    if (step.tool === "chrome_open_url") {
+      let host: string;
+      try { host = new URL(step.url).hostname.replace(/^www\./, ""); } catch { return false; }
+      return words.has(host) || words.has(host.split(".")[0] ?? "");
+    }
+    const query = [...contentWords(step.query)];
+    return !query.length || query.filter((word) => words.has(word)).length / query.length >= 0.75;
+  });
 }
 
 function verifiedForLearning(step: RunStep): boolean {
@@ -469,8 +513,10 @@ export class GeneratedPlaybookService {
 
   matchActive(prompt: string): GeneratedPlaybookCandidate | null {
     const query = normalize(prompt);
-    if (!query) return null;
+    const words = contentWords(prompt);
+    if (!query || !words.size) return null;
     const compoundRequest = /\b(?:and|then|after that|followed by)\b/.test(query);
+    const people = listPeople(this.memoryDir);
     let best: { candidate: GeneratedPlaybookCandidate; score: number } | null = null;
     for (const candidate of this.active()) {
       const stepCount = generatedDefinitionSteps(candidate.definition).length;
@@ -481,16 +527,19 @@ export class GeneratedPlaybookService {
       // a simple one-action request merely because that request is a subset of
       // the longer learned trigger.
       if ((compoundRequest && stepCount === 1) || (!compoundRequest && stepCount > 1)) continue;
+      if (!namesTargets(candidate.definition, words, people)) continue;
+      // Distinct words only, in both directions: the request must repeat most
+      // of a learned phrase (coverage) and be mostly about it (precision).
       const scores = candidate.triggerPhrases.map((phrase) => {
-        const trigger = normalize(phrase);
-        if (!trigger) return 0;
-        if (query === trigger || query.includes(trigger) || trigger.includes(query)) return 100;
-        const words = new Set(trigger.split(" ").filter((word) => word.length > 2));
-        const hits = query.split(" ").filter((word) => words.has(word)).length;
-        return words.size ? hits / words.size : 0;
+        const trigger = contentWords(phrase);
+        if (!trigger.size) return 0;
+        const shared = [...trigger].filter((word) => words.has(word)).length;
+        const coverage = shared / trigger.size;
+        const precision = shared / words.size;
+        return coverage >= 0.75 && precision >= 0.6 ? coverage + precision : 0;
       });
       const score = Math.max(...scores, 0);
-      if (score >= 0.6 && (!best || score > best.score)) best = { candidate, score };
+      if (score > 0 && (!best || score > best.score)) best = { candidate, score };
     }
     return best?.candidate ?? null;
   }

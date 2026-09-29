@@ -130,3 +130,29 @@ describe("memory archive", () => {
     expect(ftsQuery("what is it")).toBeNull();
   });
 });
+
+describe("importing a reviewed archive", () => {
+  it("copies every archive table with its search index, and refuses to overwrite", async () => {
+    const { mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { openDb } = await import("../state/db.js");
+    const { importReviewedArchive } = await import("./migrate.js");
+    const dir = mkdtempSync(join(tmpdir(), "ava-archive-import-"));
+    const reviewed = openDb(join(dir, "reviewed.db"));
+    const source = new MemoryArchive(reviewed, () => T0);
+    const kept = source.add(memory({ topic: "mother's name", text: "Niko's mother's name is Teo." }), "backfill");
+    const gone = source.add(memory({ topic: "code word", text: "Niko's code word is pelican.", sourceMessageIds: [77] }), "backfill");
+    if (!kept.ok || !gone.ok) throw new Error("setup failed");
+    source.forget(gone.record.id, "niko");
+    reviewed.close();
+    const live = openDb(join(dir, "live.db"));
+    const counts = importReviewedArchive(live, join(dir, "reviewed.db"));
+    expect(counts).toMatchObject({ memory_records: 1, memory_tombstones: 1, memory_tombstone_messages: 1 });
+    const archive = new MemoryArchive(live, () => T0);
+    expect(archive.search("mother").map((hit) => hit.record.text)).toEqual(["Niko's mother's name is Teo."]);
+    expect(archive.forgottenMessageIds([77])).toEqual(new Set([77]));
+    expect(() => importReviewedArchive(live, join(dir, "reviewed.db"))).toThrow(/not empty/);
+    live.close();
+  });
+});

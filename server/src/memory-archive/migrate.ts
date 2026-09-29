@@ -21,3 +21,46 @@ export function seedIndexTombstones(db: Db, archive: MemoryArchive): { entries: 
   }
   return { entries: ranges.length, messages };
 }
+
+const ARCHIVE_TABLES = [
+  "memory_records",
+  "memory_tombstones",
+  "memory_tombstone_messages",
+  "memory_record_events",
+  "memory_extraction_state",
+  "memory_extraction_runs",
+] as const;
+
+/**
+ * Copies a reviewed archive (the backfill's dry-run copy) into `db`, so what
+ * goes live is exactly what Niko reviewed. Refuses when `db` already holds
+ * records or tombstones. Verifies row counts and the full-text index.
+ */
+export function importReviewedArchive(db: Db, fromPath: string): Record<(typeof ARCHIVE_TABLES)[number], number> {
+  const count = (table: string, schema = "main") =>
+    (db.prepare(`SELECT count(*) AS n FROM ${schema}.${table}`).get() as { n: number }).n;
+  if (count("memory_records") || count("memory_tombstones")) {
+    throw new Error("the archive here is not empty; refusing to overwrite it");
+  }
+  db.prepare("ATTACH DATABASE ? AS reviewed").run(fromPath);
+  try {
+    db.transaction(() => {
+      for (const table of ARCHIVE_TABLES) {
+        // Named columns keep this right even if the two schemas order them differently.
+        const columns = (db.prepare(`PRAGMA main.table_info(${table})`).all() as Array<{ name: string }>)
+          .map((column) => column.name).join(", ");
+        db.prepare(`INSERT INTO main.${table} (${columns}) SELECT ${columns} FROM reviewed.${table}`).run();
+      }
+    })();
+    const counts = {} as Record<(typeof ARCHIVE_TABLES)[number], number>;
+    for (const table of ARCHIVE_TABLES) {
+      counts[table] = count(table);
+      if (counts[table] !== count(table, "reviewed")) throw new Error(`${table}: copied ${counts[table]} of ${count(table, "reviewed")} rows`);
+    }
+    // Throws if the search index disagrees with the records it was built from.
+    db.prepare("INSERT INTO memory_records_fts(memory_records_fts) VALUES ('integrity-check')").run();
+    return counts;
+  } finally {
+    db.prepare("DETACH DATABASE reviewed").run();
+  }
+}

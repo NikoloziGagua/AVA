@@ -510,7 +510,10 @@ export function chatRoutes(
       try {
         const index = loadPlaybookIndex(agentDeps.memoryDir);
         if (index.length) {
-          const slug = matchPlaybook({ prompt: parsed.data.text, index });
+          // A voice job carries earlier results; match only what Sir asked now
+          // (an earlier Instagram result made every later request match the
+          // Instagram playbook).
+          const slug = matchPlaybook({ prompt: currentVoiceRequest(parsed.data.text), index });
           if (slug) {
             const pb = readPlaybook(agentDeps.memoryDir, slug);
             if (pb) {

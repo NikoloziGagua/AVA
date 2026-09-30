@@ -234,4 +234,25 @@ describe("chat playbook capture", () => {
       prompt: expect.stringContaining("reference data only"),
     }));
   });
+
+  it("recalls a learned playbook from a voice job's current request only, never from earlier results", async () => {
+    const runAgentImpl = vi.fn(async (opts: any) => {
+      opts.emit({ kind: "final", payload: { text: "done" } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const { app, memoryDir } = setup({ runAgentImpl });
+    writePlaybook(memoryDir, {
+      slug: "open-a-social-media-direct-message", trigger: "Open Instagram chats by username",
+      keywords: ["instagram", "profile", "message", "chat"], created: "2026-07-25", last_used: "2026-09-28",
+      uses: 9, stakes: "consequential", steps: ["Open the profile URL.", "Click Message."], version: 1,
+      succ: 4, fail: 0, avg_secs: 53, lessons: [],
+    });
+    const reports = [{ request: "open Lasha's chat on Instagram", result: "Lasha's Instagram chat is open from his profile; I clicked Message and the direct chat opened." }];
+    await request(app).post("/api/chat").send({ text: taskWithResults("what's in my notes", reports), persist: false }).expect(200);
+    await request(app).post("/api/chat").send({ text: "open instagram chats by username for luka", persist: false }).expect(200);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const prompts = runAgentImpl.mock.calls.map((call) => String((call[0] as { prompt: string }).prompt));
+    expect(prompts[0]).not.toContain("[PLAYBOOK");
+    expect(prompts[1]).toContain("[PLAYBOOK — open-a-social-media-direct-message]");
+  });
 });

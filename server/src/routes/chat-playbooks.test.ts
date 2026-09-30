@@ -255,4 +255,11 @@ describe("chat playbook capture", () => {
     expect(prompts[0]).not.toContain("[PLAYBOOK");
     expect(prompts[1]).toContain("[PLAYBOOK — open-a-social-media-direct-message]");
   });
+
+  it("does not learn procedures from automated prompts, only from Sir's requests", async () => {
+    const { app, memoryDir } = setup();
+    await request(app).post("/api/chat").send({ text: "[CODEX CYCLE PLANNING] do the thing on my pc" }).expect(200);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(listPlaybooks(memoryDir)).toHaveLength(0);
+  });
 });

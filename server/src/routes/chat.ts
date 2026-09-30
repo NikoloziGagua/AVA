@@ -81,6 +81,7 @@ import { detectCorrection, formatCorrection } from "../orchestrator/correction-d
 import { rememberObservation } from "../memory/remember.js";
 import type { MemoryArchive } from "../memory-archive/archive.js";
 import { memoryV2Enabled } from "../memory-archive/brief.js";
+import { AUTOMATION_TEXT } from "../memory-archive/extractor.js";
 import { maybeCapture } from "../playbooks/capture.js";
 import { matchPlaybook } from "../playbooks/match.js";
 import { loadPlaybookIndex, readPlaybook } from "../playbooks/store.js";
@@ -729,17 +730,23 @@ export function chatRoutes(
         const learningOutcome = learningOutcomeFromReceipt(receipt);
         const evidence = learningEvidenceFromReceipt(receipt);
         const durationSecs = Math.max(0, (at - runStartMs) / 1000);
+        // Procedures are learned only from what Sir asks. Automated improvement
+        // cycles and watcher prompts had filled the playbook store with
+        // development procedures he never uses.
+        const learnFromRun = actor !== "automation" && !AUTOMATION_TEXT.test(currentVoiceRequest(latestUserText));
         try {
-          agentDeps.generatedPlaybooks?.observeVerifiedRun({
-            taskId: receipt.taskId,
-            goal: objectiveForRun,
-            steps: runSteps,
-            outcome: learningOutcome,
-          });
+          if (learnFromRun) {
+            agentDeps.generatedPlaybooks?.observeVerifiedRun({
+              taskId: receipt.taskId,
+              goal: objectiveForRun,
+              steps: runSteps,
+              outcome: learningOutcome,
+            });
+          }
         } catch (err) {
           console.warn("[automations] generated playbook observation failed:", err instanceof Error ? err.message : err);
         }
-        if (finalTextForLearning && agentDeps.provider) {
+        if (learnFromRun && finalTextForLearning && agentDeps.provider) {
           void maybeCapture({
             memoryDir: agentDeps.memoryDir,
             provider: agentDeps.provider,

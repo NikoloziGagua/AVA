@@ -205,11 +205,25 @@ describe("provenance and ordering", () => {
   it("demands that Niko's cited words mention what the memory is about", async () => {
     const { sharesKeyWord } = await import("./extractor.js");
     const notes = "I want to design an interface like notes where you keep your notes. Don't set a watcher yet";
-    expect(sharesKeyWord("Niko wants AVA to keep its answers concise. concise responses", [notes])).toBe(false);
+    expect(sharesKeyWord("Niko prefers tea to coffee.", [notes])).toBe(false);
+    // He really wrote "BE CONSISED IN UR ANSWERS": the answers are the shared key word.
+    expect(sharesKeyWord("Niko wants AVA to keep its answers concise.", [`${notes}. BE CONSISED IN UR ANSWERS`])).toBe(true);
+    expect(sharesKeyWord("AVA should save study material only when Niko asks, not everything.", ["You don't need to save everything, just what I tell you"])).toBe(true);
     expect(sharesKeyWord("Niko likes to be alone.", ["I like to be alone"])).toBe(true);
     expect(sharesKeyWord("Niko's mother's name is Teo.", ["My moms name is teo remember that"])).toBe(true);
     expect(sharesKeyWord("Niko is Georgian.", ["I am indeed Georgian"])).toBe(true);
     expect(sharesKeyWord("Niko wants Europe/Dublin as his default time zone.", ["I live in Dublin, I mean near Dublin", "Yes, I want it as a preference"])).toBe(true);
+  });
+
+  it("keeps other people's phone numbers and emails out of memory", () => {
+    const archive = new MemoryArchive(openInMemoryDb(), () => T0 + 60 * MIN);
+    const convo = [msg(20, "user", "Luka's whatsapp is +353 89 000 0000 and his email is luka@example.com")];
+    const result = applyOperations(archive, [
+      op({ kind: "person", topic: "Luka's WhatsApp", text: "Luka can be reached on WhatsApp at +353 89 000 0000.", sourceMessageIds: [20], evidence: "Luka's whatsapp is +353 89 000 0000" }),
+      op({ kind: "person", topic: "Luka's email", text: "Luka's email is luka@example.com.", sourceMessageIds: [20], evidence: "his email is luka@example.com" }),
+    ], { batch: convo, sessionId: "s1", origin: "backfill", actor: "backfill" });
+    expect(result.skipped.map((item) => item.why)).toEqual(["contact details belong in the contacts list", "contact details belong in the contacts list"]);
+    expect(archive.current()).toEqual([]);
   });
 
   it("files an older statement that arrives late as history, never over a newer one", () => {

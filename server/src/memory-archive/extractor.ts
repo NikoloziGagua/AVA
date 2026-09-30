@@ -138,7 +138,8 @@ DO NOT STORE
 - AVA feature requests and development details (see AVA ITSELF), what AVA did with its tools, watcher runs, credit balances.
 - Transient states (credits ran out, a server restarting, a chat is open), greetings, microphone tests, small talk.
 - Lecture or slide content Niko reads aloud while studying; study notes belong in Notes. His courses and study habits are facts.
-- Secrets: passwords, codes, keys, payment or card details, addresses of other people.
+- Secrets: passwords, codes, keys, payment or card details.
+- Other people's phone numbers, email addresses or home addresses: the contacts list holds how to reach people.
 - "Forget about that for now" means drop the topic. It never asks for a memory to be erased.
 
 SENSITIVE (set sensitive=true)
@@ -279,18 +280,19 @@ export function quoteFound(evidence: string, messages: ConversationMessage[]): b
   return messages.some((message) => comparable(message.content).includes(quote));
 }
 
-// Everyday words that say nothing about what a memory is about.
+// Filler that says nothing about what a memory is about. Deliberately short:
+// verbs like "keep" or "save" often carry the memory itself.
 const GENERIC_WORDS = new Set([
   "the", "and", "for", "with", "that", "this", "you", "your", "are", "was", "were", "have", "has", "had", "not",
   "but", "can", "will", "would", "should", "want", "like", "just", "about", "from", "into", "what", "when",
   "they", "them", "his", "her", "him", "she", "our", "out", "all", "any", "also", "then", "than", "ava", "niko",
-  "sir", "yes", "yeah", "okay", "please", "don", "dont", "really", "very", "much", "some", "keep", "use", "make",
-  "get", "got", "going", "need", "say", "said", "tell", "told", "know", "think", "work", "open", "show", "see",
-  "look", "start", "stop", "ask", "give", "take", "put", "set", "try", "help", "find", "check", "call", "come",
-  "let", "done", "thing", "stuff", "way", "time", "now", "right", "good", "new", "one", "two", "every",
-  "everything", "something", "anything", "always", "never", "remember", "save", "note", "because", "there",
-  "here", "where", "which", "who", "how", "why", "him", "its", "it", "rather", "instead", "only", "more",
+  "sir", "yes", "yeah", "okay", "please", "don", "dont", "really", "very", "much", "some", "need", "get", "got",
+  "going", "make", "thing", "stuff", "way", "now", "right", "good", "one", "two", "something", "anything",
+  "because", "there", "here", "where", "which", "who", "how", "why", "its", "only", "more", "let", "lets",
 ]);
+
+/** Contact details: they belong in the contacts list, never in memory loaded into every prompt. */
+const CONTACT_DETAILS = /(?:\+|\b)\d[\d\s().-]{7,}\d\b|[\w.+-]+@[\w-]+\.[\w.]+/;
 
 function keyWords(text: string): Set<string> {
   return new Set(comparable(text).split(" ")
@@ -336,6 +338,10 @@ export function applyOperations(
     const needsNiko = op.speechAct !== "discussed" && op.speechAct !== "inferred";
     if (needsNiko && !nikoSources.length) { skipped.push({ op, why: "not supported by Niko's own words" }); continue; }
     if (!op.text.trim() || !op.topic.trim()) { skipped.push({ op, why: "empty text or topic" }); continue; }
+    if (CONTACT_DETAILS.test(op.text) && op.speechAct !== "requested") {
+      skipped.push({ op, why: "contact details belong in the contacts list" });
+      continue;
+    }
     // Provenance: the quote must be in Niko's own cited words (or, for an idea
     // AVA raised, in a cited message). This is what stops AVA's own promise
     // ("I'll keep my answers concise") becoming Niko's preference.

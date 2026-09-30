@@ -6,7 +6,8 @@
 //   old/prompt   preferences + observations in the system prompt (today's AVA)
 //   old/auto     + today's automatic memory retrieval
 //   new/brief    the memory v2 Brief in the system prompt
-//   new/recall   + a memory_recall search for the question
+//   new/recall   + a memory_recall search for the question, always
+//   new/agent    the Brief, and AVA decides when to call memory_recall (as live)
 //
 //   npx tsx scripts/memory-eval.ts [--db ../data/scratch/memory-backfill.db] [--only F01,U03] [--variants old/prompt,new/recall]
 import Database from "better-sqlite3";
@@ -25,7 +26,7 @@ import { dublinStamp } from "../src/memory-archive/extractor.js";
 import { formatRecall, recall, recallIdeas } from "../src/memory-archive/recall.js";
 
 type Item = { id: string; cat: string; q: string; a: string; not?: string[]; ask?: string; asOf?: string };
-type Variant = "old/prompt" | "old/auto" | "new/brief" | "new/recall";
+type Variant = "old/prompt" | "old/auto" | "new/brief" | "new/recall" | "new/agent";
 type Verdict = { verdict: "pass" | "partial" | "fail"; reason: string };
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -71,6 +72,56 @@ async function respond(client: OpenAI, input: { model: string; system: string; u
     .flatMap((item) => (item.content ?? []).filter((part) => part.type === "output_text").map((part) => part.text ?? "")).join("");
 }
 
+const RECALL_TOOL = {
+  type: "function",
+  name: "memory_recall",
+  description: "Search what Niko told me before, and past conversations, with dates and the source messages. Use it before saying I don't know something about Niko, and for questions like 'what did we decide about X', 'when did I say Y', 'what did we talk about last week'. Pass from/to (YYYY-MM-DD) for time questions.",
+  parameters: {
+    type: "object",
+    properties: {
+      query: { type: "string" },
+      from: { type: "string" },
+      to: { type: "string" },
+    },
+    required: ["query"],
+    additionalProperties: false,
+  },
+  strict: false,
+};
+
+type ResponseItem = { type: string; call_id?: string; arguments?: string; content?: Array<{ type: string; text?: string }> };
+
+/** The Brief in the prompt and memory_recall as a tool: the model decides when to search, as live AVA does. */
+async function respondWithRecall(client: OpenAI, input: {
+  model: string; system: string; user: string; runRecall: (args: { query?: string; from?: string; to?: string }) => Promise<string>;
+}): Promise<{ text: string; searches: number }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const api = (client as any).responses;
+  let response = (await api.create({
+    model: input.model, instructions: input.system, input: input.user, reasoning: { effort: "low" },
+    tools: [RECALL_TOOL], max_output_tokens: 2_000,
+  })) as { id: string; output?: ResponseItem[] };
+  let searches = 0;
+  for (let round = 0; round < 3; round++) {
+    const calls = (response.output ?? []).filter((item) => item.type === "function_call");
+    if (!calls.length) break;
+    const outputs = [];
+    for (const call of calls) {
+      searches += 1;
+      let args: { query?: string; from?: string; to?: string } = {};
+      try { args = JSON.parse(call.arguments ?? "{}"); } catch { /* empty search */ }
+      outputs.push({ type: "function_call_output", call_id: call.call_id, output: await input.runRecall(args) });
+    }
+    response = (await api.create({
+      model: input.model, instructions: input.system, previous_response_id: response.id, input: outputs,
+      reasoning: { effort: "low" }, tools: [RECALL_TOOL], max_output_tokens: 2_000,
+    })) as { id: string; output?: ResponseItem[] };
+  }
+  const text = (response.output ?? []).filter((item) => item.type === "message")
+    .flatMap((item) => (item.content ?? []).filter((part) => part.type === "output_text").map((part) => part.text ?? "")).join("");
+  return { text, searches };
+}
+
 async function pool<T, R>(items: T[], size: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
@@ -111,7 +162,8 @@ async function main() {
 
   const system = (variant: Variant) => {
     if (variant.startsWith("new/")) process.env.AVA_MEMORY_V2 = "on"; else delete process.env.AVA_MEMORY_V2;
-    return buildSystemPrompt({ memoryDir, mode: "conversation", today: evalSet.askedAsOf });
+    // The agent variant gets the action prompt, whose v2 rubric tells it when to use memory_recall.
+    return buildSystemPrompt({ memoryDir, mode: variant === "new/agent" ? "action" : "conversation", today: evalSet.askedAsOf });
   };
   const systems = Object.fromEntries(variants.map((variant) => [variant, system(variant)])) as Record<Variant, string>;
   delete process.env.AVA_MEMORY_V2;
@@ -131,7 +183,23 @@ async function main() {
     const user = [clock, context, `Sir: ${item.q}`].filter(Boolean).join("\n\n");
     let answer = "";
     try {
-      answer = await respond(client, { model: answerModel, system: systems[variant], user, effort: "low" });
+      if (variant === "new/agent") {
+        const result = await respondWithRecall(client, {
+          model: answerModel, system: systems[variant], user,
+          runRecall: async (args) => {
+            const query = String(args.query ?? "").trim();
+            if (!query) return "missing query";
+            const day = (value: unknown, end: boolean) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)
+              ? Date.parse(`${value}T${end ? "23:59:59" : "00:00:00"}Z`) : undefined;
+            return formatRecall(recall(db as never, archive, query, { from: day(args.from, false), to: Math.min(day(args.to, true) ?? asOf, asOf) }),
+              await recallIdeas(index, query));
+          },
+        });
+        answer = result.searches ? `${result.text}
+[searched memory ${result.searches}x]` : result.text;
+      } else {
+        answer = await respond(client, { model: answerModel, system: systems[variant], user, effort: "low" });
+      }
     } catch (error) {
       answer = `[answer failed: ${error instanceof Error ? error.message : String(error)}]`;
     }

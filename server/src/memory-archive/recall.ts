@@ -12,9 +12,9 @@ import type { MemoryKind, MemoryRecord } from "./types.js";
 
 export type RecallSource = { messageId: number; at: number; speaker: "Niko" | "AVA"; excerpt: string };
 export type RecalledMemory = { record: MemoryRecord; score: number; sources: RecallSource[] };
-export type RecalledMessage = RecallSource & { sessionId: string; sessionTitle: string; matched: number };
+export type RecalledMessage = RecallSource & { sessionId: string; sessionTitle: string; matched: number; voice: boolean };
 
-type MessageRow = { id: number; session_id: string; role: string; content: string; created_at: number; title: string | null };
+type MessageRow = { id: number; session_id: string; role: string; content: string; metadata: string | null; created_at: number; title: string | null };
 
 function excerpt(text: string, terms: string[], max = 280): string {
   const clean = text.replace(/\s+/g, " ").trim();
@@ -53,12 +53,16 @@ export function recall(db: Db, archive: MemoryArchive, query: string, opts: {
     }),
   }));
   const messages: RecalledMessage[] = [];
-  if (terms.length && (opts.messageLimit ?? 5) > 0) {
+  // Raw lines are a fallback for what was only discussed and never became a
+  // memory. They also hold background audio and pasted text, which the
+  // evaluation showed being repeated as fact, so they are searched only when
+  // no memory matched, and only a few are shown.
+  if (terms.length && !memories.length && (opts.messageLimit ?? 3) > 0) {
     // Terms are quoted words from ftsQuery; LIKE needs its wildcards escaped.
     const likes = terms.slice(0, 8).map((term) => `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
     const clauses = likes.map(() => "lower(m.content) LIKE ? ESCAPE '\\'").join(" OR ");
     const rows = db.prepare(`
-      SELECT m.id, m.session_id, m.role, m.content, m.created_at, s.title
+      SELECT m.id, m.session_id, m.role, m.content, m.metadata, m.created_at, s.title
       FROM messages m JOIN sessions s ON s.id = m.session_id
       WHERE s.deleted_at IS NULL AND s.origin IN ('human', 'unknown') AND m.role IN ('user', 'assistant')
         AND (${clauses})
@@ -76,9 +80,11 @@ export function recall(db: Db, archive: MemoryArchive, query: string, opts: {
       .filter((item) => item.matched >= Math.min(2, terms.length))
       // More terms first; Niko's own words before AVA's; then the most recent.
       .sort((a, b) => b.matched - a.matched || (a.row.role === "user" ? -1 : 1) - (b.row.role === "user" ? -1 : 1) || b.row.created_at - a.row.created_at);
-    for (const { row, matched } of scored.slice(0, opts.messageLimit ?? 5)) {
+    for (const { row, matched } of scored.slice(0, opts.messageLimit ?? 3)) {
+      let voice = false;
+      try { voice = (JSON.parse(row.metadata ?? "{}") as { inputModality?: string }).inputModality === "voice"; } catch { /* plain text */ }
       messages.push({
-        messageId: row.id, at: row.created_at, speaker: row.role === "user" ? "Niko" : "AVA",
+        messageId: row.id, at: row.created_at, speaker: row.role === "user" ? "Niko" : "AVA", voice,
         excerpt: excerpt(row.content, terms), sessionId: row.session_id, sessionTitle: row.title ?? "", matched,
       });
     }
@@ -135,9 +141,14 @@ export function formatRecall(result: ReturnType<typeof recall>, ideas: RecalledI
     }
   }
   if (result.messages.length) {
-    parts.push("PAST CONVERSATION (raw messages; what AVA said is not what Niko decided):");
+    parts.push([
+      "UNVERIFIED LINES FROM PAST CONVERSATIONS (not memories). Voice capture can include background audio",
+      "and TV; typed lines can be pasted text; AVA's lines are not Niko's decisions. Never state these as facts",
+      "about Niko. If one looks relevant, say it came up on that date and ask him.",
+    ].join(" "));
     for (const message of result.messages) {
-      parts.push(`- #${message.messageId} ${message.speaker}, ${dublinStamp(message.at)}${message.sessionTitle ? `, "${message.sessionTitle}"` : ""}: "${message.excerpt}"`);
+      const who = message.speaker === "Niko" ? (message.voice ? "Niko (voice)" : "Niko") : "AVA";
+      parts.push(`- #${message.messageId} ${who}, ${dublinStamp(message.at)}${message.sessionTitle ? `, "${message.sessionTitle}"` : ""}: "${message.excerpt}"`);
     }
   }
   return parts.join("\n");

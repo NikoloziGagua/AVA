@@ -98,9 +98,16 @@ describe("memory v2 tools", () => {
     const text = (await call("memory_recall", { query: "tyre business Stripe" })).text;
     expect(text).toContain("Niko is exploring a mobile tyre-fitting van business in Dublin. (Niko said Thu 24 Sep 2026 14:01)");
     expect(text).toContain('source #1, Niko');
-    expect(text).toContain("#2 AVA");
-    expect(text).not.toContain("CODEX CYCLE");
-    expect(text).not.toContain("7788");
+    // A memory matched, so no raw lines are mixed in.
+    expect(text).not.toContain("UNVERIFIED LINES");
+    // Nothing stored about Stripe alone: raw lines come back, labelled, never the forgotten or automated ones.
+    const raw = (await call("memory_recall", { query: "Stripe Adyen" })).text;
+    expect(raw).toContain("UNVERIFIED LINES FROM PAST CONVERSATIONS (not memories)");
+    expect(raw).toContain("#2 AVA");
+    for (const out of [text, raw]) {
+      expect(out).not.toContain("CODEX CYCLE");
+      expect(out).not.toContain("7788");
+    }
     expect(db.prepare("SELECT count(*) AS n FROM memory_records").get()).toEqual({ n: 1 });
   });
 

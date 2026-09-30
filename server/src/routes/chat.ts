@@ -65,6 +65,7 @@ import { buildNotesTools } from "../tools/notes-mcp.js";
 import { buildCalendarTools } from "../tools/calendar-mcp.js";
 import { buildProjectTools } from "../tools/projects-mcp.js";
 import { projectBrief, projectForSession } from "../projects/store.js";
+import { extractMaterial } from "../projects/extract.js";
 import { buildVisualExplanationTools } from "../tools/visual-explanations-mcp.js";
 import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
 import { buildShopifyTools } from "../tools/shopify-mcp.js";
@@ -977,7 +978,10 @@ export function chatRoutes(
           sessionId: sid,
           source: parsed.data.voice ? "ava_voice" : "ava_chat",
         });
-        const projectTools = buildProjectTools({ db, sessionId: sid, source: parsed.data.voice ? "voice" : "chat" });
+        const projectTools = buildProjectTools({
+          db, sessionId: sid, source: parsed.data.voice ? "voice" : "chat",
+          onMaterial: (material) => void extractMaterial({ db, dataDir: agentDeps.dataDir, openai: metered.openai ?? null }, material),
+        });
         const visualExplanationTools = buildVisualExplanationTools({
           db,
           sessionId: sid,

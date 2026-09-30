@@ -5,6 +5,7 @@ import {
   listProjects, projectBrief, removeProject, removedProjects, restoreProject, updateProject, updateProjectItem, removeProjectItem,
   type Project, type ProjectItemKind, type ProjectKind, type ProjectPatch, type ProjectSource, type ProjectStatus,
 } from "../projects/store.js";
+import { addLink, type Material } from "../projects/materials.js";
 
 const text = (value: unknown) => typeof value === "string" ? value : undefined;
 const failure = (error: unknown) => ({ ok: false, text: error instanceof Error ? error.message : String(error) });
@@ -25,7 +26,11 @@ const summary = (project: Project) => `${project.name} [${project.kind}, ${proje
  * "bring it back" undoes it. Keep each project's steps, questions and
  * "where it stands" current as he talks about it.
  */
-export function buildProjectTools(options: { db: Db; sessionId?: string | null; source?: Extract<ProjectSource, "chat" | "voice"> }): ToolDef[] {
+export function buildProjectTools(options: {
+  db: Db; sessionId?: string | null; source?: Extract<ProjectSource, "chat" | "voice">;
+  /** Reads a link AVA added, after the reply (see projects/extract.ts). */
+  onMaterial?: (material: Material) => void;
+}): ToolDef[] {
   const { db } = options;
   const source = options.source ?? "chat";
   const sessionId = options.sessionId ?? null;
@@ -150,6 +155,22 @@ export function buildProjectTools(options: { db: Db; sessionId?: string | null; 
         try {
           const item = addProjectItem(db, project.id, { kind: args.kind as ProjectItemKind, text: text(args.text) ?? "", source, sessionId });
           return { ok: true, text: `Added to ${project.name}: ${item.text} (${item.id}).` };
+        } catch (error) { return failure(error); }
+      },
+    },
+    {
+      tool: {
+        name: "project_add_link",
+        description: "Attach a web link Sir shared to a project's materials. AVA then reads the page and keeps what matters for the project.",
+        inputSchema: { type: "object", properties: { project: projectArg, url: { type: "string" } }, required: ["project", "url"] },
+      },
+      run: async (args) => {
+        const project = resolve(db, args.project);
+        if (!project) return { ok: false, text: "No live project by that name." };
+        try {
+          const material = addLink(db, project.id, { url: text(args.url) ?? "", source });
+          options.onMaterial?.(material);
+          return { ok: true, text: `Added the link to ${project.name}'s materials. I'm reading it now; what matters will show there shortly.` };
         } catch (error) { return failure(error); }
       },
     },

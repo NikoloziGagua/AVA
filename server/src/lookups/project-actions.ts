@@ -11,7 +11,7 @@ import {
 // list, AVA does it directly, and the verified result is spoken. Anything else
 // (a discussion, several changes, anything unclear) goes to the agent.
 
-const ACTION_WORDS = /\b(?:add|create|start|new|make|remove|delete|drop|scrap|kill|get rid|bring\b[\w\s]{0,40}\bback|restore|undo|rename|call it|pause|resume|finish(?:ed)?|done|complete|mark|stage|next step|step|to-?do|progress|what(?:'s| is| are)|where|how(?:'s| is)|list|show|status)\b/i;
+const ACTION_WORDS = /\b(?:add|create|start|new|make|remove|delete|drop|scrap|kill|get rid|bring\b[\w\s]{0,40}\bback|restore|undo|rename|call it|pause|resume|finish(?:ed)?|done|complete|mark|stage|next step|step|to-?do|progress|what(?:'s| is| are)|where|how(?:'s| is)|list|show|status|talk about|work on|discuss|brainstorm)\b/i;
 
 const words = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").split(" ").filter((word) => word.length > 2);
 
@@ -27,7 +27,7 @@ export function projectCandidate(request: string, names: readonly string[]): boo
 
 export type ProjectPlan =
   | { action: "create"; name: string; kind: ProjectKind }
-  | { action: "remove" | "restore" | "show"; projectId: string }
+  | { action: "remove" | "restore" | "show" | "discuss"; projectId: string }
   | { action: "rename"; projectId: string; name: string }
   | { action: "status"; projectId: string; status: ProjectStatus }
   | { action: "stage" | "step" | "log"; projectId: string; text: string }
@@ -45,8 +45,9 @@ Actions:
 - step: add a step or to-do; "text" = the step.
 - log: progress or a fact Sir reports about it; "text" = what happened.
 - show: where a project stands or what its next step is.
+- discuss: Sir wants to talk about, work on or brainstorm one project ("let's talk about the tyre business"); the call switches to it.
 - list: what projects he has.
-- agent: discussing or brainstorming a project, several changes at once, anything else, or if unsure.
+- agent: several changes at once, anything else, or if unsure.
 Use "project_id" exactly from the lists given. Reply with JSON only:
 {"action": "...", "project_id": string or null, "name": string or null, "kind": string or null, "status": string or null, "text": string or null}`;
 
@@ -62,7 +63,7 @@ export function parseProjectPlan(raw: string, known: ReadonlySet<string>, remove
       const name = str("name"), kind = str("kind");
       return name && kind && (PROJECT_KINDS as readonly string[]).includes(kind) ? { action: "create", name, kind: kind as ProjectKind } : { action: "agent" };
     }
-    case "remove": case "show": return live ? { action: value.action, projectId: live } : { action: "agent" };
+    case "remove": case "show": case "discuss": return live ? { action: value.action, projectId: live } : { action: "agent" };
     case "restore": return id && removed.has(id) ? { action: "restore", projectId: id } : { action: "agent" };
     case "rename": { const name = str("name"); return live && name ? { action: "rename", projectId: live, name } : { action: "agent" }; }
     case "status": {
@@ -91,6 +92,12 @@ export function runProjectPlan(db: Db, plan: Exclude<ProjectPlan, { action: "age
         : "Sir has no projects yet.";
     }
     case "show": return `Read just now:\n${projectBrief(db, getProject(db, plan.projectId)!)}`;
+    case "discuss": {
+      const project = getProject(db, plan.projectId)!;
+      return `Sir wants to talk about his project “${project.name}”. From now on this call is about it. What AVA knows, read just now:\n`
+        + `${projectBrief(db, project)}\nAsk him one sharp question about what is next or where it is stuck. `
+        + "As he talks, send new steps, decisions, progress and where it stands to AVA so she records them in the project.";
+    }
     case "create": {
       const project = createProject(db, { name: plan.name, kind: plan.kind, source: "voice" });
       return done(`the project “${project.name}” is added under ${KIND_GROUP[project.kind]}, with its own notes folder.`);
@@ -121,7 +128,9 @@ export function runProjectPlan(db: Db, plan: Exclude<ProjectPlan, { action: "age
 }
 
 /** Null means "use the agent": not about projects, unsure, or it failed. */
-export async function fastProjectAction(deps: { db: Db; provider: LLMProvider }, request: string, recent: string, signal?: AbortSignal): Promise<string | null> {
+export type ProjectActionResult = { text: string; /** Set when the call is now about this project. */ project?: { id: string; name: string } };
+
+export async function fastProjectAction(deps: { db: Db; provider: LLMProvider }, request: string, recent: string, signal?: AbortSignal): Promise<ProjectActionResult | null> {
   const live = listProjects(deps.db), gone = removedProjects(deps.db, 5);
   if (!projectCandidate(request, [...live, ...gone].map((project) => project.name)) || signal?.aborted) return null;
   let plan: ProjectPlan;
@@ -142,9 +151,11 @@ export async function fastProjectAction(deps: { db: Db; provider: LLMProvider },
   }
   if (plan.action === "agent" || signal?.aborted) return null;
   try {
-    return runProjectPlan(deps.db, plan);
+    const text = runProjectPlan(deps.db, plan);
+    const focus = plan.action === "discuss" || plan.action === "show" ? getProject(deps.db, plan.projectId) : null;
+    return focus ? { text, project: { id: focus.id, name: focus.name } } : { text };
   } catch (error) {
     // A refusal is still an answer Sir should hear (for example a duplicate name).
-    return error instanceof ProjectError ? `Not done: ${error.message}` : null;
+    return error instanceof ProjectError ? { text: `Not done: ${error.message}` } : null;
   }
 }

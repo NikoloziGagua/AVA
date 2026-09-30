@@ -34,23 +34,33 @@ describe("fast project actions", () => {
     expect(parseProjectPlan("not json", known, removed)).toEqual({ action: "agent" });
   });
 
-  it("adds, removes and brings back a project at once, and hands a discussion to the agent", async () => {
+  it("adds, removes and brings back a project at once, and hands anything unclear to the agent", async () => {
     const db = openInMemoryDb();
     const tyre = createProject(db, { name: "Mobile tyre fitting", kind: "business", source: "app" });
     const added = await fastProjectAction({ db, provider: provider(() => plan({ action: "create", name: "Data Science", kind: "uni" })) }, "add a uni project for data science", "");
-    expect(added).toContain("“Data Science” is added under Uni");
+    expect(added?.text).toContain("“Data Science” is added under Uni");
     const removed = await fastProjectAction({ db, provider: provider(() => plan({ action: "remove", project_id: tyre.id })) }, "remove the tyre project", "");
-    expect(removed).toContain("“Mobile tyre fitting” is removed");
+    expect(removed?.text).toContain("“Mobile tyre fitting” is removed");
     expect(listProjects(db).map((project) => project.name)).toEqual(["Data Science"]);
     const back = await fastProjectAction({ db, provider: provider(() => plan({ action: "restore", project_id: tyre.id })) }, "bring the tyre project back", "");
-    expect(back).toContain("is back");
+    expect(back?.text).toContain("is back");
     expect(removedProjects(db)).toEqual([]);
     const duplicate = await fastProjectAction({ db, provider: provider(() => plan({ action: "create", name: "data science", kind: "uni" })) }, "add a project data science", "");
-    expect(duplicate).toMatch(/^Not done: There is already a project called Data Science/);
+    expect(duplicate?.text).toMatch(/^Not done: There is already a project called Data Science/);
     const talk = provider(() => plan({ action: "agent" }));
     expect(await fastProjectAction({ db, provider: talk }, "let's brainstorm the tyre project", "")).toBeNull();
     const idle = provider(() => plan({ action: "list" }));
     expect(await fastProjectAction({ db, provider: idle }, "what's the weather", "")).toBeNull();
     expect(idle.calls).toBe(0);
+  });
+
+  it("switches the conversation into a project when Sir wants to talk about it", async () => {
+    const db = openInMemoryDb();
+    const tyre = createProject(db, { name: "Mobile tyre fitting", kind: "business", summary: "Looking for a van.", source: "app" });
+    expect(projectCandidate("let's talk about the tyre business", [tyre.name])).toBe(true);
+    const result = await fastProjectAction({ db, provider: provider(() => plan({ action: "discuss", project_id: tyre.id })) }, "let's talk about the tyre business", "");
+    expect(result?.project).toEqual({ id: tyre.id, name: "Mobile tyre fitting" });
+    expect(result?.text).toContain("From now on this call is about it");
+    expect(result?.text).toContain("Where it stands: Looking for a van.");
   });
 });

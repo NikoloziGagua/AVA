@@ -220,7 +220,7 @@ describe("GPT-Live memory updates during a call", () => {
 });
 
 describe("GPT-Live fast lookup lane", () => {
-  async function liveWith(fastLookup: (input: { request: string; recent: string }) => Promise<{ route: "calendar"; text: string; ms: number } | null>) {
+  async function liveWith(fastLookup: (input: { request: string; recent: string }) => Promise<{ route: "calendar" | "projects"; text: string; ms: number; project?: { id: string; name: string } } | null>) {
     const db = openInMemoryDb();
     const sessionId = createSession(db, { title: "Synthetic voice test", origin: "human" }).id;
     const client = new Socket(), upstream = new Socket();
@@ -258,5 +258,15 @@ describe("GPT-Live fast lookup lane", () => {
     await live.ask("Add gym on Friday at seven", "d2");
     expect(live.runAction).toHaveBeenCalledTimes(1);
     expect(live.spoken()).toEqual(["The agent answered."]);
+  });
+
+  it("keeps the call on a project once Sir switches to it, so the agent works in that project", async () => {
+    const live = await liveWith(async ({ request }) => /talk about/.test(request)
+      ? { route: "projects", text: "Sir wants to talk about his project “Test tyre business”.", ms: 800, project: { id: "proj_1", name: "Test tyre business" } }
+      : null);
+    await live.ask("Let's talk about the tyre business", "d3");
+    expect(live.runAction).not.toHaveBeenCalled();
+    await live.ask("I found a van for twelve grand", "d4");
+    expect(live.runAction.mock.calls[0]![1]).toMatch(/^\[Sir is talking about his project “Test tyre business” \(id proj_1\)/);
   });
 });

@@ -437,6 +437,7 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
     sendUpstream({ type: "session.commentary.append", event_id: `res_${nanoid(8)}`, delegation_id: delegationId, content: safe });
   };
 
+  let activeProject: { id: string; name: string } | null = null;
   /** A bounded FIFO: the request is frozen, earlier results are read at execution. */
   const pump = async () => {
     if (pumping) return;
@@ -462,6 +463,7 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
         if (ctx.fastLookup) {
           const fast = await ctx.fastLookup({ request: job.request, recent: job.recent, signal: controller.signal }).catch(() => null);
           if (fast && current()) {
+            if (fast.project) activeProject = fast.project;
             report(job, fast.text);
             reply(delegationId, fast.text, true);
             record({ producerId: "ava:voice", type: "agent.delegation.completed", status: "success",
@@ -473,7 +475,11 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
           if (!current()) { actions.delete(controller); activeJob = null; continue; }
         }
         try {
-          const result = await ctx.runAction(sessionId, taskWithResults(task, reports), (tool, args) => {
+          // Once Sir switched the call to a project, the agent works in it too.
+          const focus = activeProject
+            ? `[Sir is talking about his project “${activeProject.name}” (id ${activeProject.id}). Keep it current with the project_* tools.]\n`
+            : "";
+          const result = await ctx.runAction(sessionId, focus + taskWithResults(task, reports), (tool, args) => {
             if (current()) sendClient(JSON.stringify({ type: "ava.step", tool, args }));
           }, controller.signal);
           if (!current()) continue;

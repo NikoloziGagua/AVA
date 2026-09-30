@@ -1104,3 +1104,24 @@ CREATE TABLE IF NOT EXISTS project_items (
 
 CREATE INDEX IF NOT EXISTS idx_project_items_project
   ON project_items(project_id, kind, created_at);
+
+-- What Sir drops into a project: photos, files and links, with what AVA
+-- pulled out of each (status pending until she has read it).
+CREATE TABLE IF NOT EXISTS project_materials (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('photo', 'file', 'link')),
+  title TEXT NOT NULL DEFAULT '',
+  url TEXT,
+  file_name TEXT,
+  mime TEXT,
+  size INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'ready', 'failed')),
+  takeaways TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'app',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_materials_project
+  ON project_materials(project_id, created_at);

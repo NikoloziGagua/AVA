@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { CheckCircle2, Circle, HelpCircle, NotebookPen, Pencil, Plus, Send, X } from "lucide-react";
+import { CheckCircle2, Circle, FileText, HelpCircle, Link2, NotebookPen, Pencil, Plus, Send, Upload, X } from "lucide-react";
 import { ApiError, api } from "../api.js";
 import { Button, Chip, Receipt, Row, Surface, Tag, TextArea, TextInput } from "../design/index.js";
 import { Atmosphere } from "../design/metal/Atmosphere.js";
@@ -7,8 +7,9 @@ import { MetalObject } from "../design/metal/MetalObject.js";
 import { useChatStream } from "../chat/useChatStream.js";
 import { useMedia } from "../memory/MemoryExtras.js";
 import {
-  addItem, createProject, deleteItem, fetchProject, fetchProjects, openConversation, removeProject, restoreProject, updateItem, updateProject,
-  type Project, type ProjectDetail, type ProjectItem, type ProjectKind, type ProjectMessage, type ProjectPatch, type ProjectStatus,
+  addItem, addLinkMaterial, createProject, deleteItem, deleteMaterial, fetchProject, fetchProjects, materialFileUrl, openConversation, removeProject,
+  restoreProject, updateItem, updateProject, uploadMaterial,
+  type Material, type Project, type ProjectDetail, type ProjectItem, type ProjectKind, type ProjectMessage, type ProjectPatch, type ProjectStatus,
 } from "./api.js";
 
 type Tab = "overview" | "materials" | "log" | "discuss";
@@ -113,7 +114,7 @@ export function ProjectsScreen({ onOpenNote }: { onOpenNote?: (noteId: string) =
           <div className="ds-projects-body">
             {!detail ? <p role="status" className="text-body text-ink-2">Opening the project…</p>
               : shownTab === "overview" ? <Overview detail={detail} onPatch={(change) => void patch(current, change)} act={act} />
-              : shownTab === "materials" ? <Materials detail={detail} onOpenNote={onOpenNote} />
+              : shownTab === "materials" ? <Materials detail={detail} onOpenNote={onOpenNote} act={act} onPoll={() => void loadDetail(current.id)} />
               : shownTab === "log" ? <Log detail={detail} />
               : <Discuss key={current.id} project={current} onChanged={() => void refresh()} />}
           </div>
@@ -223,18 +224,90 @@ function Overview({ detail, onPatch, act }: { detail: ProjectDetail; onPatch: (c
   </>;
 }
 
-function Materials({ detail, onOpenNote }: { detail: ProjectDetail; onOpenNote?: (noteId: string) => void }) {
+const ACCEPT = "image/jpeg,image/png,image/webp,image/gif,application/pdf,text/plain,text/markdown,text/csv,application/json,.md,.csv";
+const looksLikeLink = (text: string) => /^https?:\/\/\S+$/i.test(text.trim());
+
+/** Drop, choose or paste photos, files and links; AVA reads each and keeps what matters. */
+function Materials({ detail, onOpenNote, act, onPoll }: {
+  detail: ProjectDetail; onOpenNote?: (noteId: string) => void;
+  act: (work: () => Promise<string | void>) => Promise<void>; onPoll: () => void;
+}) {
+  const { project } = detail;
+  const materials = detail.materials ?? [];
+  const [link, setLink] = useState(""), [dragging, setDragging] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+  const pending = materials.some((material) => material.status === "pending");
+  useEffect(() => {
+    if (!pending) return;
+    const timer = window.setInterval(onPoll, 3_000);
+    return () => window.clearInterval(timer);
+  }, [pending, onPoll]);
+  const upload = (files: File[]) => {
+    if (!files.length) return;
+    void act(async () => {
+      for (const file of files) await uploadMaterial(project.id, file);
+      return files.length === 1 ? `Added “${files[0]!.name}”. AVA is reading it.` : `Added ${files.length} files. AVA is reading them.`;
+    });
+  };
+  const addLink = (url: string) => void act(async () => { await addLinkMaterial(project.id, url.trim()); setLink(""); return "Added the link. AVA is reading it."; });
+  const photos = materials.filter((material) => material.kind === "photo"), others = materials.filter((material) => material.kind !== "photo");
   return <>
+    <div className="ds-projects-drop" data-dragging={dragging} tabIndex={0} aria-label="Drop photos, files or links here"
+      onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)}
+      onDrop={(event) => {
+        event.preventDefault(); setDragging(false);
+        const files = [...event.dataTransfer.files];
+        const text = event.dataTransfer.getData("text/uri-list") || event.dataTransfer.getData("text/plain");
+        if (files.length) upload(files); else if (looksLikeLink(text)) addLink(text);
+      }}
+      onPaste={(event) => {
+        const files = [...event.clipboardData.files], text = event.clipboardData.getData("text");
+        if (files.length) { event.preventDefault(); upload(files); } else if (looksLikeLink(text) && !(event.target instanceof HTMLInputElement)) { event.preventDefault(); addLink(text); }
+      }}>
+      <Upload size={22} aria-hidden />
+      <p className="text-body text-ink">Drop photos, files or links here, or paste</p>
+      <p className="text-meta text-ink-3">AVA reads each one and keeps what matters for this project. Photos, PDFs and text files, up to 20 MB.</p>
+      <div className="flex w-full max-w-lg flex-wrap justify-center gap-2">
+        <Button size="sm" onClick={() => picker.current?.click()}>Choose files</Button>
+        <form className="flex min-w-0 flex-1 gap-2" onSubmit={(event) => { event.preventDefault(); if (looksLikeLink(link)) addLink(link); }}>
+          <TextInput value={link} onChange={(event) => setLink(event.target.value)} placeholder="Paste a link" aria-label="Link" inputMode="url" />
+          <Button type="submit" size="sm" disabled={!looksLikeLink(link)} aria-label="Add link"><Plus size={16} /></Button>
+        </form>
+      </div>
+      <input ref={picker} type="file" multiple accept={ACCEPT} hidden onChange={(event) => { upload([...(event.target.files ?? [])]); event.target.value = ""; }} />
+    </div>
+    {photos.length > 0 && <Section label={`PHOTOS · ${photos.length}`}>
+      <div className="ds-projects-photos">{photos.map((material) => <figure key={material.id} className="ds-projects-photo">
+        <img src={materialFileUrl(material)} alt={material.title} loading="lazy" />
+        <figcaption><MaterialText material={material} act={act} /></figcaption>
+      </figure>)}</div>
+    </Section>}
+    {others.length > 0 && <Section label={`FILES AND LINKS · ${others.length}`}>
+      {others.map((material) => <div key={material.id} className="ds-projects-material">
+        <span className="text-ink-2" aria-hidden>{material.kind === "link" ? <Link2 size={18} /> : <FileText size={18} />}</span>
+        <MaterialText material={material} act={act} />
+      </div>)}
+    </Section>}
     <Section label={`NOTES · ${detail.notes.length}`}>
       {detail.notes.length ? detail.notes.map((note) => <Row key={note.id} leading={<NotebookPen size={18} />} title={note.title || "Untitled"}
         meta={`Updated ${ago(note.updatedAt)}`} onClick={onOpenNote ? () => onOpenNote(note.id) : undefined} />)
         : <p className="text-body text-ink-3">No notes yet. Anything AVA saves for this project lands here.</p>}
     </Section>
-    <Surface tone="sunken" elevation={0} className="grid justify-items-center gap-2 p-8 text-center">
-      <span className="text-body text-ink-2">Photos, files and links</span>
-      <span className="text-meta text-ink-3">Dropping them here, with AVA pulling out what matters, comes in the next update.</span>
-    </Surface>
   </>;
+}
+
+function MaterialText({ material, act }: { material: Material; act: (work: () => Promise<string | void>) => Promise<void> }) {
+  const title = material.url
+    ? <a className="ds-focus text-body text-ink underline-offset-4 hover:underline" href={material.url} target="_blank" rel="noreferrer noopener">{material.title}</a>
+    : <span className="text-body text-ink">{material.title}</span>;
+  return <div className="grid min-w-0 flex-1 gap-1">
+    <div className="flex items-start justify-between gap-2">{title}
+      <Button size="sm" variant="quiet" aria-label={`Remove ${material.title}`} onClick={() => void act(async () => { await deleteMaterial(material); return `Removed “${material.title}”.`; })}><X size={14} /></Button>
+    </div>
+    {material.status === "pending" ? <p role="status" className="text-meta text-ink-3">AVA is reading it…</p>
+      : material.status === "failed" ? <p className="text-meta text-danger">Couldn’t read it: {material.takeaways}</p>
+      : <p className="whitespace-pre-wrap text-meta text-ink-2">{material.takeaways}</p>}
+  </div>;
 }
 
 const SOURCE: Record<ProjectItem["source"], string> = { app: "In the app", chat: "From a chat", voice: "From voice", ava: "AVA" };

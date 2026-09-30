@@ -5,10 +5,13 @@ import type { Project, ProjectDetail } from "./api.js";
 const mock = vi.hoisted(() => ({
   list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), remove: vi.fn(), restore: vi.fn(),
   addItem: vi.fn(), updateItem: vi.fn(), deleteItem: vi.fn(), conversation: vi.fn(), send: vi.fn(),
+  upload: vi.fn(), addLink: vi.fn(), deleteMaterial: vi.fn(),
 }));
 vi.mock("./api.js", () => ({
   fetchProjects: mock.list, fetchProject: mock.get, createProject: mock.create, updateProject: mock.update, removeProject: mock.remove,
   restoreProject: mock.restore, addItem: mock.addItem, updateItem: mock.updateItem, deleteItem: mock.deleteItem, openConversation: mock.conversation,
+  uploadMaterial: mock.upload, addLinkMaterial: mock.addLink, deleteMaterial: mock.deleteMaterial,
+  materialFileUrl: (material: { id: string }) => `/file/${material.id}`,
 }));
 vi.mock("../api.js", async (original) => ({ ...(await original<typeof import("../api.js")>()), api: { sendMessage: mock.send } }));
 vi.mock("../chat/useChatStream.js", () => ({ useChatStream: () => ({ events: [] }) }));
@@ -97,6 +100,27 @@ describe("Projects tab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(mock.send).toHaveBeenCalledWith("session_tyre", "Found a van for 12k"));
     expect(await screen.findByText("AVA is thinking…")).toBeTruthy();
+  });
+
+  it("takes files and links, and shows what AVA pulled out of each", async () => {
+    const photo = { id: "pmat_1", projectId: "proj_tyre", kind: "photo", title: "Test van listing", url: null, fileName: "van.png", mime: "image/png", size: 10, status: "ready", takeaways: "- Test price €12k", createdAt: NOW };
+    const link = { ...photo, id: "pmat_2", kind: "link", title: "example.com", url: "https://example.com/van", status: "pending", takeaways: "" };
+    mock.get.mockImplementation(async () => ({ ...detailOf(tyre), materials: [photo, link] }));
+    render(<ProjectsScreen />);
+    await screen.findByRole("heading", { name: /Test tyre business/ });
+    fireEvent.click(screen.getByRole("button", { name: "Materials" }));
+    expect(await screen.findByText("- Test price €12k")).toBeTruthy();
+    expect((screen.getByRole("img", { name: "Test van listing" }) as HTMLImageElement).getAttribute("src")).toBe("/file/pmat_1");
+    expect(screen.getByText("AVA is reading it…")).toBeTruthy();
+    mock.upload.mockResolvedValue(photo);
+    const file = new File(["x"], "quote.pdf", { type: "application/pdf" });
+    fireEvent.drop(screen.getByLabelText("Drop photos, files or links here"), { dataTransfer: { files: [file], getData: () => "" } });
+    expect(await screen.findByText("Added “quote.pdf”. AVA is reading it.")).toBeTruthy();
+    expect(mock.upload).toHaveBeenCalledWith("proj_tyre", file);
+    mock.addLink.mockResolvedValue(link);
+    fireEvent.change(screen.getByRole("textbox", { name: "Link" }), { target: { value: "https://example.com/other" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add link" }));
+    await waitFor(() => expect(mock.addLink).toHaveBeenCalledWith("proj_tyre", "https://example.com/other"));
   });
 
   it("shows an empty state with no projects", async () => {

@@ -830,7 +830,7 @@ app.use("/api/memory/archive", memoryArchiveRoutes(requireToken(db), { db, archi
 app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir, index: memoryIndex }));
 app.use("/api/notes", notesRoutes(db, requireToken(db), { queueSelfImprove }));
 app.use("/api/calendar", calendarRoutes(db, requireToken(db)));
-app.use("/api/projects", projectRoutes(db, requireToken(db)));
+app.use("/api/projects", projectRoutes(db, requireToken(db), { dataDir: cfg.dataDir, openai }));
 app.use("/api/ui/preferences", uiPreferencesRoutes(db, requireToken(db)));
 app.use("/api/visual-explanations", visualExplanationRoutes(db, requireToken(db)));
 app.use("/api/capabilities", capabilityRoutes(requireToken(db), capabilityRouteDeps));

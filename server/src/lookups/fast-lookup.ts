@@ -40,7 +40,11 @@ export type LookupPlan =
   | { route: "memory"; query: string }
   | { route: "agent" };
 
-export type LookupResult = { route: Exclude<LookupPlan["route"], "agent"> | "projects"; text: string; ms: number };
+export type LookupResult = {
+  route: Exclude<LookupPlan["route"], "agent"> | "projects"; text: string; ms: number;
+  /** The project the call is now about ("let's talk about the tyre business"). */
+  project?: { id: string; name: string };
+};
 
 const ROUTER_SYSTEM = `You route one spoken request from Sir (Niko) to AVA. Decide whether it is a READ-ONLY question AVA can answer by reading its own data, and which data:
 - calendar: what's on, his schedule, classes, plans or free time in a period. Give "from" and "to" as YYYY-MM-DD in Europe/Dublin, inclusive.
@@ -176,8 +180,8 @@ export function createFastLookup(deps: {
   return async ({ request, recent, signal }) => {
     const started = now();
     // Projects first: adding or removing one must never wait for the agent.
-    const projectText = await fastProjectAction(deps, request, recent, signal);
-    if (projectText) return { route: "projects", text: projectText, ms: now() - started };
+    const projectAction = await fastProjectAction(deps, request, recent, signal);
+    if (projectAction) return { route: "projects", text: projectAction.text, project: projectAction.project, ms: now() - started };
     if (!lookupCandidate(request) || signal?.aborted) return null;
     let plan: LookupPlan;
     try {

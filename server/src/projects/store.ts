@@ -302,6 +302,14 @@ export function projectForSession(db: Db, sessionId: string): Project | null {
   return row ? toProject(row) : null;
 }
 
+/** What AVA took from photos, files and links Sir dropped in (newest first). */
+function materialLines(db: Db, projectId: string): string {
+  const rows = db.prepare(`SELECT kind, title, takeaways FROM project_materials WHERE project_id = ? AND status = 'ready'
+    ORDER BY created_at DESC LIMIT 6`).all(projectId) as Array<{ kind: string; title: string; takeaways: string }>;
+  const lines = rows.map((row) => `- ${row.kind} “${row.title}”: ${row.takeaways.replace(/\n/g, " ")}`);
+  return lines.length ? `From what Sir dropped in:\n${lines.join("\n")}` : "";
+}
+
 const KIND_LABEL: Record<ProjectKind, string> = { business: "business", build: "build", uni: "uni" };
 
 /** What AVA reads before discussing a project: short, current, and in plain words. */
@@ -317,6 +325,7 @@ export function projectBrief(db: Db, project: Project): string {
     detail?.questions.length ? `Open questions:\n${detail.questions.slice(0, 8).map((question) => `- ${question.text} (${question.id})`).join("\n")}` : "",
     detail?.log.length ? `Latest progress:\n${detail.log.slice(0, 5).map((line) => `- ${new Date(line.createdAt).toISOString().slice(0, 10)}: ${line.text}`).join("\n")}` : "",
     detail?.notes.length ? `Notes in its folder: ${detail.notes.slice(0, 8).map((note) => note.title || "Untitled").join("; ")}` : "",
+    materialLines(db, project.id),
   ];
   return lines.filter(Boolean).join("\n");
 }

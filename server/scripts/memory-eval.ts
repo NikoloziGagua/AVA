@@ -125,7 +125,8 @@ async function main() {
       const decision = await retrieveAutomaticMemory(index, { query: item.q, channel: "chat" });
       context = decision.prompt ?? "";
     } else if (variant === "new/recall") {
-      context = `[MEMORY SEARCH for this question]\n${formatRecall(recall(db as never, archive, item.q, { to: asOf }))}\n[/MEMORY SEARCH]`;
+      const ideas = await recallIdeas(index, item.q);
+      context = `[MEMORY SEARCH for this question]\n${formatRecall(recall(db as never, archive, item.q, { to: asOf }), ideas)}\n[/MEMORY SEARCH]`;
     }
     const user = [clock, context, `Sir: ${item.q}`].filter(Boolean).join("\n\n");
     let answer = "";

@@ -35,8 +35,8 @@ describe("bootstrapMemoryDir", () => {
   it("PERSONALITY_MD byte length is pinned (drift detection)", () => {
     const bytes = Buffer.byteLength(PERSONALITY_MD, "utf8");
     // Persona 3.1 adds "Care and curiosity" (Niko, 2026-09-27). Tool authority
-    // remains a separate prompt layer.
-    expect(bytes).toBe(8175);
+    // remains a separate prompt layer. 30 Sep: "gym or jiu-jitsu", not running.
+    expect(bytes).toBe(8177);
   });
 
   it.each(PREVIOUS_PERSONALITY_TEMPLATES.map((template, index) => [index, template] as const))(

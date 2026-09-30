@@ -15,8 +15,8 @@ export const PERSONALITY_MD = `<!-- ava-persona-schema: 3.1 -->
 I'm AVA — Niko's personal intelligence and assistant.
 
 I help him think clearly, keep his life and work under control, and act when
-something needs doing. He builds projects and is launching businesses; he keeps
-up the gym and running; he studies at university. I maintain continuity across
+something needs doing. He builds projects and is launching businesses; he trains
+at the gym or jiu-jitsu; he studies at university. I maintain continuity across
 his projects, businesses, ideas, plans, commitments, university work and
 day-to-day life so he does not have to carry all of it in his head.
 
@@ -455,7 +455,14 @@ therapy-speak or repetitive sign-offs.
  * data/memory/personality.md only when it still equals one of these exactly,
  * so an owner's own edits always win.
  */
+/** Persona 3.1 as first shipped. Niko corrected it on 30 Sep: gym or jiu-jitsu, not running. */
+const PERSONALITY_V3_1_MD = PERSONALITY_MD.replace(
+  "he trains\nat the gym or jiu-jitsu;",
+  "he keeps\nup the gym and running;",
+);
+
 export const PREVIOUS_PERSONALITY_TEMPLATES: readonly string[] = [
+  PERSONALITY_V3_1_MD,
   PERSONALITY_V3_0_MD,
   PERSONALITY_V2_1_MD,
   PERSONALITY_V2_0_MD,

@@ -48,9 +48,8 @@ brainstorming session" (13).
 
 ## Proposals, in order of value
 
-1. **Learn procedures only from Niko's own requests.** Skip automated Codex and watcher cycles, so their
-   procedures stop filling the store. Small change in `playbooks/capture.ts`: the session origin and the
-   automation-prompt check already exist in the memory work.
+1. **Learn procedures only from Niko's own requests. Done** (commit after `ecafaad`): runs from automation,
+   or whose request is an automated prompt, no longer teach playbooks.
 2. **One procedural system, not two.** Keep the file playbooks as hints. Run approved learned sequences
    directly with AVA's own executor (it already does the work) and drop the Activepieces sign-off hop. That
    removes the 20-second timeouts and the failure when Activepieces is down.

@@ -148,7 +148,7 @@ WRITING EACH MEMORY
 - text: one or two plain sentences in the third person that stand on their own, e.g. "Niko's mother's name is Teo." Resolve relative dates ("tomorrow", "Friday", "next week") to absolute dates using the message time; all times are Europe/Dublin.
 - topic: a short, stable label for what the memory is about, e.g. "mother's name", "Lasha's Instagram", "top priorities", "study session saving rule". When the new information is about the same thing as an existing memory, reuse that memory's topic exactly.
 - source_message_ids: the ids of the NEW messages that support it, including at least one of Niko's. Never cite context messages.
-- evidence: a short exact quote (3 to 25 words) copied character for character from one of the cited messages, taken from Niko's own message unless speech_act is "discussed" or "inferred". It must show the memory is really there. If you cannot quote Niko saying it, do not propose it: what AVA said is never Niko's statement.
+- evidence: a short exact quote (3 to 25 words) copied character for character from one of the cited messages, taken from Niko's own message unless speech_act is "discussed" or "inferred". Quote the part that carries the memory's content (the name, place, number or thing itself), not the "remember that" part. If you cannot quote Niko saying it, do not propose it: what AVA said is never Niko's statement.
 - due: for commitments only, "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM" in Dublin time; otherwise null.
 - confidence: high when Niko said it plainly; medium when it is clear but indirect; low when you are unsure it was really Niko or really meant.
 - reason: a few words on why this is worth remembering.
@@ -279,23 +279,34 @@ export function quoteFound(evidence: string, messages: ConversationMessage[]): b
   return messages.some((message) => comparable(message.content).includes(quote));
 }
 
-const COMMON_WORDS = new Set([
+// Everyday words that say nothing about what a memory is about.
+const GENERIC_WORDS = new Set([
   "the", "and", "for", "with", "that", "this", "you", "your", "are", "was", "were", "have", "has", "had", "not",
-  "but", "can", "will", "would", "should", "want", "wants", "like", "just", "about", "from", "into", "what",
-  "when", "they", "them", "his", "her", "him", "she", "our", "out", "all", "any", "also", "then", "than",
-  "ava", "niko", "sir", "yes", "yeah", "okay", "please", "don", "dont", "really", "very", "much", "some",
+  "but", "can", "will", "would", "should", "want", "like", "just", "about", "from", "into", "what", "when",
+  "they", "them", "his", "her", "him", "she", "our", "out", "all", "any", "also", "then", "than", "ava", "niko",
+  "sir", "yes", "yeah", "okay", "please", "don", "dont", "really", "very", "much", "some", "keep", "use", "make",
+  "get", "got", "going", "need", "say", "said", "tell", "told", "know", "think", "work", "open", "show", "see",
+  "look", "start", "stop", "ask", "give", "take", "put", "set", "try", "help", "find", "check", "call", "come",
+  "let", "done", "thing", "stuff", "way", "time", "now", "right", "good", "new", "one", "two", "every",
+  "everything", "something", "anything", "always", "never", "remember", "save", "note", "because", "there",
+  "here", "where", "which", "who", "how", "why", "him", "its", "it", "rather", "instead", "only", "more",
 ]);
 
-function contentWords(text: string): Set<string> {
+function keyWords(text: string): Set<string> {
   return new Set(comparable(text).split(" ")
-    .map((word) => word.replace(/(?:'s|s)$/, ""))
-    .filter((word) => word.length >= 3 && !COMMON_WORDS.has(word)));
+    .map((word) => (word.length > 4 ? word.replace(/s$/, "") : word))
+    .filter((word) => word.length >= 3 && !GENERIC_WORDS.has(word)));
 }
 
-/** The quote must be about the memory: at least one real word in common. */
-export function quoteSupports(evidence: string, memoryText: string): boolean {
-  const memory = contentWords(memoryText);
-  return [...contentWords(evidence)].some((word) => memory.has(word));
+/**
+ * The cited words must mention what the memory is about: at least one key
+ * word in common, ignoring everyday words. A real quote from an unrelated
+ * sentence ("...where you keep your notes") no longer carries a memory
+ * about something else ("keep answers concise").
+ */
+export function sharesKeyWord(memoryText: string, sourceTexts: string[]): boolean {
+  const memory = keyWords(memoryText);
+  return sourceTexts.some((text) => [...keyWords(text)].some((word) => memory.has(word)));
 }
 
 export type AppliedOperation = { op: ProposedOperation; result: "added" | "replaced" | "ended" | "forgotten" | "unchanged" | "confirmed" };
@@ -330,8 +341,8 @@ export function applyOperations(
     // ("I'll keep my answers concise") becoming Niko's preference.
     const quoteSources = (needsNiko ? nikoSources : sources).map((id) => byId.get(id)!);
     if (!quoteFound(op.evidence, quoteSources)) { skipped.push({ op, why: "evidence quote not found in the cited words" }); continue; }
-    if ((op.op === "add" || op.op === "update") && !quoteSupports(op.evidence, `${op.text} ${op.topic}`)) {
-      skipped.push({ op, why: "evidence quote does not support the memory" });
+    if ((op.op === "add" || op.op === "update") && !sharesKeyWord(`${op.text} ${op.topic}`, quoteSources.map((message) => message.content))) {
+      skipped.push({ op, why: "the cited words don't mention it" });
       continue;
     }
     const nikoText = nikoSources.map((id) => byId.get(id)!.content).join("\n");

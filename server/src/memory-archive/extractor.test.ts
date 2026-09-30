@@ -202,12 +202,14 @@ describe("memory extractor", () => {
 });
 
 describe("provenance and ordering", () => {
-  it("demands that the quote is about the memory, not just any line of Niko's", async () => {
-    const { quoteSupports } = await import("./extractor.js");
-    expect(quoteSupports("Don't set a watcher yet", "Niko wants AVA to keep its answers concise.")).toBe(false);
-    expect(quoteSupports("I like to be alone", "Niko likes to be alone.")).toBe(true);
-    expect(quoteSupports("My moms name is teo remember that", "Niko's mother's name is Teo.")).toBe(true);
-    expect(quoteSupports("I am indeed Georgian", "Niko is Georgian.")).toBe(true);
+  it("demands that Niko's cited words mention what the memory is about", async () => {
+    const { sharesKeyWord } = await import("./extractor.js");
+    const notes = "I want to design an interface like notes where you keep your notes. Don't set a watcher yet";
+    expect(sharesKeyWord("Niko wants AVA to keep its answers concise. concise responses", [notes])).toBe(false);
+    expect(sharesKeyWord("Niko likes to be alone.", ["I like to be alone"])).toBe(true);
+    expect(sharesKeyWord("Niko's mother's name is Teo.", ["My moms name is teo remember that"])).toBe(true);
+    expect(sharesKeyWord("Niko is Georgian.", ["I am indeed Georgian"])).toBe(true);
+    expect(sharesKeyWord("Niko wants Europe/Dublin as his default time zone.", ["I live in Dublin, I mean near Dublin", "Yes, I want it as a preference"])).toBe(true);
   });
 
   it("files an older statement that arrives late as history, never over a newer one", () => {

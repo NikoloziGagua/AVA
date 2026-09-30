@@ -1,0 +1,584 @@
+{
+ "week": {
+  "from": "2026-10-05",
+  "to": "2026-10-11",
+  "today": "2026-10-06",
+  "nowMinutes": 1060,
+  "days": [
+   {
+    "date": "2026-10-05",
+    "past": true,
+    "today": false,
+    "rest": false,
+    "items": [
+     {
+      "kind": "calendar",
+      "key": "cal_1NcGCq8FHuJcdG:2026-10-05",
+      "start": "09:00",
+      "end": "11:00",
+      "title": "Agile Software Development",
+      "label": "Lecture"
+     },
+     {
+      "kind": "calendar",
+      "key": "cal_OAVFPHY2umwnnU:2026-10-05",
+      "start": "11:00",
+      "end": "13:00",
+      "title": "Concurrent Development Practical",
+      "label": "Lecture"
+     },
+     {
+      "kind": "session",
+      "key": "trs_lMuMKWjBV84s",
+      "start": null,
+      "end": null,
+      "session": {
+       "id": "trs_lMuMKWjBV84s",
+       "discipline": "boxing",
+       "title": "Boxing",
+       "status": "done",
+       "localDate": "2026-10-05",
+       "startLocalTime": null,
+       "durationMin": null,
+       "plan": [],
+       "reason": "",
+       "calendarEventId": null,
+       "calendarEventVersion": null,
+       "minutes": 70,
+       "effort": 7,
+       "sore": [
+        "shoulder"
+       ],
+       "notes": "Felt heavy",
+       "distanceKm": null,
+       "durationS": null,
+       "loggedAt": 1791304800000,
+       "source": "voice",
+       "version": 2,
+       "createdAt": 1791304800000,
+       "updatedAt": 1791304800000
+      },
+      "hard": false,
+      "conflict": null
+     }
+    ]
+   },
+   {
+    "date": "2026-10-06",
+    "past": false,
+    "today": true,
+    "rest": false,
+    "items": [
+     {
+      "kind": "calendar",
+      "key": "cal_6t5IctDbBc6p0y:2026-10-06",
+      "start": "09:00",
+      "end": "11:00",
+      "title": "Data Science",
+      "label": "Lecture"
+     },
+     {
+      "kind": "calendar",
+      "key": "cal_xXEmoG-zb7cqld:2026-10-06",
+      "start": "13:00",
+      "end": "15:00",
+      "title": "Data Science",
+      "label": "Lecture"
+     },
+     {
+      "kind": "booked",
+      "key": "cal_iQggnoqaI1S7BB:2026-10-06",
+      "start": "19:00",
+      "end": "21:00",
+      "title": "Gym / Jujitsu",
+      "discipline": "bjj",
+      "hard": true
+     }
+    ]
+   },
+   {
+    "date": "2026-10-07",
+    "past": false,
+    "today": false,
+    "rest": false,
+    "items": [
+     {
+      "kind": "session",
+      "key": "trs_LvgPxZyQllL4",
+      "start": "08:00",
+      "end": "08:25",
+      "session": {
+       "id": "trs_LvgPxZyQllL4",
+       "discipline": "mobility",
+       "title": "Mobility: hips, thoracic, shoulders",
+       "status": "approved",
+       "localDate": "2026-10-07",
+       "startLocalTime": "08:00:00",
+       "durationMin": 25,
+       "plan": [
+        {
+         "text": "Hip openers",
+         "minutes": 10,
+         "methodId": null
+        },
+        {
+         "text": "Thoracic rotations",
+         "minutes": 8,
+         "methodId": null
+        },
+        {
+         "text": "Band shoulder work",
+         "minutes": 7,
+         "methodId": null
+        }
+       ],
+       "reason": "Loosen up before the run. Easy on the sore shoulder.",
+       "calendarEventId": "cal_xc6QqHmZglcJTQ",
+       "calendarEventVersion": 1,
+       "minutes": null,
+       "effort": null,
+       "sore": [],
+       "notes": "",
+       "distanceKm": null,
+       "durationS": null,
+       "loggedAt": null,
+       "source": "ava",
+       "version": 2,
+       "createdAt": 1791304800000,
+       "updatedAt": 1791304800000
+      },
+      "hard": false,
+      "conflict": null
+     },
+     {
+      "kind": "booked",
+      "key": "cal_jOjukqVLEXbp1R:2026-10-07",
+      "start": "13:20",
+      "end": "14:00",
+      "title": "Run",
+      "discipline": "run",
+      "hard": false
+     },
+     {
+      "kind": "booked",
+      "key": "cal_s6hwONwYzpaZaz:2026-10-07",
+      "start": "14:00",
+      "end": "14:30",
+      "title": "Run",
+      "discipline": "run",
+      "hard": false
+     },
+     {
+      "kind": "booked",
+      "key": "cal_WmtoHQ5ZFjs5wa:2026-10-07",
+      "start": "20:00",
+      "end": "22:00",
+      "title": "Gym",
+      "discipline": "gym",
+      "hard": true
+     }
+    ]
+   },
+   {
+    "date": "2026-10-08",
+    "past": false,
+    "today": false,
+    "rest": false,
+    "items": [
+     {
+      "kind": "calendar",
+      "key": "cal_6OTCxw-aeWRyq-:2026-10-08",
+      "start": "09:00",
+      "end": "10:00",
+      "title": "Data Science",
+      "label": "Lecture"
+     },
+     {
+      "kind": "calendar",
+      "key": "cal_rs0XoEBH_y_m-p:2026-10-08",
+      "start": "11:00",
+      "end": "12:00",
+      "title": "Concurrent Development",
+      "label": "Lecture"
+     },
+     {
+      "kind": "session",
+      "key": "trs_zu76NTzaQH0J",
+      "start": "18:00",
+      "end": "19:15",
+      "session": {
+       "id": "trs_zu76NTzaQH0J",
+       "discipline": "boxing",
+       "title": "Boxing: jab–cross, slip-roll counter, 6 bag rounds",
+       "status": "proposed",
+       "localDate": "2026-10-08",
+       "startLocalTime": "18:00:00",
+       "durationMin": 75,
+       "plan": [
+        {
+         "text": "Warm-up, skipping, shadowboxing",
+         "minutes": 12,
+         "methodId": null
+        },
+        {
+         "text": "Slip-roll counter drill",
+         "minutes": 9,
+         "methodId": null
+        },
+        {
+         "text": "Heavy bag, 6 × 3 min",
+         "minutes": 24,
+         "methodId": null
+        },
+        {
+         "text": "Core and neck",
+         "minutes": 10,
+         "methodId": null
+        }
+       ],
+       "reason": "Free after lectures. Two days after Monday's boxing.",
+       "calendarEventId": null,
+       "calendarEventVersion": null,
+       "minutes": null,
+       "effort": null,
+       "sore": [],
+       "notes": "",
+       "distanceKm": null,
+       "durationS": null,
+       "loggedAt": null,
+       "source": "ava",
+       "version": 1,
+       "createdAt": 1791304800000,
+       "updatedAt": 1791304800000
+      },
+      "hard": false,
+      "conflict": null
+     }
+    ]
+   },
+   {
+    "date": "2026-10-09",
+    "past": false,
+    "today": false,
+    "rest": true,
+    "items": [
+     {
+      "kind": "calendar",
+      "key": "cal_v-Co9wOjnHfDGa:2026-10-09",
+      "start": "10:00",
+      "end": "11:00",
+      "title": "Data Science",
+      "label": "Lecture"
+     }
+    ]
+   },
+   {
+    "date": "2026-10-10",
+    "past": false,
+    "today": false,
+    "rest": false,
+    "items": [
+     {
+      "kind": "session",
+      "key": "trs_TJot9w3b53nW",
+      "start": "11:00",
+      "end": "12:15",
+      "session": {
+       "id": "trs_TJot9w3b53nW",
+       "discipline": "kickboxing",
+       "title": "Kickboxing: pads, low-kick defence, light sparring",
+       "status": "proposed",
+       "localDate": "2026-10-10",
+       "startLocalTime": "11:00:00",
+       "durationMin": 75,
+       "plan": [],
+       "reason": "Weekend slot, fresh legs.",
+       "calendarEventId": null,
+       "calendarEventVersion": null,
+       "minutes": null,
+       "effort": null,
+       "sore": [],
+       "notes": "",
+       "distanceKm": null,
+       "durationS": null,
+       "loggedAt": null,
+       "source": "ava",
+       "version": 1,
+       "createdAt": 1791304800000,
+       "updatedAt": 1791304800000
+      },
+      "hard": true,
+      "conflict": null
+     }
+    ]
+   },
+   {
+    "date": "2026-10-11",
+    "past": false,
+    "today": false,
+    "rest": false,
+    "items": [
+     {
+      "kind": "session",
+      "key": "trs_IXYrfUoVmrAI",
+      "start": "12:00",
+      "end": "13:00",
+      "session": {
+       "id": "trs_IXYrfUoVmrAI",
+       "discipline": "gym",
+       "title": "Gym: squat, hinge, carries",
+       "status": "proposed",
+       "localDate": "2026-10-11",
+       "startLocalTime": "12:00:00",
+       "durationMin": 60,
+       "plan": [],
+       "reason": "Legs after a rest morning.",
+       "calendarEventId": null,
+       "calendarEventVersion": null,
+       "minutes": null,
+       "effort": null,
+       "sore": [],
+       "notes": "",
+       "distanceKm": null,
+       "durationS": null,
+       "loggedAt": null,
+       "source": "ava",
+       "version": 1,
+       "createdAt": 1791304800000,
+       "updatedAt": 1791304800000
+      },
+      "hard": false,
+      "conflict": null
+     }
+    ]
+   }
+  ],
+  "warnings": [
+   {
+    "key": "cal_jOjukqVLEXbp1R:2026-10-07|cal_s6hwONwYzpaZaz:2026-10-07",
+    "date": "2026-10-07",
+    "discipline": "run",
+    "start": "13:20",
+    "end": "14:30",
+    "title": "Run (two entries, 13:20 and 14:00)",
+    "text": "Looks like one run entered twice. Merge them?",
+    "fix": {
+     "first": {
+      "occurrenceKey": "cal_jOjukqVLEXbp1R:2026-10-07",
+      "eventVersion": 1,
+      "exceptionVersion": null
+     },
+     "second": {
+      "occurrenceKey": "cal_s6hwONwYzpaZaz:2026-10-07",
+      "eventVersion": 1,
+      "exceptionVersion": null
+     }
+    }
+   }
+  ],
+  "checkin": {
+   "id": "trc__4NcDh94gEvR",
+   "localDate": "2026-10-06",
+   "feeling": "ok",
+   "sore": [
+    "shoulder"
+   ],
+   "sleepHours": 6.5,
+   "note": "",
+   "createdAt": 1791304800000,
+   "updatedAt": 1791304800000
+  },
+  "readiness": {
+   "score": 70,
+   "word": "OK",
+   "detail": "Slept 6.5 h · shoulder sore"
+  },
+  "cycle": [
+   {
+    "discipline": "mobility",
+    "done": 0,
+    "planned": 1
+   },
+   {
+    "discipline": "bjj",
+    "done": 0,
+    "planned": 1
+   },
+   {
+    "discipline": "boxing",
+    "done": 1,
+    "planned": 2
+   },
+   {
+    "discipline": "kickboxing",
+    "done": 0,
+    "planned": 1
+   },
+   {
+    "discipline": "gym",
+    "done": 0,
+    "planned": 2
+   },
+   {
+    "discipline": "run",
+    "done": 0,
+    "planned": 2
+   }
+  ],
+  "waiting": 3,
+  "note": "No targets. Sessions are planned with you as the week goes.",
+  "fetchedAt": 1791304800000
+ },
+ "plan": {
+  "from": "2026-10-05",
+  "to": "2026-10-11",
+  "proposed": [
+   {
+    "id": "trs_LvgPxZyQllL4",
+    "discipline": "mobility",
+    "title": "Mobility: hips, thoracic, shoulders",
+    "status": "proposed",
+    "localDate": "2026-10-07",
+    "startLocalTime": "08:00:00",
+    "durationMin": 25,
+    "plan": [
+     {
+      "text": "Hip openers",
+      "minutes": 10,
+      "methodId": null
+     },
+     {
+      "text": "Thoracic rotations",
+      "minutes": 8,
+      "methodId": null
+     },
+     {
+      "text": "Band shoulder work",
+      "minutes": 7,
+      "methodId": null
+     }
+    ],
+    "reason": "Loosen up before the run. Easy on the sore shoulder.",
+    "calendarEventId": null,
+    "calendarEventVersion": null,
+    "minutes": null,
+    "effort": null,
+    "sore": [],
+    "notes": "",
+    "distanceKm": null,
+    "durationS": null,
+    "loggedAt": null,
+    "source": "ava",
+    "version": 1,
+    "createdAt": 1791304800000,
+    "updatedAt": 1791304800000
+   },
+   {
+    "id": "trs_zu76NTzaQH0J",
+    "discipline": "boxing",
+    "title": "Boxing: jab–cross, slip-roll counter, 6 bag rounds",
+    "status": "proposed",
+    "localDate": "2026-10-08",
+    "startLocalTime": "18:00:00",
+    "durationMin": 75,
+    "plan": [
+     {
+      "text": "Warm-up, skipping, shadowboxing",
+      "minutes": 12,
+      "methodId": null
+     },
+     {
+      "text": "Slip-roll counter drill",
+      "minutes": 9,
+      "methodId": null
+     },
+     {
+      "text": "Heavy bag, 6 × 3 min",
+      "minutes": 24,
+      "methodId": null
+     },
+     {
+      "text": "Core and neck",
+      "minutes": 10,
+      "methodId": null
+     }
+    ],
+    "reason": "Free after lectures. Two days after Monday's boxing.",
+    "calendarEventId": null,
+    "calendarEventVersion": null,
+    "minutes": null,
+    "effort": null,
+    "sore": [],
+    "notes": "",
+    "distanceKm": null,
+    "durationS": null,
+    "loggedAt": null,
+    "source": "ava",
+    "version": 1,
+    "createdAt": 1791304800000,
+    "updatedAt": 1791304800000
+   },
+   {
+    "id": "trs_TJot9w3b53nW",
+    "discipline": "kickboxing",
+    "title": "Kickboxing: pads, low-kick defence, light sparring",
+    "status": "proposed",
+    "localDate": "2026-10-10",
+    "startLocalTime": "11:00:00",
+    "durationMin": 75,
+    "plan": [],
+    "reason": "Weekend slot, fresh legs.",
+    "calendarEventId": null,
+    "calendarEventVersion": null,
+    "minutes": null,
+    "effort": null,
+    "sore": [],
+    "notes": "",
+    "distanceKm": null,
+    "durationS": null,
+    "loggedAt": null,
+    "source": "ava",
+    "version": 1,
+    "createdAt": 1791304800000,
+    "updatedAt": 1791304800000
+   },
+   {
+    "id": "trs_IXYrfUoVmrAI",
+    "discipline": "gym",
+    "title": "Gym: squat, hinge, carries",
+    "status": "proposed",
+    "localDate": "2026-10-11",
+    "startLocalTime": "12:00:00",
+    "durationMin": 60,
+    "plan": [],
+    "reason": "Legs after a rest morning.",
+    "calendarEventId": null,
+    "calendarEventVersion": null,
+    "minutes": null,
+    "effort": null,
+    "sore": [],
+    "notes": "",
+    "distanceKm": null,
+    "durationS": null,
+    "loggedAt": null,
+    "source": "ava",
+    "version": 1,
+    "createdAt": 1791304800000,
+    "updatedAt": 1791304800000
+   }
+  ],
+  "replaced": 0,
+  "dropped": [
+   {
+    "title": "Gym right after a lecture",
+    "localDate": "2026-10-09",
+    "why": "too close to Data Science (10:00–11:00)"
+   },
+   {
+    "title": "Easy run, 6 km",
+    "localDate": "2026-10-09",
+    "why": "keeps one rest day in the week"
+   }
+  ]
+ }
+}

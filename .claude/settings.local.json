@@ -25,7 +25,6 @@
       "Bash(git reset *)",
       "Bash(git -C \"C:/Users/nikug/ai/forge\" log -2 --format=\"%an <%ae>\")",
       "Bash(curl -s http://localhost:8787/health)",
-      "Bash(grep *)"
-    ]
+      "Bash(grep *)"    ]
   }
 }

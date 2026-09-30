@@ -33,3 +33,13 @@ Stuff/
 apply-forge-*.ps1
 apply-forge-*.cmd
 APPLY-FORGE-*.cmd
+
+# agentroom (personal: holds your agent token)
+.agentroom/
+
+# agentroom (personal: holds your agent token)
+.claude/settings.local.json
+
+# agentroom (personal: holds your agent token)
+.codex/config.toml
+.codex/hooks.json

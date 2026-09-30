@@ -22,6 +22,7 @@ describe("fast project actions", () => {
     expect(projectCandidate("what's the next step on agile", names)).toBe(true);
     expect(projectCandidate("Ava, what's on my calendar this week?", names)).toBe(false);
     expect(projectCandidate("tell me a joke", names)).toBe(false);
+    expect(projectCandidate("What projects do I have?", names)).toBe(true);
   });
 
   it("accepts only a plan that names a real project", () => {

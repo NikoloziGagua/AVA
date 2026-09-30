@@ -17,6 +17,7 @@ const words = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,
 
 /** Cheap first gate: about projects, or naming one, and asking for something the lane can do. */
 export function projectCandidate(request: string, names: readonly string[]): boolean {
+  if (/\bprojects\b/i.test(request)) return true;
   if (!ACTION_WORDS.test(request)) return false;
   if (/\bprojects?\b/i.test(request)) return true;
   const said = new Set(words(request).map((word) => word.replace(/^tire/, "tyre")));

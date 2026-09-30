@@ -1,3 +1,6 @@
+import type { ToolVerificationEvidence } from "../verification-evidence.js";
+import type { MessageRoomPostReceipt, MessageSavedItem } from "../../state/messages.js";
+
 export type ToolDefinition = {
   name: string;
   description: string;
@@ -20,6 +23,12 @@ export type ToolResult = {
   call_id: string;
   output: string;      // tool stringified its own result
   is_error?: boolean;
+  /** AVA-local operational evidence. Provider adapters must not manufacture it. */
+  verification?: ToolVerificationEvidence;
+  /** AVA-local: what this call durably saved (shown as a Saved card). Never sent to the model. */
+  saved?: MessageSavedItem;
+  /** AVA-local authoritative agentroom post evidence. Never sent to the model. */
+  roomPost?: MessageRoomPostReceipt;
 };
 
 export type Message =
@@ -27,10 +36,19 @@ export type Message =
   | { role: "assistant"; content: string; tool_calls?: ToolCall[] }
   | { role: "tool"; content: ToolResult };
 
+export type ProviderUsage = {
+  providerRequestId: string | null;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+};
+
 export type StreamEvent =
   | { kind: "delta"; text: string }
   | { kind: "tool_call"; call: ToolCall }
   | { kind: "thought"; text: string }
+  | { kind: "usage"; usage: ProviderUsage }
   | { kind: "done"; stop_reason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error"; error?: string };
 
 export type StreamInput = {

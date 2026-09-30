@@ -1,27 +1,68 @@
-import { useEffect, useMemo, useRef } from "react";
-import { gsap, useGSAP, ScrollTrigger } from "../lib/gsap.js";
-import { D, EASE, SHADOW, hoverLift } from "../lib/deckMotion.js";
+import { Fragment, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
-import { Orb } from "../components/ava/Orb.js";
-import { WordReveal } from "../components/ava/WordReveal.js";
+import { cn } from "../design/cn.js";
 import { ThinkingIndicator, type ThinkingState } from "./ThinkingIndicator.js";
 import { ToolCallChip } from "./ToolCallChip.js";
 import { humanizeTool } from "./humanize.js";
 import { MessageActions } from "./MessageActions.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
-import { stripMarkdown } from "./strip-markdown.js";
+import { AssistantMarkdown } from "./AssistantMarkdown.js";
 import type { StreamEvent } from "./useChatStream.js";
+import { TaskReceiptCard } from "./TaskReceiptCard.js";
+import { VisualMessageCard, type VisualSemanticActionHandler } from "../visuals/VisualMessageCard.js";
+import type { VisualMessage, VisualMessageContext } from "../visuals/types.js";
+import { MemoryContextCapsule } from "./MemoryContextCapsule.js";
+import { SavedItemsCard } from "./SavedItemsCard.js";
+import { RoomPostReceipt } from "./RoomPostReceipt.js";
+import { validRoomPosts, type RoomPosts } from "./room-posts.js";
+import type { SavedItem, SavedItems } from "./saved-items.js";
+import type { MemoryContext } from "./memory-context.js";
 
+// createdAt (epoch ms) places a message under its Dublin day divider; a message
+// without one (a live reply) sits under the divider before it.
 export type ChatMessage =
-  | { role: "user"; text: string; id: string }
-  | { role: "assistant"; text: string; id: string }
+  | { role: "user"; text: string; id: string; createdAt?: number; visualContext?: VisualMessageContext; inputSource?: "voice_exact_text"; inputModality?: "text" | "voice" }
+  | { role: "assistant"; text: string; id: string; createdAt?: number; visualMessages?: VisualMessage[]; memoryContext?: MemoryContext; savedItems?: SavedItems; roomPosts?: RoomPosts }
   // `system` rows are server notices (e.g. the "Server restarted…" recovery
   // message) — rendered as a centered notice, never attributed to Ava.
-  | { role: "system"; text: string; id: string };
+  | { role: "system"; text: string; id: string; createdAt?: number };
+
+const DUBLIN_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Dublin", year: "numeric", month: "2-digit", day: "2-digit" });
+const DUBLIN_LABEL = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Dublin", weekday: "short", day: "numeric", month: "short" });
+
+/** The Europe/Dublin calendar day of an instant, as YYYY-MM-DD (one-conversation v1). */
+export function dublinDay(at: number): string {
+  return DUBLIN_DAY.format(at);
+}
+
+/** "Today", "Yesterday" or "Mon 28 Sep", all in Dublin time. */
+export function dayLabel(at: number, now = Date.now()): string {
+  const day = dublinDay(at);
+  if (day === dublinDay(now)) return "Today";
+  // Noon UTC of the previous date is that same date in Dublin (UTC+0 or +1), DST or not.
+  const [y, m, d] = dublinDay(now).split("-").map(Number) as [number, number, number];
+  if (day === dublinDay(Date.UTC(y, m - 1, d - 1, 12))) return "Yesterday";
+  return DUBLIN_LABEL.format(at).replace(",", "").replace("Sept", "Sep");
+}
+
+/** Where a day divider goes: before each message whose Dublin day differs from the last dated one. */
+export function dayBreaks(history: ChatMessage[], now = Date.now()): Map<string, string> {
+  const breaks = new Map<string, string>();
+  let lastDay: string | null = null;
+  for (const message of history) {
+    if (message.createdAt === undefined) continue;
+    const day = dublinDay(message.createdAt);
+    if (day !== lastDay) breaks.set(message.id, dayLabel(message.createdAt, now));
+    lastDay = day;
+  }
+  return breaks;
+}
 
 export interface MessageListProps {
   history: ChatMessage[];
   liveEvents: StreamEvent[];
+  /** Open something AVA saved (a row of a reply's Saved card). */
+  onOpenSaved?: (item: SavedItem) => void;
   /** Re-run the last turn (wired to the action row's Retry). */
   onRetry?: () => void;
   /**
@@ -46,43 +87,37 @@ export interface MessageListProps {
   executing?: boolean;
   runningTool?: string | null;
   headerState?: "idle" | "thinking" | "responding";
-  /**
-   * True when the Activity panel is expanded (docked as a right rail at xl).
-   * Hides the inline tool-call chips at xl only — there they'd mirror the
-   * rail's step list line for line. Below xl (and whenever the rail is
-   * collapsed) the chips stay, as they're the only live-step surface.
-   */
-  toolChipsDocked?: boolean;
+  onVisualSemanticAction?: VisualSemanticActionHandler;
 }
 
 export function MessageList({
   history,
   liveEvents,
   onRetry,
+  onOpenSaved,
   scrollerRef,
   onScrollerMount,
   optimisticThinking = false,
   executing = false,
   runningTool,
   headerState = "idle",
-  toolChipsDocked = false,
+  onVisualSemanticAction,
 }: MessageListProps) {
   const reduced = useReducedMotion();
   const internalRef = useRef<HTMLDivElement>(null);
   const scroller = scrollerRef ?? internalRef;
   const endRef = useRef<HTMLDivElement>(null);
-  const breathKilled = useRef(false);
 
-  // Callback ref: keep the shared ref object's `.current` in sync (so the
-  // ScrollTriggers below can read it) AND notify ChatScreen of the node identity.
+  // Callback ref: keep the shared ref object's `.current` in sync AND notify
+  // ChatScreen of the node identity.
   const attachScroller = (node: HTMLDivElement | null) => {
     (scroller as React.MutableRefObject<HTMLDivElement | null>).current = node;
     onScrollerMount?.(node);
   };
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [history.length, liveEvents.length, optimisticThinking]);
+    endRef.current?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "end" });
+  }, [history.length, liveEvents.length, optimisticThinking, reduced]);
 
   const resolved = new Map<string, "approved" | "denied" | "expired">();
   for (const e of liveEvents) {
@@ -90,6 +125,13 @@ export function MessageList({
   }
 
   const lastFinal = [...liveEvents].reverse().find((e) => e.kind === "final");
+  // Approval snapshots and the terminal result use the same receipt event. Only
+  // the newest snapshot is authoritative for the current run.
+  const lastReceipt = [...liveEvents].reverse().find((e) => e.kind === "receipt");
+  const liveMemoryContext = [...liveEvents].reverse().find((e) => e.kind === "memory_context");
+  // Each saved_items event is cumulative, so the newest one is the whole list.
+  const liveSavedItems = [...liveEvents].reverse().find((e) => e.kind === "saved_items");
+  const liveRoomPosts = [...liveEvents].reverse().find((e) => e.kind === "room_posts");
 
   // Retry re-runs the LAST turn (ChatScreen's retryLast), so it only belongs on
   // the LAST assistant bubble — on every bubble it implied re-running THAT turn.
@@ -118,9 +160,9 @@ export function MessageList({
   // No live token-by-token bubble. Reasoning models (gpt-5.5) "think" for seconds then
   // emit the WHOLE reply in a sub-100ms burst, so a live bubble either flashed past
   // unseen or (worse) rendered empty. Instead the thinking indicator stays up until the
-  // reply is ready, then the FINAL block reveals it WORD-BY-WORD (WordReveal) — exactly
-  // "it thinks, then outputs word by word". `streamingText` is still accumulated so a
-  // Stop mid-reply can show whatever was generated.
+  // reply is ready, then the FINAL block renders its complete Markdown tree in one
+  // stable pass. `streamingText` is still accumulated so Stop can show the partial
+  // answer without discarding headings, lists, or code that already arrived.
 
   // Caption: backward-walk the live stream (verified mechanism). Before any
   // liveEvent (the optimistic window) it seeds "thinking…", then upgrades the
@@ -138,101 +180,60 @@ export function MessageList({
       ? "responding"
       : "thinking";
 
-  // Thinking row shows from send until the final reply arrives (then WordReveal takes over).
+  // Thinking row shows from send until the final reply arrives.
   const showThinking = optimisticThinking && !lastFinal && !runTerminated;
+  const breaks = useMemo(() => dayBreaks(history), [history]);
 
-  // ── Single source of truth for bubble reveals: ScrollTrigger.batch ──
-  // ScrollTrigger.batch fires onEnter for elements already in view at creation
-  // time too, so it covers BOTH the just-appended newest bubble AND older
-  // bubbles scrolling into view — no separate per-append gsap.from (which used
-  // to double-animate the newest node, fighting over opacity/transform).
-  //
-  // `[data-bubble]:not([data-entered])` keeps the set disjoint across re-runs:
-  // already-revealed bubbles carry data-entered and are skipped when the batch
-  // is rebuilt (history.length changes), so each bubble animates exactly once.
-  // useGSAP reverts tweens but does NOT kill ScrollTriggers — capture + kill.
-  useGSAP(
-    () => {
-      if (reduced || !scroller.current) return;
-      const triggers: ScrollTrigger[] = [];
-      ScrollTrigger.batch("[data-bubble]:not([data-entered])", {
-        scroller: scroller.current,
-        start: "top 92%",
-        once: true,
-        onEnter: (els) => {
-          els.forEach((el) => el.setAttribute("data-entered", ""));
-          gsap.from(els, {
-            y: 18,
-            opacity: 0,
-            filter: "blur(6px)",
-            duration: D.section,
-            ease: EASE,
-            stagger: 0.06,
-            overwrite: true,
-            clearProps: "filter",
-          });
-        },
-      });
-      ScrollTrigger.getAll().forEach((t) => {
-        if (t.scroller === scroller.current) triggers.push(t);
-      });
-      return () => triggers.forEach((t) => t.kill());
-    },
-    { scope: scroller, dependencies: [history.length] },
-  );
-
-  // ── Cross-fade the thinking row out the moment the final block streams in ──
-  useGSAP(
-    () => {
-      if (reduced || !lastFinal || breathKilled.current) return;
-      breathKilled.current = true;
-      const row = scroller.current?.querySelector("[data-thinking]");
-      if (row) gsap.to(row, { opacity: 0, y: -6, duration: D.fast, ease: "power2.in" });
-    },
-    { scope: scroller, dependencies: [!!lastFinal] },
-  );
-  // Re-arm the cross-fade gate for the next run (when the final clears).
-  useEffect(() => {
-    if (!lastFinal) breathKilled.current = false;
-  }, [lastFinal]);
 
   return (
-    <div ref={attachScroller} className="soft-scrollbar relative flex-1 overflow-y-auto px-4 py-6 lg:px-6">
-      {/* Bottom-anchor: min-h-full + justify-end pins a short conversation just
-          above the composer (newest-near-composer convention) instead of
-          stranding it at the top of a tall desktop column; long chats overflow
-          and scroll normally, with endRef keeping the view pinned to the last. */}
-      <div className="flex min-h-full flex-col justify-end space-y-5">
+    <div ref={attachScroller} className="relative min-h-0 flex-1 overflow-y-auto px-4 py-6">
+      {/* Bottom-anchor: a short conversation sits just above the bar; a long
+          one scrolls, with endRef keeping the newest line in view. */}
+      <div className="ds-quiet-thread mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-end gap-7">
       {history.map((m) => {
-        if (m.role === "system") {
-          return (
-            <div key={m.id} className="flex justify-center">
+        const divider = breaks.get(m.id);
+        return (
+        <Fragment key={m.id}>
+        {divider && <h2 className="text-center font-ui-mono text-label uppercase text-ink-3">{divider}</h2>}
+        {m.role === "system" ? (
+            <div className={cn("flex justify-center", arrived(m.id))}>
               <SystemNotice text={m.text} />
             </div>
-          );
-        }
-        return (
-        <div key={m.id} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+        ) : (
+        <div className={cn(m.role === "user" ? "flex justify-end" : "flex justify-start", arrived(m.id))}>
           {m.role === "user" ? (
-            <OwnerBubble text={m.text} reduced={reduced} />
+            <div className="flex max-w-[85%] flex-col items-end gap-1.5">
+              <OwnerBubble text={m.text} />
+              {m.inputSource === "voice_exact_text" && <MessageTag>Exact text · entered in voice</MessageTag>}
+              {m.inputModality === "voice" && m.inputSource !== "voice_exact_text" && <MessageTag>Said</MessageTag>}
+              {m.visualContext && (
+                <MessageTag>
+                  Visual context · rev {m.visualContext.revision} · {m.visualContext.selectedElementIds.length || "scene"}
+                </MessageTag>
+              )}
+            </div>
           ) : (
-            <AvaBubble reduced={reduced}>
-              <div
-                className="text-[15px] leading-[1.65] whitespace-pre-wrap bg-clip-text text-transparent"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))",
-                }}
-              >
-                {stripMarkdown(m.text)}
-              </div>
+            <AvaMessage>
+              <AssistantMarkdown text={m.text} />
+              {m.memoryContext && <MemoryContextCapsule context={m.memoryContext} />}
+              {m.savedItems && <SavedItemsCard saved={m.savedItems} onOpen={onOpenSaved} />}
+              {m.roomPosts && <RoomPostReceipt posts={m.roomPosts} />}
               <MessageActions
                 text={m.text}
                 onRetry={!lastFinal && m.id === lastAssistantHistoryId ? onRetry : undefined}
               />
-            </AvaBubble>
+              {m.visualMessages?.map((visual) => (
+                <VisualMessageCard
+                  key={`${visual.visualMessageId}:${visual.revision}`}
+                  visual={visual}
+                  onSemanticAction={onVisualSemanticAction}
+                />
+              ))}
+            </AvaMessage>
           )}
         </div>
+        )}
+        </Fragment>
         );
       })}
 
@@ -247,21 +248,18 @@ export function MessageList({
               args={e.payload.args}
               summary={e.payload.summary}
               resolvedStatus={resolved.get(e.payload.id) ?? null}
+              riskTier={e.payload.riskTier}
+              timeoutBehavior={e.payload.timeoutBehavior}
+              requestedAt={e.payload.requestedAt}
+              deadlineAt={e.payload.deadlineAt}
+              timeoutMs={e.payload.timeoutMs}
             />
           );
         }
-        if (e.kind === "tool_call") {
-          // Docked rail (xl) already lists this step — skip the inline twin.
-          return (
-            <div key={key} className={toolChipsDocked ? "xl:hidden" : undefined}>
-              <ToolCallChip label={humanizeTool(e.payload.tool, e.payload.args)} />
-            </div>
-          );
-        }
+        // Each step shows in the island and its steps sheet (contract ui-remodel
+        // v2 §7); the conversation itself only shows a step that failed.
+        if (e.kind === "tool_call") return null;
         if (e.kind === "tool_result") {
-          // Success is already reflected live in the Activity panel and the
-          // running line — keep the chat flow clean and only surface failures
-          // inline (with the raw output tucked behind a click).
           if (e.payload.ok) return null;
           return <ToolCallChip key={key} label={humanizeTool(e.payload.tool)} ok={false} result={e.payload.result} />;
         }
@@ -269,7 +267,7 @@ export function MessageList({
           return null; // thoughts surface via the thinking caption, not rendered as message
         }
         if (e.kind === "error") {
-          return <div key={key} className="text-sm text-red-400">error: {e.payload.message}</div>;
+          return <p key={key} role="alert" className="rounded-card bg-danger-soft px-4 py-2.5 text-meta text-danger">error: {e.payload.message}</p>;
         }
         if (e.kind === "killed") {
           // Stop mid-reply must NOT discard whatever was generated. There's no live
@@ -281,48 +279,71 @@ export function MessageList({
             <div key={key} className="space-y-3">
               {showPartial && (
                 <div className="flex justify-start" data-testid="stopped-partial">
-                  <AvaBubble reduced={reduced}>
-                    <WordReveal
-                      text={stripMarkdown(streamingText)}
-                      animate={false}
-                      className="text-[15px] leading-[1.65] whitespace-pre-wrap"
-                      gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
-                    />
-                  </AvaBubble>
+                  <AvaMessage>
+                    <AssistantMarkdown text={streamingText} partial />
+                  </AvaMessage>
                 </div>
               )}
-              <div className="text-sm text-amber-400">stopped.</div>
+              <p className="w-fit rounded-full bg-warning-soft px-3 py-1.5 text-meta text-warning">Stopped.</p>
             </div>
           );
         }
         if (e.kind === "gap") {
           return (
-            <div key={key} className="text-xs text-amber-500">
-              ⚠ missed {e.payload.to - e.payload.from + 1} live events — reopen this chat to refresh.
-            </div>
+            <p key={key} role="status" className="rounded-card bg-warning-soft px-4 py-2.5 text-meta text-warning">
+              I missed {e.payload.to - e.payload.from + 1} live events — reopen this chat to refresh.
+            </p>
           );
         }
+        if (e.kind === "receipt") return null;
+        if (e.kind === "memory_context") return null;
+        if (e.kind === "saved_items") return null;
+        if (e.kind === "room_posts") return null;
         return null;
       })}
 
       {lastFinal && (
-        <div className="flex justify-start" data-testid="final-message">
-          <AvaBubble reduced={reduced}>
-            <WordReveal
-              text={stripMarkdown(lastFinal.payload.text)}
-              // Always reveal the reply word-by-word — there's no live bubble to hand
-              // off from, so this IS the reveal the owner asked for.
-              animate
-              className="text-[15px] leading-[1.65] whitespace-pre-wrap"
-              gradient="linear-gradient(180deg, rgba(255,255,255,0.96), rgba(226,232,240,0.85))"
+        <div className="ds-rise flex justify-start" data-testid="final-message">
+          <AvaMessage>
+            <AssistantMarkdown
+              text={lastFinal.payload.text}
             />
+            {liveMemoryContext?.kind === "memory_context" && (
+              <MemoryContextCapsule context={liveMemoryContext.payload} />
+            )}
+            {liveSavedItems?.kind === "saved_items" && (
+              <SavedItemsCard saved={liveSavedItems.payload} onOpen={onOpenSaved} />
+            )}
+            {liveRoomPosts?.kind === "room_posts" && validRoomPosts(liveRoomPosts.payload) && (
+              <RoomPostReceipt posts={validRoomPosts(liveRoomPosts.payload)!} />
+            )}
             <MessageActions text={lastFinal.payload.text} onRetry={onRetry} />
-          </AvaBubble>
+          </AvaMessage>
         </div>
       )}
 
+      {!lastFinal && runTerminated && liveMemoryContext?.kind === "memory_context" && (
+        <div className="grid" data-testid="terminated-memory-context">
+          <MemoryContextCapsule context={liveMemoryContext.payload} />
+        </div>
+      )}
+
+      {/* A run that failed or was stopped may still have saved something. */}
+      {!lastFinal && runTerminated && liveSavedItems?.kind === "saved_items" && (
+        <div className="grid" data-testid="terminated-saved-items">
+          <SavedItemsCard saved={liveSavedItems.payload} onOpen={onOpenSaved} />
+        </div>
+      )}
+      {!lastFinal && runTerminated && liveRoomPosts?.kind === "room_posts" && validRoomPosts(liveRoomPosts.payload) && (
+        <div className="grid" data-testid="terminated-room-posts">
+          <RoomPostReceipt posts={validRoomPosts(liveRoomPosts.payload)!} />
+        </div>
+      )}
+
+      {lastReceipt?.kind === "receipt" && <TaskReceiptCard receipt={lastReceipt.payload} />}
+
       {showThinking && (
-        <div className="flex justify-start">
+        <div className="ds-rise flex justify-start">
           <ThinkingIndicator
             caption={thinkingCaption}
             state={thinkingState}
@@ -338,78 +359,42 @@ export function MessageList({
   );
 }
 
+/** Only messages that arrive while the chat is open rise in; a reopened history is simply there. */
+function arrived(id: string): string | undefined {
+  return id.startsWith("s-") ? undefined : "ds-rise";
+}
+
 /**
- * A server-originated notice (e.g. the "Server restarted…" recovery row) — a
- * centered, muted pill so it reads as a system event, NOT an Ava reply. Keeping
- * it visually distinct is also what stops it from poisoning the reopen dedupe.
+ * A server-originated notice (e.g. the "Server restarted…" recovery row), shown
+ * as a quiet centred note so it reads as a system event, not an AVA reply.
+ * Keeping it distinct is also what stops it from poisoning the reopen dedupe.
  */
 function SystemNotice({ text }: { text: string }) {
   return (
-    <div
-      className="max-w-[80%] rounded-full px-4 py-1.5 text-center text-[11.5px] leading-snug text-white/55"
-      style={{
-        background: "rgba(255,255,255,0.04)",
-        border: "1px solid rgba(255,255,255,0.08)",
-      }}
-    >
+    <p className="max-w-[85%] rounded-full bg-glass px-4 py-1.5 text-center text-meta text-ink-2">
+      {text}
+    </p>
+  );
+}
+
+function MessageTag({ children }: { children: ReactNode }) {
+  return <span className="rounded-full bg-glass px-2.5 py-1 text-label text-ink-2">{children}</span>;
+}
+
+/** Niko's message: a soft bubble on the right. Line breaks are kept. */
+function OwnerBubble({ text }: { text: string }) {
+  return (
+    <div className="max-w-full whitespace-pre-wrap break-words rounded-card rounded-br-control bg-surface-strong px-4 py-2.5 text-body text-ink shadow-e1">
       {text}
     </div>
   );
 }
 
 /**
- * Owner (user) bubble — a distinct, brighter mercury surface so the speaker reads
- * as polished liquid metal vs Ava's cyan glass. Visually subordinate so the eye
- * rests on Ava's answers. Right-aligned, hover-lift, GSAP entrance via data-bubble.
+ * AVA's reply: no bubble, just the text on the page (Markdown on paper), with
+ * whatever the reply saved or used underneath and its action row last.
  */
-function OwnerBubble({ text, reduced }: { text: string; reduced: boolean }) {
-  const ref = useRef<HTMLDivElement>(null);
-  return (
-    <div
-      ref={ref}
-      data-bubble
-      onPointerEnter={() => ref.current && hoverLift(ref.current, true, reduced)}
-      onPointerLeave={() => ref.current && hoverLift(ref.current, false, reduced)}
-      className="lg-sweep group relative max-w-[78%] rounded-2xl rounded-br-md px-4 py-2.5 text-[14.5px] text-white/95 lg:max-w-[82%]"
-      style={{
-        background:
-          "linear-gradient(135deg, rgba(214,238,244,0.16), rgba(159,198,212,0.05))",
-        border: "1px solid rgba(159,198,212,0.28)",
-        backdropFilter: "blur(18px) saturate(160%)",
-        WebkitBackdropFilter: "blur(18px) saturate(160%)",
-        boxShadow:
-          "inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -1px 0 rgba(0,0,0,0.2), 0 10px 32px -12px rgba(0,0,0,0.6)",
-      }}
-    >
-      <span className="relative z-[1]">{text}</span>
-    </div>
-  );
-}
-
-/**
- * Ava (assistant) bubble — a .lg-slab-derived cyan-tinted glass surface hosting the
- * text block + a static mercury Orb avatar. Hover-lift + specular sweep via lg-sweep.
- * The final-block orb here must NOT carry flipId (only ThinkingIndicator does).
- */
-function AvaBubble({ children, reduced }: { children: React.ReactNode; reduced: boolean }) {
-  const ref = useRef<HTMLDivElement>(null);
-  return (
-    // group/msg: desktop hover-reveals the action row (see MessageActions) —
-    // scoped/named so it can't collide with other `group` uses in the tree.
-    <div className="group/msg flex items-start gap-3 max-w-[88%] lg:max-w-[92%]">
-      <div className="shrink-0 mt-1">
-        <Orb state="idle" size={22} />
-      </div>
-      <div
-        ref={ref}
-        data-bubble
-        onPointerEnter={() => ref.current && hoverLift(ref.current, true, reduced)}
-        onPointerLeave={() => ref.current && hoverLift(ref.current, false, reduced)}
-        className="lg-slab lg-sweep flex flex-col gap-2 px-4 py-3"
-        style={{ boxShadow: SHADOW.rest }}
-      >
-        {children}
-      </div>
-    </div>
-  );
+function AvaMessage({ children }: { children: ReactNode }) {
+  // group/msg lets the action row brighten on hover on a desktop.
+  return <article className="group/msg grid w-full min-w-0 gap-3">{children}</article>;
 }

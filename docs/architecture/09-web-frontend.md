@@ -15,7 +15,7 @@ Term note: "view" = a top-level screen (home, chat, voice, a settings panel). "S
 | Build tool / dev server | **Vite 7** | `web/vite.config.ts` |
 | UI framework | **React 19** (StrictMode) | `web/src/main.tsx` |
 | Animation | **GSAP 3.13+** (Flip, Morph, Draw, Scramble) + **Motion** (`motion/react`, the successor to Framer Motion) | `web/src/lib/gsap.ts` |
-| 3D | **three.js** (the home's dotted surface) | `web/src/components/ava/DottedSurface.tsx` |
+| 3D | **three.js** (the voice screen's lazily loaded dotted surface) | `web/src/components/ava/DottedSurface.tsx` |
 | Styling | **Tailwind CSS v4** + a small token layer | `web/src/theme.css` |
 | Icons | **lucide-react** | throughout |
 | PWA / service worker | **vite-plugin-pwa** (`injectManifest`) + `workbox-precaching` | `web/vite.config.ts`, `web/src/sw.ts` |
@@ -28,27 +28,35 @@ The entry chain is intentionally tiny. `web/index.html:12` loads `/src/main.tsx`
 
 ## 2. The view / navigation state machine (`App.tsx`)
 
-`App.tsx` (192 lines) holds two pieces of state and nothing else:
+`App.tsx` holds two central pieces of state, `paired` and `view`, beside a few
+navigation helpers: the remembered chat, the New-chat revision and the sidebar
+preference.
 
 ```ts
-const [paired, setPaired] = useState<boolean>(!!getToken());   // App.tsx:28
-const [view, setView]     = useState<View>({ name: "splash" }); // App.tsx:29
+const [paired, setPaired] = useState<boolean>(!!getToken());
+const [view, setView]     = useState<View>(readInitialView); // splash on a tab's first load, else Today
 ```
 
 - `paired` — is this device authenticated? Seeded from `getToken()` (a bearer token in `localStorage`, see §4). If false, **the entire app is replaced by the pairing screen** and nothing else renders: `if (!paired) return <PairingScreen ... />` (`App.tsx:59`).
-- `view` — a discriminated union (`App.tsx:17-25`) describing the current screen and any data it needs:
+- `view` — a discriminated union describing the current screen and any data it needs:
 
 ```ts
 type View =
   | { name: "splash" }
-  | { name: "orbit" }                                              // the home
-  | { name: "chat"; sessionId: string | null; initialText?: string }
-  | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
-  | { name: "memory" }
-  | { name: "rules" }
-  | { name: "self" }
-  | { name: "list" };                                              // all-chats list
+  | { name: "today" }                                              // the home (I3a)
+  | { name: "chat"; sessionId: string | null; initialText?: string; audit?: boolean }
+  | { name: "voice"; from: "today" | "chat"; sessionId: string | null; intent: ConversationIntent }
+  | { name: "notes"; noteId?: string; handoff?: number }           // exact-note handoff
+  | { name: "ideas" } | { name: "schedule" }
+  | { name: "memory" } | { name: "rules" } | { name: "self" }
+  | { name: "watches"; focusWatchId?: string | null; navigationOrigin?: "mission-control" }
+  | { name: "strategy"; sourceSessionId?: string } | { name: "visuals"; visualId?: string }
+  | { name: "capabilities" }                                       // Explore AVA
+  | { name: "list" };                                              // Your conversations
 ```
+
+The splash plays only on a tab's first load and never under AVA reduced motion;
+see [Life-assistant navigation](../features/life-assistant-navigation.md).
 
 Navigation = calling `setView({...})`. Each screen receives `on*` callbacks that do exactly that; screens never know about each other, only about the `view` they request next. The whole tree is wrapped in Motion's `<AnimatePresence>` (`App.tsx:68`) so the outgoing screen animates out while the incoming one animates in.
 
@@ -60,41 +68,42 @@ stateDiagram-v2
     [*] --> PairingScreen : if no token
     PairingScreen --> splash : onPaired() sets paired=true
 
-    splash --> orbit : onDone (auto, ~1.7s)
+    splash --> today : onDone (~1.7s, first load of a tab only)
+    [*] --> today : later loads / AVA reduced motion
 
-    state "orbit (HOME)" as orbit
+    state "today (HOME)" as today
     state "chat (sessionId, initialText?)" as chat
-    state "voice (from, sessionId)" as voice
+    state "voice (from, sessionId, intent)" as voice
+    state "notes (noteId?)" as notes
 
-    orbit --> chat : onOpenChat(sid) / onCommand(text)
-    orbit --> voice : onEnterVoice (Space or tap orb)
-    orbit --> memory : onOpenMemory
-    orbit --> rules : onOpenRules
-    orbit --> self : onOpenSelf
-    orbit --> list : onOpenList
+    today --> chat : conversation row / capture text
+    today --> voice : Talk to AVA (from="today")
+    today --> notes : idea or note row (exact handoff)
+    ideas --> notes : idea row (exact handoff)
 
     chat --> voice : onEnterVoice (from="chat")
-    chat --> orbit : persistent nav → Home
-    chat --> memory : persistent nav → Memory
-    chat --> rules : persistent nav → Rules
-    chat --> list : persistent nav → Chats
-
     voice --> chat : onExit (if from="chat") / onSwitchToKeyboard
-    voice --> orbit : onExit (if from="orbit")
+    voice --> today : onExit (if from="today")
 
     list --> chat : onOpenChat(sid)
-    list --> orbit : onClose
+    schedule --> chat : Go to Talk
 
-    memory --> orbit : onClose
-    rules --> orbit : onClose
-    self --> orbit : onClose
+    note right of today
+      The sidebar reaches every view from anywhere:
+      Today, Talk (remembered chat or list), Schedule,
+      Notes, Ideas; System: Activity, Explore, Watches,
+      Memory, Visuals, Rules, Self. The development room is reached from AVA
+      chat/voice and configured in Rules; the retired Strategy Room is not a
+      navigation destination.
+      Panels' close actions return to Today.
+    end note
 ```
 
 Things worth noting from the diagram:
 
-- **`orbit` (the home) is the hub.** Every panel returns to `orbit` on close. There is no global back-stack; "back" is hard-coded per screen (`memory`/`rules`/`self`/`list` always go to `orbit`). As of commit `b4e6ada`, **chat joined the persistent deck nav** (`NAV_FOR_VIEW.chat = "New"`, `App.tsx:72`): it no longer renders its own header or back arrow — the nav pill drives navigation off the chat surface (see §5 and the [Premium Chat feature doc](../features/premium-chat.md)).
-- **Voice remembers where it came from.** The `voice` view carries `from: "orbit" | "chat"`. On exit, `App.tsx:130-134` routes back accordingly: `from === "chat"` → back to that chat (with the session id), otherwise → home. This is the only "return to caller" behavior in the app.
-- **The two grouped behaviors** are *surfaces that own the Orb* (`splash`, `orbit`, `chat`, `voice`) vs. *panels* (`memory`, `rules`, `self`, `list`). This split drives both the GSAP Flip logic and the entry animation. As of the deck redesign (commit `5e24e00`), the four panels no longer slide up from the bottom — they **materialize** (fade + slight scale-in, then blur/shrink out) while the deck nav stays put; orb-surfaces still cross-fade. See §3 and the [Deck Design System feature doc](../features/deck-design-system.md). Commit `b4e6ada` then **moved chat onto the persistent nav** (it shows on chat now, lamp on "New") while chat keeps its orb-surface cross-fade.
+- **`today` (the home) is the hub.** Every panel returns to `today` on close. There is no global back-stack; "back" is hard-coded per screen (`memory`/`rules`/`self`/`list` always go to `today`). Until I3a the home was `orbit` (`OrbitScreen`), since removed. As of commit `b4e6ada`, **chat joined the persistent deck nav** (`NAV_FOR_VIEW.chat = "New"`, `App.tsx:72`): it no longer renders its own header or back arrow — the nav pill drives navigation off the chat surface (see §5 and the [Premium Chat feature doc](../features/premium-chat.md)).
+- **Voice remembers where it came from.** The `voice` view carries `from: "today" | "chat"`. On exit, `App.tsx:130-134` routes back accordingly: `from === "chat"` → back to that chat (with the session id), otherwise → home. This is the only "return to caller" behavior in the app.
+- **The two grouped behaviors** are *surfaces that own the Orb* (`splash`, `today`, `voice`; chat renders no orb) vs. *panels* (`memory`, `rules`, `self`, `list`). This split drives both the GSAP Flip logic and the entry animation. As of the deck redesign (commit `5e24e00`), the four panels no longer slide up from the bottom — they **materialize** (fade + slight scale-in, then blur/shrink out) while the deck nav stays put; orb-surfaces still cross-fade. See §3 and the [Deck Design System feature doc](../features/deck-design-system.md). Commit `b4e6ada` then **moved chat onto the persistent nav** (it shows on chat now, lamp on "New") while chat keeps its orb-surface cross-fade.
 
 ### How `sessionId` threads between chat and voice
 
@@ -102,10 +111,19 @@ Things worth noting from the diagram:
 
 1. **New chat, no id.** From home: `onOpenChat(null)` (the "New" nav item) or `onCommand(text)` (the command bar) opens `{ name: "chat", sessionId: null, initialText? }`. Inside `ChatScreen`, the first `send()` POSTs with `sessionId: null`; the server replies `{ sessionId }`, which the screen stores in local state (`ChatScreen.tsx:144-146`).
 2. **Opening an existing chat.** `onOpenChat(sid)` from the chat list passes a real id; `ChatScreen` fetches its history and adopts that id (`ChatScreen.tsx:49-61`).
-3. **Chat → voice.** `chat`'s `onEnterVoice` builds `{ name: "voice", from: "chat", sessionId: view.sessionId }` (`App.tsx:115`) — the **current** session id is handed to voice, so spoken turns continue the same conversation.
+3. **Chat → voice.** `ChatScreen` passes its own current session id through
+   `onEnterVoice`. If it has already sent a typed turn, voice resumes that exact
+   ID. If the New chat is still blank, `App` passes `startFresh=true`; voice asks
+   the server to create a new session rather than applying the Today-orb
+   resume-latest fallback.
 4. **Voice → chat.** On exit/keyboard-switch, `VoiceScreen` calls back with the (possibly newly-created) session id, and `App.tsx:131-134` reopens `chat` with it. So a conversation can start typed, continue spoken, and return to typed without losing thread.
 
-> Important subtlety: the `view.sessionId` carried in `App` and the `sessionId` held *inside* `ChatScreen` are two different variables. `App` passes its value in as the `requestedSessionId` prop; `ChatScreen` keeps its own `sessionId` state and updates it after the first send. When you open a brand-new chat and send a message, `App.view.sessionId` stays `null` (App never hears about the new id) — only `ChatScreen` knows the real id. That's why **chat→voice from a freshly-created, never-reopened chat passes `null`**, and voice has to create/adopt its own session. This is a real edge in the current design, called out here so it isn't mistaken for a bug.
+> Important subtlety: `App.view.sessionId` and `ChatScreen`'s local `sessionId`
+> are different variables. The mic callback deliberately sends the local value,
+> so a typed New chat keeps its server-assigned ID without remounting the running
+> chat. Only a genuinely blank New chat sends `null`; its origin is carried
+> separately as `startFresh`, preventing it from being mistaken for Today-orb
+> resume-latest entry.
 
 ---
 
@@ -113,15 +131,15 @@ Things worth noting from the diagram:
 
 Two animation systems cooperate, and the split is deliberate.
 
-**Motion (`AnimatePresence`)** owns screen-to-screen transitions. Each `view` branch is a `motion.div` with `initial`/`animate`/`exit`. The four panels (`memory`/`rules`/`self`/`list`) **materialize**: `initial opacity:0` → `animate opacity:1`, and `exit { opacity:0, scale:0.985, filter:"blur(6px)" }` on the cinematic ease `[0.22, 1, 0.36, 1]`, with the duration cut to `0.15s` under reduced motion (`App.tsx:150-200`). `orbit` fades and zooms slightly on exit; `chat` fades up; `voice` plain-fades. (Until commit `5e24e00` the panels slid up `y:"100%"` → `0` over their own black background; that was replaced because it read as a separate app slamming in — see the [Deck Design System feature doc](../features/deck-design-system.md). The rich *entrance* now lives **inside** each panel, in `PanelShell`'s GSAP enter timeline, not in this `motion.div`.)
+**Motion (`AnimatePresence`)** owns screen-to-screen transitions. Each `view` branch is a `motion.div` with `initial`/`animate`/`exit`. The four panels (`memory`/`rules`/`self`/`list`) **materialize**: `initial opacity:0` → `animate opacity:1`, and `exit { opacity:0, scale:0.985, filter:"blur(6px)" }` on the cinematic ease `[0.22, 1, 0.36, 1]`, with the duration cut to `0.15s` under reduced motion (`App.tsx:150-200`). `today` uses the shared screen entry; `chat` fades up; `voice` plain-fades. (Until commit `5e24e00` the panels slid up `y:"100%"` → `0` over their own black background; that was replaced because it read as a separate app slamming in — see the [Deck Design System feature doc](../features/deck-design-system.md). The rich *entrance* now lives **inside** each panel, in `PanelShell`'s GSAP enter timeline, not in this `motion.div`.)
 
 A load-bearing comment at `App.tsx:81-84` explains why there is **no `mode="wait"`**: the home and voice screens run *infinite* CSS animations (nebula drift, orb morph) that never fire an exit-complete, so `mode="wait"` would block the next view from ever mounting (panels appeared "dead/black"). Default concurrent mode cross-fades instead.
 
-**The deck nav is persistent.** The `TubelightNav` pill is mounted **once, outside** the `AnimatePresence`; it fades/lifts out only on the immersive hero views (splash/voice, via `showNav`) and tracks the current view through `NAV_FOR_VIEW`. As of commit `b4e6ada` **chat is included** — `NAV_FOR_VIEW.chat = "New"` (`App.tsx:72`), so the nav now shows on chat too and chat no longer renders its own header. Because it never unmounts across panel swaps, the cyan "lamp" springs smoothly between items, and panels/chat no longer render an in-panel back button — the nav handles navigation.
+**The app sidebar is persistent.** `AppSidebar` is mounted once outside `AnimatePresence` and becomes inert only for immersive Splash and Voice. Its collapsed rail holds New chat and the everyday destinations (Today, Talk, Schedule, Notes, Ideas) plus a System group for AVA's own tools; its expanded state adds Sir's recent conversations. `ChatScreen.onSessionChange` lifts the canonical server session into `App`, which stores only the opaque ID and restores it after reload. Below 1024px the expanded drawer overlays the stage behind a dismiss scrim and closes after any choice. See [Persistent sidebar navigation](../features/persistent-sidebar-navigation.md).
 
-**GSAP Flip** owns the **shared Orb**. The mercury orb carries a stable `flipId="ava-orb"` on `splash`, `orbit`, `voice`, and — since commit `b4e6ada` — `chat` via the **`ThinkingIndicator`** (the old chat header avatar that used to carry it is gone with the header). The `useLayoutEffect` at `App.tsx:39-59` snapshots the orb's geometry before a view change and `Flip.from(...)` animates it from its old position/size to its new one — so the orb *flies* between surfaces (splash center → home hero → chat thinking row → voice hero) instead of cutting. On chat the orb only exists while the thinking row is mounted, so `document.querySelector` returns null otherwise and the Flip cleanly degrades. **Exactly one element may carry `flipId="ava-orb"` at a time** — see the [Premium Chat feature doc](../features/premium-chat.md) for that invariant. Guards:
+**GSAP Flip** owns the **shared Orb**. The mercury orb carries a stable `flipId="ava-orb"` on `splash`, `today` and `voice`. Chat's **`ThinkingIndicator`** also carries it, but App deliberately never Flips into or out of chat (it is not in `VIEWS_WITH_ORB`). The `useLayoutEffect` at `App.tsx:39-59` snapshots the orb's geometry before a view change and `Flip.from(...)` animates it from its old position/size to its new one — so the orb *flies* between surfaces (splash center → Today → voice hero) instead of cutting. **Exactly one element may carry `flipId="ava-orb"` at a time** — see the [Premium Chat feature doc](../features/premium-chat.md) for that invariant. Guards:
 
-- Only runs for `VIEWS_WITH_ORB = ["splash","orbit","chat","voice"]` (`App.tsx:41`). Panels have no orb, so Flipping during those transitions would hijack the *exiting* home orb — explicitly avoided.
+- Only runs for `VIEWS_WITH_ORB = ["splash","today","voice"]`. Panels and chat have no Flip-owned orb, so Flipping during those transitions would hijack the *exiting* home orb — explicitly avoided.
 - `useReducedMotion()` short-circuits the whole thing (`App.tsx:42`).
 - Every GSAP call is wrapped in `try/catch` to degrade to a hard cut if the orb is absent mid-swap.
 
@@ -239,7 +257,7 @@ As of commit `b4e6ada` the composer **expands on focus** (`Composer.tsx:51-84`):
   - `tool_result` → **only failures render inline** (`ok:false`); successes are intentionally suppressed in the chat flow because the Activity panel already shows them (`MessageList.tsx:105-110`).
   - `thought` → **not rendered as a bubble**; the latest thought/tool feeds the "thinking…" caption instead.
   - `error` / `killed` / `gap` → small status lines (a `gap` means buffered SSE events were missed and points the owner at Sessions for the full trace).
-- The **live `final`** renders via `WordReveal` (`MessageList.tsx:221-232`) — a one-shot, time-boxed, word-by-word blur-up. This is necessary because Ava's answer arrives as a **single `final` event, not token-streamed**, so the reveal animation *is* the "typing" feel.
+- The **live `final`** renders its complete Markdown tree in one stable pass (`AssistantMarkdown`), revealed by the shared bubble reveal (`chat/bubble-reveal.ts`). The thinking indicator stays up until the reply is ready: reasoning models emit the whole reply in a sub-100 ms burst, so a token-by-token bubble would flash past or render empty.
 - A premium **`ThinkingIndicator`** (commit `b4e6ada`) shows whenever `optimisticThinking && !lastFinal` (`MessageList.tsx:98`, `234`) — a breathing mercury orb (hosting the chat `flipId="ava-orb"`) + a state `.chip` + a cyan/mercury `ShiningText` caption. It appears the **instant** you send (the synchronous `pending` flag), before any live event, and cross-fades out when the `final` streams in. It replaced the old `MessageLoading`-dots indicator that only appeared once live events existed.
 - Auto-scrolls to the bottom on every change in `history.length`, `liveEvents.length`, or `optimisticThinking`.
 
@@ -267,7 +285,7 @@ This is the core client loop, verified against the code. It shows how a keystrok
 6. **Render the live turn.** `ChatScreen` recomputes `liveEvents` (current run, minus an already-promoted final) and passes them to:
    - **`MessageList`** — shows tool-call breadcrumbs, inline failures, approval cards, and the thinking caption.
    - **`ActivityPanel`** — `deriveSteps(liveEvents)` (`activity-steps.ts:14-34`) turns each `tool_call` into a **running** step and completes it on the matching `tool_result` (marking `ok`). `isExecuting` (any step still running) charges the `FlowingLines` background (warms it toward exec-amber + quickens), swaps the thinking orb to `working`, and auto-expands the panel.
-7. **Final answer reveals.** When a `final` event arrives, `MessageList` renders its text with `WordReveal` (word-by-word blur-up) — the stand-in for token streaming, since the answer comes whole.
+7. **Final answer reveals.** When a `final` event arrives, `MessageList` renders the whole Markdown reply at once and the bubble reveal fades it in; the thinking indicator covers the wait.
 8. **Terminal → promote + close.** On `done` / `killed` / `error`, `useChatStream` sets `finished = true` and closes the `EventSource`. The promotion effect (`ChatScreen.tsx:70-91`) moves the run's `final` text into `history` as a settled assistant message (id `a-{epoch}`), and the live copy stops rendering. `busy` flips false → the Stop button reverts to Send.
 9. **Stop (optional).** If the owner hits Stop mid-run, `Composer.onKill` → `ChatScreen.kill()` → `api.kill(sessionId)` (`POST /api/chat/:id/kill`); the server emits `killed`, which terminates the stream the same way.
 
@@ -305,7 +323,7 @@ sequenceDiagram
     end
 
     S-->>H: event: final
-    CS->>ML: WordReveal(final.text)
+    CS->>ML: AssistantMarkdown(final.text)
     S-->>H: event: done
     H->>H: finished=true, close()
     CS->>CS: promote final → history (id a-{epoch}), busy=false
@@ -327,8 +345,8 @@ sequenceDiagram
 When Ava wants to do something gated, the server streams an `approval_required` event and `MessageList` renders an **`ApprovalCard`** inline. The card:
 
 - Shows the humanized action ("Ava wants to **Run …**"), an expandable raw `tool` + `args` blob, and **Cancel / Approve now** buttons.
-- Runs a **15-second veto countdown** with a draining progress bar. The server **auto-approves after 15s unless the owner declines** — the countdown just mirrors that window (`ApprovalCard.tsx:24-31`). This matches Ava's "act-first" posture: confirm only briefly, default to proceeding.
-- On tap, calls `approveApproval(id)` / `denyApproval(id)` and stays in a "Settling…" busy state; it does **not** optimistically resolve. It waits for the server's `approval_resolved` SSE event, which flips the card to its compact resolved form (`MessageList` passes `resolvedStatus` down). This keeps the UI honest about the server's actual decision.
+- Mirrors the server's **absolute veto deadline** with a draining progress bar. `medium` risk says silence auto-approves; `high` risk says silence auto-denies and the action will not run. Remount/reconnect uses the original deadline rather than restarting at 15 seconds. Missing legacy metadata gets neutral “not recorded” copy.
+- On tap, calls `approveApproval(id)` / `denyApproval(id)` and stays in a submission state; it does **not** optimistically resolve. It waits for the server's `approval_resolved` SSE event, which flips the card to a risk-aware compact resolved form (`MessageList` passes `resolvedStatus` down). Native buttons, labelled regions, and polite status announcements preserve keyboard and screen-reader access.
 
 Approvals also arrive as **web-push notifications** so the owner can respond when the app is closed (see §9), with native Approve/Deny notification actions.
 
@@ -338,9 +356,9 @@ Approvals also arrive as **web-push notifications** so the owner can respond whe
 
 > **The four deck panels share one design system.** `Chats` (`ChatListScreen`), `Memory`, `Rules`, and `Self` are all built on **`PanelShell` / `PanelSection`** (`web/src/components/ava/PanelShell.tsx`) and the shared **`deckMotion`** module (`web/src/lib/deckMotion.ts`) — one material vocabulary (`.lg-slab`/`.lg-sweep`/`.btn-deck`/`.chip`/`.tgl`), one enter timeline (materialize → staggered section reveal → specular glint), and reduced-motion gating throughout. The per-panel notes below describe each screen's *content*; for the shared chrome, materials, and motion, see the [Deck Design System feature doc](../features/deck-design-system.md). Shipped in commit `5e24e00`.
 
-### Home — `orbit/OrbitScreen.tsx`
+### Today — `today/TodayScreen.tsx`
 
-The "de-spun" home (the old orbital ring was removed — see the locked aesthetic note in §10). Layout: a three.js `DottedSurface` + drifting `NebulaBackground` behind a vignette, a glass **`TubelightNav`** pill at top (New / Chats / Memory / Rules / Self), the **mercury `Orb` hero** (150px) with the "AVA" wordmark, and a **`CommandBar`** omnibox at the bottom. Interactions: **press Space (when not typing) or click the orb → voice** (`OrbitScreen.tsx:34-43`); the command bar submits text → opens a fresh chat seeded with it (`onCommand`).
+The home since I3a (it replaced `orbit/OrbitScreen.tsx` and its `HomeSurface`). A greeting and date, a **"Talk to AVA"** orb button (the Flip-owned orb) that opens voice, a **`CommandBar`** capture box that opens a new chat seeded with the text, and independently loading cards: *Continue talking* (`GET /api/sessions?scope=human&limit=3`), *Recent ideas* and *Recent notes* (the notes snapshot; each opens that exact note in Notes), and a read-only *Schedule* card of upcoming one-off reminders (`useReminderFeed`: 15 s refresh while visible, newest answer only, stale marker on failure). A first-run welcome appears only when every load succeeded empty. **Ideas** (`ideas/IdeasScreen.tsx`) and **Schedule** (`schedule/ScheduleScreen.tsx`) are `PanelShell` pages; Schedule creates, lists and deletes one-off reminders through `reminders/` (wall-time resolver, receipt presenter; see [Reminders](../features/reminders.md)). Three.js is not on Today; `DottedSurface` now loads lazily behind the voice screen only. Full write-up: [Life-assistant navigation](../features/life-assistant-navigation.md).
 
 ### Command bar — `chat/CommandBar.tsx`
 
@@ -359,7 +377,7 @@ Tap a row/card → open that chat; **+** → new chat. **Delete** is optimistic 
 
 ### Splash — `splash/Splash.tsx`
 
-A ~1.7s cinematic intro: the mercury orb scales/blurs in over a nebula, "AVA" reveals letter-by-letter, then `onDone()` advances to home. The orb carries the shared `flipId`, so GSAP Flip flies it from splash-center into the home hero (no cut).
+A ~1.7s cinematic intro: the mercury orb scales/blurs in over a nebula, "AVA" reveals letter-by-letter, then `onDone()` advances to Today. It plays only on the first load of a browser tab (the `ava:splash-seen` session flag is written on the app's first mount, whatever that first route was) and never under AVA reduced motion. The orb carries the shared `flipId`, so GSAP Flip flies it from splash-center into Today's orb (no cut).
 
 ### Memory — `memory/MemoryScreen.tsx`
 
@@ -416,24 +434,22 @@ The **locked aesthetic** (per project memory, `frontend_remodel_aesthetic`): a *
 | Component | Role |
 |---|---|
 | **`Orb.tsx`** + `orb-state.ts` | The canonical avatar/hero. GSAP drives spin/rim-pulse/(listening) ripples; CSS does the morph. `orbMotion(state, amplitude)` maps `idle/listening/thinking/responding/working` → spin/morph/rim numbers (pure, tested). **Perf-critical detail:** only orbs ≥40px animate; the many tiny avatars (chat header, every message, composer ≈14–28px) render as a **static** mercury disc, or a long chat would spin up ~20 infinite GSAP timelines and choke the main thread (`Orb.tsx:30-31`). |
-| **`TubelightNav.tsx`** + `tubelight-nav.ts` | The glass home nav pill; a cyan "lamp" springs to the active item via Motion `layoutId`. Items fire view-switches, not routes. |
-| **`DottedSurface.tsx`** | three.js animated dot-grid wave — the home's depth layer. |
-| **`NebulaBackground` / `PathsBackground` / `RainBackground` / `SpaceBackground` / `EtherealShadows`** | Per-surface decorative backdrops. `PathsBackground` (pairing) animates flowing SVG strokes. (`EtherealShadows` was the chat backdrop until commit `b4e6ada` replaced it with `FlowingLines`; it remains in the codebase but is no longer used by chat.) All freeze under reduced motion and are `aria-hidden`. |
+| **`DottedSurface.tsx`** | three.js animated dot-grid wave behind voice. Loaded lazily, never under reduced motion or without WebGL; a failing frame or resize stops it and reports through `onError`, and voice falls back to a static backdrop. |
+| **`NebulaBackground` / `PathsBackground`** | Per-surface decorative backdrops. `PathsBackground` (pairing) animates flowing SVG strokes. Chat uses `FlowingLines` (below). All freeze under reduced motion and are `aria-hidden`. The unused `RainBackground`, `SpaceBackground` and `EtherealShadows` were removed in the M1 cleanup. |
 | **`FlowingLines.tsx`** | **(commit `b4e6ada`)** The chat hero background — a slow looping bundle of cyan/mercury lines (one GSAP `strokeDashoffset` draw timeline over 16 paths), a single-layer opacity breathe, tab-hidden pause, and one ScrollTrigger parallax. `charged` warms + quickens. Replaced `EtherealShadows` on chat. See the [Premium Chat feature doc](../features/premium-chat.md). |
 | **`EdgeFade.tsx`** | **(commit `b4e6ada`)** Pure-CSS stacked-blur + gradient edge fade, mounted as a viewport-pinned overlay over the chat scroll column (top + bottom) so messages dissolve into the substrate. No JS/rAF; reduced motion → tint only. |
 | **`NeuralField.tsx`** | **(commit `b4e6ada`)** A subtle fixed/viewport-sized raw-WebGL "neuro" fbm shader (cyan), now Memory's backdrop. One fullscreen triangle, one draw call; reduced-motion static frame; gl-null CSS-haze fallback. |
-| **`WordReveal.tsx`** | Word-by-word blur-up for Ava's final answers (since answers aren't token-streamed). Time-boxed so long replies don't crawl; reduced motion renders plainly. |
-| **`ShiningText` / `TextEffect` / `CyclingText` / `MessageLoading`** | Small text/loading flourishes. `ShiningText` is the cyan/mercury "thinking…" caption (recolored via `.shine-deck`); its shimmer is a **Framer Motion loop**, so the CSS reduced-motion gate can't stop it — commit `b4e6ada` added a `reduced` prop that renders a static lit gradient instead. `MessageLoading` is the three-dot SVG spinner. |
+| **`ShiningText`** | The cyan/mercury "thinking…" caption (recolored via `.shine-deck`). Its shimmer is a **Framer Motion loop**, so the CSS reduced-motion gate can't stop it; commit `b4e6ada` added a `reduced` prop that renders a static lit gradient instead. The unused `TextEffect`, `CyclingText` and `MessageLoading` were removed in the M1 cleanup. |
 | **`SegmentedTabs.tsx`** | The pill toggle (with a spring-animated cursor) used by Rules' Speed and Memory's category filter. |
 | **`BorderGlow.tsx`** | A `.bg-card` whose cyan/mercury border lights toward the cursor. **(commit `4f206ee`)** Also exports two standalone helpers — `igniteBorder(e)`/`douseBorder(e)` — that drive the effect off `e.currentTarget`'s `--edge`/`--angle` CSS vars, so any `.bg-card` (e.g. the `DisplayCards` cards) can share the exact same border by wiring them as `onPointerMove`/`onPointerLeave`. |
 | **`DisplayCards.tsx`** | **(commit `4f206ee`)** The Chats screen's "Important chats" cluster — up to four pinned chats as a skewed depth-cued fan of `.bg-card` glass slabs that GSAP-spreads to a flat readable row on hover (reduced-motion → a flat CSS grid). Each card lights the `igniteBorder` border and carries a lit star to unpin. See [`features/chats-screen-pinning.md`](../features/chats-screen-pinning.md). |
 | **`GlassFilter.tsx`** | A hidden SVG `feTurbulence`/`feDisplacementMap` filter (`#ava-glass`) mounted once at the app root for liquid-glass distortion. |
 
-Most of these have co-located `*.smoke.test.tsx` files (render-without-crashing checks), and the pure helpers (`orb-state`, `tubelight-nav`, `activity-steps`, `humanize`, `message-actions`) have real unit tests.
+Most of these have co-located `*.smoke.test.tsx` files (render-without-crashing checks), and the pure helpers (`orb-state`, `activity-steps`, `humanize`, `message-actions`) have real unit tests.
 
 ### `components/ui/` — the design-language primitives
 
-A small shadcn-style kit — `button`, `card`, `textarea`, `badge`, `dialog` (Radix), `alert` (with variants like `info`/`destructive`, used by the chat-list undo toast and the pairing error). These are the neutral building blocks the Ava-branded components and screens compose on top of.
+A small shadcn-style kit — `button`, `textarea`, `badge`, `dialog` (Radix), `alert` (with variants like `info`/`destructive`, used by the chat-list undo toast and the pairing error). These are the neutral building blocks the Ava-branded components and screens compose on top of.
 
 ---
 
@@ -447,8 +463,22 @@ A small shadcn-style kit — `button`, `card`, `textarea`, `badge`, `dialog` (Ra
 
 ## Unresolved questions / notes for follow-up
 
-1. **`view.sessionId` vs. `ChatScreen.sessionId` divergence.** As detailed in §2, opening a brand-new chat and then going to voice passes `null` (App never learns the id `ChatScreen` created). Voice has to create/adopt its own session. Is that intended, or should `ChatScreen` lift the new id back up to `App` so chat→voice always continues the same thread? (I documented it as a known edge, not a bug, but it's worth a decision.)
+1. **Resolved: `view.sessionId` vs. `ChatScreen.sessionId`.** Chat keeps its server-assigned ID locally to avoid a keyed remount, but the mic callback now passes that exact local ID to voice. A new typed chat therefore continues in the same session when its input mode changes.
 2. **`VoiceScreen` is out of this doc's scope** but is a first-class node in the navigation state machine (it owns the `from`/`sessionId` return logic). A dedicated voice-frontend doc should cover the realtime WS, mic amplitude → orb, and the `openai`/`hume` engine handling.
 3. **Like/Dislike are client-only.** `MessageActions` toggles reaction state locally but no feedback endpoint is called. If this is meant to train/inform Ava, the wiring is missing.
 4. **`SessionsScreen.tsx` is dead code.** Recommend deleting it (or noting it as deprecated) to avoid confusion, since `ChatListScreen` fully replaces it.
 5. **Reasoning `supported` flag.** The Rules UI degrades gracefully when `supported:false`, but the exact set of models that report `false` isn't visible from the client; that lives server-side (`/api/reasoning`).
+
+### Voice/chat handoff correction (2026-08-27)
+
+The former `view.sessionId` / `ChatScreen.sessionId` divergence is no longer a
+voice continuity edge. `ChatScreen` now invokes `onEnterVoice` with its canonical
+local session ID, so a freshly created chat never hands the stale route-level
+`null` to voice. Voice also closes its socket and media resources on explicit
+navigation and unmount. `App` still avoids lifting the new ID during a running
+chat because doing so would change the keyed view and remount the live stream.
+For a still-blank New chat, `null` is intentional and paired with `startFresh`;
+for Today-orb voice, `null` intentionally retains resume-latest behavior.
+When returning from voice, the requested session ID is also used by the mic
+button during asynchronous history hydration, closing the rapid re-entry window
+where local chat state has not adopted it yet.

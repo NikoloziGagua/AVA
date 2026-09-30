@@ -75,8 +75,28 @@ describe("buildPolicyHook", () => {
     // claude_code classifies "medium" → ask; an undecided medium op auto-approves.
     const r = await hook("claude_code", { prompt: "edit a file" });
     expect(r).toEqual({ allow: true });
+    const requested = events.find((e) => e.kind === "approval_required");
+    expect(requested).toMatchObject({
+      kind: "approval_required",
+      payload: {
+        riskTier: "medium",
+        timeoutBehavior: "auto_approve",
+        timeoutMs: 50,
+      },
+    });
+    if (requested?.kind === "approval_required") {
+      expect(requested.payload.deadlineAt - requested.payload.requestedAt).toBe(50);
+    }
     const resolved = events.find((e) => e.kind === "approval_resolved");
-    expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("approved");
+    expect(resolved).toMatchObject({
+      kind: "approval_resolved",
+      payload: {
+        status: "approved",
+        riskTier: "medium",
+        timeoutBehavior: "auto_approve",
+        timeoutMs: 50,
+      },
+    });
   });
 
   // ── Item 5: genuinely destructive HIGH-risk ops AUTO-DENY on timeout ──────
@@ -91,8 +111,28 @@ describe("buildPolicyHook", () => {
     const r = await hook("shell", { command: "rm -rf /tmp/x" });
     expect(r.allow).toBe(false);
     if (!r.allow) expect(r.message).toMatch(/DENIED \(expired\)/);
+    const requested = events.find((e) => e.kind === "approval_required");
+    expect(requested).toMatchObject({
+      kind: "approval_required",
+      payload: {
+        riskTier: "high",
+        timeoutBehavior: "auto_deny",
+        timeoutMs: 50,
+      },
+    });
+    if (requested?.kind === "approval_required") {
+      expect(requested.payload.deadlineAt - requested.payload.requestedAt).toBe(50);
+    }
     const resolved = events.find((e) => e.kind === "approval_resolved");
-    expect(resolved?.kind === "approval_resolved" && resolved.payload.status).toBe("expired");
+    expect(resolved).toMatchObject({
+      kind: "approval_resolved",
+      payload: {
+        status: "expired",
+        riskTier: "high",
+        timeoutBehavior: "auto_deny",
+        timeoutMs: 50,
+      },
+    });
   });
 
   it("undecided HIGH-risk fs_delete auto-DENIES on timeout", async () => {
@@ -118,6 +158,56 @@ describe("buildPolicyHook", () => {
     // Auto-deny is only the TIMEOUT behaviour; an explicit approval still allows.
     const r = await hook("shell", { command: "rm -rf /tmp/x" });
     expect(r).toEqual({ allow: true });
+  });
+
+  it("always asks before the genuine bounded UFO runtime even when a standing allow rule exists", async () => {
+    createRule(db, {
+      source: "test",
+      parsed: JSON.stringify({ match: { tool: "ufo_runtime_run" }, action: "allow" }),
+      status: "active",
+    });
+    const hook = buildPolicyHook({ db, sessionId, approvalTimeoutMs: 20,
+      emit: (event) => { if (event.kind === "approval_required") decide(db, event.payload.id, "denied"); } });
+    const result = await hook("ufo_runtime_run", {});
+    expect(result).toMatchObject({ allow: false });
+  });
+
+  it("UFO fixture action ignores standing allow rules and expires without explicit approval", async () => {
+    createRule(db, {
+      source: "allow experimental fixture",
+      parsed: JSON.stringify({ match: { tool: "ufo_experiment_action" }, action: "allow" }),
+      status: "active",
+    });
+    const events: PolicyEvent[] = [];
+    const hook = buildPolicyHook({ db, sessionId, emit: (event) => events.push(event), approvalTimeoutMs: 20 });
+    const result = await hook("ufo_experiment_action", { fixtureId: "counter-v1", expectedFixtureVersion: 1 });
+    expect(result.allow).toBe(false);
+    expect(events.map((event) => event.kind)).toEqual(["approval_required", "approval_resolved"]);
+    expect(events.at(-1)).toMatchObject({ kind: "approval_resolved", payload: { status: "expired" } });
+  });
+
+  it("UFO fixture action proceeds only after an explicit approval decision", async () => {
+    const hook = buildPolicyHook({
+      db, sessionId, approvalTimeoutMs: 5_000,
+      emit: (event) => {
+        if (event.kind === "approval_required") setTimeout(() => decide(db, event.payload.id, "approved"), 5);
+      },
+    });
+    await expect(hook("ufo_experiment_action", { fixtureId: "counter-v1", expectedFixtureVersion: 1 }))
+      .resolves.toEqual({ allow: true });
+  });
+
+  it("an active deny rule still blocks the UFO fixture action before approval", async () => {
+    createRule(db, {
+      source: "deny experimental fixture",
+      parsed: JSON.stringify({ match: { tool: "ufo_experiment_action" }, action: "deny" }),
+      status: "active",
+    });
+    const events: PolicyEvent[] = [];
+    const hook = buildPolicyHook({ db, sessionId, emit: (event) => events.push(event) });
+    const result = await hook("ufo_experiment_action", { fixtureId: "counter-v1", expectedFixtureVersion: 1 });
+    expect(result.allow).toBe(false);
+    expect(events).toHaveLength(0);
   });
 
   it("Stop during the veto window cancels (not allow): aborting the signal blocks the tool", async () => {

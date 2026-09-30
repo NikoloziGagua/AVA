@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { AnthropicProvider } from "./anthropic-provider.js";
-import type { Message } from "./types.js";
+import type { Message, StreamEvent } from "./types.js";
 
 function fakeAnthropic(opts: { responseText?: string }) {
   return {
@@ -71,6 +71,39 @@ describe("AnthropicProvider.stream", () => {
     }
     expect(out.join("")).toBe("Hello, Sir.");
     expect(done).toBe("end_turn");
+  });
+
+  it("emits provider-reported token usage across start and delta events", async () => {
+    const client = fakeAnthropicWithStream([
+      {
+        type: "message_start",
+        message: {
+          id: "msg_usage_1",
+          model: "claude-sonnet-4-6",
+          usage: { input_tokens: 150, cache_read_input_tokens: 60 },
+        },
+      },
+      { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 25 } },
+    ]);
+    const p = new AnthropicProvider({ client });
+    const events: StreamEvent[] = [];
+    for await (const event of p.stream({
+      model: "claude-sonnet-4-6",
+      system: "S",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [],
+      abort: new AbortController().signal,
+    })) events.push(event);
+    expect(events.find((event) => event.kind === "usage")).toEqual({
+      kind: "usage",
+      usage: {
+        providerRequestId: "msg_usage_1",
+        model: "claude-sonnet-4-6",
+        inputTokens: 150,
+        outputTokens: 25,
+        cachedTokens: 60,
+      },
+    });
   });
 
   it("emits tool_call from a tool_use content block", async () => {

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Opportunity Radar · AVA Future</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .cols { grid-template-columns: 1.05fr .95fr; align-items: start; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .radarwrap { position: relative; aspect-ratio: 1; width: 100%; max-width: 560px; margin: 0 auto; }
+  #radar { width: 100%; height: 100%; display: block; cursor: pointer; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; margin-top: 8px; font-size: 12.5px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  .opps { display: grid; gap: 10px; }
+  .opp { text-align: left; width: 100%; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass); cursor: pointer; transition: all .25s var(--ease); }
+  .opp:hover { border-color: var(--line-2); }
+  .opp[aria-pressed="true"] { border-color: rgba(156,196,255,.6); box-shadow: 0 0 24px rgba(156,196,255,.15); }
+  .opp .top { display: flex; justify-content: space-between; gap: 10px; }
+  .fitbar { height: 5px; border-radius: 99px; background: rgba(255,255,255,.08); margin-top: 8px; overflow: hidden; }
+  .fitbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--good)); }
+  .why { font-size: 13.5px; color: var(--ink-2); margin-top: 6px; }
+  .due { font: 12px var(--mono); color: var(--warm); white-space: nowrap; }
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .real { margin-top: 16px; }
+  .real li { font-size: 13.5px; color: var(--ink-2); margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <a class="back" href="index.html">← All concepts</a>
+    <span class="eyebrow">Concept 06</span>
+    <span class="badge demo">DEMO · fictional opportunities</span>
+  </div>
+  <h1><span class="silver">Opportunity Radar</span></h1>
+  <p class="lede">AVA watches a few sources <em>you pick</em> (hackathon lists, fellowships, job boards) and pings you only when something truly matches your goals. It always says why it matched, when it's due, and where it came from.</p>
+
+  <section class="grid cols">
+    <div class="card glow">
+      <div class="radarwrap"><canvas id="radar" aria-label="Radar of matched opportunities. Use the list to browse them." role="img"></canvas></div>
+      <div class="legend"><span><i style="background:#9cc4ff"></i>Hackathon</span><span><i style="background:#c6a8ff"></i>Fellowship / accelerator</span><span><i style="background:#86e3be"></i>Job / internship</span><span><i style="background:#ffc07a"></i>Competition / grant</span></div>
+      <p class="faint" style="text-align:center;margin:8px 0 0">Closer to the centre = better fit with your goals</p>
+    </div>
+    <div>
+      <div class="filters" id="filters"></div>
+      <div class="opps" id="opps"></div>
+      <div class="card real">
+        <h3>Real examples, as read on 28 Sep 2026 (check the official pages)</h3>
+        <ul>
+          <li>Nebius × NVIDIA Global AI Hackathon: online, deadline listed as 30 Oct 2026, requires Nebius cloud or tokens. <a href="https://dev.to/devengers/dev-opportunity-radar-18-50k-ai-hackathon-shebuilds-verci-fellowship-and-stanford-cs336-18fm" target="_blank" rel="noopener">dev.to roundup #18</a></li>
+          <li>Verci Fellowship for young builders: deadline listed as 1 Oct 2026. <a href="https://dev.to/devengers/dev-opportunity-radar-18-50k-ai-hackathon-shebuilds-verci-fellowship-and-stanford-cs336-18fm" target="_blank" rel="noopener">same roundup</a></li>
+          <li>RevenueCat Shipaton 2026: build window 1 Aug – 30 Sep, submissions due 1 Oct 2026. <a href="https://dev.to/devengers/dev-opportunity-radar-13-a16z-alpha-a-740k-hackathon-and-an-ai-agent-competition-1l1i" target="_blank" rel="noopener">dev.to roundup #13</a></li>
+        </ul>
+        <p class="faint" style="margin:6px 0 0">Read from third-party roundups, not the organisers' own pages. Dates and rules must be checked at the official source before acting. The real radar would do that check itself.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>Every opportunity on the radar is invented.</li><li>The fit scores are illustrative.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>A few sources you add explicitly, each checked for changes (like <a href="https://github.com/dgtlmoon/changedetection.io" target="_blank" rel="noopener">changedetection.io</a>, Apache-2.0).</li><li>Matches explained against goals you confirmed.</li><li>Every deadline dated and linked to its source.</li></ul></div>
+    <div class="card"><h3>How it plugs into AVA</h3><p>A matched opportunity arrives as an "AVA starts a conversation" invitation: one push at most, with sources as chips. Unrestricted web crawling is out of scope; this needs its own contract.</p></div>
+    <div class="card"><h3>Why for you</h3><p>You're future-focused and you build. Hackathons, fellowships and competitions are the cheapest way to turn a side project into momentum, but they're easy to miss by a day.</p><p class="faint" style="margin-top:6px">Effort: medium · Risk: medium (freshness) · Wow: high</p></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  var COLORS = { hack: "#9cc4ff", fellow: "#c6a8ff", job: "#86e3be", comp: "#ffc07a" };
+  var OPPS = [
+    { id: 1, type: "hack", title: "Dublin Agents Weekend (fictional)", due: "in 6 days", fit: 92, angle: 0.6, why: "Personal AI agents is exactly AVA. You could demo it as-is." },
+    { id: 2, type: "fellow", title: "Student Founders Fellowship (fictional)", due: "in 19 days", fit: 81, angle: 2.2, why: "Funds a summer building your own product; Tabby's pilot data would strengthen the application." },
+    { id: 3, type: "job", title: "AI Engineering Intern · fintech (fictional)", due: "rolling", fit: 74, angle: 3.6, why: "It combines your AI track with finance, and they want a portfolio project with agents." },
+    { id: 4, type: "comp", title: "Campus Venture Pitch (fictional)", due: "in 11 days", fit: 68, angle: 4.9, why: "Good forcing function for Tabby's pitch, with a prize that covers a pilot." },
+    { id: 5, type: "hack", title: "Voice UX Jam (fictional)", due: "in 30 days", fit: 55, angle: 5.7, why: "AVA's voice mode fits, but it's a weekend away from the gym plan." },
+    { id: 6, type: "job", title: "Frontend role · agency (fictional)", due: "rolling", fit: 31, angle: 1.3, why: "It pays, but doesn't serve your building or AI goals. Shown dimmed." },
+  ];
+  var filter = "all", selected = OPPS[0];
+  var canvas = document.getElementById("radar"), ctx = canvas.getContext("2d");
+  var dpr = Math.min(window.devicePixelRatio || 1, 2), size = 0, sweep = 0, pings = {};
+  function resize() { size = canvas.clientWidth; canvas.width = size * dpr; canvas.height = size * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  function place(o) { var r = (1 - o.fit / 100) * 0.42 * size + 0.06 * size; return { x: size / 2 + Math.cos(o.angle) * r, y: size / 2 + Math.sin(o.angle) * r }; }
+  function visible() { return OPPS.filter(function (o) { return filter === "all" || o.type === filter; }); }
+  function draw() {
+    var c = size / 2;
+    ctx.clearRect(0, 0, size, size);
+    var bg = ctx.createRadialGradient(c, c, 0, c, c, c);
+    bg.addColorStop(0, "rgba(120,150,255,.10)"); bg.addColorStop(1, "rgba(5,7,11,0)");
+    ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(c, c, c * 0.96, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,.08)"; ctx.lineWidth = 1;
+    for (var i = 1; i <= 4; i++) { ctx.beginPath(); ctx.arc(c, c, c * 0.96 * i / 4, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(c, c * 0.04); ctx.lineTo(c, size - c * 0.04); ctx.moveTo(c * 0.04, c); ctx.lineTo(size - c * 0.04, c); ctx.stroke();
+    // sweep
+    if (!AVAF.reduced) {
+      var g = ctx.createConicGradient ? ctx.createConicGradient(sweep - 0.9, c, c) : null;
+      if (g) { g.addColorStop(0, "rgba(156,196,255,0)"); g.addColorStop(0.14, "rgba(156,196,255,.22)"); g.addColorStop(0.145, "rgba(156,196,255,0)"); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(c, c, c * 0.96, 0, Math.PI * 2); ctx.fill(); }
+      ctx.strokeStyle = "rgba(190,215,255,.7)"; ctx.beginPath(); ctx.moveTo(c, c); ctx.lineTo(c + Math.cos(sweep) * c * 0.96, c + Math.sin(sweep) * c * 0.96); ctx.stroke();
+    }
+    visible().forEach(function (o) {
+      var p = place(o), a = ((sweep - o.angle) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2);
+      if (a < 0.05) pings[o.id] = 1;
+      var glow = AVAF.reduced ? 0.6 : (pings[o.id] || 0);
+      pings[o.id] = Math.max(0, (pings[o.id] || 0) - 0.008);
+      var col = COLORS[o.type], dim = o.fit < 40 ? 0.35 : 1;
+      ctx.globalAlpha = dim;
+      if (glow > 0) { ctx.fillStyle = col; ctx.globalAlpha = dim * glow * 0.35; ctx.beginPath(); ctx.arc(p.x, p.y, 10 + 16 * (1 - glow), 0, Math.PI * 2); ctx.fill(); }
+      ctx.globalAlpha = dim; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(p.x, p.y, o === selected ? 7 : 5, 0, Math.PI * 2); ctx.fill();
+      if (o === selected) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p.x, p.y, 12, 0, Math.PI * 2); ctx.stroke(); }
+      ctx.globalAlpha = 1;
+    });
+    ctx.fillStyle = "#f4f4f5"; ctx.beginPath(); ctx.arc(c, c, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgba(244,244,245,.6)"; ctx.font = "12px Geist, system-ui"; ctx.fillText("you", c + 8, c - 8);
+    sweep += AVAF.reduced ? 0 : 0.012;
+    if (!AVAF.reduced) requestAnimationFrame(draw);
+  }
+  canvas.addEventListener("click", function (e) {
+    var r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, best = null, bd = 30;
+    visible().forEach(function (o) { var p = place(o), d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; best = o; } });
+    if (best) { selected = best; list(); if (AVAF.reduced) draw(); }
+  });
+  function list() {
+    document.getElementById("opps").innerHTML = visible().sort(function (a, b) { return b.fit - a.fit; }).map(function (o) {
+      return '<button class="opp" type="button" data-id="' + o.id + '" aria-pressed="' + (o === selected) + '"><div class="top"><h3 style="margin:0"><span style="color:' + COLORS[o.type] + '">●</span> ' + AVAF.esc(o.title) + '</h3><span class="due">' + AVAF.esc(o.due) + '</span></div><div class="fitbar"><i style="width:' + o.fit + '%"></i></div>' +
+        (o === selected ? '<div class="why">' + AVAF.esc(o.why) + '<br><span class="faint">Source: a fictional listing · verify before applying</span></div>' : "") + "</button>";
+    }).join("");
+    document.querySelectorAll(".opp").forEach(function (b) { b.addEventListener("click", function () { selected = OPPS.filter(function (o) { return String(o.id) === b.dataset.id; })[0]; list(); if (AVAF.reduced) draw(); }); });
+  }
+  var F = [["all", "All"], ["hack", "Hackathons"], ["fellow", "Fellowships"], ["job", "Jobs"], ["comp", "Competitions"]];
+  function filters() {
+    document.getElementById("filters").innerHTML = F.map(function (f) { return '<button class="chip" type="button" data-f="' + f[0] + '" aria-pressed="' + (filter === f[0]) + '">' + f[1] + "</button>"; }).join("");
+    document.querySelectorAll("[data-f]").forEach(function (b) { b.addEventListener("click", function () { filter = b.dataset.f; if (visible().indexOf(selected) < 0) selected = visible()[0]; filters(); list(); if (AVAF.reduced) draw(); }); });
+  }
+  resize(); window.addEventListener("resize", function () { resize(); if (AVAF.reduced) draw(); });
+  filters(); list(); draw();
+})();
+</script>
+</body>
+</html>

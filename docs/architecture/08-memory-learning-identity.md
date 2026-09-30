@@ -32,7 +32,8 @@ All paths are absolute. Code citations use `path:line`.
    - [Promotion, refresh, supersede, forget](#27-promotion-refresh-supersede-forget)
    - [Projects and the project index](#28-projects-and-the-project-index)
    - [The runtime memory tools (how Ava writes)](#29-the-runtime-memory-tools-how-ava-writes)
-   - [Auto-learning from corrections](#210-auto-learning-from-corrections)
+   - [Source-linked semantic index](#210-source-linked-semantic-index)
+   - [Auto-learning from corrections](#211-auto-learning-from-corrections)
 3. [Identity and the system prompt](#3-identity-and-the-system-prompt)
    - [The persona (seeded identity)](#31-the-persona-seeded-identity)
    - [The capability map](#32-the-capability-map)
@@ -69,10 +70,13 @@ it knows. That prompt is assembled, layer by layer, from files on disk: a seeded
 rubric**, the list of allowed **filesystem roots**, and — when relevant — a matched
 **playbook** (a learned procedure) and **project context**.
 
-Memory is not a database of conversation history. It is a small, curated set of
-Markdown files that Ava deliberately writes to using memory tools, and which a human
-can read and edit from the phone. The design goal is a memory you can audit at a
-glance, not an opaque vector store.
+The always-loaded preference/observation memory is not a database of conversation
+history. It remains a small, curated set of Markdown files that Ava deliberately
+writes using memory tools, and which a human can read and edit from the phone.
+Alongside it, AVA now has a bounded SQLite **discovery index** for explicitly
+selected research and developed ideas. That index stores compact summaries and
+source references, not transcript copies; embeddings locate candidates but never
+replace verification of the authoritative conversation messages.
 
 ```mermaid
 flowchart TB
@@ -147,15 +151,10 @@ Playbooks live in a sibling directory, `playbooks/`, under the same memory dir
 (`C:/ai/chemiapebi/yovlisshemdzle/server/src/playbooks/store.ts:44`). They are
 procedural memory and are covered in [section 4](#4-the-learning-system-playbooks).
 
-> **Live-state finding.** As of writing, the production memory dir contains
-> `personality.md`, `observations.md`, `preferences.md`, an empty `projects/`, and a
-> well-populated `playbooks/` (~50 files). Notably there is **no `MEMORY.md` on
-> disk**, and `projects/` is empty. Both are created lazily on first write, so the
-> project-context layer of the system prompt is effectively **dormant in
-> production** until a project file is created and linked. This is by design (nothing
-> seeds them) but worth knowing: the project-routing machinery in
-> [§2.8](#28-projects-and-the-project-index) is wired and tested but currently has no
-> data to act on.
+> `MEMORY.md` and `projects/` are created lazily. A `memory_remember` call with
+> `file=project` now creates the project file and automatically adds its link to
+> `MEMORY.md`, activating project routing as soon as the saved project note contains
+> an absolute path.
 
 ### 2.2 The four memory files + projects + playbooks
 
@@ -384,20 +383,20 @@ This index drives two things:
 3. **A suggestion chip.** The chip generator uses the same index to offer an
    "Open <slug>" chip for recently-mentioned projects ([§5.2](#52-chip-generation)).
 
-> Because the index is keyed off `MEMORY.md` and there is currently no `MEMORY.md` on
-> disk, all three behaviors are presently no-ops in production — they activate the
-> moment a `MEMORY.md` links a project file containing a path. The logic is fully
-> implemented and unit-tested (`project-index.test.ts`); it simply has no data yet.
+> The index is keyed off `MEMORY.md`. `memory_remember file=project` maintains that
+> index automatically, and `memory_forget mode=project` removes the link again.
+> Routing activates once the project note contains an absolute path.
 
 ### 2.9 The runtime memory tools (how Ava writes)
 
 This is the heart of "how memory is written at runtime." Memory is **not** written by
 some background process scraping the conversation. It is written when the model,
 mid-turn, decides to call one of three tools defined in
-`C:/ai/chemiapebi/yovlisshemdzle/server/src/tools/memory-mcp.ts`. These tools are
-included in the agent's toolset in *both* conversation and action modes
-(`C:/ai/chemiapebi/yovlisshemdzle/server/src/routes/chat.ts:341`), so Ava can record
-or recall a fact even in a casual voice chat.
+`C:/ai/chemiapebi/yovlisshemdzle/server/src/tools/memory-mcp.ts`. The chat route
+constructs memory tools for both of its tool sets, but `runAgent` deliberately
+passes no tools to the model in conversation mode. Explicit remember/read/forget
+requests route through action mode; in realtime voice, the speaking model hands
+them to the action agent through `do_on_computer`.
 
 **`memory_read`** (`memory-mcp.ts:10`) — read durable memory. `file` ∈
 `all | preferences | observations | project` (project requires a `slug`). The tool's
@@ -407,7 +406,8 @@ stale prompt snapshot.
 
 **`memory_remember`** (`memory-mcp.ts:58`) — write durable memory. Behavior by argument:
 - `file=preferences` → append the trimmed `text` as a line.
-- `file=project` + `project=<slug>` → append `text` to that project's file.
+- `file=project` + `project=<slug>` → append `text` to that project's file and
+  ensure `MEMORY.md` links it.
 - `file=observations` (default) → build a formatted observation from `text`,
   `category` (default `context`), and `confidence` (default `low`), then run it
   through `rememberObservation` → `promoteOnRepeat` (so repeats bump instead of
@@ -432,7 +432,89 @@ Ava the exact line format, the confidence ladder, and *when* to use refresh vs
 supersede vs forget — so the model produces well-formed calls without the tool having
 to repair bad input.
 
-### 2.10 Auto-learning from corrections
+### 2.10 Source-linked semantic index
+
+`server/src/memory-index/` implements a separate retrieval layer for substantial
+research, developed ideas and explicit "remember this discussion" requests. Its
+canonical entry is a sanitized compact record in SQLite: title, summary,
+conclusions, open questions, next steps, tags, privacy scope and timestamps. A
+source row points to an exact persisted message range and stores a SHA-256 content
+fingerprint. Transcript bodies are not copied into the index.
+
+After a clean persisted assistant turn, `AutoMemoryCaptureCoordinator` applies a
+deterministic category gate. Explicit research requests and ideas developed over
+multiple turns may be summarized by a conservative side model; routine chat,
+failed or contradicted work, interruptions and delegated `persist:false` action turns do
+not enter automatic memory. The same post-turn seam is used by chat, OpenAI
+Realtime and Hume, so provenance records whether the source was typed or spoken.
+Assistant-message keyed claim rows make replay and concurrent delivery
+idempotent without storing another transcript copy.
+
+Meaningfully developed Ideas use immutable checkpoint lineage. The first entry
+starts a thread. A later material decision, conclusion, topic shift, open question,
+next step or substantive revision appends a child with the same thread ID, a parent
+ID, a monotonic sequence and a sanitized change reason. The child carries a
+standalone compact current-state snapshot and an expanding verified source range;
+earlier entries remain unchanged. Parent-version and latest-thread guards prevent
+concurrent completions from forking. A broader later completion may subsume an
+older late result, which is recorded as skipped rather than rewriting history.
+
+The runtime tools are:
+
+- `memory_index_capture` selects a bounded range (maximum 80 messages), sanitizes
+  the supplied compact record, persists it idempotently and creates an embedding
+  when a provider is configured.
+- `memory_index_search` combines exact/keyword overlap with cosine similarity. It
+  still works in lexical fallback mode if the embedding provider is absent or
+  fails, and reports that fallback rather than hiding it.
+- `memory_index_open` loads a bounded sanitized source range after retrieval when
+  a detailed answer needs more than the compact locator summary.
+- `memory_index_forget` soft-deletes one exact version and immediately removes its
+  vector. It does not delete the original conversation.
+- `memory_index_correct` appends a sanitized correction overlay while preserving
+  the original checkpoint beside it.
+- `memory_index_pin` adds or removes a bounded relevance-order hint on one current
+  thread.
+- `memory_index_supersede` explicitly links an obsolete thread to a verified
+  current replacement without deleting history.
+- `memory_index_conflict` pauses two contradictory threads, then records a chosen
+  source-verified winner without silently merging them.
+
+Every list, get and search result recomputes the authoritative range fingerprint.
+Only `source.status=verified` produces `usable=true`; changed or unavailable
+sources remain visible as diagnostic evidence but must not ground an answer.
+Personal entries are visible in the default scope. Project entries require the
+same explicit project boundary and are excluded from other projects.
+
+The default adapter is OpenAI `text-embedding-3-small`, following the official
+[embeddings API shape](https://developers.openai.com/api/docs/guides/embeddings#how-to-get-embeddings).
+Provider, model, vector dimensions and sanitized-input hash travel with every
+vector so incompatible spaces are never compared. SQLite summaries and sources
+remain authoritative; vectors are replaceable discovery data. See
+[`docs/features/semantic-memory-index.md`](../features/semantic-memory-index.md)
+for the contract, limitations and test procedure.
+
+Automatic capture covers completed research, the first mature checkpoint of a
+meaningfully developed Idea and material linked checkpoints as the Idea evolves.
+Automatic retrieval now uses the same canonical records and evidence boundary in
+typed chat and voice. The shared pre-response gate searches only latest lineage
+checkpoints, enforces personal/project scope, re-verifies the source, opens a
+bounded scrubbed authoritative excerpt and records why it did or did not use
+memory. OpenAI Realtime applies the gate per accepted utterance before
+`response.create`; Hume preloads it from the active chat's latest user context at
+connection because its transcript arrives after provider response generation has
+already begun. Explicit capture/search/open/forget and governance remain available.
+
+Phase 5 adds an append-only governance log and a versioned thread-state
+projection. Corrections, pins, supersessions and conflict decisions all record
+actor, time, reason and stable replay key. The original compact checkpoint and
+source fingerprint are not rewritten. Normal and automatic retrieval use only
+current, non-conflicted threads; a correction never upgrades changed or missing
+source evidence. Project boundaries apply to both sides of every relationship,
+and stale versions or cross-thread request-key reuse fail closed. The Memory UI
+shows effective-versus-original content and the full bounded governance history.
+
+### 2.11 Auto-learning from corrections
 
 Beyond explicit `memory_remember` calls, Ava captures one signal automatically: **you
 correcting her**. In `chat.ts:125`, before each turn dispatches, the new user message
@@ -464,25 +546,31 @@ Ava's identity is a fixed block of prose,
 `C:/ai/chemiapebi/yovlisshemdzle/server/src/memory/personality-content.ts`. It is the
 **source of truth** for `personality.md` — bootstrap copies it verbatim on first run.
 
-The register (revised 2026-06-05) is "Jarvis": poised, warm, dry wit, addresses you as
-"Sir," concise, act-first, and bound by non-negotiable honesty rules. The file defines:
-- **Address & tone** — "Sir" used warmly where it lands, not every sentence; composed,
-  economical, no goofiness.
-- **What I am** — a capable agent with broad PC reach, not a chatbot; assumes any task
-  is doable and finds the path.
-- **How I work** — act immediately, one-line heads-up for long actions, pause only for
-  destructive/irreversible/flagged work.
-- **Honesty (this never bends)** — never claim a tool worked unless it returned success
-  this turn; quote the real error; say so when unsure.
-- **What I don't say** — a banlist ("Sure!", "Absolutely!", "As an AI…", "I can't"
-  before trying).
-- **Examples** — a handful of sample exchanges to set the voice.
+Persona 3.0 (revised 2026-09-24) describes AVA as Niko's personal intelligence,
+thinking partner and life-management assistant. It is poised, evidence-grounded,
+warm without flattery, candid, and capable. "JARVIS-like" describes bearing rather
+than imitation. AVA normally calls him Niko, uses "Sir" occasionally, never invents
+shared history, and treats computer control as a tool rather than her identity.
+
+The identity may encourage initiative, but explicitly says "Initiative is not
+permission". Tool policy and approval boundaries remain separate and authoritative.
+Situational awareness must come from accessible evidence such as the current
+conversation, Memory, Notes, Schedule, project context, and verified tool results.
+
+Collaboration policy and contextual delivery no longer live inside the identity
+prose. `server/src/persona/runtime.ts` defines the shared collaboration contract and
+five closed registers: casual, execution, brainstorming, repair, and high stakes.
+The current turn selects one register without copying raw user text into the system
+block. Chat and voice share these rules; voice adds only spoken-delivery guidance.
+See `docs/features/persona-v2.md` for the complete architecture and the 50-scenario
+Persona Consistency Lab.
 
 The persona is **never auto-written** by Ava. It changes only when a human edits
-`personality.md`, or when Claude edits `personality-content.ts` and the file is
-re-seeded. The byte length is pinned in a test (`bootstrap.test.ts:41`, currently
-`3905`) so an accidental edit to the canonical text surfaces in CI as a drift failure;
-intentional changes must update that number.
+`personality.md`, or when a developer edits `personality-content.ts`. Bootstrap
+seeds it on first run and migrates only byte-identical previously shipped defaults;
+owner-edited copies are preserved. The UTF-8 byte length is pinned in
+`bootstrap.test.ts` (currently `6725`) so an accidental edit to the canonical text
+surfaces in CI as a drift failure; intentional changes must update that number.
 
 ### 3.2 The capability map
 
@@ -561,10 +649,9 @@ an absolute path, a memory op, or an imperative verb paired with an object
 `conversation`.
 
 **How it's actually applied** (`chat.ts:224`):
-- **Typed text** is forced to **action** mode regardless of the classifier. A comment
-  explains why: the classifier was too conservative and casual "look up X" was wrongly
-  staying conversational, making Ava say "I can't access Google." So text always gets
-  the full tool stack. (`FORCE_INTENT=conversation` can override this for testing.)
+- **Typed text** uses the action-biased `classifyTypedIntent`: only unmistakable short
+  chitchat stays conversational; task-shaped or longer input gets the full action
+  stack. (`FORCE_INTENT=conversation` can override this for testing.)
 - **Voice** trusts the classifier: a spoken "hi Ava" stays conversational (fast
   side-model, no big tool prompt, no playbook recall), and only a genuine action
   request spins up the full agent. This keeps spoken replies snappy.
@@ -579,14 +666,13 @@ an absolute path, a memory op, or an imperative verb paired with an object
 | `fsRoots` layer | ❌ omitted | ✅ included |
 | Tools exposed to model | ❌ none (model can't call tools) | ✅ full registry |
 | Model used | `defaultSideModel` (fast/cheap) | `defaultOrchestratorModel` |
-| Memory + discuss + update-log + control_app tools | ✅ still wired | ✅ |
+| Thin tools constructed by chat route | ✅ constructed but withheld from model | ✅ |
 | Playbook recall | ❌ skipped | ✅ (text only) |
 
 The mode is threaded from `chat.ts` into `runAgent`, which selects the model and tool
-visibility (`agent.ts:129`). Crucially, even conversation mode keeps the **memory,
-discuss-with-Claude, update-log, and control_app** tools available
-(`chat.ts:394`), so Ava can record a fact, recall one, drive a native app, or tell you
-"what Claude is doing" by voice without escalating to the full action stack.
+visibility (`agent.ts:129`). Conversation mode receives memory in its prompt but no
+callable tools. Tool work, including memory mutation, must route through action mode;
+the realtime voice model does this with `do_on_computer`.
 
 ### 3.5 The secret-scrub firewall
 
@@ -648,18 +734,21 @@ any **mutating** tool ran (`fs_write`, `fs_delete`, `shell`, `claude_code`,
 reuse the policy risk classifier here, because that rates `fs_write` as "low" which
 would mislabel writes.
 
-### 4.2 Capture: learning from a successful run
+### 4.2 Capture: learning from a verified run
 
 Capture is wired into the chat route. As the agent runs, `chat.ts` collects each tool
-step into `runSteps` and tracks whether **any** tool result failed (`anyToolFailed`,
-`chat.ts:281`). When the run emits its `final`, it calls `maybeCapture` fire-and-forget
-(`chat.ts:299`).
+step and carries validated post-action evidence through the shared tool-result event.
+`final` records response text but does not teach. When `done`, `error`, or `killed`
+arrives, AVA builds the terminal task receipt and settles learning exactly once.
 
 `maybeCapture` (`C:/ai/chemiapebi/yovlisshemdzle/server/src/playbooks/capture.ts`)
 gates strictly:
-- **Only on success** (`succeeded`, which `chat.ts` sets to `!anyToolFailed` — a run
-  with any failed tool is not learned, so Ava never memorizes broken steps).
+- **Only on verified task-outcome evidence.** A final reply, executor `ok`,
+  response delivery, operation-only evidence, or an approval/cancellation boundary
+  cannot create or replace a procedure.
 - **Only multi-step** (`steps.length >= 2`) — a one-tool task isn't worth a playbook.
+- **No unresolved failed tail or mostly-failed trace.** Recovered detours may still
+  become lessons only when the final task outcome itself has independent proof.
 
 If gated through, it calls `distillPlaybook`
 (`C:/ai/chemiapebi/yovlisshemdzle/server/src/playbooks/distill.ts:20`): the **side
@@ -701,10 +790,9 @@ Steps:
      reporting done**."
    - `routine` → "follow these steps efficiently; no recheck needed."
 
-The matcher uses the **trigger**, not the stored `keywords` — the keywords field is
-captured but the current `match.ts` feeds only `slug: trigger` lines to the model (see
-findings). The tool rubric also documents this behavior to the model under "Procedural
-memory (playbooks)" (`tool-rubric.ts:64`).
+The matcher is local and lexical. It scores meaningful trigger-token coverage and
+uses keyword hits only as corroboration; keywords alone cannot select a playbook.
+This is effectively instantaneous and deliberately prefers no match over a loose one.
 
 ### 4.4 Pruning playbooks
 
@@ -713,7 +801,9 @@ run after each capture, keeps the library small and high-value:
 1. **Drop stale one-offs** — any playbook with `uses <= 1` *and* `last_used` (or
    `created`) older than `MAX_AGE_DAYS = 60` (`capture.ts:7`). A procedure tried once
    and never reused expires.
-2. **Enforce a soft cap** — `SOFT_CAP = 50` (`capture.ts:6`). If over, keep the
+2. **Drop contradicted or repeated evidence-backed failures.** Once gate evidence
+   exists, it supersedes legacy final-response counters for demotion and pruning.
+3. **Enforce a soft cap** — `SOFT_CAP = 50` (`capture.ts:6`). If over, keep the
    most-used (tie-break newest `last_used`) and drop the rest. So the library
    self-selects toward your genuinely recurring tasks.
 
@@ -992,22 +1082,13 @@ and playbook capture.
 
 ## 9. Unresolved questions / findings
 
-1. **`MEMORY.md` and `projects/` are empty in production.** Bootstrap never seeds
-   `MEMORY.md`, and nothing has written one. Because the project index, mid-run project
-   switching, and the "Open <slug>" chip all key off `MEMORY.md`, those three features
-   are **wired and unit-tested but currently dormant** (no data). They activate the
-   moment a `MEMORY.md` links a `projects/<slug>.md` that contains an absolute path.
-   *Open question:* is the intent for Ava to create `MEMORY.md` autonomously (it can,
-   via `memory_remember file=project` + a manual index link), or is seeding it deferred
-   to a human? Today neither happens automatically.
-
-2. **Playbook `keywords` are captured but unused at recall.** `distill.ts` stores a
+1. **Playbook `keywords` are captured but unused at recall.** `distill.ts` stores a
    `keywords` array and `store.ts` parses it, but `match.ts` feeds the side model only
    `slug: trigger` lines (`match.ts:12`). Keywords currently contribute nothing to
    matching. Either wire them into the match prompt or drop them — right now they're
    dead weight in every file.
 
-3. **Auto-learned corrections accumulate as low-confidence noise.** The live
+2. **Auto-learned corrections accumulate as low-confidence noise.** The live
    `observations.md` shows many `(corrected)` preference lines (often capturing
    transient confusion like mis-heard voice input, not durable preferences). They're
    low-confidence by design and will eventually be pruned if they age past 60 days
@@ -1017,7 +1098,7 @@ and playbook capture.
    pass that promotes genuine corrections into clean preferences and drops the noise?
    Currently curation is entirely manual (phone UI) or passive (60-day stale-low prune).
 
-4. **Pruning at prompt-build is non-destructive; the file can exceed soft cap on
+3. **Pruning at prompt-build is non-destructive; the file can exceed soft cap on
    disk.** `buildSystemPrompt` prunes a *copy* for the prompt and never writes back
    (`system-prompt.ts:61`). The actual `observations.md` only shrinks when a human
    edits it or `memory_forget`/`forgetProject` runs. So a file can sit above the
@@ -1026,14 +1107,14 @@ and playbook capture.
    means "the prompt is bounded" and "the file is bounded" are different guarantees —
    worth confirming that's the desired contract.
 
-5. **`autoPruneObservations` stops after the first effective pass.** Each call drops
+4. **`autoPruneObservations` stops after the first effective pass.** Each call drops
    *either* superseded *or* stale-low lines, not both in one pass (it returns as soon
    as one pass changes content, `budgets.ts:55`/`:65`). Over repeated turns it
    converges, but a single over-budget turn is only partially trimmed. Likely fine
    (prompts are rebuilt every turn) but noting it in case a turn needs maximal trimming
    immediately.
 
-6. **No explicit hard-cap enforcement in code.** `HARD_CAPS` is defined
+5. **No explicit hard-cap enforcement in code.** `HARD_CAPS` is defined
    (`budgets.ts:11`) and referenced in docs/tests, but I did not find a runtime path
    that *enforces* the hard cap (the auto-pruner only uses `softCap`). Hard caps appear
    to be an advisory ceiling backed by the `needs_user` signal rather than an automatic

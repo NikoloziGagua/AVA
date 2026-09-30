@@ -46,7 +46,7 @@ describe("self-improvement integration", () => {
     const d = open();
     const id = createIntent(d, { trigger: "explicit", goal: "bump marker" });
     await runImprovement(d, id, baseDeps({
-      implement: async (_b: string, cwd: string) => { writeFileSync(join(cwd, "marker.txt"), "v2"); return { ok: true, output: "" }; },
+      implement: async (_provider: string, _b: string, cwd: string) => { writeFileSync(join(cwd, "marker.txt"), "v2"); return { ok: true, output: "" }; },
       verify: async () => ({ ok: true, log: "ok" }),
     }));
     expect(getIntent(d, id)!.status).toBe("swapped");
@@ -57,7 +57,7 @@ describe("self-improvement integration", () => {
     const d = open();
     const id = createIntent(d, { trigger: "explicit", goal: "bad change" });
     await runImprovement(d, id, baseDeps({
-      implement: async (_b: string, cwd: string) => { writeFileSync(join(cwd, "marker.txt"), "broken"); return { ok: true, output: "" }; },
+      implement: async (_provider: string, _b: string, cwd: string) => { writeFileSync(join(cwd, "marker.txt"), "broken"); return { ok: true, output: "" }; },
       verify: async () => ({ ok: false, log: "tests failed" }),
     }));
     expect(getIntent(d, id)!.status).toBe("failed");

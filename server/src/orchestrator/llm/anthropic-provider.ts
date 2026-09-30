@@ -78,14 +78,30 @@ export class AnthropicProvider implements LLMProvider {
     type Block = { kind: "text" } | { kind: "tool_use"; id: string; name: string; argsBuf: string };
     const blocks = new Map<number, Block>();
     let stopReason: "end_turn" | "tool_use" | "max_tokens" | "abort" | "error" = "end_turn";
+    let providerRequestId: string | null = null;
+    let providerModel = input.model;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let cachedTokens = 0;
 
     try {
       for await (const ev of stream as AsyncIterable<{
         type: string; index?: number; content_block?: { type: string; id?: string; name?: string; input?: unknown };
         delta?: { type?: string; text?: string; partial_json?: string; stop_reason?: string };
+        message?: {
+          id?: string;
+          model?: string;
+          usage?: { input_tokens?: number; cache_read_input_tokens?: number };
+        };
+        usage?: { output_tokens?: number };
       }>) {
         if (input.abort.aborted) { stopReason = "abort"; break; }
-        if (ev.type === "content_block_start" && typeof ev.index === "number" && ev.content_block) {
+        if (ev.type === "message_start" && ev.message) {
+          providerRequestId = ev.message.id ?? providerRequestId;
+          providerModel = ev.message.model ?? providerModel;
+          inputTokens = ev.message.usage?.input_tokens ?? inputTokens;
+          cachedTokens = ev.message.usage?.cache_read_input_tokens ?? cachedTokens;
+        } else if (ev.type === "content_block_start" && typeof ev.index === "number" && ev.content_block) {
           if (ev.content_block.type === "text") {
             blocks.set(ev.index, { kind: "text" });
           } else if (ev.content_block.type === "tool_use") {
@@ -113,6 +129,7 @@ export class AnthropicProvider implements LLMProvider {
             yield { kind: "tool_call", call };
           }
         } else if (ev.type === "message_delta" && ev.delta?.stop_reason) {
+          outputTokens = ev.usage?.output_tokens ?? outputTokens;
           stopReason = ev.delta.stop_reason === "tool_use" ? "tool_use"
             : ev.delta.stop_reason === "max_tokens" ? "max_tokens"
             : "end_turn";
@@ -121,6 +138,18 @@ export class AnthropicProvider implements LLMProvider {
     } catch (err) {
       yield { kind: "done", stop_reason: "error", error: err instanceof Error ? err.message : String(err) };
       return;
+    }
+    if (providerRequestId || inputTokens || outputTokens || cachedTokens) {
+      yield {
+        kind: "usage",
+        usage: {
+          providerRequestId,
+          model: providerModel,
+          inputTokens,
+          outputTokens,
+          cachedTokens,
+        },
+      };
     }
     yield { kind: "done", stop_reason: stopReason };
   }

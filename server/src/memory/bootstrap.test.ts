@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Buffer } from "node:buffer";
 import { bootstrapMemoryDir } from "./bootstrap.js";
-import { PERSONALITY_MD } from "./personality-content.js";
+import { PERSONALITY_MD, PREVIOUS_PERSONALITY_TEMPLATES } from "./personality-content.js";
 
 let dir: string;
 
@@ -34,10 +34,42 @@ describe("bootstrapMemoryDir", () => {
 
   it("PERSONALITY_MD byte length is pinned (drift detection)", () => {
     const bytes = Buffer.byteLength(PERSONALITY_MD, "utf8");
-    // The canonical persona text is from spec §3.9, revised 2026-06-05 to a
-    // Jarvis register: warm + dry wit, friendly "Sir", concise (act-first +
-    // honesty intact). This assertion pins the byte length so accidental edits
-    // surface in CI; intentional changes require updating this number.
-    expect(bytes).toBe(3905);
+    // Persona 3.2 integrates active care, reflection and practical accountability.
+    // Authority remains a separate layer; both shipped 3.1 defaults stay migratable.
+    expect(bytes).toBe(9668);
+  });
+
+  it.each(PREVIOUS_PERSONALITY_TEMPLATES.map((template, index) => [index, template] as const))(
+    "upgrades untouched previous template %i to the current one",
+    (_index, template) => {
+      writeFileSync(join(dir, "personality.md"), template, "utf8");
+      bootstrapMemoryDir({ dir });
+      expect(readFileSync(join(dir, "personality.md"), "utf8")).toBe(PERSONALITY_MD);
+    },
+  );
+
+  it("keeps an owner-edited copy of the previous template exactly as it is", () => {
+    const edited = PREVIOUS_PERSONALITY_TEMPLATES[0]!.replace("Poised", "Calm");
+    writeFileSync(join(dir, "personality.md"), edited, "utf8");
+    bootstrapMemoryDir({ dir });
+    expect(readFileSync(join(dir, "personality.md"), "utf8")).toBe(edited);
+  });
+
+  it("describes AVA as a grounded personal intelligence whose tools do not define her", () => {
+    expect(PERSONALITY_MD).toContain("Niko's personal intelligence and assistant");
+    expect(PERSONALITY_MD).toContain("university work");
+    expect(PERSONALITY_MD).toContain("evidence I can actually access");
+    expect(PERSONALITY_MD).toContain("Initiative is not permission");
+    expect(PERSONALITY_MD.replace(/\s+/g, " ")).toContain("I am not a computer manager");
+    expect(PERSONALITY_MD).not.toContain("right hand on his Windows PC");
+  });
+
+  it("cares and follows up without presuming what happened (persona 3.2)", () => {
+    expect(PERSONALITY_MD).toContain("## Care and curiosity");
+    const flat = PERSONALITY_MD.replace(/\s+/g, " ");
+    expect(flat).toContain("A plan is not proof that something happened");
+    expect(flat).toContain("Memory's consent and governance rules");
+    expect(PERSONALITY_MD).toContain("launching businesses");
+    expect(PERSONALITY_MD).toContain("I do not nag");
   });
 });

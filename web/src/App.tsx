@@ -1,57 +1,411 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
-import { Home, Plus, List, Brain, Settings2, Sparkles } from "lucide-react";
+import {
+  Component,
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
+import { motion } from "motion/react";
+import {
+  Activity,
+  AlarmClock,
+  Brain,
+  CalendarDays,
+  Dumbbell,
+  House,
+  FolderKanban,
+  Lightbulb,
+  MessageSquareText,
+  NotebookPen,
+  Presentation,
+  Radar,
+  Settings2,
+  Sparkles,
+  Sun,
+} from "lucide-react";
 import { Flip } from "./lib/gsap.js";
-import { TubelightNav, type TubelightItem } from "./components/ava/TubelightNav.js";
+import { BottomBar, withViewTransition, type BarConversation, type Destination, type RecentConversation } from "./design/index.js";
 import { SCREEN, markTransition } from "./lib/deckMotion.js";
 import { useReducedMotion } from "./lib/useReducedMotion.js";
+import { computeReduced } from "./lib/motionPref.js";
 import { getToken } from "./auth/tokens.js";
+import { fetchSessionPage, lastHumanActivity, transcribeAudio, type ConversationIntent } from "./api.js";
+import { isCoarsePointer } from "./lib/media.js";
 import { PairingScreen } from "./auth/PairingScreen.js";
-import { ChatScreen } from "./chat/ChatScreen.js";
-import { RulesScreen } from "./rules/RulesScreen.js";
-import { MemoryScreen } from "./memory/MemoryScreen.js";
-import { SelfScreen } from "./self/SelfScreen.js";
-import { OrbitScreen } from "./orbit/OrbitScreen.js";
-import { ChatListScreen } from "./orbit/ChatListScreen.js";
-import { VoiceScreen } from "./voice/VoiceScreen.js";
+import { TodayScreen } from "./today/TodayScreen.js";
+import { HomeScreen } from "./home/HomeScreen.js";
+import { FaceStill } from "./design/face/FaceStill.js";
 import { Splash } from "./splash/Splash.js";
 import { GlassFilter } from "./components/ava/GlassFilter.js";
+import { savedItemDestination, type SavedItem } from "./chat/saved-items.js";
+import { fetchInboxSessions, isInitiativeLinkId } from "./initiative/api.js";
+import { ideaCount } from "./initiative/copy.js";
+import { IdeaUnavailable } from "./initiative/InvitationPanel.js";
+import { useInitiativeSummary } from "./initiative/useInitiativeSummary.js";
+import type { InvitationRef } from "./initiative/useInvitation.js";
+
+// Measured heavyweight destinations load only at their real navigation
+// boundaries. Chat and Visuals intentionally move together: each reaches the
+// same Markdown/diagram graph, so deferring only one leaves that graph eager.
+const ChatScreen = lazy(async () => ({
+  default: (await import("./chat/ChatScreen.js")).ChatScreen,
+}));
+const ProjectsScreen = lazy(async () => ({
+  default: (await import("./projects/ProjectsScreen.js")).ProjectsScreen,
+}));
+const TrainingScreen = lazy(async () => ({
+  default: (await import("./training/TrainingScreen.js")).TrainingScreen,
+}));
+const MemoryScreen = lazy(async () => ({
+  default: (await import("./memory/MemoryScreen.js")).MemoryScreen,
+}));
+const VoiceScreen = lazy(async () => ({
+  default: (await import("./voice/VoiceScreen.js")).VoiceScreen,
+}));
+const ExplorerScreen = lazy(async () => ({
+  default: (await import("./explorer/ExplorerScreen.js")).ExplorerScreen,
+}));
+const VisualsScreen = lazy(async () => ({
+  default: (await import("./visuals/VisualsScreen.js")).VisualsScreen,
+}));
+// Only the first screens (pairing, the intro, Today) ship eagerly. Every other
+// destination loads when it is first opened; the offline cache keeps each one
+// a local fetch after the first visit.
+const NotesScreen = lazy(async () => ({ default: (await import("./notes/NotesScreen.js")).NotesScreen }));
+const IdeasScreen = lazy(async () => ({ default: (await import("./ideas/IdeasScreen.js")).IdeasScreen }));
+const CalendarScreen = lazy(async () => ({ default: (await import("./calendar/CalendarScreen.js")).CalendarScreen }));
+const ChatListScreen = lazy(async () => ({ default: (await import("./orbit/ChatListScreen.js")).ChatListScreen }));
+const WatchesScreen = lazy(async () => ({ default: (await import("./watches/WatchesScreen.js")).WatchesScreen }));
+const RulesScreen = lazy(async () => ({ default: (await import("./rules/RulesScreen.js")).RulesScreen }));
+const SelfScreen = lazy(async () => ({ default: (await import("./self/SelfScreen.js")).SelfScreen }));
+const MissionControlScreen = lazy(async () => ({
+  default: (await import("./mission-control/MissionControlScreen.js")).MissionControlScreen,
+}));
 
 type View =
   | { name: "splash" }
-  | { name: "orbit" }
-  | { name: "chat"; sessionId: string | null; initialText?: string }
-  | { name: "voice"; from: "orbit" | "chat"; sessionId: string | null }
+  // Home is the calm landing page (phase C redesigns it); until then it shows
+  // the Today screen but stays its own destination and history entry.
+  | { name: "home" }
+  | { name: "today" }
+  // Mission Control inside AVA; the standalone ?mission-control=1 window remains.
+  | { name: "activity" }
+  // `audit` shows an automated run for reference without making it the current chat.
+  // `initiativeId` opens it as AVA's idea; `verifyInitiative` requires the pair to match.
+  // `continueLatest`: Talk with nothing remembered; the first send lets the server continue the latest conversation.
+  | { name: "chat"; sessionId: string | null; initialText?: string; audit?: boolean; initiativeId?: string; verifyInitiative?: boolean; continueLatest?: boolean }
+  // An idea link too malformed to name a conversation (ava-initiative).
+  | { name: "idea-missing" }
+  | { name: "voice"; from: "today" | "chat"; sessionId: string | null; intent: ConversationIntent }
   | { name: "memory" }
+  // `noteId` opens that exact note once; `handoff` makes each navigation distinct.
+  | { name: "notes"; noteId?: string; handoff?: number }
+  | { name: "ideas" }
+  | { name: "projects" }
+  | { name: "training" }
+  // `focusAt` opens the week of that moment (an idea's calendar source).
+  | { name: "schedule"; focusAt?: number; focusOccurrenceKey?: string }
+  | { name: "watches"; focusWatchId?: string | null; navigationOrigin?: "mission-control" }
   | { name: "rules" }
   | { name: "self" }
+  | { name: "visuals"; visualId?: string }
+  | { name: "capabilities" }
   | { name: "list" };
 
-// Only these surfaces own the mercury Orb (with flipId="ava-orb"): splash → home
-// hero → voice hero. ChatScreen renders NO orb, so it must not be listed here —
-// otherwise entering chat would capture the still-exiting orbit orb and the next
-// orb view would Flip from a stale snapshot.
-const VIEWS_WITH_ORB = ["splash", "orbit", "voice"];
+// Only these surfaces own the mercury Orb (with flipId="ava-orb"): splash →
+// Today → voice hero. ChatScreen renders NO orb, so it must not be listed here —
+// otherwise entering chat would capture a still-exiting orb and the next orb
+// view would Flip from a stale snapshot.
+const VIEWS_WITH_ORB = ["splash", "today", "voice"];
+// Explicit presentation ownership, not a guess from background colour or theme.
+// Older workspaces retain dark surfaces even when the bar's look is Paper.
+const ATELIER_VIEWS: readonly View["name"][] = ["home", "today", "chat", "voice", "notes", "ideas", "schedule", "list", "idea-missing"];
+const LAST_CHAT_STORAGE_KEY = "ava:last-chat-session";
+// The intro plays once per browser tab; reloads go straight to Today.
+const SPLASH_SEEN_KEY = "ava:splash-seen";
+const WATCHER_LINK_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** Which nav lamp to light for a view. Voice/splash return undefined (no nav). */
-function navForView(v: View): string | undefined {
-  switch (v.name) {
-    case "orbit": return "Home";
-    // Opening an EXISTING chat is "viewing history" → Chats; only a brand-new
-    // (sessionId === null) composition lights "New".
-    case "chat": return v.sessionId === null ? "New" : "Chats";
-    case "memory": return "Memory";
-    case "rules": return "Rules";
-    case "self": return "Self";
-    case "list": return "Chats";
-    default: return undefined;
+/** Splash only on a tab's first load, and never under AVA's reduced motion. */
+export function shouldPlaySplash(): boolean {
+  try {
+    if (window.sessionStorage.getItem(SPLASH_SEEN_KEY)) return false;
+  } catch { /* storage blocked: fall through to the motion preference */ }
+  return !computeReduced();
+}
+
+function markSplashSeen(): void {
+  try { window.sessionStorage.setItem(SPLASH_SEEN_KEY, "1"); } catch { /* non-critical */ }
+}
+
+/**
+ * A push opens `/?session=<id>&initiative=<id>` (contract ava-initiative). The
+ * pair is checked against the server before anything is shown; a link too
+ * malformed to name a conversation says so in place.
+ */
+export function readIdeaLink(search: string): View | null {
+  const params = new URLSearchParams(search);
+  if (!params.has("initiative")) return null;
+  const sessionId = params.get("session");
+  const initiativeId = params.get("initiative");
+  if (!isInitiativeLinkId(sessionId) || !isInitiativeLinkId(initiativeId)) return { name: "idea-missing" };
+  return { name: "chat", sessionId, initiativeId, verifyInitiative: true };
+}
+
+// The idea on screen in this tab, so a reload returns to it (ava-initiative v2).
+// It is separate from the remembered chat, which opening an idea never moves.
+const OPEN_IDEA_KEY = "ava:open-idea";
+
+function readOpenIdea(): View | null {
+  try {
+    const raw = window.sessionStorage.getItem(OPEN_IDEA_KEY);
+    if (!raw) return null;
+    const value = JSON.parse(raw) as { sessionId?: unknown; initiativeId?: unknown };
+    return isInitiativeLinkId(value.sessionId) && isInitiativeLinkId(value.initiativeId)
+      ? { name: "chat", sessionId: value.sessionId, initiativeId: value.initiativeId, verifyInitiative: true }
+      : null;
+  } catch {
+    return null;
   }
+}
+
+function readInitialView(): View {
+  if (typeof window === "undefined") return { name: "splash" };
+  const idea = readIdeaLink(window.location.search) ?? readOpenIdea();
+  if (idea) return idea;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("view") !== "watches" || params.get("from") !== "mission-control") {
+    return shouldPlaySplash() ? { name: "splash" } : { name: "home" };
+  }
+  const requested = params.get("watch");
+  return {
+    name: "watches",
+    focusWatchId: requested && WATCHER_LINK_ID.test(requested) ? requested : null,
+    navigationOrigin: "mission-control",
+  };
+}
+
+function readStoredChat(): string | null {
+  try { return window.localStorage.getItem(LAST_CHAT_STORAGE_KEY); }
+  catch { return null; }
+}
+
+export function DeferredScreenFallback() {
+  return (
+    <div className="absolute inset-0 grid place-items-center bg-black" role="status" aria-live="polite">
+      <span className="hud text-[10px] tracking-[0.2em] text-white/45">Loading workspace…</span>
+    </div>
+  );
+}
+
+type DeferredScreenBoundaryProps = {
+  children: ReactNode;
+  resetKey: string;
+  reload?: () => void;
+};
+
+/**
+ * A stale service-worker page can request a chunk from the previous build after
+ * a release. Suspense handles normal loading; this boundary makes that uncommon
+ * failure explicit and recoverable without weakening module integrity.
+ */
+export class DeferredScreenBoundary extends Component<
+  DeferredScreenBoundaryProps,
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[ava] deferred workspace failed to load", error.message, info.componentStack);
+  }
+
+  componentDidUpdate(previous: DeferredScreenBoundaryProps) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false });
+    }
+  }
+
+  private reload = () => {
+    if (this.props.reload) this.props.reload();
+    else window.location.reload();
+  };
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="absolute inset-0 grid place-items-center bg-black px-6 text-center" role="alert">
+        <div className="flex max-w-sm flex-col items-center gap-3">
+          <strong className="text-sm font-medium text-white">This workspace did not load.</strong>
+          <span className="text-xs leading-5 text-white/55">
+            AVA may have updated while this window was open. Reload to use the installed version.
+          </span>
+          <button className="btn-deck btn-ghost h-9 px-4 text-xs" type="button" onClick={this.reload}>
+            Reload AVA
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
+
+/** Which bottom-bar destination a view belongs to (contract ui-remodel v2 §4). */
+function destinationForView(v: View): string | null {
+  switch (v.name) {
+    case "home": return "home";
+    case "today": return "today";
+    // One conversation (one-conversation v1): a new topic, the latest conversation and History are all Talk.
+    case "chat": return "talk";
+    case "list": return "talk";
+    case "idea-missing": return "talk";
+    case "schedule": return "calendar";
+    case "notes": return "notes";
+    case "ideas": return "ideas";
+    case "projects": return "projects";
+    case "training": return "training";
+    case "memory": return "memory";
+    case "watches": return "reminders";
+    case "capabilities": return "explore";
+    case "visuals": return "visuals";
+    case "activity": return "activity";
+    case "self": return "self";
+    case "rules": return "settings";
+    default: return null;
+  }
+}
+
+const DESTINATIONS: Destination[] = [
+  { id: "home", label: "Home", icon: <House size={18} />, group: "primary" },
+  { id: "today", label: "Today", icon: <Sun size={18} />, group: "primary" },
+  { id: "talk", label: "Talk", icon: <MessageSquareText size={18} />, group: "primary" },
+  { id: "notes", label: "Notes", icon: <NotebookPen size={18} />, group: "primary" },
+  { id: "calendar", label: "Calendar", icon: <CalendarDays size={18} />, group: "primary" },
+  { id: "ideas", label: "Ideas", icon: <Lightbulb size={18} />, group: "primary" },
+  { id: "projects", label: "Projects", icon: <FolderKanban size={18} />, group: "primary" },
+  { id: "training", label: "Training", icon: <Dumbbell size={18} />, group: "primary" },
+  { id: "memory", label: "Memory", icon: <Brain size={18} />, group: "system" },
+  { id: "reminders", label: "Reminders & watches", icon: <AlarmClock size={18} />, group: "system" },
+  { id: "explore", label: "Explore AVA", icon: <Radar size={18} />, group: "system" },
+  { id: "visuals", label: "Visual explanations", icon: <Presentation size={18} />, group: "system" },
+  { id: "activity", label: "Activity", icon: <Activity size={18} />, group: "system" },
+  { id: "self", label: "Self development", icon: <Sparkles size={18} />, group: "system" },
+  { id: "settings", label: "Settings", icon: <Settings2 size={18} />, group: "system" },
+];
+
+const RECENT_LIMIT = 5;
+
+function formatRecentTime(value: number): string {
+  const date = new Date(value);
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/**
+ * Nika's recent conversations for the menu: the scoped human-only list, with
+ * the current conversation lifted to the top. A failed lookup shows nothing
+ * rather than a wrong list; "All conversations" stays available.
+ */
+function useRecentConversations(currentSessionId: string | null, enabled: boolean): RecentConversation[] {
+  const [recents, setRecents] = useState<RecentConversation[]>([]);
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const page = await fetchSessionPage({ scope: "human", limit: RECENT_LIMIT });
+        if (cancelled) return;
+        const rows = [...page.sessions];
+        const at = currentSessionId ? rows.findIndex((row) => row.id === currentSessionId) : -1;
+        if (at > 0) rows.unshift(...rows.splice(at, 1));
+        setRecents(rows.map((row) => ({
+          id: row.id,
+          title: row.title?.trim() || "Untitled conversation",
+          meta: formatRecentTime(lastHumanActivity(row)),
+        })));
+      } catch {
+        if (!cancelled) setRecents([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentSessionId, enabled]);
+  return recents;
 }
 
 export function App() {
   const [paired, setPaired] = useState<boolean>(!!getToken());
-  const [view, setView] = useState<View>({ name: "splash" });
+  const [view, setView] = useState<View>(readInitialView);
+  // A fresh-chat view can remain `sessionId:null` after ChatScreen internally
+  // receives a server session. Incrementing this key makes a second press of
+  // New genuinely discard that draft and mount a clean conversation.
+  const [newChatRevision, setNewChatRevision] = useState(0);
+  const [lastChatSessionId, setLastChatSessionId] = useState<string | null>(readStoredChat);
+  // The bottom bar's draft lives here so menu changes and navigation never lose it.
+  const [barDraft, setBarDraft] = useState("");
+  const barSendLock = useRef(false);
+  // While Talk is open it lends the bar its conversation: sends go there, Send
+  // becomes Stop while AVA replies, and voice continues that conversation.
+  const [talkBar, setTalkBar] = useState<BarConversation | null>(null);
+  const [barFocus, setBarFocus] = useState(0);
+  const putInBar = useCallback((text: string) => {
+    setBarDraft(text);
+    setBarFocus((request) => request + 1);
+  }, []);
+  // Opening Talk on a desktop puts the cursor straight in the box; phones skip
+  // it so the soft keyboard doesn't cover the conversation uninvited.
+  const talkOpen = talkBar !== null;
+  useEffect(() => {
+    if (talkOpen && !isCoarsePointer()) setBarFocus((request) => request + 1);
+  }, [talkOpen]);
   const reduced = useReducedMotion();
+
+  // The ONE remembered conversation shared by Chat, Voice and the sidebar. It
+  // moves only on an explicit selection or an authoritative binding (a chat
+  // load of a conversation Nika can talk in, a sent message, a voice ack),
+  // never because a list page happens not to include it.
+  const lastChatRef = useRef(lastChatSessionId);
+  const rememberChat = useCallback((sessionId: string) => {
+    lastChatRef.current = sessionId;
+    setLastChatSessionId(sessionId);
+    try { window.localStorage.setItem(LAST_CHAT_STORAGE_KEY, sessionId); } catch { /* non-critical */ }
+  }, []);
+
+  /** Forget the remembered chat only when the conversation that turned out unavailable IS it. */
+  const forgetUnavailableChat = useCallback((sessionId: string | null) => {
+    if (!sessionId || lastChatRef.current !== sessionId) return;
+    lastChatRef.current = null;
+    setLastChatSessionId(null);
+    try { window.localStorage.removeItem(LAST_CHAT_STORAGE_KEY); } catch { /* non-critical */ }
+  }, []);
+
+  // The conversation voice actually bound during the current voice visit. It is
+  // tied to that visit's view object, so a later visit never inherits it.
+  const voiceBindingRef = useRef<{ visit: View; sessionId: string } | null>(null);
+
+  const openChat = useCallback((sessionId: string | null, options?: { audit?: boolean }) => {
+    setView({ name: "chat", sessionId, ...(options?.audit ? { audit: true } : {}) });
+  }, []);
+
+  // One of AVA's ideas, opened by exact resume. The pair is always re-checked.
+  const openInvitation = useCallback((target: InvitationRef) => {
+    setView({ name: "chat", sessionId: target.sessionId, initiativeId: target.initiativeId, verifyInitiative: true });
+  }, []);
+
+  const openNewChat = (initialText?: string) => {
+    setNewChatRevision((revision) => revision + 1);
+    setView({ name: "chat", sessionId: null, ...(initialText ? { initialText } : {}) });
+  };
+
+  // Whatever this tab showed first (the intro, a reduced-motion skip or a deep
+  // link), its first load is over: later reloads go straight to Today.
+  useEffect(() => { markSplashSeen(); }, []);
 
   // Expired/invalid token → back to pairing. api.ts dispatches `ava:unauthorized`
   // (+ clearToken) on a 401; we just listen and drop back to the pairing screen.
@@ -60,6 +414,33 @@ export function App() {
     window.addEventListener("ava:unauthorized", h);
     return () => window.removeEventListener("ava:unauthorized", h);
   }, []);
+
+  // Consume the Mission Control deep link once. Replacing only the current
+  // history entry keeps browser Back pointed at the originating Mission Control
+  // view while preventing a later reload from repeatedly forcing Watches.
+  useEffect(() => {
+    if (view.name !== "watches" || view.navigationOrigin !== "mission-control") return;
+    const clean = `${window.location.pathname}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", clean || "/");
+  }, []);
+
+  // Consume an idea link once; the open idea itself survives a reload below.
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has("initiative")) return;
+    const clean = `${window.location.pathname}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", clean || "/");
+  }, []);
+
+  // Remember the idea on screen for this tab only; any other screen forgets it.
+  useEffect(() => {
+    try {
+      if (view.name === "chat" && view.verifyInitiative && view.sessionId && view.initiativeId) {
+        window.sessionStorage.setItem(OPEN_IDEA_KEY, JSON.stringify({ sessionId: view.sessionId, initiativeId: view.initiativeId }));
+      } else if (view.name !== "splash") {
+        window.sessionStorage.removeItem(OPEN_IDEA_KEY);
+      }
+    } catch { /* storage blocked: a reload lands on Home */ }
+  }, [view]);
 
   // ── Transition window: mark it so the always-on WebGL loops idle during the
   // overlap, and flag the deck panels so their glass tree drops backdrop-filter
@@ -105,83 +486,288 @@ export function App() {
     try { flipStateRef.current = Flip.getState(orb); } catch { flipStateRef.current = null; }
   }, [view.name, reduced]);
 
-  // Persistent deck nav — the bar stays put while panels swap, tracks the current
-  // view, and lets you jump straight between Home / Chats / Memory / Rules / Self.
-  const navItems: TubelightItem[] = [
-    { name: "Home", icon: Home, onSelect: () => setView({ name: "orbit" }) },
-    { name: "New", icon: Plus, onSelect: () => setView({ name: "chat", sessionId: null }) },
-    { name: "Chats", icon: List, onSelect: () => setView({ name: "list" }) },
-    { name: "Memory", icon: Brain, onSelect: () => setView({ name: "memory" }) },
-    { name: "Rules", icon: Settings2, onSelect: () => setView({ name: "rules" }) },
-    { name: "Self", icon: Sparkles, onSelect: () => setView({ name: "self" }) },
-  ];
-  const activeNav = navForView(view);
-  const showNav = activeNav !== undefined;
+  // Talk continues the remembered conversation exactly. With none, its first
+  // send asks the server to continue the latest one; it never lands on a list.
+  const openTalk = () => (lastChatSessionId
+    ? openChat(lastChatSessionId)
+    : setView({ name: "chat", sessionId: null, continueLatest: true }));
+  const openNote = (noteId: string) => setView({ name: "notes", noteId, handoff: Date.now() });
+  const openSavedItem = (item: SavedItem) => {
+    const target = savedItemDestination(item);
+    if (target.view === "notes") openNote(target.noteId);
+    else if (target.view === "watches") setView({ name: "watches", focusWatchId: target.watchId });
+    else if (target.view === "schedule") setView({ name: "schedule" });
+    else setView({ name: "memory" });
+  };
+  const enterVoiceFromToday = () => setView({
+    name: "voice",
+    from: "today",
+    sessionId: lastChatSessionId,
+    intent: lastChatSessionId ? "resume" : "continue",
+  });
 
-  // Shared enter/exit timings — every screen uses the same tokens. Out is faster
-  // than in so the outgoing layer clears before the incoming settles.
-  const enterT = { duration: reduced ? 0.14 : SCREEN.enter, ease: SCREEN.easeEnter };
-  const exitT = { duration: reduced ? 0.1 : SCREEN.exit, ease: SCREEN.easeExit };
-  const exitTo = { ...SCREEN.exitTo, transition: exitT };
+  const goHome = () => setView({ name: "home" });
+
+  const navigate = (id: string) => {
+    switch (id) {
+      case "home": goHome(); break;
+      case "today": setView({ name: "today" }); break;
+      case "talk": openTalk(); break;
+      case "notes": setView({ name: "notes" }); break;
+      case "calendar": setView({ name: "schedule" }); break;
+      case "ideas": setView({ name: "ideas" }); break;
+      case "memory": setView({ name: "memory" }); break;
+      case "projects": setView({ name: "projects" }); break;
+      case "training": setView({ name: "training" }); break;
+      case "reminders": setView({ name: "watches" }); break;
+      case "explore": setView({ name: "capabilities" }); break;
+      case "visuals": setView({ name: "visuals" }); break;
+      case "activity": setView({ name: "activity" }); break;
+      case "self": setView({ name: "self" }); break;
+      case "settings": setView({ name: "rules" }); break;
+      default: break;
+    }
+  };
+
+  // One bar send becomes exactly one new conversation turn. The lock holds
+  // until the resulting route commits, so a double press cannot start two.
+  useEffect(() => { barSendLock.current = false; }, [view]);
+  // On an idea screen that has not lent the bar (still checking, or it matched
+  // nothing), neither sending nor voice may fall through to another chat.
+  const ideaHeld = (view.name === "chat" && view.verifyInitiative === true) || view.name === "idea-missing";
+  const sendFromBar = (text: string) => {
+    if (talkBar) {
+      talkBar.onSend(text);
+      setBarDraft("");
+      return;
+    }
+    // An idea still being checked, or one that matched nothing, never turns the
+    // words into a different conversation on its own: the draft waits until
+    // Niko chooses where it goes.
+    if (ideaHeld) return;
+    if (barSendLock.current) return;
+    barSendLock.current = true;
+    setBarDraft("");
+    withViewTransition(() => openNewChat(text));
+  };
+
+  const barCurrent = destinationForView(view);
+  const barVisible = view.name !== "splash";
+  // Voice has its own controls; the bar shrinks to its menu button there. On
+  // Talk the bar is the message box.
+  const barCompact = view.name === "voice";
+  const recents = useRecentConversations(lastChatSessionId, paired && barVisible);
+  const { summary: ideas, refresh: refreshIdeas } = useInitiativeSummary(paired && barVisible);
+  // The newest pending idea; without a summary entry, the inbox's first row.
+  const openNewestIdea = () => {
+    const newest = ideas?.newest;
+    if (newest) {
+      openInvitation({ sessionId: newest.sessionId, initiativeId: newest.initiativeId });
+      return;
+    }
+    void fetchInboxSessions(1).then((rows) => {
+      const first = rows[0];
+      if (first?.initiativeId) openInvitation({ sessionId: first.id, initiativeId: first.initiativeId });
+    }).catch(() => { /* nothing to open */ });
+  };
+  const pendingIdeas = ideas && ideas.pending > 0 ? ideas : null;
+
+  // Shared entry timing — the previous screen is already unmounted.
+  // A destination owns the stage exclusively. React removes the previous
+  // destination in the same commit and only the incoming surface eases in.
+  // That prevents Home chrome from lingering beneath another workspace and
+  // avoids compositing two full application surfaces during navigation.
+  const enterT = { duration: reduced ? 0.1 : SCREEN.enter, ease: SCREEN.easeEnter };
   const deckTransition = transitioning || undefined;
 
   if (!paired) return <PairingScreen onPaired={() => setPaired(true)} />;
+  if (new URLSearchParams(window.location.search).get("mission-control") === "1") {
+    return (
+      <DeferredScreenBoundary resetKey="mission-control">
+        <Suspense fallback={<DeferredScreenFallback />}>
+          <MissionControlScreen />
+        </Suspense>
+      </DeferredScreenBoundary>
+    );
+  }
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-black text-white">
+    <div data-app-surface={ATELIER_VIEWS.includes(view.name) ? "atelier" : "legacy"} className="relative w-full h-full overflow-hidden bg-black text-white">
       <GlassFilter />
-      {/* No mode="wait": the home/voice screens have infinite CSS animations
-          (nebula drift, orb morph) that never "finish", so mode="wait" would
-          wait forever for exit-complete and never mount the next view. Default
-          concurrent mode cross-dissolves — and every screen now enters/exits with
-          the SAME tokens so the swap reads as one coherent motion, not a pile of
-          mismatched pops and fades. */}
-      <AnimatePresence>
+      <div className="ava-app-stage">
+      {/* Exactly one route surface is mounted at a time. Entry motion is small
+          and compositor-only; destination changes never retain the old Home
+          scene or run two heavyweight workspaces concurrently. */}
+      <DeferredScreenBoundary resetKey={view.name}>
+      <Suspense fallback={<DeferredScreenFallback />}>
         {view.name === "splash" && (
           <motion.div
             key="splash"
             data-view="splash"
             className="absolute inset-0"
-            exit={exitTo}
           >
-            <Splash onDone={() => setView({ name: "orbit" })} />
+            <Splash onDone={goHome} />
           </motion.div>
         )}
-        {view.name === "orbit" && (
+        {view.name === "home" && (
           <motion.div
-            key="orbit"
-            data-view="orbit"
+            key="home"
+            data-view="home"
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
-            <OrbitScreen
-              onCommand={(text) => setView({ name: "chat", sessionId: null, initialText: text })}
-              onEnterVoice={() => setView({ name: "voice", from: "orbit", sessionId: null })}
+            <HomeScreen
+              onStartChat={(text) => openNewChat(text)}
+              onOpenNote={openNote}
+              onOpenCalendar={() => setView({ name: "schedule" })}
+              onOpenReminders={() => setView({ name: "watches" })}
+              ideas={pendingIdeas ? { pending: pendingIdeas.pending, onOpen: () => withViewTransition(openNewestIdea) } : null}
             />
+          </motion.div>
+        )}
+        {view.name === "today" && (
+          <motion.div
+            key="today"
+            data-view="today"
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <TodayScreen
+              onOpenChat={(sessionId) => openChat(sessionId)}
+              onStartChat={(text) => openNewChat(text)}
+              // Voice goes back to the remembered conversation exactly; with none
+              // remembered the server continues Nika's latest human chat.
+              onEnterVoice={enterVoiceFromToday}
+              onOpenTalk={() => setView({ name: "list" })}
+              onOpenNote={openNote}
+              onOpenIdeas={() => setView({ name: "ideas" })}
+              onOpenNotes={() => setView({ name: "notes" })}
+            />
+          </motion.div>
+        )}
+        {view.name === "activity" && (
+          <motion.div
+            key="activity"
+            data-view="activity"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <MissionControlScreen />
+          </motion.div>
+        )}
+        {view.name === "ideas" && (
+          <motion.div
+            key="ideas"
+            data-view="ideas"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <IdeasScreen onOpenNote={openNote} />
+          </motion.div>
+        )}
+        {view.name === "projects" && (
+          <motion.div
+            key="projects"
+            data-view="projects"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <ProjectsScreen onOpenNote={openNote} />
+          </motion.div>
+        )}
+        {view.name === "training" && (
+          <motion.div
+            key="training"
+            data-view="training"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <TrainingScreen onVoice={enterVoiceFromToday} onAsk={(text) => withViewTransition(() => openNewChat(text))} />
+          </motion.div>
+        )}
+        {view.name === "schedule" && (
+          <motion.div
+            key={view.focusAt === undefined ? "schedule" : `schedule-${view.focusAt}`}
+            data-view="schedule"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <CalendarScreen onOpenTalk={openTalk} focusAt={view.focusAt} focusOccurrenceKey={view.focusOccurrenceKey} />
           </motion.div>
         )}
         {view.name === "chat" && (
           <motion.div
-            key={`chat-${view.sessionId ?? "new"}`}
+            key={view.sessionId ? `chat-${view.sessionId}` : `chat-${view.continueLatest ? "continue" : "new"}-${newChatRevision}`}
             data-view="chat"
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <ChatScreen
               sessionId={view.sessionId}
               initialText={view.initialText}
-              onOpenSessions={() => setView({ name: "orbit" })}
+              audit={view.audit === true}
+              continueLatest={view.continueLatest === true}
+              onSessionChange={rememberChat}
+              onSessionUnavailable={forgetUnavailableChat}
+              onNewChat={() => openNewChat()}
+              onOpenChat={(id) => openChat(id)}
+              onOpenSessions={goHome}
               onOpenRules={() => setView({ name: "rules" })}
               onOpenMemory={() => setView({ name: "memory" })}
               onOpenList={() => setView({ name: "list" })}
-              onEnterVoice={() => setView({ name: "voice", from: "chat", sessionId: view.sessionId })}
+              // A blank New topic is an explicit new conversation; blank Talk
+              // (nothing remembered) continues the latest, like its first send.
+              onEnterVoice={(sessionId) => setView({
+                name: "voice",
+                from: "chat",
+                sessionId,
+                intent: sessionId ? "resume" : view.continueLatest ? "continue" : "new",
+              })}
+              onOpenVisual={(visualId) => setView({ name: "visuals", visualId })}
+              onOpenSaved={openSavedItem}
+              onComposer={setTalkBar}
+              onDraft={putInBar}
+              initiativeId={view.initiativeId ?? null}
+              verifyInitiative={view.verifyInitiative === true}
+              onFocusComposer={() => setBarFocus((request) => request + 1)}
+              onOpenNote={openNote}
+              onOpenCalendarAt={(at, occurrenceKey) => setView({ name: "schedule", focusAt: at, focusOccurrenceKey: occurrenceKey })}
+              onOpenInvitation={(target) => withViewTransition(() => openInvitation(target))}
+              onInitiativeChange={refreshIdeas}
             />
+          </motion.div>
+        )}
+        {view.name === "idea-missing" && (
+          <motion.div
+            key="idea-missing"
+            data-view="idea-missing"
+            className="ds-root absolute inset-0 flex flex-col bg-canvas font-ui text-ink"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <IdeaUnavailable onOpenList={() => setView({ name: "list" })} onNewChat={() => openNewChat()} />
           </motion.div>
         )}
         {view.name === "voice" && (
@@ -191,16 +777,27 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <VoiceScreen
               initialSessionId={view.sessionId}
-              onExit={(sid) => {
-                if (view.from === "chat") setView({ name: "chat", sessionId: sid });
-                else setView({ name: "orbit" });
+              intent={view.intent}
+              onSessionBound={(sessionId) => {
+                voiceBindingRef.current = { visit: view, sessionId };
+                rememberChat(sessionId);
               }}
-              onSwitchToKeyboard={(sid) => setView({ name: "chat", sessionId: sid })}
+              // The unavailable conversation is the one voice last bound in this
+              // visit (a new or continued chat), else the one it was entered with.
+              onSessionUnavailable={() => {
+                const bound = voiceBindingRef.current;
+                forgetUnavailableChat(bound?.visit === view ? bound.sessionId : view.sessionId);
+              }}
+              onOpenConversations={() => setView({ name: "list" })}
+              onExit={(sid) => {
+                if (view.from === "chat") openChat(sid);
+                else goHome();
+              }}
+              onSwitchToKeyboard={(sid) => openChat(sid)}
             />
           </motion.div>
         )}
@@ -212,10 +809,12 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
-            <MemoryScreen onClose={() => setView({ name: "orbit" })} />
+            <MemoryScreen
+              onClose={goHome}
+              onOpenChat={(sessionId) => openChat(sessionId)}
+            />
           </motion.div>
         )}
         {view.name === "rules" && (
@@ -226,10 +825,9 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
-            <RulesScreen onClose={() => setView({ name: "orbit" })} />
+            <RulesScreen onClose={goHome} />
           </motion.div>
         )}
         {view.name === "self" && (
@@ -240,10 +838,77 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
-            <SelfScreen onClose={() => setView({ name: "orbit" })} />
+            <SelfScreen onClose={goHome} />
+          </motion.div>
+        )}
+        {view.name === "notes" && (
+          <motion.div
+            // A new key per handoff mounts Notes afresh, so each "open this
+            // note" is applied exactly once.
+            key={view.noteId ? `notes-${view.noteId}-${view.handoff ?? 0}` : "notes"}
+            data-view="notes"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <NotesScreen
+              onStartTask={(text) => openNewChat(text)}
+              onOpenChat={(sessionId) => openChat(sessionId)}
+              initialNoteId={view.noteId ?? null}
+            />
+          </motion.div>
+        )}
+        {view.name === "watches" && (
+          <motion.div
+            key="watches"
+            data-view="watches"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <WatchesScreen
+              onOpenChat={(sessionId) => openChat(sessionId, { audit: true })}
+              focusWatchId={view.focusWatchId}
+              navigationRequested={view.navigationOrigin === "mission-control"}
+              onBackToMissionControl={() => window.history.back()}
+            />
+          </motion.div>
+        )}
+        {view.name === "visuals" && (
+          <motion.div
+            key={view.visualId ? `visuals-${view.visualId}` : "visuals"}
+            data-view="visuals"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <VisualsScreen
+              initialVisualId={view.visualId ?? null}
+              onCreate={(text) => openNewChat(text)}
+            />
+          </motion.div>
+        )}
+        {view.name === "capabilities" && (
+          <motion.div
+            key="capabilities"
+            data-view="capabilities"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <ExplorerScreen
+              onLaunch={(text) => openNewChat(text)}
+            />
           </motion.div>
         )}
         {view.name === "list" && (
@@ -254,33 +919,45 @@ export function App() {
             className="absolute inset-0"
             initial={SCREEN.from}
             animate={SCREEN.to}
-            exit={exitTo}
             transition={enterT}
           >
             <ChatListScreen
-              onClose={() => setView({ name: "orbit" })}
-              onOpenChat={(sid) => setView({ name: "chat", sessionId: sid })}
+              onClose={goHome}
+              onOpenChat={(sid, options) => (sid ? openChat(sid, options) : openNewChat())}
             />
           </motion.div>
         )}
-      </AnimatePresence>
+      </Suspense>
+      </DeferredScreenBoundary>
 
-      {/* Persistent deck nav: stays mounted (so the cyan lamp springs smoothly
-          between panels) and fades out on the immersive hero views (splash/voice).
-          Chat joins the deck — the lamp lights "New" for a fresh chat, "Chats"
-          for an existing one. */}
-      <motion.div
-        className="absolute left-1/2 z-30 -translate-x-1/2"
-        animate={{ opacity: showNav ? 1 : 0, y: showNav ? 0 : -14 }}
-        transition={{ duration: 0.3, ease: "easeOut" }}
-        style={{
-          pointerEvents: showNav ? "auto" : "none",
-          // top-6 plus the notch/status-bar inset on phones (env() is 0 on desktop).
-          top: "calc(env(safe-area-inset-top, 0px) + 1.5rem)",
-        }}
-      >
-        <TubelightNav items={navItems} activeName={activeNav} />
-      </motion.div>
+      </div>
+      {/* Mounted once, outside the route switch, so it never remounts on navigation. */}
+      {barVisible && (
+        <BottomBar
+          destinations={DESTINATIONS}
+          current={barCurrent}
+          onNavigate={(id) => withViewTransition(() => navigate(id))}
+          recents={recents}
+          onOpenRecent={(sessionId) => withViewTransition(() => openChat(sessionId))}
+          onOpenAllConversations={() => withViewTransition(() => setView({ name: "list" }))}
+          draft={barDraft}
+          onDraftChange={setBarDraft}
+          onSend={sendFromBar}
+          onTalk={talkBar ? talkBar.onVoice : ideaHeld ? undefined : enterVoiceFromToday}
+          busy={talkBar?.busy ?? false}
+          onStop={talkBar?.onStop}
+          dictate={talkBar ? transcribeAudio : undefined}
+          focusRequest={barFocus}
+          placeholder={talkBar ? "Message AVA…" : undefined}
+          compact={barCompact}
+          face={<FaceStill size={32} />}
+          ideas={pendingIdeas ? {
+            label: `${ideaCount(pendingIdeas.pending)} from AVA`,
+            fresh: pendingIdeas.unopened > 0,
+            onOpen: () => withViewTransition(openNewestIdea),
+          } : null}
+        />
+      )}
     </div>
   );
 }

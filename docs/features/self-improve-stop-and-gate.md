@@ -9,7 +9,9 @@ outside instead of running away unseen:
    that threads into every long step — the LLM `reflect` call, the `claude_code`
    worker that edits files, and the `npm test`/build verify subprocess. The Self
    screen shows a **Stop** button on any running improvement, and the red global
-   **Stop** button (`/kill`) now also cancels *all* self-improvements. A cancelled
+   **Stop** button (`/kill-all`) also cancels *all* self-improvements. Routine
+   voice barge-in uses the session-only `/kill` route and cannot cancel detached
+   self-development. A cancelled
    run is recorded `status="failed"`, `outcome="cancelled"` (not a plain failure).
 2. **It shows its plan first.** A *user-triggered* improvement drafts its change
    brief, then **pauses** at a new `awaiting_approval` state and waits — no code is
@@ -23,8 +25,8 @@ in flight (Stop).
 ## Why it exists
 
 The self-improvement pipeline used to run **fully detached** with no abort path.
-Chat/voice runs register an `AbortController` in `ActiveRuns` and the red Stop
-button (`POST /api/chat/:sessionId/kill`) aborts them — but a self-improvement
+Chat/voice runs register an `AbortController` in `ActiveRuns` and session Stop
+(`POST /api/chat/:sessionId/kill`) aborts them — but a self-improvement
 isn't a session run, so Stop couldn't reach it. Once a self-improvement started,
 it ran to completion (or its own internal timeouts) regardless of the button.
 That was the exact "I pressed Stop and it kept going" runaway, and it was
@@ -58,7 +60,7 @@ the app) plus the red global **Stop** button.
   `useSelfJournal.ts:83-85`) shows a small red **Stop** button
   (`SelfScreen.tsx:73-80`). It hits `POST /api/self/:id/cancel`.
 - **The red global Stop also reaches self-improvements.** Pressing the main Stop
-  button (the chat `/kill` endpoint) now cancels **every** running and queued
+  button (the chat `/kill-all` endpoint) cancels **every** running and queued
   self-improvement in one shot, matching what you expect from the red button
   (`routes/chat.ts:516-520`).
 - **Review and approve a plan.** When a user-triggered improvement parks, the Self
@@ -125,9 +127,10 @@ stateDiagram-v2
   intent as cancelled. Returns the count. This is what the red button calls.
 - **`hasActiveImprovement()`** (`improver.ts:44-46`) reports whether anything is
   running or queued.
-- **A cancel is recorded as cancelled, not failed.** The catch block checks
-  `signal.aborted`: if set, it writes `outcome="cancelled"` and emits a `cancelled`
-  step; otherwise it's an ordinary `failed` (`improver.ts:164-174`).
+- **A cancel records its source.** The catch block writes
+  `outcome="cancelled"` plus `cancellation_source="self_stop"`,
+  `"global_stop"`, or `"system_abort"` and a matching plain-language error.
+  It no longer labels every abort "cancelled by user."
 - **The stages honor the signal.**
   - `reflect.ts:7,21` — passes `o.abort` straight to `provider.stream({... abort})`
     instead of the old throwaway `new AbortController().signal`, so the LLM call is
@@ -140,11 +143,12 @@ stateDiagram-v2
   - `implement` is `selfClaudeCode.run({ ..., signal })` (`index.ts:171`,
     `auto-improve-loop.ts:75`) — the worker's existing `claude_code` abort support
     kills the `claude -p` child mid-edit.
-- **The red Stop reaches it.** `routes/chat.ts:519` calls `cancelAllImprovements(db)`
-  inside the `/kill` handler (imported at `chat.ts:20`) and returns
+- **The red Stop reaches it without coupling voice barge-in to it.** The chat UI
+  calls `/kill-all`, which calls `cancelAllImprovements(db, "global_stop")` and returns
   `cancelledImprovements` in the JSON. The endpoint still does its existing job
   (abort the session run, tree-kill its PIDs) — cancelling self-improvements is an
-  added step.
+  added step. Voice interruption calls `/kill`, which performs only the session
+  abort and returns `cancelledImprovements: 0`.
 - **Wiring.** Both improver wirings pass the signal through (the live deps,
   `index.ts:159-175`, and the overnight loop, `auto-improve-loop.ts:68-78`). The
   HTTP route `POST /api/self/:id/cancel` is wired to `cancelImprovement`

@@ -97,7 +97,7 @@ export const CONSISTENCY_REMINDER_MARKER = "[RESULT CHECK]";
  */
 export function buildConsistencyReminder(worst: ActionResultClass): string {
   if (worst === "error") {
-    return `${CONSISTENCY_REMINDER_MARKER} A recent action tool reported a FAILURE. Do not claim the task is complete or successful. Explicitly tell Sir what failed, and report any partial progress you did make. Be honest about the failure.`;
+    return `${CONSISTENCY_REMINDER_MARKER} A recent action tool reported a FAILURE. Use the repair register: calm, accountable, and without humor or excuses. Do not claim the task is complete or successful. State the last verified result, the failure observation point, and any partial progress, then give the best recovery step.`;
   }
-  return `${CONSISTENCY_REMINDER_MARKER} A recent action tool returned an uncertain or only partial result. Do not claim the task is complete or fully successful. Explicitly report what is uncertain or incomplete, and describe the partial progress made.`;
+  return `${CONSISTENCY_REMINDER_MARKER} A recent action tool returned an uncertain or only partial result. Use the repair register: calm, candid, and without humor. Do not claim the task is complete or fully successful. State what is verified, what remains uncertain, and the best recovery step.`;
 }

@@ -2,6 +2,20 @@ import { describe, it, expect } from "vitest";
 import { classifyRisk } from "./classify.js";
 
 describe("classifyRisk", () => {
+  it("classifies local calendar reads and creates without broadening other operations", () => {
+    expect(classifyRisk("calendar_query", {}).tier).toBe("read-only");
+    for (const recurrence_kind of ["none", "weekly"]) {
+      expect(classifyRisk("calendar_add", { recurrence_kind }).tier).toBe("low");
+    }
+    for (const tool of ["calendar_update", "calendar_set_attendance", "calendar_end_series", "calendar_remove"]) {
+      expect(classifyRisk(tool, {}).tier).toBe("low");
+    }
+    for (const tool of ["calendar_remind", "unknown_calendar_tool"]) {
+      expect(classifyRisk(tool, {}).tier).toBe("medium");
+    }
+    expect(classifyRisk("calendar_update", { title: ".env" }).tier).toBe("blocked");
+    expect(classifyRisk("calendar_add", { title: ".env" }).tier).toBe("blocked");
+  });
   it("read-only: chrome.read_page", () => {
     expect(classifyRisk("chrome_read_page", {}).tier).toBe("read-only");
   });
@@ -15,6 +29,27 @@ describe("classifyRisk", () => {
   });
   it("low: chrome.navigate non-purchase URL", () => {
     expect(classifyRisk("chrome_navigate", { url: "https://news.ycombinator.com" }).tier).toBe("low");
+  });
+  it("low: opening the dedicated AVA Chrome never asks for approval", () => {
+    expect(classifyRisk("chrome_open", {}).tier).toBe("low");
+    expect(classifyRisk("chrome_open", { url: "https://www.google.com" }).tier).toBe("low");
+  });
+
+  it("low: a direct Google search is reversible browser navigation", () => {
+    expect(classifyRisk("chrome_google_search", { query: "AVA test" })).toEqual({
+      tier: "low",
+      reason: "direct reversible search in AVA Chrome",
+    });
+  });
+  it("low: direct URL and YouTube routes are reversible browser actions", () => {
+    expect(classifyRisk("chrome_open_url", { url: "https://example.com/" })).toEqual({
+      tier: "low",
+      reason: "direct reversible navigation in AVA Chrome",
+    });
+    expect(classifyRisk("chrome_youtube_search", { query: "AVA test" })).toEqual({
+      tier: "low",
+      reason: "direct reversible search in AVA Chrome",
+    });
   });
   it("low: fs_write under allowlist root (caller still allowlist-checks separately)", () => {
     expect(classifyRisk("fs_write", { path: "C:/ai/x.txt" }).tier).toBe("low");
@@ -43,6 +78,20 @@ describe("classifyRisk", () => {
     expect(classifyRisk("shell", { command: 'start "" "C:\\x\\App.exe"' }).tier).toBe("low");
     expect(classifyRisk("shell", { command: "explorer ." }).tier).toBe("low");
     expect(classifyRisk("shell", { command: "code ." }).tier).toBe("low");
+  });
+  it("low: Strategy Room handoff starts discussion but cannot execute", () => {
+    expect(classifyRisk("strategy_room_open", {}).tier).toBe("low");
+  });
+  it("low: pinned read-only Activepieces playbooks", () => {
+    expect(classifyRisk("automation_system_report", {}).tier).toBe("low");
+    expect(classifyRisk("automation_operations_brief", {}).tier).toBe("low");
+  });
+  it("requires explicit approval to publish learned playbooks but lets approved read-only actions run", () => {
+    expect(classifyRisk("automation_playbook_activate", { candidateId: "candidate", expectedVersion: 2 }).tier).toBe("high");
+    expect(classifyRisk("automation_run_playbook", { playbookId: "ava.learned.instagram-open-chat.x" }).tier).toBe("low");
+  });
+  it("low: dedicated Instagram profile opening", () => {
+    expect(classifyRisk("instagram_open_profile", { person: "Lasha" }).tier).toBe("low");
   });
   it("low: ordinary shell (dir, git status, git push) — Sir wants no friction", () => {
     expect(classifyRisk("shell", { command: "dir" }).tier).toBe("low");
@@ -85,6 +134,39 @@ describe("classifyRisk", () => {
   it("low: memory_remember and memory_forget (local memory dir, behind firewall)", () => {
     expect(classifyRisk("memory_remember", { category: "preferences", text: "user prefers pwsh" }).tier).toBe("low");
     expect(classifyRisk("memory_forget", { category: "preferences", line: "old pref" }).tier).toBe("low");
+  });
+  it("routes semantic memory search read-only and local index mutations low", () => {
+    expect(classifyRisk("memory_index_search", { query: "prior research" }).tier).toBe("read-only");
+    expect(classifyRisk("memory_index_open", { id: "memory_1" }).tier).toBe("read-only");
+    expect(classifyRisk("memory_index_capture", { title: "Decision" }).tier).toBe("low");
+    expect(classifyRisk("memory_index_forget", { id: "memory_1", expected_version: 1 }).tier).toBe("low");
+    expect(classifyRisk("memory_index_correct", { id: "memory_1", expected_version: 1 }).tier).toBe("low");
+    expect(classifyRisk("memory_index_pin", { thread_id: "memory_1", expected_version: 1 }).tier).toBe("low");
+    expect(classifyRisk("memory_index_supersede", { thread_id: "memory_1", replacement_thread_id: "memory_2" }).tier).toBe("low");
+    expect(classifyRisk("memory_index_conflict", { mode: "open", thread_id: "memory_1", other_thread_id: "memory_2" }).tier).toBe("low");
+  });
+  it("routes Notes reads and local mutations without a redundant approval stall", () => {
+    expect(classifyRisk("notes_search", { query: "voice" }).tier).toBe("read-only");
+    expect(classifyRisk("notes_folders", { action: "list" }).tier).toBe("read-only");
+    expect(classifyRisk("notes_folders", { action: "move" }).tier).toBe("low");
+    expect(classifyRisk("notes_capture", { content: "idea" }).tier).toBe("low");
+    expect(classifyRisk("notes_update", { id: "note_1", expected_version: 1 }).tier).toBe("low");
+    expect(classifyRisk("notes_promote", { id: "note_1", target: "self_improvement" }).tier).toBe("low");
+  });
+  it("routes visual creation as bounded local state and visual listing as read-only", () => {
+    expect(classifyRisk("visual_explanation_create", { title: "Map" }).tier).toBe("low");
+    expect(classifyRisk("research_visual_create", { title: "Evidence map" }).tier).toBe("low");
+    expect(classifyRisk("visual_explanation_list", {}).tier).toBe("read-only");
+  });
+  it("routes AVA's bounded room read/post without an unknown-tool approval stall", () => {
+    expect(classifyRisk("room_read", { limit: 10 }).tier).toBe("read-only");
+    expect(classifyRisk("room_post", { body: "Bring this to the room" }).tier).toBe("low");
+  });
+  it("keeps UFO status/observation read-only and fixture action explicitly high-risk", () => {
+    expect(classifyRisk("ufo_experiment_status", {}).tier).toBe("read-only");
+    expect(classifyRisk("ufo_experiment_observe", { fixtureId: "counter-v1" }).tier).toBe("read-only");
+    expect(classifyRisk("ufo_experiment_action", { fixtureId: "counter-v1", expectedFixtureVersion: 1 }).tier).toBe("high");
+    expect(classifyRisk("ufo_runtime_run", {}).tier).toBe("high");
   });
 });
 

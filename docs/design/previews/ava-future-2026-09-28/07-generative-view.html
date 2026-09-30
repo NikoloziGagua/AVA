@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Generative Views · AVA Future</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .ask { display: flex; gap: 10px; align-items: center; padding: 8px 8px 8px 16px; border-radius: 999px; border: 1px solid var(--line-2); background: rgba(255,255,255,.05); }
+  .ask input { flex: 1; background: none; border: 0; color: var(--ink); font: inherit; font-size: 15.5px; outline: none; min-width: 0; }
+  .build { margin-top: 18px; min-height: 420px; }
+  .steps { display: grid; gap: 8px; }
+  .step { display: flex; gap: 10px; align-items: center; font-size: 14px; color: var(--ink-2); animation: fadeIn .4s var(--ease) both; }
+  .step i { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--accent); border-top-color: transparent; animation: rot .8s linear infinite; }
+  .step.ok i { animation: none; border-color: var(--good); background: var(--good); }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  .skel { height: 14px; border-radius: 8px; background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.12), rgba(255,255,255,.05)); background-size: 200% 100%; animation: sh 1.2s linear infinite; margin: 10px 0; }
+  @keyframes sh { to { background-position: -200% 0; } }
+  .app { display: none; grid-template-columns: 300px 1fr; gap: 18px; }
+  .app.show { display: grid; animation: fadeIn .7s var(--ease) both; }
+  @media (max-width: 880px) { .app.show { grid-template-columns: 1fr; } }
+  .slider { margin-bottom: 14px; }
+  .slider label { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px; }
+  .slider input { width: 100%; accent-color: #9cc4ff; }
+  .option { position: relative; padding: 14px 16px; border-radius: 16px; border: 1px solid var(--line); background: var(--glass); margin-bottom: 10px; transition: transform .5s var(--ease), border-color .3s; }
+  .option.lead { border-color: rgba(134,227,190,.5); box-shadow: 0 0 26px rgba(134,227,190,.12); }
+  .option .head { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .score { font: 600 22px var(--mono); }
+  .bars { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 10px; }
+  .bars div { font-size: 11.5px; color: var(--ink-3); }
+  .bars i { display: block; height: 5px; border-radius: 99px; background: rgba(255,255,255,.08); margin-top: 3px; overflow: hidden; }
+  .bars i b { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .why { margin-top: 12px; padding: 12px 14px; border-radius: 12px; border-left: 2px solid var(--good); background: rgba(134,227,190,.06); font-size: 14px; color: var(--ink-2); }
+  .gallery { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <a class="back" href="index.html">← All concepts</a>
+    <span class="eyebrow">Concept 07</span>
+    <span class="badge demo">DEMO · pre-built "generated" view</span>
+  </div>
+  <h1><span class="silver">Generative Views</span></h1>
+  <p class="lede">Some questions deserve a tool, not a paragraph. AVA builds a small interactive view on the spot: here, a decision board you can re-weight with your own priorities.</p>
+
+  <div class="ask" role="search">
+    <span class="orb sm" aria-hidden="true"></span>
+    <input id="q" value="Finance minor now, a master's later, or self-study with projects?" aria-label="Ask AVA" />
+    <button class="btn solid" id="askBtn">Ask AVA</button>
+  </div>
+  <div class="gallery" aria-label="Other questions that would get a view">
+    <span class="chip">"Compare 3 laptops for ML under €1,500"</span><span class="chip">"Plan my 10k training block"</span><span class="chip">"Simulate Tabby revenue at 50 houses"</span>
+  </div>
+
+  <section class="card glow build" aria-live="polite">
+    <div class="steps" id="steps"><p class="faint" style="margin:0">Press "Ask AVA" to watch the view assemble.</p></div>
+    <div id="skels"></div>
+    <div class="app" id="app">
+      <div>
+        <div class="eyebrow" style="margin-bottom:10px">Your priorities</div>
+        <div id="sliders"></div>
+        <p class="faint">Drag to re-weight. The ranking recomputes instantly, on your device.</p>
+      </div>
+      <div>
+        <div class="eyebrow" style="margin-bottom:10px">Options, ranked for you</div>
+        <div id="options"></div>
+        <div class="why" id="why"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>The "generation" is a pre-built view with an animation.</li><li>The option ratings (cost, time, signal…) are illustrative, not researched.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>The model picks a view type (compare, simulate, plan) and fills it with sourced data.</li><li>Every number links to where it came from.</li><li>The view saves to the conversation.</li></ul></div>
+    <div class="card"><h3>How it plugs into AVA</h3><p>This extends AVA's existing Visual explanations: same sandbox, same "open the exact visual" links. It adds interactive controls in place of static diagrams.</p></div>
+    <div class="card"><h3>Grounding</h3><p>Google's <a href="https://research.google/blog/generative-ui-a-rich-custom-visual-interactive-user-experience-for-any-prompt/" target="_blank" rel="noopener">generative UI research</a>: people strongly preferred generated interfaces over plain text, rating them close to expert-designed pages. The caveats: they can take a minute or more, with occasional errors.</p><p class="faint" style="margin-top:6px">Effort: high · Risk: medium · Wow: very high</p></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  var CRIT = [
+    { id: "cost", label: "Low cost", w: 3 },
+    { id: "time", label: "Fast to finish", w: 3 },
+    { id: "signal", label: "Career signal", w: 4 },
+    { id: "flex", label: "Keeps options open", w: 3 },
+    { id: "build", label: "Time left to build", w: 5 },
+  ];
+  var OPTS = [
+    { name: "Finance minor, starting now", note: "Adds finance alongside the degree", r: { cost: 4, time: 3, signal: 3, flex: 4, build: 2 } },
+    { name: "Finance master's in 2028", note: "After the degree; a strong credential", r: { cost: 1, time: 1, signal: 5, flex: 3, build: 2 } },
+    { name: "Self-study + finance projects", note: "Courses online plus shipped finance tools", r: { cost: 5, time: 4, signal: 3, flex: 5, build: 5 } },
+  ];
+  function score(o) {
+    var total = 0, max = 0;
+    CRIT.forEach(function (c) { total += c.w * o.r[c.id]; max += c.w * 5; });
+    return max ? Math.round(100 * total / max) : 0;
+  }
+  function renderSliders() {
+    document.getElementById("sliders").innerHTML = CRIT.map(function (c) {
+      return '<div class="slider"><label for="w_' + c.id + '"><span>' + AVAF.esc(c.label) + '</span><span class="faint" id="v_' + c.id + '">' + c.w + '</span></label><input type="range" min="0" max="5" step="1" id="w_' + c.id + '" value="' + c.w + '"></div>';
+    }).join("");
+    CRIT.forEach(function (c) {
+      document.getElementById("w_" + c.id).addEventListener("input", function (e) { c.w = Number(e.target.value); document.getElementById("v_" + c.id).textContent = c.w; renderOptions(); });
+    });
+  }
+  function renderOptions() {
+    var ranked = OPTS.map(function (o) { return { o: o, s: score(o) }; }).sort(function (a, b) { return b.s - a.s; });
+    document.getElementById("options").innerHTML = ranked.map(function (x, i) {
+      return '<div class="option' + (i === 0 ? " lead" : "") + '"><div class="head"><div><h3 style="margin:0">' + (i + 1) + ". " + AVAF.esc(x.o.name) + '</h3><span class="faint">' + AVAF.esc(x.o.note) + '</span></div><span class="score">' + x.s + '</span></div><div class="bars">' +
+        CRIT.map(function (c) { return "<div>" + AVAF.esc(c.label) + '<i><b style="width:' + (x.o.r[c.id] * 20) + '%"></b></i></div>'; }).join("") + "</div></div>";
+    }).join("");
+    var top = CRIT.slice().sort(function (a, b) { return b.w - a.w; }).slice(0, 2).map(function (c) { return c.label.toLowerCase(); });
+    document.getElementById("why").textContent = "With " + top.join(" and ") + " weighted highest, \"" + ranked[0].o.name + "\" leads by " + (ranked[0].s - ranked[1].s) + " points. Change what matters to you and watch it move. These ratings are illustrative in this demo.";
+  }
+  document.getElementById("askBtn").addEventListener("click", async function () {
+    var steps = document.getElementById("steps"), skels = document.getElementById("skels"), app = document.getElementById("app");
+    app.classList.remove("show"); steps.innerHTML = ""; skels.innerHTML = "";
+    var list = ["Understanding the question: a decision between 3 paths", "Choosing a view: weighted comparison", "Pulling your confirmed goals: building, AI, finance", "Building controls you can adjust"];
+    for (var i = 0; i < list.length; i++) {
+      var s = document.createElement("div"); s.className = "step"; s.innerHTML = "<i></i><span>" + AVAF.esc(list[i]) + "</span>"; steps.appendChild(s);
+      skels.innerHTML = '<div class="skel" style="width:' + (60 + i * 10) + '%"></div><div class="skel" style="width:' + (40 + i * 12) + '%"></div>';
+      await AVAF.sleep(700); s.classList.add("ok");
+    }
+    skels.innerHTML = "";
+    renderSliders(); renderOptions(); app.classList.add("show");
+  });
+})();
+</script>
+</body>
+</html>

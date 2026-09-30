@@ -1,5 +1,5 @@
 import { memoryPaths } from "./paths.js";
-import { readFile } from "./store.js";
+import { appendLine, readFile } from "./store.js";
 
 export type ProjectEntry = {
   slug: string;
@@ -12,6 +12,23 @@ const PATH_RE = /(?:^|\s|["'`(<])((?:[A-Za-z]:[\\/]|\/)[^\s"'`)>]+)/g;
 
 function normalize(p: string): string {
   return p.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+}
+
+/**
+ * Ensure a project written through memory_remember is discoverable on later
+ * turns. Previously the tool created projects/<slug>.md but nothing in runtime
+ * could create MEMORY.md, so loadProjectIndex() could never see that project.
+ */
+export function ensureProjectIndexed(memoryDir: string, slug: string): void {
+  const p = memoryPaths(memoryDir);
+  // Validates the slug before it is rendered into Markdown.
+  p.projectFile(slug);
+  const canonicalSlug = slug.toLowerCase();
+  const current = readFile(p.memoryIndex);
+  for (const match of current.matchAll(PROJECT_LINK_RE)) {
+    if (match[1]?.toLowerCase() === canonicalSlug) return;
+  }
+  appendLine(p.memoryIndex, `- [${slug}](projects/${slug}.md)`);
 }
 
 /** Build the project index by scanning MEMORY.md and each linked project file. */

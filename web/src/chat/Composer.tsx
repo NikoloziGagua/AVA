@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { fetchSuggestedChips, type SuggestedChip } from "../api.js";
+import { insertDictation as insertDictationText } from "../design/dictation.js";
+import { fetchSuggestedChips, transcribeAudio, type SuggestedChip } from "../api.js";
+import { useDictation } from "../design/dictation.js";
 import { isCoarsePointer } from "../lib/media.js";
 import { gsap, useGSAP } from "../lib/gsap.js";
 import { D, EASE, SHADOW, press } from "../lib/deckMotion.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { Textarea } from "../components/ui/textarea.js";
 import { Orb } from "../components/ava/Orb.js";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, LoaderCircle, Mic, Square, X } from "lucide-react";
 
 export interface ComposerProps {
   onSend: (text: string) => void;
@@ -19,11 +21,31 @@ export interface ComposerProps {
 const REST_SHADOW =
   "inset 0 1px 0 rgba(255,255,255,0.10), 0 12px 40px -12px rgba(0,0,0,0.7)";
 
+export {
+  describeDictationError,
+  insertDictation,
+  normalizedAudioMime,
+  preferredDictationMime,
+  type DictationState,
+} from "../design/dictation.js";
+
 export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps) {
   const [text, setText] = useState("");
   const [chips, setChips] = useState<SuggestedChip[]>([]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const dictation = useDictation({
+    transcribe: transcribeAudio,
+    onText: (transcript) => {
+      setText((current) => insertDictationText(current, transcript));
+      requestAnimationFrame(() => taRef.current?.focus());
+    },
+  });
+  const dictationState = dictation.state;
+  const dictationError = dictation.error;
+  const cancelDictation = dictation.cancel;
+  const beginDictation = dictation.begin;
+  const finishDictation = dictation.finish;
   const reduced = useReducedMotion();
   const { contextSafe } = useGSAP({ scope: boxRef });
 
@@ -195,6 +217,37 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
             className="resize-none min-h-[48px] max-h-[150px] border-none bg-transparent focus-visible:ring-0 text-white/90 placeholder:text-white/30"
           />
           <button
+            type="button"
+            aria-label={dictationState === "listening" ? "stop dictation" : dictationState === "error" ? "retry dictation" : "dictate message"}
+            aria-pressed={dictationState === "listening"}
+            onClick={dictationState === "listening" ? finishDictation : () => { void beginDictation(); }}
+            disabled={dictationState === "requesting" || dictationState === "transcribing"}
+            title={dictationState === "listening" ? "Stop and transcribe" : "Dictate into this draft"}
+            {...pressHandlers}
+            className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors disabled:cursor-wait"
+            style={dictationState === "listening"
+              ? { borderColor: "rgba(92,242,255,.65)", background: "rgba(92,242,255,.18)", color: "var(--ac)", boxShadow: "0 0 20px rgba(92,242,255,.2)" }
+              : { borderColor: "rgba(255,255,255,.12)", background: "rgba(255,255,255,.04)", color: "rgba(255,255,255,.72)" }}
+          >
+            {dictationState === "requesting" || dictationState === "transcribing"
+              ? <LoaderCircle size={17} className="animate-spin" />
+              : dictationState === "listening" ? <Square size={13} fill="currentColor" /> : <Mic size={17} />}
+            {dictationState === "listening" && (
+              <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 animate-pulse rounded-full bg-cyan-300" />
+            )}
+          </button>
+          {(dictationState === "requesting" || dictationState === "listening" || dictationState === "transcribing") && (
+            <button
+              type="button"
+              aria-label="cancel dictation"
+              onClick={cancelDictation}
+              title="Cancel dictation"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white/45 transition-colors hover:bg-white/[0.06] hover:text-white"
+            >
+              <X size={14} />
+            </button>
+          )}
+          <button
             aria-label="voice"
             onClick={onMicTap}
             title="Voice mode"
@@ -223,6 +276,12 @@ export function Composer({ onSend, onKill, onMicTap, busy, seed }: ComposerProps
               <ArrowUp size={16} />
             </button>
           )}
+        </div>
+        <div className="min-h-6 px-2 pt-1.5 text-[11px]" aria-live="polite">
+          {dictationState === "requesting" && <span className="text-white/45">Requesting microphone access…</span>}
+          {dictationState === "listening" && <span className="text-cyan-200/75">Listening — tap stop when you are done. Nothing will send automatically.</span>}
+          {dictationState === "transcribing" && <span className="text-white/55">Transcribing into your editable draft…</span>}
+          {dictationState === "error" && dictationError && <span role="alert" className="text-rose-300/80">{dictationError}</span>}
         </div>
       </div>
     </div>

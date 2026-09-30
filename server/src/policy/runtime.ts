@@ -3,9 +3,34 @@ import { enforce } from "./enforce.js";
 import { createApproval, waitForDecision, type Approval } from "../state/approvals.js";
 import { redactSensitiveArgs } from "../orchestrator/redact.js";
 
+export type ApprovalRiskTier = "medium" | "high";
+export type ApprovalTimeoutBehavior = "auto_approve" | "auto_deny";
+
+export type ApprovalPolicyEvidence = {
+  riskTier: ApprovalRiskTier;
+  timeoutBehavior: ApprovalTimeoutBehavior;
+  requestedAt: number;
+  deadlineAt: number;
+  timeoutMs: number;
+};
+
 export type PolicyEvent =
-  | { kind: "approval_required"; payload: { id: string; tool: string; args: unknown; summary: string } }
-  | { kind: "approval_resolved"; payload: { id: string; status: "approved" | "denied" | "expired" } };
+  | {
+      kind: "approval_required";
+      payload: {
+        id: string;
+        tool: string;
+        args: unknown;
+        summary: string;
+      } & ApprovalPolicyEvidence;
+    }
+  | {
+      kind: "approval_resolved";
+      payload: {
+        id: string;
+        status: "approved" | "denied" | "expired";
+      } & ApprovalPolicyEvidence;
+    };
 
 export type PolicyOutcome =
   | { allow: true }
@@ -64,9 +89,30 @@ export function buildPolicyHook(opts: PolicyHookArgs): PolicyHook {
       args,
       summary: summarize(toolName, args),
     });
+    const timeoutMs = opts.approvalTimeoutMs ?? autoApproveMs();
+    // `ask` is reachable only for medium/high classifications. Preserve the
+    // exact server decision in the event instead of making clients infer it
+    // from a tool name or from generic approval copy.
+    const riskTier: ApprovalRiskTier = e.tier === "high" ? "high" : "medium";
+    const timeoutBehavior: ApprovalTimeoutBehavior = riskTier === "high"
+      ? "auto_deny"
+      : "auto_approve";
+    const policyEvidence: ApprovalPolicyEvidence = {
+      riskTier,
+      timeoutBehavior,
+      requestedAt: approval.created_at,
+      deadlineAt: approval.created_at + timeoutMs,
+      timeoutMs,
+    };
     opts.emit({
       kind: "approval_required",
-      payload: { id: approval.id, tool: toolName, args, summary: approval.summary },
+      payload: {
+        id: approval.id,
+        tool: toolName,
+        args,
+        summary: approval.summary,
+        ...policyEvidence,
+      },
     });
     if (opts.pushDeliver) {
       void opts.pushDeliver(approval).catch(() => {
@@ -81,11 +127,18 @@ export function buildPolicyHook(opts: PolicyHookArgs): PolicyHook {
     //     CANCELLED, not silently executed — auto-DENY, not auto-approve.
     // A Stop mid-window aborts the signal, which resolves this as expired (not
     // approved) so the pending tool is cancelled rather than run — in BOTH tiers.
-    const onTimeout: "approve" | "expire" = e.tier === "high" ? "expire" : "approve";
+    const onTimeout: "approve" | "expire" = timeoutBehavior === "auto_deny" ? "expire" : "approve";
     const r = await waitForDecision(
-      opts.db, approval.id, opts.approvalTimeoutMs ?? autoApproveMs(), onTimeout, opts.signal,
+      opts.db, approval.id, timeoutMs, onTimeout, opts.signal,
     );
-    opts.emit({ kind: "approval_resolved", payload: { id: approval.id, status: r.status as "approved" | "denied" | "expired" } });
+    opts.emit({
+      kind: "approval_resolved",
+      payload: {
+        id: approval.id,
+        status: r.status as "approved" | "denied" | "expired",
+        ...policyEvidence,
+      },
+    });
     if (r.status === "approved") return { allow: true };
     return { allow: false, message: `DENIED (${r.status})` };
   };

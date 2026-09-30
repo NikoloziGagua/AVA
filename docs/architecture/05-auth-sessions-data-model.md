@@ -81,8 +81,8 @@ revoke.
 const id = nanoid(12);       // public device id
 const secret = nanoid(48);   // the bearer token (returned to the client once)
 const hash = bcrypt.hashSync(secret, 10);
-db.prepare("INSERT INTO device_tokens (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)")
-  .run(id, hash, label, Date.now());
+db.prepare("INSERT INTO device_tokens (id, token_hash, token_lookup, label, created_at, session_actor) VALUES (?, ?, ?, ?, ?, ?)")
+  .run(id, hash, sha256hex(secret), label, Date.now(), sessionActor);
 return { id, secret };
 ```
 
@@ -99,27 +99,31 @@ return { id, secret };
 
 ### Validating — `validateToken(db, secret)`
 
-```ts
-const rows = db.prepare("SELECT id, token_hash FROM device_tokens WHERE revoked_at IS NULL").all();
-for (const row of rows) {
-  if (bcrypt.compareSync(secret, row.token_hash)) {
-    db.prepare("UPDATE device_tokens SET last_seen_at = ? WHERE id = ?").run(Date.now(), row.id);
-    return row.id;          // the deviceId
-  }
-}
-return null;
-```
+Validation is an indexed exact match on `token_lookup`, the SHA-256 of the secret:
 
-Because the stored value is a one-way hash, the server cannot look a token up by
-key. It must **scan every non-revoked token and `bcrypt.compareSync` each one**.
-On a match it stamps `last_seen_at` (so the device list can show "last seen") and
-returns the `deviceId`.
+1. `SELECT id FROM device_tokens WHERE token_lookup = ? AND revoked_at IS NULL`.
+   On a hit, stamp `last_seen_at` and return the `deviceId`. No bcrypt work.
+2. Otherwise, if this digest was rejected in the last 60 s, return `null`.
+3. Otherwise check only the **legacy** rows: tokens issued before `token_lookup`
+   existed, which have no digest yet. `bcrypt.compareSync` runs against each.
+   On a match, store the digest so the next request takes step 1. On no match,
+   remember the rejected digest.
 
-> **Performance note (why revocation hygiene matters).** Each validate is O(number
-> of live tokens) bcrypt comparisons, and bcrypt is intentionally slow. A handful
-> of devices is fine; an unbounded pile of stale tokens would make every
-> authenticated request progressively slower. This is the reason
-> `revokeTokensByLabel` (below) exists.
+A secret is 48 random `nanoid` characters (about 288 bits). An unsalted SHA-256
+of it is therefore as unguessable as the secret itself, and a leaked database
+still cannot be turned into working credentials. This is the usual way API-key
+systems store keys. bcrypt remains the stored credential for rows that have not
+been upgraded yet.
+
+> **Why (2026-09-24).** Validation used to run `bcrypt.compareSync` over every
+> live token. bcryptjs is synchronous JavaScript, about 105 ms per compare on this
+> PC, so 22 live tokens made **every authenticated request take about 2.4 s**. The
+> event loop was blocked meanwhile, which also stalled the voice audio relay. The
+> Memory screen fires four requests at once, so they queued to about 10 s.
+> Each device now pays that cost at most once, on its first request after
+> the upgrade. Never-used stale test tokens stay legacy; with the rejection cache
+> they cost at most one slow scan per bad token per minute. Revoking them removes
+> even that.
 
 ### Listing — `listTokens(db)` and hidden internal tokens
 

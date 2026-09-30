@@ -4,26 +4,34 @@ import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
 import { useGSAP, gsap } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { hoverLift, press, settleText } from "../lib/deckMotion.js";
+import { TransparencyPilotMockup } from "./transparency-pilot/TransparencyPilotMockup.js";
 
 /** Status → left-spine accent + chip class. Cyan/live/exec/stop only as state, never decoration. */
 function statusLook(status: string): { spine: string; chip: string } {
   if (isRunningStatus(status)) return { spine: "var(--ac-exec)", chip: "chip-exec" };
   if (status === "swapped") return { spine: "var(--ac-live)", chip: "chip-live" };
+  if (status === "blocked") return { spine: "var(--ac)", chip: "chip-ac" };
   if (status === "failed" || status === "cancelled") return { spine: "var(--ac-stop)", chip: "chip-stop" };
   if (status === "awaiting_approval") return { spine: "var(--ac)", chip: "chip-ac" };
   return { spine: "rgba(255,255,255,.18)", chip: "chip-ac" };
 }
 
 export function SelfScreen(_props: { onClose?: () => void }) {
-  const { intents, paused, setPaused, improve, revertLast, cancel, approve, reject } =
+  const {
+    intents, paused, setPaused, improve, revertLast, cancel, approve, reject,
+    worker, workerError, selectingWorker, selectWorker, recoveryError, resumeSwap,
+  } =
     useSelfJournal();
   const canRevert = intents.some((i) => i.status === "swapped");
+  const selectedWorker = worker?.options.find((option) => option.provider === worker.provider);
+  const selectedWorkerReady = selectedWorker?.available !== false;
   const reduced = useReducedMotion();
 
   // Left-column summary — gives the short CONTROLS rail useful body so it isn't a
   // tall void beside the full-height Journal on desktop.
   const runningCount = intents.filter((i) => isRunningStatus(i.status)).length;
   const awaitingCount = intents.filter((i) => i.status === "awaiting_approval").length;
+  const blockedCount = intents.filter((i) => i.status === "blocked").length;
   const appliedCount = intents.filter((i) => i.status === "swapped").length;
 
   // Initiator: a user-written goal Ava should self-improve toward.
@@ -99,6 +107,48 @@ export function SelfScreen(_props: { onClose?: () => void }) {
           <div className="hud text-[11px] tracking-[0.18em] text-white/55">
             {paused ? "AUTONOMOUS · PAUSED" : "AUTONOMOUS · ACTIVE"}
           </div>
+          <div className="mt-4 rounded-xl border border-white/[0.08] bg-black/20 p-3">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <span className="hud text-[10px] tracking-[0.18em] text-white/55">IMPLEMENTATION WORKER</span>
+              {worker && <span className="text-[10px] text-white/35">locks when you approve</span>}
+            </div>
+            {worker ? (
+              <div role="radiogroup" aria-label="Self-improvement implementation worker" className="grid grid-cols-2 gap-2">
+                {worker.options.map((option) => {
+                  const selected = option.provider === worker.provider;
+                  return (
+                    <button
+                      key={option.provider}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      aria-label={`${option.label}${option.available ? " available" : " unavailable"}`}
+                      disabled={!option.available || selectingWorker}
+                      onClick={() => void selectWorker(option.provider)}
+                      className={`rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${selected
+                        ? "border-[rgba(92,242,255,.45)] bg-[rgba(92,242,255,.08)]"
+                        : "border-white/[0.08] bg-white/[0.02] hover:border-white/20"}`}
+                    >
+                      <span className="block text-xs font-medium text-white/90">{option.label}</span>
+                      <span className={`mt-0.5 block text-[9px] uppercase tracking-[0.13em] ${option.available ? "text-[var(--ac-live)]" : "text-[var(--ac-stop)]"}`}>
+                        {option.available ? (selected ? "selected" : "available") : "unavailable"}
+                      </span>
+                      <span className="mt-1 block truncate text-[9px] text-white/35" title={option.reason ?? undefined}>
+                        {option.installed ? `CLI installed · sign-in not checked${option.version ? ` · ${option.version}` : ""}` : option.reason ?? "CLI missing"}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-[11px] text-white/40">Checking installed workers…</div>
+            )}
+            <div className="mt-2 text-[10px] leading-relaxed text-white/40">
+              Account sign-in is verified when the approved worker starts. There is no silent fallback.
+            </div>
+            {workerError && <div role="alert" className="mt-2 text-[10px] text-[var(--ac-stop)]">{workerError}</div>}
+            {recoveryError && <div role="alert" className="mt-2 text-[10px] text-[var(--ac-stop)]">{recoveryError}</div>}
+          </div>
           <form aria-label="Start a self-improvement" onSubmit={onImprove} className="mt-4 flex gap-2">
             <input
               value={goal}
@@ -112,7 +162,7 @@ export function SelfScreen(_props: { onClose?: () => void }) {
             />
             <button
               type="submit"
-              disabled={submitting || !goal.trim()}
+              disabled={submitting || !goal.trim() || !selectedWorkerReady}
               onPointerDown={onDown}
               onPointerUp={onUp}
               onPointerLeave={onUp}
@@ -173,6 +223,14 @@ export function SelfScreen(_props: { onClose?: () => void }) {
                 </span>
               </div>
             )}
+            {blockedCount > 0 && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-[rgba(92,242,255,0.25)] bg-[rgba(92,242,255,0.05)] px-3 py-2">
+                <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ac)]" />
+                <span className="text-[11px] text-white/70">
+                  {blockedCount} verified {blockedCount === 1 ? "update" : "updates"} waiting for safe installation
+                </span>
+              </div>
+            )}
           </div>
         </PanelSection>
 
@@ -208,11 +266,17 @@ export function SelfScreen(_props: { onClose?: () => void }) {
                   cancel={cancel}
                   approve={approve}
                   reject={reject}
+                  approvalWorker={worker}
+                  approvalWorkerReady={selectedWorkerReady}
+                  selectingWorker={selectingWorker}
+                  resumeSwap={resumeSwap}
                 />
               ))}
             </ul>
           )}
         </PanelSection>
+
+        <TransparencyPilotMockup />
       </PanelShell>
     </div>
   );
@@ -243,6 +307,10 @@ function JournalEntry({
   cancel,
   approve,
   reject,
+  approvalWorker,
+  approvalWorkerReady,
+  selectingWorker,
+  resumeSwap,
 }: {
   intent: Intent;
   reduced: boolean;
@@ -253,9 +321,17 @@ function JournalEntry({
   cancel: (id: string) => void;
   approve: (id: string) => void;
   reject: (id: string) => void;
+  approvalWorker: ReturnType<typeof useSelfJournal>["worker"];
+  approvalWorkerReady: boolean;
+  selectingWorker: boolean;
+  resumeSwap: (intent: Intent) => Promise<void>;
 }) {
   const running = isRunningStatus(i.status);
   const look = statusLook(i.status);
+  const displayedWorker = i.status === "awaiting_approval"
+    ? approvalWorker?.provider ?? i.worker_provider
+    : i.worker_provider;
+  const workerLabel = displayedWorker === "claude" ? "Claude Code" : "Codex";
 
   return (
     <li
@@ -289,12 +365,49 @@ function JournalEntry({
 
       <div className="mt-2 flex items-center gap-2">
         <span className={`chip ${look.chip}`}>
-          {i.status === "awaiting_approval" ? "awaiting your approval" : i.status}
+          {i.status === "awaiting_approval"
+            ? "awaiting your approval"
+            : i.status === "blocked"
+              ? "blocked — candidate preserved"
+              : i.status}
         </span>
         {i.outcome ? (
           <span className="hud text-[10px] tracking-[0.16em] text-white/40">· {i.outcome}</span>
         ) : null}
+        {displayedWorker ? (
+          <span className="hud text-[9px] uppercase tracking-[0.14em] text-white/35">
+            · {i.status === "awaiting_approval" ? `will lock ${workerLabel} on approval` : workerLabel}
+          </span>
+        ) : null}
       </div>
+
+      {i.status === "failed" && i.error ? (
+        <div role="status" className="mt-2 text-[11px] leading-relaxed text-[var(--ac-stop)]">
+          {i.error}
+        </div>
+      ) : null}
+
+      {i.status === "blocked" ? (
+        <div className="mt-3 rounded-xl border border-[rgba(92,242,255,0.24)] bg-[rgba(92,242,255,0.05)] px-4 py-3">
+          <div className="hud text-[10px] tracking-[0.18em] text-white/60">VERIFIED UPDATE NOT YET INSTALLED</div>
+          <p className="mt-2 text-[11px] leading-relaxed text-white/65">
+            AVA preserved this candidate because installing it could have collided with newer or uncommitted work.
+            Safe retry reconciles it with the current code, reruns verification and never discards local edits.
+          </p>
+          {i.error ? <div role="status" className="mt-2 text-[11px] leading-relaxed text-[var(--ac)]">{i.error}</div> : null}
+          <button
+            type="button"
+            onClick={() => void resumeSwap(i)}
+            disabled={!i.commit_sha}
+            onPointerDown={onDown}
+            onPointerUp={onUp}
+            onPointerLeave={onUp}
+            className="btn-deck btn-primary mt-3 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            Retry safe installation
+          </button>
+        </div>
+      ) : null}
 
       {i.status === "awaiting_approval" && (
         <div className="lg-slab lg-rim-mercury mt-3 rounded-xl px-4 py-3">
@@ -317,12 +430,13 @@ function JournalEntry({
           <div className="mt-3 flex gap-2">
             <button
               onClick={() => approve(i.id)}
+              disabled={!approvalWorker || !approvalWorkerReady || selectingWorker}
               onPointerDown={onDown}
               onPointerUp={onUp}
               onPointerLeave={onUp}
-              className="btn-deck btn-primary"
+              className="btn-deck btn-primary disabled:cursor-not-allowed disabled:opacity-45"
             >
-              Approve & run
+              {approvalWorker ? `Approve & run with ${workerLabel}` : "Loading worker…"}
             </button>
             <button
               onClick={() => reject(i.id)}

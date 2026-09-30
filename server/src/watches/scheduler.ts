@@ -1,5 +1,22 @@
 import type { Db } from "../state/db.js";
-import { dueWatches, recordWatchRun, setWatchEnabled, type Watch } from "../state/watches.js";
+import { tickReminders, type ReminderDeps } from "./reminders.js";
+import {
+  dueWatches,
+  getChildWatch,
+  recordCodexCompleted,
+  recordCodexDispatch,
+  recordCodexSuccessor,
+  recordWatchRun,
+  setWatchEnabled,
+  type Watch,
+} from "../state/watches.js";
+import type { CodexDispatchRequest, CodexDispatchResult, CodexThreadSnapshot, CodexWatchTarget } from "./codex-dispatch.js";
+import type { ObservabilityService } from "../observability/store.js";
+import {
+  CommunicationObservabilityRecorder,
+  communicationRunId,
+  type CommunicationEventInput,
+} from "../observability/communications.js";
 
 // The watch scheduler. Every tick it finds due watches and runs each check as
 // a REAL agent turn through the server's own /api/chat — so a check gets the
@@ -22,9 +39,19 @@ export type SchedulerDeps = {
   log: { info: (o: unknown, m: string) => void; warn: (o: unknown, m: string) => void };
   /** Injectable check runner (tests fake this; production uses runCheckViaHttp). */
   runCheck?: (w: Watch, deps: SchedulerDeps) => Promise<WatchCheckResult>;
+  dispatchCodex?: (request: CodexDispatchRequest) => Promise<CodexDispatchResult>;
+  inspectCodex?: (target: CodexWatchTarget, marker?: string | null, dispatchOffset?: number | null) => CodexThreadSnapshot;
+  /** Shared read model for Codex delivery/status evidence. */
+  observability?: ObservabilityService;
+  /** Injectable cycle planner. Production asks AVA through its normal tool loop. */
+  planNextCodexTask?: (w: Watch, deps: SchedulerDeps) => Promise<WatchCheckResult>;
   tickMs?: number;
   /** Cap on a single check's wall clock. */
   checkTimeoutMs?: number;
+  /** Agent watches may be unavailable while direct reminders continue to work. */
+  agentChecksEnabled?: boolean;
+  deliverReminder?: ReminderDeps["deliverReminder"];
+  reminderTickMs?: number;
 };
 
 export function buildCheckPrompt(w: Watch): string {
@@ -37,6 +64,18 @@ export function buildCheckPrompt(w: Watch): string {
   );
 }
 
+export function buildCodexCyclePrompt(w: Watch): string {
+  return (
+    `[CODEX CYCLE PLANNING — Niko explicitly authorized this recurring AVA improvement loop]\n` +
+    `Codex completed watcher ${w.id}. Original task:\n${w.prompt}\n\n` +
+    `Inspect AVA's current board, recent commits, tests, Mission Control evidence and known failures. ` +
+    `Choose exactly one highest-value bounded improvement for AVA. Do not implement it in this planning run. ` +
+    `Call watch_create exactly once with kind='codex', interval_minutes=1, once=true, ` +
+    `continue_cycle=true, parent_watch_id='${w.id}', and a complete implementation-and-test prompt. ` +
+    `Do not choose Forge work. Do not repeat completed work. End by reporting the new watcher ID.`
+  );
+}
+
 export function parseWatchMarker(finalText: string): { status: "triggered" | "ok" | "unclear"; detail: string } {
   const m = /^WATCH:\s*(TRIGGERED|OK)\s*(?:[—–-]+\s*(.*))?$/im.exec(finalText);
   if (!m) return { status: "unclear", detail: finalText.replace(/\s+/g, " ").slice(0, 200) };
@@ -46,16 +85,14 @@ export function parseWatchMarker(finalText: string): { status: "triggered" | "ok
   };
 }
 
-/** Production check runner: POST the prompt, then follow the SSE stream to the final. */
-export async function runCheckViaHttp(w: Watch, deps: SchedulerDeps): Promise<WatchCheckResult> {
+/** Production background runner: POST a prompt, then follow SSE to the final. */
+export async function runPromptViaHttp(prompt: string, requestedSessionId: string | null, deps: SchedulerDeps): Promise<WatchCheckResult> {
   const timeoutMs = deps.checkTimeoutMs ?? 240_000;
   const auth = { authorization: `Bearer ${deps.token()}` };
   const res = await fetch(`${deps.baseUrl}/api/chat`, {
     method: "POST",
     headers: { "content-type": "application/json", ...auth },
-    body: JSON.stringify(w.session_id
-      ? { text: buildCheckPrompt(w), sessionId: w.session_id }
-      : { text: buildCheckPrompt(w) }),
+    body: JSON.stringify(requestedSessionId ? { text: prompt, sessionId: requestedSessionId } : { text: prompt }),
   });
   if (!res.ok) return { kind: "error", message: `POST /api/chat ${res.status}` };
   const { sessionId } = await res.json() as { sessionId: string };
@@ -102,12 +139,301 @@ export async function runCheckViaHttp(w: Watch, deps: SchedulerDeps): Promise<Wa
   return { kind: "error", message: `check timed out after ${Math.round(timeoutMs / 1000)}s` };
 }
 
+/** Production check runner retained as the watch-specific adapter. */
+export function runCheckViaHttp(w: Watch, deps: SchedulerDeps): Promise<WatchCheckResult> {
+  return runPromptViaHttp(buildCheckPrompt(w), w.session_id, deps);
+}
+
+export function planNextCodexTaskViaHttp(w: Watch, deps: SchedulerDeps): Promise<WatchCheckResult> {
+  return runPromptViaHttp(buildCodexCyclePrompt(w), null, deps);
+}
+
+async function runCodexWatch(w: Watch, deps: SchedulerDeps): Promise<void> {
+  const communication = new CommunicationObservabilityRecorder(deps.observability);
+  // This pass's prior durable timestamp is stable if the pass is replayed, but
+  // advances before a later retry. Use it to count genuine retry attempts once.
+  const retryAttemptKey = `dispatch.retrying:${w.last_run_at ?? w.created_at}`;
+  const cycleParentRunId = w.parent_watch_id
+    ? communicationRunId("codex_watcher", w.parent_watch_id)
+    : null;
+  communication.ensureStarted({
+    source: "codex_watcher",
+    sourceId: w.id,
+    runtimeType: "codex",
+    title: "Codex watcher handoff",
+    requestSummary: w.prompt,
+    sessionId: w.session_id,
+    parentRunId: cycleParentRunId,
+    startedAt: w.created_at,
+  });
+  const observe = (input: CommunicationEventInput) =>
+    communication.record("codex_watcher", w.id, input);
+
+  if (!deps.dispatchCodex || !deps.inspectCodex) {
+    recordWatchRun(deps.db, w.id, { status: "error", result: "Codex watcher dispatcher is unavailable" });
+    observe({
+      phase: "dispatch.failed",
+      status: "error",
+      title: "Codex dispatch unavailable",
+      summary: "AVA could not reach the Codex watcher dispatcher.",
+      responseAvailability: "unavailable",
+      error: "Codex watcher dispatcher is unavailable",
+      terminal: true,
+      runStatus: "failed",
+      outcome: "dispatcher_unavailable",
+      verificationStatus: "not_verified",
+    });
+    return;
+  }
+  if (!w.target_thread_id || !w.target_session_file || !w.target_cwd) {
+    recordWatchRun(deps.db, w.id, { status: "error", result: "Codex watcher has no pinned target" });
+    setWatchEnabled(deps.db, w.id, false);
+    observe({
+      phase: "dispatch.failed",
+      status: "error",
+      title: "Codex target unavailable",
+      summary: "The watcher had no pinned Codex thread target.",
+      responseAvailability: "unavailable",
+      error: "Codex watcher has no pinned target",
+      terminal: true,
+      runStatus: "failed",
+      outcome: "pinned_target_unavailable",
+      verificationStatus: "not_verified",
+    });
+    return;
+  }
+  const target = { threadId: w.target_thread_id, sessionFile: w.target_session_file, cwd: w.target_cwd };
+
+  if (!w.delivered_at) {
+    observe({
+      phase: "delegation.started",
+      status: "running",
+      title: "AVA routed work to Codex",
+      summary: "AVA began an acknowledged delivery to the pinned Codex thread.",
+      responseAvailability: "pending",
+      runStatus: "starting",
+    });
+    let result: CodexDispatchResult;
+    try {
+      result = await deps.dispatchCodex({
+        watchId: w.id,
+        prompt: w.prompt,
+        target,
+        marker: w.delivery_marker,
+        dispatchOffset: w.dispatch_offset,
+        dispatchPid: w.dispatch_pid,
+        parentWatchId: w.parent_watch_id,
+        continueCycle: Boolean(w.continue_cycle),
+      });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      recordWatchRun(deps.db, w.id, { status: "error", result: message });
+      observe({
+        phase: "dispatch.retrying",
+        status: "retrying",
+        title: "Codex dispatch will retry",
+        summary: "The dispatch attempt failed before delivery could be verified.",
+        responseAvailability: "pending",
+        error: message,
+        runStatus: "retrying",
+        dedupSuffix: retryAttemptKey,
+      });
+      return;
+    }
+    if (result.status === "busy") {
+      recordWatchRun(deps.db, w.id, { status: "busy", result: result.detail });
+      observe({
+        phase: "dispatch.retrying",
+        status: "retrying",
+        title: "Codex thread busy",
+        summary: "AVA is waiting for the pinned Codex thread to reach a safe delivery boundary.",
+        responseAvailability: "pending",
+        error: result.detail,
+        runStatus: "retrying",
+        dedupSuffix: retryAttemptKey,
+      });
+      return;
+    }
+    if (result.status === "error") {
+      recordWatchRun(deps.db, w.id, { status: "error", result: result.detail });
+      // A persisted dispatch whose process died before its marker appeared can
+      // never be retried safely: blindly resuming again could duplicate a
+      // consequential task whose session write was merely delayed. Keep the
+      // failure evidence, but stop scheduling the same terminal error forever.
+      if (!result.retryable) setWatchEnabled(deps.db, w.id, false);
+      observe(result.retryable
+        ? {
+            phase: "dispatch.retrying",
+            status: "retrying",
+            title: "Codex dispatch will retry",
+            summary: "AVA could not verify delivery and retained the watcher for another bounded attempt.",
+            responseAvailability: "pending",
+            error: result.detail,
+            runStatus: "retrying",
+            dedupSuffix: retryAttemptKey,
+          }
+        : {
+            phase: "dispatch.failed",
+            status: "error",
+            title: "Codex dispatch failed",
+            summary: "AVA could not safely retry this delivery.",
+            responseAvailability: "unavailable",
+            error: result.detail,
+            terminal: true,
+            runStatus: "failed",
+            outcome: "codex_dispatch_failed",
+            verificationStatus: "not_verified",
+          });
+      return;
+    }
+    recordCodexDispatch(deps.db, w.id, {
+      marker: result.marker,
+      offset: result.dispatchOffset,
+      turnId: "turnId" in result ? result.turnId : null,
+      pid: "pid" in result ? result.pid : null,
+      delivered: result.status === "delivered" || result.status === "already_delivered",
+    });
+    if (result.status === "delivered" || result.status === "already_delivered") {
+      observe({
+        phase: "delivery.verified",
+        status: "success",
+        title: "Codex delivery verified",
+        summary: "The unique watcher marker was observed in the pinned Codex thread.",
+        responseAvailability: "pending",
+        runStatus: "waiting_for_agent",
+      });
+      deps.notify(`Codex received AVA watcher task: ${w.prompt.slice(0, 140)}`);
+    } else {
+      observe({
+        phase: "delivery.waiting",
+        status: "waiting",
+        title: "Waiting for Codex delivery evidence",
+        summary: "The instruction was staged but its unique marker has not yet been verified.",
+        responseAvailability: "pending",
+        runStatus: "waiting_for_agent",
+      });
+    }
+    return;
+  }
+
+  const snapshot = deps.inspectCodex(target, w.delivery_marker, w.dispatch_offset);
+  if (!snapshot.markerSeen) {
+    // Never redispatch blindly. The stored marker/offset allows a later pass to
+    // distinguish delayed session persistence from a genuinely lost process.
+    recordWatchRun(deps.db, w.id, { status: "error", result: "delivery evidence disappeared from the pinned Codex thread" });
+    observe({
+      phase: "delivery.evidence_unavailable",
+      status: "error",
+      title: "Codex delivery evidence unavailable",
+      summary: "AVA retained the watcher but could no longer observe its stored delivery marker.",
+      responseAvailability: "pending",
+      error: "delivery evidence disappeared from the pinned Codex thread",
+      runStatus: "waiting_for_agent",
+    });
+    return;
+  }
+  if (!snapshot.markerTurnCompleted) {
+    recordWatchRun(deps.db, w.id, { status: "running", result: "Codex accepted the watcher instruction and is still working" });
+    observe({
+      phase: "executor.running",
+      status: "running",
+      title: "Codex is working",
+      summary: "The pinned thread contains the watcher instruction and its turn has not reached a completed boundary.",
+      responseAvailability: "pending",
+      runStatus: "running",
+    });
+    return;
+  }
+
+  recordCodexCompleted(deps.db, w.id);
+  const terminalResult = snapshot.terminalResult ?? null;
+  observe({
+    phase: "response.completed",
+    status: "success",
+    title: "Codex task boundary completed",
+    summary: terminalResult
+      ? "AVA observed the exact delivered Codex turn reach a completed boundary and captured its sanitized terminal result. This proves a result was returned, not that the implemented outcome succeeded."
+      : "AVA observed the delivered Codex turn reach a completed boundary. This completion did not contain a terminal result, so no response content was recorded or inferred.",
+    responseSummary: terminalResult?.summary ?? null,
+    responseAvailability: terminalResult ? "sanitized_recorded" : "not_recorded",
+    responseEvidenceProvenance: terminalResult ? "exact_thread_terminal_result" : null,
+    terminal: true,
+    runStatus: "completed",
+    outcome: terminalResult
+      ? "task_boundary_observed_sanitized_response_recorded"
+      : "task_boundary_observed_response_not_recorded",
+    verificationStatus: "partially_verified",
+    occurredAt: terminalResult?.occurredAt ?? undefined,
+    durationMs: terminalResult?.durationMs ?? null,
+  });
+  if (!w.continue_cycle) {
+    setWatchEnabled(deps.db, w.id, false);
+    deps.notify(`Codex completed AVA watcher task: ${w.prompt.slice(0, 140)}`);
+    return;
+  }
+
+  const existingChild = getChildWatch(deps.db, w.id);
+  if (existingChild) {
+    recordCodexSuccessor(deps.db, w.id, {
+      status: "scheduled",
+      result: `AVA scheduled successor watcher ${existingChild.id}`,
+    });
+    setWatchEnabled(deps.db, w.id, false);
+    deps.notify(`AVA scheduled Codex's next task (${existingChild.id}).`);
+    return;
+  }
+  const plan = deps.planNextCodexTask ?? planNextCodexTaskViaHttp;
+  recordCodexSuccessor(deps.db, w.id, {
+    status: "planning",
+    result: "AVA is selecting the next bounded Codex task.",
+  });
+  let planned: WatchCheckResult;
+  try {
+    planned = await plan(w, deps);
+  } catch (cause) {
+    planned = { kind: "error", message: cause instanceof Error ? cause.message : String(cause) };
+  }
+  if (planned.kind === "error") {
+    const detail = `AVA could not select the next Codex task: ${planned.message}`;
+    recordCodexSuccessor(deps.db, w.id, { status: "blocked", result: detail });
+    if (w.successor_status !== "blocked" || w.successor_result !== detail) {
+      deps.notify(`Codex task completed, but successor planning is blocked: ${planned.message.slice(0, 160)}`);
+    }
+    return;
+  }
+  const child = getChildWatch(deps.db, w.id);
+  if (!child) {
+    const detail = "AVA planning finished without creating the required successor watch";
+    recordCodexSuccessor(deps.db, w.id, {
+      status: "blocked",
+      result: detail,
+      sessionId: planned.sessionId,
+    });
+    if (w.successor_status !== "blocked" || w.successor_result !== detail) {
+      deps.notify(`Codex task completed, but successor planning is blocked: ${detail}`);
+    }
+    return;
+  }
+  recordCodexSuccessor(deps.db, w.id, {
+    status: "scheduled",
+    result: `AVA scheduled successor watcher ${child.id}`,
+    sessionId: planned.sessionId,
+  });
+  setWatchEnabled(deps.db, w.id, false);
+  deps.notify(`AVA selected and scheduled Codex's next task (${child.id}).`);
+}
+
 /** One scheduler pass — exported for tests; the interval driver just calls it. */
 export async function tickOnce(deps: SchedulerDeps): Promise<void> {
   const due = dueWatches(deps.db);
   const run = deps.runCheck ?? runCheckViaHttp;
   for (const w of due) {
+    if (w.kind === "reminder" && w.run_at !== null) continue; // dedicated durable path
     try {
+      if (w.kind === "codex") {
+        await runCodexWatch(w, deps);
+        continue;
+      }
       // Pure reminders skip the agent entirely: the prompt IS the message.
       // Direct push at the due moment — instant and free.
       if (w.kind === "reminder") {
@@ -145,11 +471,21 @@ export async function tickOnce(deps: SchedulerDeps): Promise<void> {
 export function startWatchScheduler(deps: SchedulerDeps): () => void {
   let running = false;
   const timer = setInterval(async () => {
+    if (deps.agentChecksEnabled === false) return;
     if (running) return; // a slow check must not stack ticks
     running = true;
     try { await tickOnce(deps); } finally { running = false; }
   }, deps.tickMs ?? 60_000);
   timer.unref?.();
+  let remindersRunning = false;
+  const reminderTimer = setInterval(async () => {
+    if (remindersRunning) return;
+    remindersRunning = true;
+    try { await tickReminders(deps); }
+    catch { deps.log.warn({}, "reminder scheduler pass failed"); }
+    finally { remindersRunning = false; }
+  }, deps.reminderTickMs ?? 1_000);
+  reminderTimer.unref?.();
   deps.log.info({}, "watch scheduler started");
-  return () => clearInterval(timer);
+  return () => { clearInterval(timer); clearInterval(reminderTimer); };
 }

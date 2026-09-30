@@ -60,6 +60,14 @@ export function forgetProject(opts: { paths: MemoryPaths; slug: string }): Forge
 
   const re = slugTokenRe(opts.slug);
 
+  const indexContent = readFile(opts.paths.memoryIndex);
+  if (indexContent) {
+    const filtered = indexContent.split("\n")
+      .filter((ln) => !re.test(ln))
+      .join("\n");
+    if (filtered !== indexContent) writeFile(opts.paths.memoryIndex, filtered);
+  }
+
   const prefContent = readFile(opts.paths.preferences);
   if (prefContent) {
     const filtered = prefContent.split("\n")

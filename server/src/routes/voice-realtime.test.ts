@@ -1,4 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import type { Server } from "node:http";
+import { WebSocket } from "ws";
+import { openDb, type Db } from "../state/db.js";
+import { issueToken } from "../auth/tokens.js";
+import { createSession, getSession, markHumanActivity, softDeleteSession } from "../state/sessions.js";
+import { resolveConversation } from "../state/session-binding.js";
+import { listMessages } from "../state/messages.js";
+import { initiativeFixture } from "../initiative/fixture.test-helper.js";
+import { setVoiceEngine } from "../state/voice-engine-pref.js";
+import { resolveVoiceProvider } from "./voice-provider-config.js";
 import {
   buildRealtimeSessionUpdate,
   buildHybridSessionUpdate,
@@ -9,6 +20,11 @@ import {
   actionStartedFrame,
   bargeInFrame,
   recoverFrame,
+  speechDismissedFrame,
+  mergeSavedItems,
+  mergeRoomPosts,
+  transcriptPendingFrame,
+  acceptedTranscriptFrame,
   loadRealtimeVadConfig,
   vadForReasoning,
   turnDetectionFor,
@@ -17,8 +33,14 @@ import {
   speechDurationMs,
   decideTranscriptForward,
   forwardFrame,
-  chooseResumeOrNew,
+  shouldForwardResponseCancel,
+  buildRealtimeProxy,
+  type RealtimeProxy,
+  type RealtimeProxyDeps,
   seedContentType,
+  openAiHistoryFrames,
+  openAiMemoryContextFrame,
+  buildVoiceConversationSummary,
   buildHumeSessionSettings,
   buildHumeHistoryBlock,
   buildHumeVoicePrompt,
@@ -33,11 +55,52 @@ import {
 } from "./voice-realtime.js";
 import { DEFAULT_TRANSCRIPT_GATE } from "../voice/transcript-gate.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
-import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
+import { DEFAULT_REALTIME_SPEECH_RATE } from "../voice/voiceConfig.js";
 
 // Voices the OpenAI speech / realtime models expose that read as female. Used to
 // prove the no-saved-preference default speaks with a female voice.
-const FEMALE_VOICES = new Set(["nova", "shimmer", "coral", "sage", "fable"]);
+const FEMALE_VOICES = new Set(["nova", "shimmer", "coral", "sage", "fable", "marin"]);
+
+type TestSocket = EventEmitter & {
+  address?: string;
+  readyState: number;
+  sent: string[];
+  closes: Array<{ code: number; reason: string }>;
+  close(code?: number, reason?: string): void;
+};
+const socketState = vi.hoisted(() => ({ upstreams: [] as TestSocket[] }));
+
+// No real sockets, provider credentials, audio, or disk-backed session database.
+vi.mock("ws", async () => {
+  const { EventEmitter } = await import("node:events");
+  class FakeWebSocket extends EventEmitter {
+    static OPEN = 1;
+    readyState: number;
+    sent: string[] = [];
+    closes: Array<{ code: number; reason: string }> = [];
+    constructor(public address?: string) {
+      super();
+      this.readyState = address ? 0 : 1;
+      if (address) socketState.upstreams.push(this);
+    }
+    send(data: unknown) { this.sent.push(String(data)); }
+    close(code = 1000, reason = "") {
+      if (this.readyState === 3) return;
+      this.readyState = 3;
+      this.closes.push({ code, reason });
+      this.emit("close", code, Buffer.from(reason));
+    }
+  }
+  return {
+    WebSocket: FakeWebSocket,
+    WebSocketServer: class {
+      handleUpgrade(_req: unknown, socket: { client: TestSocket }, _head: unknown, done: (client: TestSocket) => void) { done(socket.client); }
+      close() {}
+    },
+  };
+});
+vi.mock("../orchestrator/system-prompt.js", () => ({ buildSystemPrompt: () => "Test AVA prompt" }));
+vi.mock("../self/dev-log.js", () => ({ readDevLog: () => [] }));
 
 describe("hybrid voice (speak + do_on_computer)", () => {
   it("session.update enables audio out, the tool, and keeps create_response false (gate controls replies)", () => {
@@ -60,8 +123,8 @@ describe("hybrid voice (speak + do_on_computer)", () => {
     };
     expect(u.session.audio.output.voice).toBe(DEFAULT_VOICE);
     expect(FEMALE_VOICES.has(u.session.audio.output.voice)).toBe(true);
-    // The faster spoken-delivery preference must be preserved by the default.
-    expect(u.session.audio.output.speed).toBe(DEFAULT_SPEECH_RATE);
+    // Realtime stays at the model's natural cadence (no quality-degrading respeed).
+    expect(u.session.audio.output.speed).toBe(DEFAULT_REALTIME_SPEECH_RATE);
   });
 
   it("readToolCall parses a completed do_on_computer function call", () => {
@@ -96,18 +159,6 @@ describe("hybrid voice (speak + do_on_computer)", () => {
   });
 });
 
-describe("chooseResumeOrNew — voice session continuity", () => {
-  it("resumes the most-recent session by default (voice<->chat shared memory)", () => {
-    expect(chooseResumeOrNew(false, "sess-123")).toEqual({ resumeId: "sess-123" });
-  });
-  it("starts fresh when the client asks for a new conversation (?new=1)", () => {
-    expect(chooseResumeOrNew(true, "sess-123")).toEqual({ resumeId: null });
-  });
-  it("creates a new session when there is no prior conversation to resume", () => {
-    expect(chooseResumeOrNew(false, null)).toEqual({ resumeId: null });
-  });
-});
-
 describe("buildVoiceUpdatesBlock — seed Ava's real changelog into the voice prompt", () => {
   it("returns empty when there are no shipped entries", () => {
     expect(buildVoiceUpdatesBlock([])).toBe("");
@@ -123,6 +174,15 @@ describe("buildVoiceUpdatesBlock — seed Ava's real changelog into the voice pr
     expect(out).toContain("- Fixed voice recollection");
     expect(out).not.toContain("in progress"); // started entries excluded
     expect(out.toLowerCase()).toContain("changelog");
+  });
+  it("includes what each update does, without the author prefix, so AVA can answer without a tool", () => {
+    const out = buildVoiceUpdatesBlock([
+      { ts: "t1", phase: "shipped", title: "Saved cards in chat", detail: "By Claude. Replies show a Saved card naming what AVA saved." },
+      { ts: "t2", phase: "shipped", title: "Long one", detail: "x".repeat(400) },
+    ]);
+    expect(out).toContain("- Saved cards in chat: Replies show a Saved card naming what AVA saved.");
+    expect(out).not.toContain("By Claude.");
+    expect(out.split("\n").find((line) => line.startsWith("- Long one"))!.length).toBeLessThan(240);
   });
 });
 
@@ -277,6 +337,59 @@ describe("seedContentType — GA realtime content-part type for seeded turns", (
   });
 });
 
+describe("voice memory context transport", () => {
+  it("injects verified OpenAI memory as a system reference item", () => {
+    const frame = JSON.parse(openAiMemoryContextFrame("[VERIFIED DURABLE MEMORY]\nsource excerpt")!);
+    expect(frame).toEqual({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "system",
+        content: [{ type: "input_text", text: "[VERIFIED DURABLE MEMORY]\nsource excerpt" }],
+      },
+    });
+    expect(openAiMemoryContextFrame("  ")).toBeNull();
+  });
+
+  it("keeps preloaded Hume memory inside the priority prompt budget", () => {
+    const memory = "[VERIFIED DURABLE MEMORY]\nThe current decision uses SQLite.";
+    const prompt = buildHumeVoicePrompt({
+      voicePersona: "AVA identity",
+      updates: "latest update",
+      history: `recent chat\n${memory}`,
+      base: "x".repeat(20_000),
+    }, 11_000);
+    expect(prompt).toContain(memory);
+    expect(prompt.length).toBeLessThanOrEqual(11_000);
+  });
+});
+
+describe("voice/chat shared context", () => {
+  it("serializes typed user and assistant turns into valid realtime history items", () => {
+    const frames = openAiHistoryFrames([
+      { role: "user", content: "the discussion brief" },
+      { role: "assistant", content: "I have it" },
+      { role: "system", content: "not a conversational turn" },
+    ]).map((frame) => JSON.parse(frame));
+
+    expect(frames).toHaveLength(2);
+    expect(frames[0]).toMatchObject({
+      type: "conversation.item.create",
+      item: { role: "user", content: [{ type: "input_text", text: "the discussion brief" }] },
+    });
+    expect(frames[1]).toMatchObject({
+      type: "conversation.item.create",
+      item: { role: "assistant", content: [{ type: "output_text", text: "I have it" }] },
+    });
+  });
+
+  it("gives voice the same durable earlier-conversation summary as typed chat", () => {
+    expect(buildVoiceConversationSummary(null)).toBe("");
+    expect(buildVoiceConversationSummary(" earlier decisions ")).toContain("earlier decisions");
+    expect(buildVoiceConversationSummary("x".repeat(5_000)).length).toBeLessThan(4_100);
+  });
+});
+
 const TRANSCRIPT_TYPE = "conversation.item.input_audio_transcription.completed";
 function transcriptEvt(transcript: string, extra: Record<string, unknown> = {}) {
   return { type: TRANSCRIPT_TYPE, transcript, ...extra };
@@ -294,32 +407,34 @@ describe("buildRealtimeSessionUpdate (transcribe-only GA schema)", () => {
     expect(s.audio.output).toBeUndefined();
     expect(s.audio.input.format).toEqual({ type: "audio/pcm", rate: 24000 });
     expect(s.audio.input.transcription.model).toBe(DEFAULT_REALTIME_VAD.transcribeModel);
+    expect(s.audio.input.transcription.language).toBe("en");
   });
 
-  it("tunes server VAD and disables auto-response (no reply to silence)", () => {
+  it("uses patient semantic VAD and waits for a gated transcript before interruption", () => {
     const s = buildRealtimeSessionUpdate("x").session as Record<string, any>;
     const td = s.audio.input.turn_detection;
-    expect(td.type).toBe("server_vad");
+    expect(td.type).toBe("semantic_vad");
+    expect(td.eagerness).toBe("low");
     expect(td.create_response).toBe(false);
     expect(td.interrupt_response).toBe(false);
-    expect(td.threshold).toBe(DEFAULT_REALTIME_VAD.threshold);
-    expect(td.prefix_padding_ms).toBe(DEFAULT_REALTIME_VAD.prefixPaddingMs);
-    expect(td.silence_duration_ms).toBe(DEFAULT_REALTIME_VAD.silenceMs);
   });
 
-  it("honors a supplied VAD config", () => {
+  it("honors a supplied server-VAD fallback config", () => {
     const s = buildRealtimeSessionUpdate("x", {
       transcribeModel: "whisper-1",
+      transcribeLanguage: null,
+      mode: "server_vad",
       threshold: 0.8,
       prefixPaddingMs: 100,
       silenceMs: 900,
     }).session as Record<string, any>;
     expect(s.audio.input.transcription.model).toBe("whisper-1");
+    expect(s.audio.input.transcription.language).toBeUndefined();
     expect(s.audio.input.turn_detection.threshold).toBe(0.8);
     expect(s.audio.input.turn_detection.silence_duration_ms).toBe(900);
   });
 
-  it("does NOT send the beta-shape fields that gpt-realtime rejects", () => {
+  it("does NOT send the beta-shape fields that GA realtime models reject", () => {
     const s = buildRealtimeSessionUpdate("x").session as Record<string, any>;
     expect(s.modalities).toBeUndefined();
     expect(s.voice).toBeUndefined();
@@ -327,13 +442,14 @@ describe("buildRealtimeSessionUpdate (transcribe-only GA schema)", () => {
   });
 });
 
-describe("enter_push_to_talk session mode (server VAD disabled)", () => {
-  it("turnDetectionFor returns tuned server_vad in VAD mode", () => {
+describe("enter_push_to_talk session mode (automatic VAD disabled)", () => {
+  it("turnDetectionFor returns semantic_vad in hands-free mode", () => {
     const td = turnDetectionFor(DEFAULT_REALTIME_VAD, false) as Record<string, unknown>;
     expect(td).not.toBeNull();
-    expect(td.type).toBe("server_vad");
+    expect(td.type).toBe("semantic_vad");
+    expect(td.eagerness).toBe("low");
     expect(td.create_response).toBe(false);
-    expect(td.silence_duration_ms).toBe(DEFAULT_REALTIME_VAD.silenceMs);
+    expect(td.interrupt_response).toBe(false);
   });
 
   it("turnDetectionFor returns null (no auto endpointing) in push-to-talk mode", () => {
@@ -350,7 +466,7 @@ describe("enter_push_to_talk session mode (server VAD disabled)", () => {
 
   it("transcribe-only: the default (no opts) preserves existing VAD behaviour", () => {
     const s = buildRealtimeSessionUpdate("x").session as Record<string, any>;
-    expect(s.audio.input.turn_detection.type).toBe("server_vad");
+    expect(s.audio.input.turn_detection.type).toBe("semantic_vad");
     expect(s.audio.input.turn_detection.create_response).toBe(false);
   });
 
@@ -364,17 +480,21 @@ describe("enter_push_to_talk session mode (server VAD disabled)", () => {
 
   it("hybrid: the default (no opts) preserves existing VAD behaviour", () => {
     const s = buildHybridSessionUpdate("be ava").session as Record<string, any>;
-    expect(s.audio.input.turn_detection.type).toBe("server_vad");
+    expect(s.audio.input.turn_detection.type).toBe("semantic_vad");
     expect(s.audio.input.turn_detection.create_response).toBe(false);
+    expect(s.audio.input.transcription).toEqual({
+      model: DEFAULT_REALTIME_VAD.transcribeModel,
+      language: "en",
+    });
   });
 });
 
 describe("vadForReasoning (the toggle tunes voice snappiness)", () => {
-  it("fast rides through short mid-sentence pauses, thorough is patient", () => {
-    // 'fast' was 300ms — it ended a turn on a natural pause and Ava barged into the
-    // owner. 500ms keeps it snappy without cutting the owner off mid-sentence.
-    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "fast").silenceMs).toBe(500);
-    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "thorough").silenceMs).toBe(700);
+  it("uses semantic completeness and a patient server-VAD fallback", () => {
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "fast").semanticEagerness).toBe("low");
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "thorough").semanticEagerness).toBe("low");
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "fast").silenceMs).toBe(900);
+    expect(vadForReasoning(DEFAULT_REALTIME_VAD, "thorough").silenceMs).toBe(1200);
   });
   it("leaves the other VAD fields untouched", () => {
     const out = vadForReasoning(DEFAULT_REALTIME_VAD, "fast");
@@ -392,14 +512,29 @@ describe("loadRealtimeVadConfig", () => {
   it("applies env overrides", () => {
     const cfg = loadRealtimeVadConfig({
       REALTIME_TRANSCRIBE_MODEL: "whisper-1",
+      REALTIME_TRANSCRIBE_LANGUAGE: "fr",
       REALTIME_VAD_THRESHOLD: "0.75",
       REALTIME_VAD_PREFIX_PADDING_MS: "250",
       REALTIME_VAD_SILENCE_MS: "800",
     });
     expect(cfg.transcribeModel).toBe("whisper-1");
+    expect(cfg.transcribeLanguage).toBe("fr");
     expect(cfg.threshold).toBe(0.75);
     expect(cfg.prefixPaddingMs).toBe(250);
     expect(cfg.silenceMs).toBe(800);
+  });
+
+  it("allows automatic language detection explicitly", () => {
+    expect(loadRealtimeVadConfig({
+      REALTIME_TRANSCRIBE_LANGUAGE: "auto",
+    }).transcribeLanguage).toBeNull();
+  });
+});
+
+describe("realtime response cancellation", () => {
+  it("forwards cancellation only for a confirmed active response", () => {
+    expect(shouldForwardResponseCancel(false)).toBe(false);
+    expect(shouldForwardResponseCancel(true)).toBe(true);
   });
 });
 
@@ -522,8 +657,40 @@ describe("voice barge-in + PTT recovery control frames", () => {
   it("bargeInFrame tells the client to stop Ava's audio when the owner talks over her", () => {
     expect(JSON.parse(bargeInFrame())).toEqual({ type: "ava.barge_in" });
   });
+  it("speechDismissedFrame tells a hands-free client its pause was a false alarm", () => {
+    expect(JSON.parse(speechDismissedFrame("echo"))).toEqual({ type: "ava.speech_dismissed", reason: "echo" });
+  });
+  it("mergeSavedItems combines what several voice actions saved before the reply", () => {
+    const note = { kind: "note" as const, id: "n1", title: "Groceries" };
+    const reminder = { kind: "reminder" as const, id: "w1", title: "Hang the clothes" };
+    expect(mergeSavedItems(null, null)).toBeNull();
+    expect(mergeSavedItems(null, { schemaVersion: 1, items: [note] })).toEqual({ schemaVersion: 1, items: [note] });
+    expect(mergeSavedItems({ schemaVersion: 1, items: [note] }, { schemaVersion: 1, items: [note, reminder] }))
+      .toEqual({ schemaVersion: 1, items: [note, reminder] });
+    expect(mergeSavedItems({ schemaVersion: 1, items: [note] }, undefined)).toEqual({ schemaVersion: 1, items: [note] });
+  });
+
+  it("mergeRoomPosts keeps authoritative voice-action receipts bounded and deduped", () => {
+    const first = { schemaVersion: 1 as const, messageId: 10, roomName: "klevar", correlationId: "run_1", postedAt: 100 };
+    const second = { schemaVersion: 1 as const, messageId: 11, roomName: "klevar", correlationId: "run_2", postedAt: 200 };
+    expect(mergeRoomPosts(null, { schemaVersion: 1, items: [first] })).toEqual({ schemaVersion: 1, items: [first] });
+    expect(mergeRoomPosts({ schemaVersion: 1, items: [first] }, { schemaVersion: 1, items: [first, second] }))
+      .toEqual({ schemaVersion: 1, items: [first, second] });
+    expect(mergeRoomPosts(null, null)).toBeNull();
+  });
+
   it("recoverFrame carries the drop reason so the client re-arms listening", () => {
     expect(JSON.parse(recoverFrame("empty"))).toEqual({ type: "ava.recover", reason: "empty" });
+  });
+  it("marks an incomplete partial without turning it into a user command", () => {
+    expect(JSON.parse(transcriptPendingFrame("I want you to go"))).toEqual({
+      type: "ava.transcript_pending",
+      text: "I want you to go",
+    });
+    expect(JSON.parse(acceptedTranscriptFrame("I want you to go into WhatsApp"))).toEqual({
+      type: "conversation.item.input_audio_transcription.completed",
+      transcript: "I want you to go into WhatsApp",
+    });
   });
 });
 
@@ -594,6 +761,290 @@ describe("Hume EVI provider helpers", () => {
   it("VOICE_PERSONA_INSTRUCTIONS keeps 'Sir' natural and pacing snappy", () => {
     expect(VOICE_PERSONA_INSTRUCTIONS).toContain("Sir");
     expect(VOICE_PERSONA_INSTRUCTIONS.toLowerCase()).toContain("warm");
+  });
+
+  it("frames AVA as Sir's personal assistant, not a computer manager", () => {
+    expect(VOICE_PERSONA_INSTRUCTIONS).toContain("personal assistant");
+    expect(VOICE_PERSONA_INSTRUCTIONS).toMatch(/university work/);
+    expect(VOICE_PERSONA_INSTRUCTIONS).not.toMatch(/living on Sir's Windows PC/);
+    // "What's new?" is answered from the seeded summary, not by reading a log through a tool.
+    expect(VOICE_PERSONA_INSTRUCTIONS).not.toMatch(/Claude update log/);
+    expect(DO_ON_COMPUTER_TOOL.description).toMatch(/note/);
+    expect(DO_ON_COMPUTER_TOOL.description).toMatch(/reminder/);
+  });
+});
+
+describe("voice conversation binding ingress", () => {
+  let db: Db;
+  let token: ReturnType<typeof issueToken>;
+  let now: number;
+  const clients: TestSocket[] = [];
+  const proxies: RealtimeProxy[] = [];
+  const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  const frames = (socket: TestSocket): Array<Record<string, any>> => socket.sent.map((frame) => JSON.parse(frame));
+  const hello = (socket: TestSocket) => frames(socket).find((frame) => frame.type === "ava.session")!;
+  const sessionCount = () => (db.prepare("SELECT COUNT(*) AS n FROM sessions").get() as { n: number }).n;
+  const activity = (id: string) => getSession(db, id)?.last_human_activity_at;
+  const receive = (socket: TestSocket, event: Record<string, unknown>) => socket.emit("message", Buffer.from(JSON.stringify(event)), false);
+  async function open(socket: TestSocket) {
+    socket.readyState = 1;
+    socket.emit("open");
+    await settle();
+  }
+  async function connect(query = "", options: { hybrid?: boolean; hume?: boolean; runAction?: RealtimeProxyDeps["runAction"] } = {}) {
+    setVoiceEngine(db, options.hume ? "hume" : "openai");
+    const proxy = buildRealtimeProxy({
+      db, apiKey: "fake-key-no-network", memoryDir: "unused-voice-test-memory",
+      providerConfig: resolveVoiceProvider(options.hume ? { AVA_VOICE_PROVIDER: "hume", HUME_API_KEY: "fake-hume-no-network" } : {}),
+      runAction: options.hybrid === false ? undefined : options.runAction ?? (async (sessionId) => ({ text: "Done.", sessionId })),
+    });
+    proxies.push(proxy);
+    const client = new (WebSocket as unknown as new () => TestSocket)();
+    clients.push(client);
+    const server = new EventEmitter();
+    proxy.attach(server as Server);
+    server.emit("upgrade", { url: `/api/voice/realtime?t=${token.secret}${query ? `&${query}` : ""}` }, { client }, Buffer.alloc(0));
+    await settle();
+    return { client, upstream: socketState.upstreams.at(-1)! };
+  }
+  beforeEach(() => {
+    now = 10_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    socketState.upstreams.length = 0;
+    db = openDb(":memory:");
+    token = issueToken(db, { label: "voice-test-human-device" });
+  });
+  afterEach(() => {
+    for (const client of clients.splice(0)) client.close();
+    for (const upstream of socketState.upstreams) upstream.close();
+    for (const proxy of proxies.splice(0)) proxy.close();
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  it("Home continues human activity instead of newer automation and acknowledges the client pointer", async () => {
+    const human = createSession(db, { title: "Human conversation", origin: "human" });
+    markHumanActivity(db, human.id, 100);
+    const automation = createSession(db, { title: "New automated work", origin: "automation" });
+    db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(99_000, automation.id);
+    const { client, upstream } = await connect();
+    expect(sessionCount()).toBe(2);
+    await open(upstream);
+    expect(hello(client)).toEqual({ type: "ava.session", sessionId: human.id, mode: "hybrid", binding: { version: 1, sessionId: human.id, origin: "human", resolution: "continued" } });
+    expect(resolveConversation(db, { actor: "human", deviceId: token.id, intent: "continue" }).sessionId).toBe(human.id);
+    expect(activity(human.id)).toBe(100);
+    expect(activity(automation.id)).toBeNull();
+  });
+
+  it("creates a human conversation when Home has only automation to choose from", async () => {
+    createSession(db, { origin: "automation" });
+    const { client, upstream } = await connect();
+    await open(upstream);
+    expect(hello(client).binding).toMatchObject({ origin: "human", resolution: "created" });
+    expect(sessionCount()).toBe(2);
+    expect(activity(hello(client).sessionId)).toBeNull();
+  });
+
+  it("resumes an exact legacy id and only makes it eligible for Home after an accepted user turn", async () => {
+    const legacy = createSession(db, {});
+    const { client, upstream } = await connect(`sessionId=${legacy.id}`);
+    await open(upstream);
+    expect(hello(client).binding).toMatchObject({ sessionId: legacy.id, origin: "unknown", resolution: "resumed_exact" });
+    expect(sessionCount()).toBe(1);
+    expect(activity(legacy.id)).toBeNull();
+    receive(upstream, transcriptEvt("open downloads", { item_id: "legacy-user-turn" }));
+    await settle();
+    expect(activity(legacy.id)).toBe(now);
+    expect(getSession(db, legacy.id)?.origin).toBe("unknown");
+    expect(resolveConversation(db, { actor: "human", deviceId: token.id, intent: "continue" }).sessionId).toBe(legacy.id);
+    expect(sessionCount()).toBe(1);
+  });
+
+  it.each(["missing", "deleted", "automation"])("fails closed for an unavailable exact %s id before any provider connection", async (kind) => {
+    const target = kind === "missing" ? "not-present" : createSession(db, { origin: kind === "automation" ? "automation" : "human" }).id;
+    if (kind === "deleted") softDeleteSession(db, target);
+    const before = sessionCount();
+    const { client } = await connect(`sessionId=${target}`, { hume: true });
+    expect(frames(client)).toEqual([{ type: "ava.session_error", code: "session_unavailable", message: "This conversation is unavailable.", retryable: false }]);
+    expect(client.closes).toEqual([{ code: 4404, reason: "session_unavailable" }]);
+    expect(socketState.upstreams).toHaveLength(0);
+    expect(sessionCount()).toBe(before);
+  });
+
+  it.each([
+    "intent=other", "intent=", "intent=resume", "new=1&sessionId=exact", "new=1&intent=continue",
+    "intent=new&sessionId=exact", "intent=continue&sessionId=exact", "intent=continue&intent=new", "bindingRequestId=",
+  ])("rejects malformed/conflicting binding query %s without side effects", async (query) => {
+    const { client } = await connect(query);
+    expect(frames(client)).toEqual([{ type: "ava.session_error", code: "bad_request", message: "Invalid conversation binding request.", retryable: false }]);
+    expect(client.closes[0]?.code).toBe(4400);
+    expect(socketState.upstreams).toHaveLength(0);
+    expect(sessionCount()).toBe(0);
+  });
+
+  it("echoes the new-request key and reuses the same session on reconnect", async () => {
+    const key = "voice-new-reconnect-001";
+    const first = await connect(`new=1&intent=new&bindingRequestId=${key}`);
+    await open(first.upstream);
+    const initial = hello(first.client);
+    expect(initial.binding).toMatchObject({ version: 1, origin: "human", resolution: "created", bindingRequestId: key });
+    first.client.close();
+    const second = await connect(`new=1&intent=new&bindingRequestId=${key}`);
+    await open(second.upstream);
+    expect(hello(second.client).sessionId).toBe(initial.sessionId);
+    expect(hello(second.client).binding.bindingRequestId).toBe(key);
+    expect(sessionCount()).toBe(1);
+    expect(listMessages(db, initial.sessionId)).toEqual([]);
+    expect(activity(initial.sessionId)).toBeNull();
+  });
+
+  it("keeps legacy new=1 working without an idempotency key", async () => {
+    const old = createSession(db, { origin: "human" });
+    markHumanActivity(db, old.id, 100);
+    const { client, upstream } = await connect("new=1");
+    await open(upstream);
+    expect(hello(client).sessionId).not.toBe(old.id);
+    expect(hello(client).binding.resolution).toBe("created");
+    expect(sessionCount()).toBe(2);
+  });
+
+  it.each(["error", "close", "unexpected-response"])("retains one initial binding across Hume %s fallback and ignores the abandoned provider", async (failure) => {
+    const key = "voice-provider-fallback-001";
+    const { client, upstream: hume } = await connect(`new=1&bindingRequestId=${key}`, { hume: true });
+    expect(hume.address).toContain("hume.ai");
+    expect(sessionCount()).toBe(1); // resolved before Hume opened
+    const initial = (db.prepare("SELECT id FROM sessions").get() as { id: string }).id;
+    const unrelated = createSession(db, { origin: "human" });
+    markHumanActivity(db, unrelated.id, 20_000);
+    if (failure === "close") hume.close(1006, "fake pre-open close");
+    else if (failure === "unexpected-response") hume.emit("unexpected-response", {}, { statusCode: 401 });
+    else hume.emit("error", new Error("fake pre-open failure"));
+    await settle();
+    const openai = socketState.upstreams.at(-1)!;
+    expect(openai).not.toBe(hume);
+    await open(openai);
+    expect(hello(client).binding).toMatchObject({ sessionId: initial, bindingRequestId: key, resolution: "created" });
+    expect(sessionCount()).toBe(2);
+    expect(client.listenerCount("message")).toBe(1);
+    const humeSends = hume.sent.length;
+    receive(client, { type: "input_audio_buffer.append", audio: "fake-audio" });
+    expect(hume.sent).toHaveLength(humeSends);
+    receive(hume, { type: "user_message", message: { role: "user", content: "open downloads" } });
+    await open(hume); // even a late stale open cannot acquire the client
+    expect(frames(client).filter((frame) => frame.type === "ava.session")).toHaveLength(1);
+    expect(listMessages(db, initial)).toEqual([]);
+    receive(openai, transcriptEvt("open downloads", { item_id: "accepted-fallback-turn" }));
+    await settle();
+    expect(listMessages(db, initial).filter((message) => message.role === "user")).toHaveLength(1);
+  });
+
+  it("does not start a fallback provider after the client closes during Hume connection", async () => {
+    const { client } = await connect("new=1&bindingRequestId=disconnect-before-open", { hume: true });
+    client.close();
+    await settle();
+    expect(socketState.upstreams).toHaveLength(1);
+    expect(frames(client).some((frame) => frame.type === "ava.session")).toBe(false);
+    expect(sessionCount()).toBe(1);
+    const session = db.prepare("SELECT last_human_activity_at FROM sessions").get() as { last_human_activity_at: number | null };
+    expect(session.last_human_activity_at).toBeNull();
+  });
+
+  it.each([false, true])("binds transcribe-only without duplicating chat persistence or human stamping (Hume=%s)", async (hume) => {
+    const { client, upstream } = await connect("intent=new&bindingRequestId=transcribe-001&mode=hybrid", { hybrid: false, hume });
+    await open(upstream);
+    const session = hello(client);
+    expect(session.mode).toBe("transcribe"); // existing runtime capability, not an unrelated query, owns mode
+    expect(session.binding.sessionId).toBe(session.sessionId);
+    receive(upstream, hume
+      ? { type: "user_message", message: { role: "user", content: "open downloads" } }
+      : transcriptEvt("open downloads", { item_id: "transcribe-only-turn" }));
+    await settle();
+    expect(frames(client).filter((frame) => frame.type === TRANSCRIPT_TYPE)).toHaveLength(1);
+    expect(listMessages(db, session.sessionId)).toEqual([]);
+    expect(activity(session.sessionId)).toBeNull();
+  });
+
+  it.each([false, true])("stamps only accepted stored user turns and keeps delegated results in the canonical session (Hume=%s)", async (hume) => {
+    const foreign = createSession(db, { origin: "human" });
+    const roomPost = {
+      schemaVersion: 1 as const,
+      messageId: 47,
+      roomName: "klevar",
+      correlationId: "voice-room-post-1",
+      postedAt: 25_000,
+    };
+    const runAction = vi.fn(async (_sessionId: string | null) => ({
+      text: "Action finished.",
+      sessionId: foreign.id,
+      roomPosts: { schemaVersion: 1 as const, items: [roomPost] },
+    }));
+    const { client, upstream } = await connect("new=1&mode=transcribe", { hume, runAction });
+    await open(upstream);
+    const canonical = hello(client).sessionId as string;
+    expect(hello(client).mode).toBe("hybrid");
+    expect(activity(canonical)).toBeNull();
+    const say = (text: string) => receive(upstream, hume
+      ? { type: "user_message", message: { role: "user", content: text } }
+      : transcriptEvt(text, { item_id: `user-${now}` }));
+    const assistant = () => {
+      receive(upstream, hume ? { type: "assistant_message", message: { role: "assistant", content: "Here is the answer." } } : { type: "response.output_audio_transcript.done", transcript: "Here is the answer." });
+      receive(upstream, { type: hume ? "assistant_end" : "response.done" });
+    };
+    assistant();
+    say("Thank you."); // silence-hallucination gate
+    expect(activity(canonical)).toBeNull();
+    if (!hume) {
+      say("I want you to go"); // incomplete fragment, not yet a persisted user turn
+      expect(activity(canonical)).toBeNull();
+      expect(listMessages(db, canonical).filter((message) => message.role === "user")).toHaveLength(0);
+    }
+    now = 20_000;
+    say("open downloads");
+    await settle();
+    expect(activity(canonical)).toBe(20_000);
+    const users = listMessages(db, canonical).filter((message) => message.role === "user");
+    expect(users).toHaveLength(1);
+    expect(users[0]?.metadata?.inputModality).toBe("voice");
+    now = 30_000;
+    assistant();
+    receive(upstream, hume
+      ? { type: "tool_call", tool_call_id: "tool-1", name: "do_on_computer", parameters: '{"task":"open downloads"}' }
+      : { type: "response.output_item.done", item: { type: "function_call", call_id: "tool-1", name: "do_on_computer", arguments: '{"task":"open downloads"}' } });
+    await settle();
+    // OpenAI speaks the delegated result in a subsequent response, while Hume
+    // stores the delegated result itself. Both must persist the same bounded
+    // room-post receipt in the canonical shared conversation.
+    if (!hume) {
+      assistant();
+      await settle();
+    }
+    expect(runAction).toHaveBeenCalledTimes(1);
+    expect(runAction.mock.calls[0]?.[0]).toBe(canonical);
+    expect(frames(client).filter((frame) => frame.type === "ava.session").every((frame) => frame.sessionId === canonical && frame.binding.sessionId === canonical)).toBe(true);
+    expect(activity(canonical)).toBe(20_000);
+    expect(activity(foreign.id)).toBeNull();
+    expect(listMessages(db, foreign.id)).toEqual([]);
+    expect(listMessages(db, canonical).filter((message) => message.role === "user")).toHaveLength(1);
+    expect(listMessages(db, canonical).some((message) => (
+      message.role === "assistant"
+      && message.metadata?.roomPosts?.items.some((item) => item.correlationId === roomPost.correlationId)
+    ))).toBe(true);
+    expect(sessionCount()).toBe(2);
+  });
+
+  it.each([false, true])("engages an exact invitation only on accepted speech (Hume=%s)", async (hume) => {
+    const f = initiativeFixture(db); await f.engine.tick(); const row = f.rows()[0]!;
+    const { client, upstream } = await connect(`intent=resume&sessionId=${row.session_id}`, { hume });
+    await open(upstream);
+    expect(hello(client).sessionId).toBe(row.session_id);
+    expect(f.rows()[0]!.disposition_state).toBe("open");
+    const say = (text: string) => receive(upstream, hume
+      ? { type: "user_message", message: { role: "user", content: text } }
+      : transcriptEvt(text, { item_id: `initiative-${now}` }));
+    say("Thank you."); expect(f.rows()[0]!.disposition_state).toBe("open");
+    now = 20_000; say("compare the launch options"); await settle();
+    expect(f.rows()[0]).toMatchObject({ disposition_state: "engaged", disposition_version: 2 });
+    expect(listMessages(db, row.session_id!).filter(m => m.role === "user")).toHaveLength(1);
   });
 });
 

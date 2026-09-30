@@ -7,9 +7,19 @@ describe("TOOL_RUBRIC", () => {
     expect(TOOL_RUBRIC).toContain("fs_read");
     expect(TOOL_RUBRIC).toContain("chrome_navigate");
     expect(TOOL_RUBRIC).toContain("memory_remember");
+    expect(TOOL_RUBRIC).toContain("notes_capture");
+    expect(TOOL_RUBRIC).toContain("notes_folders");
     expect(TOOL_RUBRIC).toContain("memory_forget");
     expect(TOOL_RUBRIC).toContain("memory_read");
+    expect(TOOL_RUBRIC).toContain("memory_index_capture");
+    expect(TOOL_RUBRIC).toContain("memory_index_search");
+    expect(TOOL_RUBRIC).toContain("memory_index_open");
+    expect(TOOL_RUBRIC).toContain("memory_index_forget");
+    expect(TOOL_RUBRIC).toContain("automation_system_report");
+    expect(TOOL_RUBRIC).toContain("automation_operations_brief");
     expect(TOOL_RUBRIC).toContain("self_improve");
+    expect(TOOL_RUBRIC).toContain("focus-default-window.ps1");
+    expect(TOOL_RUBRIC).toContain("WinSta0\\Default");
   });
 
   it("biases toward acting immediately, not idling in chat", () => {
@@ -37,6 +47,14 @@ describe("TOOL_RUBRIC", () => {
   it("instructs that memory-read queries route through memory_read, not recitation", () => {
     expect(TOOL_RUBRIC.toLowerCase()).toContain("what do you remember");
     expect(TOOL_RUBRIC).toContain("memory_read");
+  });
+
+  it("keeps automatic and explicit semantic recall source-verified and governed", () => {
+    expect(TOOL_RUBRIC).toContain("original conversation range re-verifies");
+    expect(TOOL_RUBRIC).toContain("offered to the\n  automatic capture gate");
+    expect(TOOL_RUBRIC).toContain("exact/keyword matching");
+    expect(TOOL_RUBRIC).toContain("memory_index_conflict");
+    expect(TOOL_RUBRIC).toContain("never rewrite or manufacture support");
   });
 
   it("hard rules: .env paths blocked, no --dangerously-skip-permissions", () => {

@@ -14,3 +14,32 @@ chrome-profile/
 .vite/
 .pm2/
 *.tsbuildinfo
+coord/.BOARD.md.append.lock
+
+# Scratch and staging areas from Forge patch runs and installer testing.
+# Working directories, not source — they hold copies of files that live
+# elsewhere in this repo, so committing them would create a second, silently
+# diverging copy of the real thing.
+forge-backups/
+forge-codex-patch-work/
+forge-remodel-work/
+installer-test-target/
+installer-test-target-fail/
+Stuff/
+
+# Drivers for the scratch directories above. They copy files out of
+# forge-codex-patch-work/ and forge-remodel-work/, which are ignored, so a
+# clone would get scripts pointing at directories that do not exist.
+apply-forge-*.ps1
+apply-forge-*.cmd
+APPLY-FORGE-*.cmd
+
+# agentroom (personal: holds your agent token)
+.agentroom/
+
+# agentroom (personal: holds your agent token)
+.claude/settings.local.json
+
+# agentroom (personal: holds your agent token)
+.codex/config.toml
+.codex/hooks.json

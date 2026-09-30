@@ -1,14 +1,24 @@
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import type { Chrome } from "../tools/chrome.js";
-import { ensureReady, login, submitCode, openThread, sendDm, readThread } from "./instagram.js";
+import type { ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
+import { ensureReady, login, submitCode, openProfile, openThread, sendDm, readThread } from "./instagram.js";
 import { listPeople, upsertPerson } from "./people.js";
 
-// Instagram + people tools — the deterministic fast path for Sir's most-used
+// Instagram + people tools — the deterministic identity path for Sir's most-used
 // app. Every edge case returns instructions for what to ask Sir, so the agent
 // never flails: needs=login → ask for credentials or a window login;
 // needs=code → ask for the 2FA code; needs=person/username → ask who/what.
 
-type ToolDef = { tool: Tool; run: (args: Record<string, unknown>) => Promise<{ text: string; ok: boolean }> };
+type ToolDef = { tool: Tool; run: (args: Record<string, unknown>) => Promise<{
+  text: string; ok: boolean; verification?: ToolVerificationEvidence;
+}> };
+
+const verified = (method: string, summary: string): ToolVerificationEvidence => ({
+  state: "verified",
+  scope: "task_outcome",
+  method,
+  summary,
+});
 
 export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memoryDir: string }): ToolDef[] {
   const deps = async () => ({ chrome: await o.getChrome(), memoryDir: o.memoryDir });
@@ -16,11 +26,35 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
   return [
     {
       tool: {
+        name: "instagram_open_profile",
+        description:
+          "Open an Instagram profile without messaging. A known people-map name or " +
+          "explicit @username opens directly. An unknown plain name opens safe search " +
+          "results instead of guessing the account; ask for the @username only when an " +
+          "exact profile is required.",
+        inputSchema: {
+          type: "object",
+          properties: { person: { type: "string", description: "Known name, plain search name, or @username." } },
+          required: ["person"],
+        },
+      },
+      run: async (args) => {
+        const r = await openProfile(await deps(), s(args.person));
+        return {
+          ok: r.ok,
+          text: r.detail,
+          ...(r.ok ? { verification: verified("instagram_profile_url", "Instagram remained on the exact resolved profile URL.") } : {}),
+        };
+      },
+    },
+    {
+      tool: {
         name: "instagram_send_dm",
         description:
           "Send an Instagram DM. person = a name/alias from the people map, or a raw " +
-          "IG username. Uses the learned thread for known people (instant), otherwise " +
-          "discovers the chat via the profile's Message button and LEARNS the thread. " +
+          "IG username. Always resolves the exact username, opens instagram.com/<username>/, " +
+          "verifies that profile URL, and enters through its exact Message action. It never " +
+          "searches the inbox or routes by a learned thread ID. " +
           "Verifies the message appears on the page before claiming success. If it " +
           "returns needs=login/code/person, ask Sir for exactly that and retry.",
         inputSchema: {
@@ -34,29 +68,41 @@ export function buildInstagramTools(o: { getChrome: () => Promise<Chrome>; memor
       },
       run: async (args) => {
         const r = await sendDm(await deps(), s(args.person), s(args.text));
-        return { ok: r.ok, text: r.detail };
+        return {
+          ok: r.ok,
+          text: r.detail,
+          ...(r.ok ? { verification: verified("instagram_message_dom", "The message appeared in the verified recipient conversation and left the composer.") } : {}),
+        };
       },
     },
     {
       tool: {
         name: "instagram_open_chat",
-        description: "Open the Instagram DM thread with a person (people-map name or IG username) without sending anything.",
+        description: "Open the Instagram DM thread with a person without sending: resolve the people-map username, verify the exact profile URL, then click its Message action. Never searches the inbox.",
         inputSchema: { type: "object", properties: { person: { type: "string" } }, required: ["person"] },
       },
       run: async (args) => {
         const r = await openThread(await deps(), s(args.person));
-        return { ok: r.ok, text: r.detail };
+        return {
+          ok: r.ok,
+          text: r.detail,
+          ...(r.ok ? { verification: verified("instagram_thread_identity", "The conversation opened through the exact verified recipient profile.") } : {}),
+        };
       },
     },
     {
       tool: {
         name: "instagram_read_chat",
-        description: "Open the DM thread with a person and return the visible tail of the conversation (for 'what did X reply?').",
+        description: "Open a person's DM through their exact saved Instagram profile and return the visible conversation tail. Never searches the inbox for the recipient.",
         inputSchema: { type: "object", properties: { person: { type: "string" } }, required: ["person"] },
       },
       run: async (args) => {
         const r = await readThread(await deps(), s(args.person));
-        return { ok: r.ok, text: r.ok ? `${r.detail}:\n${r.text ?? ""}` : r.detail };
+        return {
+          ok: r.ok,
+          text: r.ok ? `${r.detail}:\n${r.text ?? ""}` : r.detail,
+          ...(r.ok ? { verification: verified("instagram_thread_identity", "Visible messages were read from the exact verified recipient conversation.") } : {}),
+        };
       },
     },
     {
@@ -155,7 +201,7 @@ export function buildPeopleTools(o: { memoryDir: string }): ToolDef[] {
           ok: true,
           text: all.map((p) =>
             `${p.name}${p.aliases.length ? ` (${p.aliases.join(", ")})` : ""}` +
-            `${p.instagram?.username ? ` | IG @${p.instagram.username}${p.instagram.threadId ? " ✓thread" : ""}` : ""}` +
+            `${p.instagram?.username ? ` | IG @${p.instagram.username}${p.instagram.threadId ? " ✓verified-thread" : ""}` : ""}` +
             `${p.whatsapp?.phone || p.whatsapp?.username ? ` | WA ${p.whatsapp.username ?? p.whatsapp.phone}` : ""}`).join("\n"),
         };
       },

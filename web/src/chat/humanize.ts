@@ -36,6 +36,7 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "read_discussion": return "Reading a Claude consult";
     case "read_claude_updates": return "Reading Claude's update notes";
     case "chrome_navigate": return a.url ? `Opening ${domain(s(a.url))}` : "Opening a page";
+    case "chrome_open_url": return a.url ? `Opening ${domain(s(a.url))}` : "Opening a website";
     case "chrome_click": return "Clicking";
     case "chrome_type": return "Typing";
     case "chrome_press_key": return "Pressing a key";
@@ -44,12 +45,29 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "chrome_screenshot": return "Capturing the page";
     case "chrome_tabs": return "Checking tabs";
     case "computer_use": return a.task ? truncate(s(a.task), 50) : "Controlling the screen";
+    case "chrome_google_search": return a.query ? `Searching Google for ${truncate(s(a.query), 42)}` : "Searching Google";
+    case "chrome_youtube_search": return a.query ? `Searching YouTube for ${truncate(s(a.query), 42)}` : "Searching YouTube";
     case "control_app": { const app = s(a.app) || s(a.name); return app ? `Controlling ${truncate(app, 30)}` : "Controlling an app"; }
     case "find_places": return a.query ? `Finding places: ${truncate(s(a.query), 36)}` : "Finding places";
     case "take_screenshot": return "Taking a screenshot";
     case "memory_remember": return "Saving to memory";
     case "memory_forget": return "Updating memory";
     case "memory_read": return "Recalling from memory";
+    case "notes_capture": {
+      const folder = s(a.folder_path).split("/").map((part) => part.trim()).filter(Boolean).pop() || s(a.project);
+      return folder ? `Saving to ${truncate(folder, 24)} Notes` : "Saving to Notes";
+    }
+    case "notes_search": return "Searching Notes";
+    case "notes_update": return "Organising Notes";
+    case "notes_folders": {
+      const action = s(a.action);
+      if (action === "create") return "Creating a Notes folder";
+      if (action === "rename") return "Renaming a Notes folder";
+      if (action === "move") return "Moving a Notes folder";
+      if (action === "delete") return "Removing an empty Notes folder";
+      return "Checking Notes folders";
+    }
+    case "notes_promote": return a.target === "self_improvement" ? "Requesting an improvement from Notes" : "Turning a note into a task";
     case "read_logs": return "Checking her own logs";
     case "shopify_list_products": return "Listing store products";
     case "shopify_get_product": return "Reading a product";
@@ -61,6 +79,7 @@ export function humanizeTool(tool: string, args?: unknown): string {
     case "watch_list": return "Listing watches";
     case "watch_delete": return "Removing a watch";
     case "instagram_send_dm": return a.person ? `Messaging ${truncate(s(a.person), 24)} on Instagram` : "Sending an Instagram DM";
+    case "instagram_open_profile": return a.person ? `Opening ${truncate(s(a.person), 24)}'s Instagram profile` : "Opening an Instagram profile";
     case "instagram_open_chat": return a.person ? `Opening ${truncate(s(a.person), 24)}'s Instagram chat` : "Opening an Instagram chat";
     case "instagram_read_chat": return a.person ? `Reading ${truncate(s(a.person), 24)}'s Instagram chat` : "Reading an Instagram chat";
     case "instagram_status": return "Checking Instagram login";

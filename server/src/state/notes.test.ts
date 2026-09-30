@@ -1,0 +1,334 @@
+import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { openDb, openInMemoryDb, type Db } from "./db.js";
+import {
+  createNote,
+  createNoteFolder,
+  deleteNoteFolder,
+  ensureNoteFolderPath,
+  deleteNote,
+  GENERAL_NOTE_FOLDER_ID,
+  getNoteFolder,
+  getNote,
+  inferNoteTitle,
+  listNotes,
+  normalizeNoteTags,
+  normalizeNoteLinks,
+  ensureNoteProject,
+  listNoteProjects,
+  listNoteFolders,
+  promoteNote,
+  resolveNoteFolderPath,
+  updateNoteFolder,
+  updateNote,
+} from "./notes.js";
+
+let db: Db;
+const tempDirs: string[] = [];
+
+beforeEach(() => {
+  db = openInMemoryDb();
+});
+
+afterEach(() => {
+  db.close();
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+describe("structured notes store", () => {
+  it("boots and migrates a legacy Notes table before creating project indexes", () => {
+    db.close();
+    const dir = mkdtempSync(join(tmpdir(), "ava-notes-migration-"));
+    tempDirs.push(dir);
+    const path = join(dir, "state.db");
+    const legacy = new Database(path);
+    legacy.exec(`
+      CREATE TABLE notes (
+        id TEXT PRIMARY KEY, title TEXT NOT NULL, content TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'general', status TEXT NOT NULL DEFAULT 'inbox',
+        collection TEXT, tags TEXT NOT NULL DEFAULT '[]', pinned INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'manual', source_session_id TEXT,
+        version INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      );
+      INSERT INTO notes (id, title, content, kind, status, collection, tags, pinned, source, version, created_at, updated_at)
+      VALUES ('legacy-1', 'Old idea', 'Migrate me', 'idea', 'inbox', 'AVA', '[]', 0, 'manual', 1, 1000, 1000);
+      INSERT INTO notes (id, title, content, kind, status, collection, tags, pinned, source, version, created_at, updated_at)
+      VALUES ('legacy-general', 'Loose idea', 'Keep me general', 'idea', 'inbox', 'General', '[]', 0, 'manual', 1, 1000, 1000);
+      INSERT INTO notes (id, title, content, kind, status, collection, tags, pinned, source, version, created_at, updated_at)
+      VALUES ('legacy-duplicate', 'Old idea', 'Keep the duplicate too', 'idea', 'inbox', 'AVA', '[]', 0, 'manual', 4, 1001, 1002);
+    `);
+    legacy.close();
+
+    db = openDb(path);
+    const migrated = getNote(db, "legacy-1");
+    expect(migrated).toMatchObject({ status: "ideas", collection: "AVA", section: "capture", documentType: "general", documentPosition: 0 });
+    expect(migrated?.projectId).toMatch(/^project_/);
+    expect(migrated?.folderId).toBe(migrated?.projectId);
+    expect(getNote(db, "legacy-general")).toMatchObject({
+      projectId: null,
+      collection: null,
+      folderId: GENERAL_NOTE_FOLDER_ID,
+      status: "ideas",
+    });
+    expect(getNote(db, "legacy-duplicate")).toMatchObject({
+      title: "Old idea",
+      content: "Keep the duplicate too",
+      version: 4,
+      folderId: migrated?.folderId,
+      documentPosition: 1,
+    });
+    expect(listNoteFolders(db).find((folder) => folder.id === migrated?.folderId)).toMatchObject({
+      name: "AVA",
+      documentCount: 2,
+      parentId: null,
+    });
+    expect(listNoteProjects(db).map((project) => project.name)).not.toContain("General");
+    const indexes = db.prepare("PRAGMA index_list(notes)").all() as Array<{ name: string }>;
+    expect(indexes.some((entry) => entry.name === "idx_notes_project_section")).toBe(true);
+    const folderSnapshot = listNoteFolders(db).map((folder) => ({ id: folder.id, path: folder.path, version: folder.version }));
+    db.close();
+    db = openDb(path);
+    expect(listNoteFolders(db).map((folder) => ({ id: folder.id, path: folder.path, version: folder.version })))
+      .toEqual(folderSnapshot);
+    expect(getNote(db, "legacy-duplicate")).toMatchObject({ content: "Keep the duplicate too", version: 4, documentPosition: 1 });
+  });
+
+  it("creates a structured note and derives a useful title", () => {
+    const note = createNote(db, {
+      content: "# Build a daily briefing\nInclude weather and AVA health.",
+      kind: "idea",
+      collection: "AVA ideas",
+      tags: ["Automation", " automation ", "Morning"],
+      source: "ava_chat",
+      sourceSessionId: "session-1",
+    });
+
+    expect(note.title).toBe("Build a daily briefing");
+    expect(note.kind).toBe("idea");
+    expect(note.status).toBe("ideas");
+    expect(note.tags).toEqual(["Automation", "Morning"]);
+    expect(note.sourceSessionId).toBe("session-1");
+    expect(getNote(db, note.id)).toEqual(note);
+  });
+
+  it("lists pinned notes first and supports real filters", () => {
+    const reference = createNote(db, { content: "OpenAI model guide", kind: "reference" });
+    const idea = createNote(db, {
+      content: "Create a voice briefing",
+      title: "Voice briefing",
+      kind: "idea",
+      collection: "AVA ideas",
+      tags: ["voice"],
+      pinned: true,
+    });
+    const archived = createNote(db, { content: "Old thought", status: "archived" });
+
+    expect(listNotes(db).map((note) => note.id)).toEqual([idea.id, reference.id]);
+    expect(listNotes(db, { q: "voice" }).map((note) => note.id)).toEqual([idea.id]);
+    expect(listNotes(db, { kind: "reference" }).map((note) => note.id)).toEqual([reference.id]);
+    expect(listNotes(db, { collection: "ava IDEAS" }).map((note) => note.id)).toEqual([idea.id]);
+    expect(listNotes(db, { includeArchived: true }).map((note) => note.id)).toContain(archived.id);
+  });
+
+  it("uses optimistic versions so stale editors cannot overwrite newer work", () => {
+    const note = createNote(db, { content: "Original", kind: "thought" });
+    const first = updateNote(db, note.id, note.version, {
+      content: "Updated once",
+      status: "doing",
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("expected update");
+    expect(first.note.version).toBe(2);
+
+    const stale = updateNote(db, note.id, note.version, { content: "Stale overwrite" });
+    expect(stale).toMatchObject({ ok: false, reason: "version_conflict" });
+    expect(getNote(db, note.id)?.content).toBe("Updated once");
+  });
+
+  it("guards deletion with the same version boundary", () => {
+    const note = createNote(db, { content: "Delete me" });
+    const updated = updateNote(db, note.id, note.version, { pinned: true });
+    if (!updated.ok) throw new Error("expected update");
+    expect(deleteNote(db, note.id, note.version)).toMatchObject({
+      ok: false,
+      reason: "version_conflict",
+    });
+    expect(deleteNote(db, note.id, updated.note.version).ok).toBe(true);
+    expect(getNote(db, note.id)).toBeNull();
+  });
+
+  it("normalizes titles and tags within bounded fields", () => {
+    expect(inferNoteTitle("- A short list item\nmore")).toBe("A short list item");
+    expect(inferNoteTitle(" ")).toBe("Untitled note");
+    expect(normalizeNoteTags(["#One", "one", "Two", ""])).toEqual(["One", "Two"]);
+    expect(normalizeNoteLinks([
+      { label: "Docs", url: "https://example.com/guide" },
+      { label: "unsafe", url: "javascript:alert(1)" },
+      { label: "duplicate", url: "https://example.com/guide" },
+    ])).toEqual([{ label: "Docs", url: "https://example.com/guide" }]);
+  });
+
+  it("scrubs secrets at the Notes persistence boundary and drops credential-bearing links", () => {
+    const secret = `sk-${"A".repeat(32)}`;
+    const note = createNote(db, {
+      title: `Deployment ${secret}`,
+      content: `Use token: ${secret} only in the secret manager.`,
+      tags: [`key-${secret}`],
+      links: [{ label: "private", url: `https://example.com/?token=${secret}` }],
+    });
+
+    expect(note.title).not.toContain(secret);
+    expect(note.content).not.toContain(secret);
+    expect(note.tags.join(" ")).not.toContain(secret);
+    expect(note.links).toEqual([]);
+    expect(JSON.stringify(getNote(db, note.id))).not.toContain(secret);
+  });
+
+  it("creates first-class project spaces and applies the project template", () => {
+    const { project, created } = ensureNoteProject(db, "AVA Explorer", "Capability visibility work");
+    expect(created).toBe(true);
+    expect(ensureNoteProject(db, "ava explorer").project.id).toBe(project.id);
+
+    const priority = createNote(db, {
+      content: "Make failures visible",
+      kind: "requirement",
+      projectId: project.id,
+      section: "priorities",
+      pinned: true,
+    });
+    const decision = createNote(db, {
+      content: "Use structured events because prose cannot power reliable replay.",
+      kind: "decision",
+      projectId: project.id,
+    });
+
+    expect(priority).toMatchObject({ projectId: project.id, section: "priorities", pinned: true });
+    expect(decision).toMatchObject({ projectId: project.id, section: "decisions" });
+    expect(listNoteProjects(db)[0]).toMatchObject({ id: project.id, noteCount: 2 });
+    expect(listNotes(db, { projectId: project.id })).toHaveLength(2);
+    expect(listNotes(db, { projectId: null })).toHaveLength(0);
+  });
+
+  it("keeps General reserved as the built-in unscoped note space", () => {
+    expect(() => ensureNoteProject(db, "General")).toThrow(/built-in note space/i);
+    const note = createNote(db, { content: "Loose thought", collection: "general" });
+    expect(note).toMatchObject({ projectId: null, collection: null });
+    expect(listNoteProjects(db)).toEqual([]);
+  });
+
+  it("creates a nested folder tree and keeps study documents on one canonical Markdown body", () => {
+    const university = createNoteFolder(db, { name: "University" });
+    const agile = createNoteFolder(db, { parentId: university.id, name: "Agile Development" });
+    const lectures = createNoteFolder(db, { parentId: agile.id, name: "Lectures" });
+    const note = createNote(db, {
+      folderId: lectures.id,
+      documentType: "study",
+      title: "Lecture 1 — Scrum",
+      content: "## Key concepts\n\nScrum roles\n\n## Questions and weak areas\n\nVelocity",
+    });
+
+    expect(note).toMatchObject({
+      folderId: lectures.id,
+      documentType: "study",
+      projectId: university.id,
+      collection: "University",
+    });
+    expect(note.folderPath.map((part) => part.name)).toEqual(["University", "Agile Development", "Lectures"]);
+    expect(resolveNoteFolderPath(db, "university/AGILE development/lectures")?.id).toBe(lectures.id);
+    expect(listNotes(db, { folderId: university.id, subtree: true }).map((entry) => entry.id)).toEqual([note.id]);
+    expect(getNoteFolder(db, lectures.id)).toMatchObject({ path: "University/Agile Development/Lectures", documentCount: 1 });
+  });
+
+  it("keeps explicit page order stable across edits and appends documents moved between folders", () => {
+    const source = createNoteFolder(db, { name: "Source" });
+    const destination = createNoteFolder(db, { name: "Destination" });
+    const first = createNote(db, { folderId: source.id, title: "First", content: "One" });
+    const second = createNote(db, { folderId: source.id, title: "Second", content: "Two" });
+    const existing = createNote(db, { folderId: destination.id, title: "Existing", content: "Destination page" });
+
+    expect([first.documentPosition, second.documentPosition, existing.documentPosition]).toEqual([0, 1, 0]);
+    const edited = updateNote(db, first.id, first.version, { content: "One, revised" });
+    expect(edited).toMatchObject({ ok: true, note: { documentPosition: 0 } });
+
+    const reordered = updateNote(db, second.id, second.version, { documentPosition: 7 });
+    expect(reordered).toMatchObject({ ok: true, note: { documentPosition: 7, version: 2 } });
+    expect(updateNote(db, second.id, second.version, { documentPosition: 9 })).toMatchObject({
+      ok: false,
+      reason: "version_conflict",
+      note: { documentPosition: 7 },
+    });
+
+    if (!edited.ok) throw new Error("expected edit");
+    const moved = updateNote(db, first.id, edited.note.version, { folderId: destination.id });
+    expect(moved).toMatchObject({ ok: true, note: { folderId: destination.id, documentPosition: 1 } });
+    expect(() => createNote(db, { folderId: source.id, title: "Invalid", content: "No", documentPosition: -1 }))
+      .toThrow(/document position/i);
+  });
+
+  it("enforces sibling names, document names, cycles, depth and versioned empty-folder deletion", () => {
+    const university = createNoteFolder(db, { name: "University" });
+    expect(() => createNoteFolder(db, { name: "university" })).toThrow(/already exists/i);
+    const agile = createNoteFolder(db, { parentId: university.id, name: "Agile" });
+    expect(() => createNoteFolder(db, { parentId: university.id, name: "AGILE" })).toThrow(/already exists/i);
+
+    createNote(db, { folderId: agile.id, title: "Lecture 1", content: "First" });
+    expect(() => createNote(db, { folderId: agile.id, title: "lecture 1", content: "Duplicate" })).toThrow(/document with this title/i);
+    expect(() => updateNoteFolder(db, university.id, university.version, { parentId: agile.id })).toThrow(/inside itself/i);
+    expect(() => deleteNoteFolder(db, agile.id, agile.version)).toThrow(/contents first/i);
+
+    const stale = updateNoteFolder(db, agile.id, agile.version, { description: "Course" });
+    expect(stale.ok).toBe(true);
+    const staleAgain = updateNoteFolder(db, agile.id, agile.version, { description: "Lost" });
+    expect(staleAgain).toMatchObject({ ok: false, reason: "version_conflict", folder: { version: 2 } });
+
+    const chain = ensureNoteFolderPath(db, "A/B/C/D/E/F");
+    expect(chain.breadcrumb).toHaveLength(6);
+    expect(() => createNoteFolder(db, { parentId: chain.id, name: "G" })).toThrow(/limited to 6/i);
+
+    const empty = createNoteFolder(db, { name: "Temporary" });
+    expect(deleteNoteFolder(db, empty.id, empty.version)).toMatchObject({ ok: true });
+    expect(getNoteFolder(db, empty.id)).toBeNull();
+    const general = getNoteFolder(db, GENERAL_NOTE_FOLDER_ID)!;
+    expect(() => deleteNoteFolder(db, general.id, general.version)).toThrow(/cannot be deleted/i);
+  });
+
+  it("keeps legacy project compatibility truthful when a nested subtree moves", () => {
+    const university = createNoteFolder(db, { name: "University" });
+    const course = createNoteFolder(db, { parentId: university.id, name: "Systems" });
+    const archive = createNoteFolder(db, { name: "Archive" });
+    const note = createNote(db, { folderId: course.id, title: "Queues", content: "Back pressure" });
+    expect(note).toMatchObject({ projectId: university.id, collection: "University" });
+
+    const moved = updateNoteFolder(db, course.id, course.version, { parentId: archive.id });
+    expect(moved.ok).toBe(true);
+    expect(getNote(db, note.id)).toMatchObject({
+      folderId: course.id,
+      projectId: archive.id,
+      collection: "Archive",
+      folderPath: [{ id: archive.id, name: "Archive" }, { id: course.id, name: "Systems" }],
+    });
+  });
+
+  it("records moves, rich-link edits and promotion lineage", () => {
+    const note = createNote(db, {
+      content: "Turn the daily briefing idea into a real workflow",
+      kind: "idea",
+      links: [{ label: "Weather API", url: "https://weather.example/docs" }],
+    });
+    const moved = updateNote(db, note.id, note.version, {
+      status: "review",
+      links: [...note.links, { label: "Design", url: "https://example.com/design" }],
+    });
+    if (!moved.ok) throw new Error("expected move");
+    expect(moved.note.status).toBe("review");
+    expect(moved.note.changeLog.at(-1)?.action).toBe("moved");
+
+    const promoted = promoteNote(db, note.id, moved.note.version, "task", "task_draft_1");
+    if (!promoted.ok) throw new Error("expected promotion");
+    expect(promoted.note.promotion).toMatchObject({ type: "task", id: "task_draft_1" });
+    expect(promoted.note.changeLog.at(-1)?.action).toBe("promoted");
+  });
+});

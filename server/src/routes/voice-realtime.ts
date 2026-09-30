@@ -1,9 +1,21 @@
 import { WebSocketServer, WebSocket, type RawData } from "ws";
+import { nanoid } from "nanoid";
 import type { Db } from "../state/db.js";
 import { buildSystemPrompt } from "../orchestrator/system-prompt.js";
 import { validateToken } from "../auth/tokens.js";
-import { createSession, touchSession, listSessions } from "../state/sessions.js";
-import { appendMessage, listMessages } from "../state/messages.js";
+import { getSessionFull, markHumanActivity, touchSession } from "../state/sessions.js";
+import { resolveConversation, SessionBindingError, type SessionBinding } from "../state/session-binding.js";
+import {
+  appendMessage,
+  listMessages,
+  listMessagesAfterId,
+  sanitizeMessageSavedItems,
+  type Message,
+  type MessageMemoryContext,
+  type MessageMetadata,
+  type MessageRoomPosts,
+  type MessageSavedItems,
+} from "../state/messages.js";
 import { readDevLog, type DevLogEntry } from "../self/dev-log.js";
 import { dirname } from "node:path";
 import {
@@ -13,10 +25,28 @@ import {
   type TranscriptGateReason,
 } from "../voice/transcript-gate.js";
 import { getReasoningLevel, type ReasoningLevel } from "../state/reasoning-pref.js";
-import { getVoiceEngine } from "../state/voice-engine-pref.js";
+import { getVoiceEngine, isVoiceEngine } from "../state/voice-engine-pref.js";
+import { LIVE_VOICE_GUIDANCE, mergeRoomPosts, startLiveSession } from "./voice-live.js";
 import { formatSpeechText } from "../voice/speechText.js";
-import { DEFAULT_SPEECH_RATE } from "../voice/voiceConfig.js";
+import { DEFAULT_REALTIME_SPEECH_RATE } from "../voice/voiceConfig.js";
 import { DEFAULT_VOICE } from "./voice-defaults.js";
+import { VOICE_DELIVERY_GUIDANCE } from "../persona/runtime.js";
+import { VoiceActionCoordinator } from "../voice/action-coordinator.js";
+import { VoiceTurnAccumulator } from "../voice/turn-policy.js";
+import type { ObservabilityService } from "../observability/store.js";
+import type { ObservabilityParentContext, ObservabilityRunStatus } from "../observability/types.js";
+import { TERMINAL_RUN_STATUSES } from "../observability/types.js";
+import type { AutoMemoryCapture } from "../memory-index/auto-capture.js";
+import type { MemoryArchive } from "../memory-archive/archive.js";
+import type { FastLookup } from "../lookups/fast-lookup.js";
+import type { MemoryIndexService } from "../memory-index/store.js";
+import {
+  memoryContextFromDecision,
+  recordAutomaticMemoryDecision,
+  retrieveAutomaticMemory,
+} from "../memory-index/auto-retrieve.js";
+import { detectProject, loadProjectIndex } from "../memory/project-index.js";
+import { voiceMemoryBudget, withinBudget } from "./voice-memory-budget.js";
 import {
   resolveVoiceProvider,
   describeVoiceProvider,
@@ -27,22 +57,20 @@ import {
   type HumeProviderConfig,
 } from "./voice-provider-config.js";
 
-// ─── OpenAI Realtime API: TRANSCRIBE-ONLY proxy ──────────────────────────────
+// ─── OpenAI Realtime API speech-to-speech proxy ─────────────────────────────
 //
-// This proxy used to run the realtime model speech-to-speech: it generated the
-// audio reply itself, with no tools. That made voice (a) hallucinate replies to
-// silence and (b) far less capable than text chat, which routes through the
-// full tool-using agent.
+// The realtime model owns one continuous spoken voice and fast conversation.
+// It gets one bridge tool, `do_on_computer`; tool requests run through AVA's
+// normal /api/chat action agent, then the result is returned to the SAME
+// realtime response so task completion never switches to a separate TTS voice.
 //
-// It is now a transcription service only:
-//   - `create_response: false` — the realtime model NEVER speaks. We use it
-//     purely for low-latency server-VAD endpointing + speech-to-text.
-//   - Every finished transcript is run through `gateTranscript` so silence /
-//     noise hallucinations ("you", "Thank you.") are dropped server-side and
-//     never reach the client.
-//   - Accepted transcripts are forwarded to the browser, which submits them to
-//     the SAME `POST /api/chat` agent path that typed messages use (full tool
-//     stack, approvals, playbooks) and speaks the reply via TTS.
+// Safety and turn-taking:
+//   - `create_response: false` lets this proxy gate completed transcripts before
+//     explicitly requesting a response; silence/noise cannot make AVA speak.
+//   - Semantic VAD waits for a complete thought instead of splitting commands at
+//     short pauses.
+//   - Accepted owner speech cancels current output; raw VAD onset alone does not.
+//     The browser then truncates the unheard tail at its playback position.
 //
 // Event types we care about (server → client):
 //     - session.created / session.updated
@@ -51,14 +79,20 @@ import {
 //     - error
 
 // gpt-4o-realtime-preview returned server_error on this account — likely a
-// gate on the older preview SKU. The GA gpt-realtime model is enabled where
-// gpt-5.x is, which is what we have. Override via REALTIME_MODEL env var.
-const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime";
+// gate on the older preview SKU. Use OpenAI's current full realtime voice model
+// by default, with REALTIME_MODEL available for intentional overrides.
+const REALTIME_MODEL = process.env.REALTIME_MODEL || "gpt-realtime-2.1";
 const REALTIME_URL = `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(REALTIME_MODEL)}`;
 
 export interface RealtimeVadConfig {
   /** Transcription model. gpt-4o-transcribe hallucinates far less than whisper-1. */
   transcribeModel: string;
+  /** ISO-639-1 language hint. Null keeps automatic language detection. */
+  transcribeLanguage: string | null;
+  /** Semantic VAD waits for a complete thought instead of every short pause. */
+  mode?: "semantic_vad" | "server_vad";
+  /** How quickly semantic VAD decides the owner has finished speaking. */
+  semanticEagerness?: "low" | "medium" | "high" | "auto";
   /** server_vad energy threshold 0..1 — higher ignores more background noise. */
   threshold: number;
   /** Audio kept before speech onset, ms. */
@@ -69,6 +103,9 @@ export interface RealtimeVadConfig {
 
 export const DEFAULT_REALTIME_VAD: RealtimeVadConfig = {
   transcribeModel: "gpt-4o-transcribe",
+  transcribeLanguage: "en",
+  mode: "semantic_vad",
+  semanticEagerness: "low",
   threshold: 0.6,
   prefixPaddingMs: 300,
   silenceMs: 600,
@@ -84,8 +121,21 @@ export function loadRealtimeVadConfig(
     const n = Number(raw);
     return Number.isFinite(n) ? n : fallback;
   };
+  const rawMode = env.REALTIME_VAD_MODE?.trim().toLowerCase();
+  const mode = rawMode === "server_vad" ? "server_vad" : "semantic_vad";
+  const rawEagerness = env.REALTIME_VAD_EAGERNESS?.trim().toLowerCase();
+  const semanticEagerness =
+    rawEagerness === "medium" || rawEagerness === "high" || rawEagerness === "auto"
+      ? rawEagerness
+      : "low";
   return {
     transcribeModel: env.REALTIME_TRANSCRIBE_MODEL || DEFAULT_REALTIME_VAD.transcribeModel,
+    transcribeLanguage:
+      env.REALTIME_TRANSCRIBE_LANGUAGE?.trim().toLowerCase() === "auto"
+        ? null
+        : env.REALTIME_TRANSCRIBE_LANGUAGE?.trim() || DEFAULT_REALTIME_VAD.transcribeLanguage,
+    mode,
+    semanticEagerness,
     threshold: num("REALTIME_VAD_THRESHOLD", DEFAULT_REALTIME_VAD.threshold),
     prefixPaddingMs: num("REALTIME_VAD_PREFIX_PADDING_MS", DEFAULT_REALTIME_VAD.prefixPaddingMs),
     silenceMs: num("REALTIME_VAD_SILENCE_MS", DEFAULT_REALTIME_VAD.silenceMs),
@@ -99,17 +149,27 @@ export function loadRealtimeVadConfig(
  * she never talks over you). Other VAD fields (threshold/prefix) are unchanged.
  */
 export function vadForReasoning(base: RealtimeVadConfig, level: ReasoningLevel): RealtimeVadConfig {
-  // "fast" was 300ms, which ended a turn on a natural mid-sentence pause — Ava
-  // barged into the OWNER. 500ms rides through those short pauses while still
-  // feeling snappy; real responsiveness now comes from voice barge-in (the owner
-  // can talk over her) rather than an ultra-short endpoint. Both stay env-tunable.
-  return { ...base, silenceMs: level === "fast" ? 500 : 700 };
+  // This fixes the measured failure where "I want you to go" became a task
+  // before "into WhatsApp" arrived. Fast uses semantic VAD's balanced timeout;
+  // Thorough lets the owner pause longer. The server-VAD fallback is also much
+  // more patient than the old 500/700ms values.
+  return {
+    ...base,
+    // Endpointing controls whether AVA acts on half a sentence; it must not
+    // become aggressive just because the text-reasoning preference is "fast".
+    // The latest real trace showed `auto` splitting "You are", "What", and
+    // "The first step" into separate action turns. Keep semantic VAD patient in
+    // both modes and tune only the server-VAD fallback timeout.
+    semanticEagerness: "low",
+    silenceMs: level === "fast" ? 900 : 1200,
+  };
 }
 
 /**
- * Build the realtime session's `turn_detection` block. In VAD mode this is the
- * tuned `server_vad` config (auto endpointing, never auto-replies). In Enter
- * push-to-talk mode it is `null`: automatic VAD/turn-detection is DISABLED, so
+ * Build the realtime session's `turn_detection` block. Hands-free mode defaults
+ * to semantic VAD (patient endpointing, never auto-replies), with server VAD
+ * retained as an explicit fallback. In Enter push-to-talk mode it is `null`:
+ * automatic VAD/turn-detection is DISABLED, so
  * the server never decides a turn started or ended from the audio. The client
  * owns turn boundaries — it forwards mic audio only while a turn is held and
  * sends an explicit `input_audio_buffer.commit` to finish it. This is what keeps
@@ -117,6 +177,17 @@ export function vadForReasoning(base: RealtimeVadConfig, level: ReasoningLevel):
  */
 export function turnDetectionFor(vad: RealtimeVadConfig, pushToTalk: boolean) {
   if (pushToTalk) return null;
+  if ((vad.mode ?? "semantic_vad") === "semantic_vad") {
+    return {
+      type: "semantic_vad" as const,
+      eagerness: vad.semanticEagerness ?? "low",
+      create_response: false,
+      // A raw energy onset may be room noise or AVA's own speaker echo. Do not
+      // destroy the current reply until the completed transcript passes our
+      // confidence + structural gates; the proxy then cancels explicitly.
+      interrupt_response: false,
+    };
+  }
   return {
     type: "server_vad" as const,
     threshold: vad.threshold,
@@ -130,7 +201,7 @@ export function turnDetectionFor(vad: RealtimeVadConfig, pushToTalk: boolean) {
 }
 
 /**
- * GA `gpt-realtime` session.update payload, configured for TRANSCRIBE-ONLY use.
+ * GA realtime session.update payload, configured for TRANSCRIBE-ONLY use.
  *
  * Key points:
  *   - `output_modalities: ["text"]` and `turn_detection.create_response: false`
@@ -155,9 +226,12 @@ export function buildRealtimeSessionUpdate(
       audio: {
         input: {
           format: { type: "audio/pcm", rate: 24000 },
-          // server_vad in VAD mode; null (no auto endpointing) in push-to-talk.
+          // Semantic/server VAD in hands-free mode; null in push-to-talk.
           turn_detection: turnDetectionFor(vad, !!opts.pushToTalk),
-          transcription: { model: vad.transcribeModel },
+          transcription: {
+            model: vad.transcribeModel,
+            ...(vad.transcribeLanguage ? { language: vad.transcribeLanguage } : {}),
+          },
         },
       },
     },
@@ -180,42 +254,56 @@ export function buildRealtimeSessionUpdate(
  * smoothly as part of the phrase rather than as a dramatic, comma-walled aside.
  */
 export const VOICE_PERSONA_INSTRUCTIONS =
-  "\n\n[VOICE] You're speaking aloud in a live conversation. Be warm, curious, and natural — " +
-  "like a sharp friend, not a formal assistant. Keep replies short and conversational, and keep " +
+  "\n\n[VOICE] You're speaking aloud in a live conversation. " + VOICE_DELIVERY_GUIDANCE + " " +
+  "Keep replies short and conversational, and keep " +
   "your pacing quick: start talking right away, don't leave long pauses before or after you speak. " +
-  "Say \"Sir\" naturally, woven smoothly into the phrase without a comma pause or dramatic emphasis " +
-  "around it (\"Yes Sir\", not \"Yes, Sir,\"). When the owner asks you to DO something on the " +
-  "computer (open/find files, run commands, browse, control apps, remember something), CALL " +
-  "do_on_computer with a clear task and do NOT speak the steps or the result yourself — the system " +
-  "narrates each step and speaks the result aloud. After the tool returns, stay silent unless Sir " +
-  "asks a follow-up. If Sir asks how it went WHILE the task is still running, say you're still " +
+  "When Sir asks you to DO something — save a note or an idea, set a reminder, remember or look up " +
+  "something, check his notes or schedule, or act on his PC, apps, accounts or the web — CALL " +
+  "do_on_computer with a clear, complete task. Never invent a destination or action from an unfinished " +
+  "utterance; if the request still trails off or lacks its target, wait for the rest or ask one short " +
+  "question. Pass the owner's request faithfully: do not expand it with fallback strategies, tool " +
+  "choices, UI automation, permissions, or invented next steps. For Chrome, websites, Instagram, " +
+  "WhatsApp, and other logged-in accounts, the task must say to use AVA's persistent logged-in Chrome " +
+  "and never launch a browser through shell. Do not narrate internal tool steps. After the tool returns, speak one concise natural " +
+  "result in this same voice. If Sir asks how it went WHILE the task is still running, say you're still " +
   "working on it — never say it's \"done\" and never invent results before the system has actually " +
-  "spoken them. You are AVA — a specific AI agent living on Sir's Windows PC, not a generic chatbot: " +
-  "NEVER describe yourself in terms of an LLM 'training cutoff' or 'my training data'. When Sir asks " +
-  "about your latest update, recent changes, self-improvement, or what Claude has been building, CALL " +
-  "do_on_computer with the task 'read and summarize my recent Claude update log' — the system has your " +
-  "exact changelog; never recite from memory or guess (a short summary is in this prompt for context, " +
-  "but the tool has the authoritative, current list). For everything else (chit-chat, questions), just " +
-  "reply directly in your own voice.";
+  "spoken them. You are AVA, Sir's personal assistant: his thinking partner, and the one who keeps his " +
+  "university work, projects, ideas, notes and reminders on track. Acting on his PC is one of your " +
+  "tools, not who you are; never describe yourself as a computer manager or an AI living on his PC, " +
+  "and NEVER describe yourself in terms of an LLM 'training cutoff' or 'my training data'. When Sir asks " +
+  "what's new with you or what changed recently, answer straight from 'Your recent updates' below, in " +
+  "the first person, as things you can now do or do better. Don't mention logs, tools or files; only " +
+  "call do_on_computer for the full update history if he asks for more than that list holds. For " +
+  "everything else (conversation, questions, thinking things through), just reply directly in your own voice.";
 
 export const DO_ON_COMPUTER_TOOL = {
   type: "function" as const,
   name: "do_on_computer",
   description:
-    "Perform an action on the owner's computer (open/find files, run commands, browse the web, " +
-    "control apps, remember things, etc.). Use this whenever the owner asks you to DO something " +
-    "rather than just chat. Pass a clear, complete task description in `task`. Do not attempt the " +
-    "action yourself in conversation — always call this tool for actions.",
+    "Hand a task to your full agent: save a note or idea, set a reminder, remember or recall " +
+    "something, check Sir's notes or schedule, or act on his PC, apps, accounts and the web. Use " +
+    "this whenever Sir asks you to DO something rather than just talk. Call only after the request is complete; never guess missing words, a " +
+    "destination, person, site, or action from a trailing fragment. Pass the owner's request faithfully " +
+    "without adding fallback strategies or tool instructions. Browser/account requests always use " +
+    "AVA's persistent logged-in Chrome, never a shell-launched browser. Do not attempt the action " +
+    "yourself in conversation.",
   parameters: {
     type: "object",
-    properties: { task: { type: "string", description: "What to do, in plain language." } },
+    properties: {
+      task: {
+        type: "string",
+        description:
+          "The owner's complete request in plain language, without invented fallbacks. For browser " +
+          "or account work, specify AVA's persistent logged-in Chrome and never shell.",
+      },
+    },
     required: ["task"],
   },
 };
 
 /**
  * Hybrid session.update: the realtime model speaks (audio out) AND can call
- * `do_on_computer`. VAD is tuned the same as transcribe-only so it won't answer
+ * `do_on_computer`. VAD uses the same transcript gate so it won't answer
  * silence. Transcription stays on so we still get captions + can persist turns.
  */
 export function buildHybridSessionUpdate(
@@ -235,16 +323,20 @@ export function buildHybridSessionUpdate(
       audio: {
         input: {
           format: { type: "audio/pcm", rate: 24000 },
-          // server_vad (proxy sends response.create only after the gate passes)
-          // in VAD mode; null (client-driven commit) in push-to-talk.
+          // Semantic/server VAD (proxy sends response.create only after the gate
+          // passes) in hands-free mode; null in push-to-talk.
           turn_detection: turnDetectionFor(vad, !!opts.pushToTalk),
-          transcription: { model: vad.transcribeModel },
+          transcription: {
+            model: vad.transcribeModel,
+            ...(vad.transcribeLanguage ? { language: vad.transcribeLanguage } : {}),
+          },
         },
         output: {
           format: { type: "audio/pcm", rate: 24000 },
           voice,
-          // Faster spoken delivery per Sir's preference (centralized default).
-          speed: DEFAULT_SPEECH_RATE,
+          // Natural model cadence. Forced 1.15× respeeding was audibly harsher
+          // and unlike OpenAI's native realtime voice.
+          speed: DEFAULT_REALTIME_SPEECH_RATE,
         },
       },
     },
@@ -357,11 +449,14 @@ export function buildHumeHistoryBlock(
 export function buildVoiceUpdatesBlock(entries: DevLogEntry[]): string {
   const shipped = entries.filter((e) => e.phase === "shipped" || e.phase === "note");
   if (shipped.length === 0) return "";
-  const lines = shipped.slice(-6).map((e) => `- ${e.title}`).join("\n");
+  const lines = shipped.slice(-6).map((e) => {
+    const detail = (e.detail ?? "").replace(/^By \w+\.\s*/, "").replace(/\s+/g, " ").trim();
+    return `- ${e.title}${detail ? `: ${detail.length > 220 ? `${detail.slice(0, 217)}...` : detail}` : ""}`;
+  }).join("\n");
   return (
-    "\n\n# Your ACTUAL recent updates (real changes Claude — Sir's coding agent — " +
-    "shipped to your code; THIS is your changelog, not your training data). When " +
-    "Sir asks about your latest update or self-improvement, answer from THIS list:\n" +
+    "\n\n# Your recent updates (ACTUAL recent changes to you, newest last; THIS is " +
+    "your changelog, not your training data). When Sir asks what's new, answer from this " +
+    "list in the first person:\n" +
     lines
   );
 }
@@ -553,19 +648,29 @@ export function translateClientFrameToHume(raw: string): string | null {
 // We tell it on connect via the session hello frame's `mode`.
 
 /** The first frame the client receives: its session id and the proxy's mode. */
-export function sessionHelloFrame(sessionId: string | null, hybrid: boolean): string {
-  return JSON.stringify({ type: "ava.session", sessionId, mode: hybrid ? "hybrid" : "transcribe" });
+export function sessionHelloFrame(sessionId: string | null, hybrid: boolean, binding?: SessionBinding): string {
+  return JSON.stringify({ type: "ava.session", sessionId, mode: hybrid ? "hybrid" : "transcribe", ...(binding ? { binding } : {}) });
 }
 
-/** When hybrid voice connects WITHOUT a session id (e.g. entering voice from the
- *  home orb), decide whether to resume an existing conversation or start fresh.
- *  Default is to RESUME the most-recent session so voice↔chat share one continuous
- *  memory ("ask in voice → finish in chat → ask in voice again, it remembers").
- *  `wantNew` (the client's "+new conversation" control → `?new=1`) forces a fresh
- *  session. Pure so the resume/new choice is unit-testable without a socket;
- *  `resumeId === null` means the caller should create a new session. */
-export function chooseResumeOrNew(wantNew: boolean, mostRecentId: string | null): { resumeId: string | null } {
-  return { resumeId: wantNew ? null : mostRecentId };
+/** Normalize legacy voice URLs without silently replacing an exact target. */
+function readVoiceSessionRequest(params: URLSearchParams): {
+  intent: "new" | "resume" | "continue";
+  sessionId: string | null;
+  bindingRequestId?: string;
+} {
+  const badRequest = () => new SessionBindingError(400, "bad_request", "Invalid conversation binding request.");
+  for (const name of ["sessionId", "new", "intent", "bindingRequestId"]) {
+    if (params.getAll(name).length > 1) throw badRequest();
+  }
+  const sessionId = params.get("sessionId")?.trim() || null;
+  const wantNew = params.get("new") === "1";
+  const intent = params.get("intent") ?? (wantNew ? "new" : sessionId ? "resume" : "continue");
+  if (intent !== "new" && intent !== "resume" && intent !== "continue") throw badRequest();
+  if (wantNew && (intent !== "new" || sessionId !== null)) throw badRequest();
+  if (intent === "resume" ? !sessionId : sessionId !== null) throw badRequest();
+  const bindingRequestId = params.get("bindingRequestId");
+  if (bindingRequestId !== null && !bindingRequestId.trim()) throw badRequest();
+  return { intent, sessionId, ...(bindingRequestId !== null ? { bindingRequestId } : {}) };
 }
 
 /** Content-part type for seeding a stored turn into the realtime model via
@@ -576,25 +681,65 @@ export function seedContentType(role: string): "input_text" | "output_text" {
   return role === "assistant" ? "output_text" : "input_text";
 }
 
+/** OpenAI conversation items for persisted chat/voice turns. Kept pure so the
+ * shared-context contract is testable without a live Realtime connection. */
+export function openAiHistoryFrames(
+  messages: Array<Pick<Message, "role" | "content">>,
+): string[] {
+  return messages
+    .filter((message) => message.role === "user" || message.role === "assistant")
+    .map((message) => JSON.stringify({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: message.role,
+        content: [{ type: seedContentType(message.role), text: message.content }],
+      },
+    }));
+}
+
+/** A verified memory excerpt is a system reference item, never a user command. */
+export function openAiMemoryContextFrame(prompt: string): string | null {
+  const text = prompt.trim();
+  if (!text) return null;
+  return JSON.stringify({
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "system",
+      content: [{ type: "input_text", text }],
+    },
+  });
+}
+
+/** The typed agent already receives this durable summary before its unsummarised
+ * rows. Voice receives the same earlier-conversation anchor, while recent rows
+ * remain normal conversation items. */
+export function buildVoiceConversationSummary(summary: string | null | undefined): string {
+  const text = summary?.trim();
+  if (!text) return "";
+  return `\n\n[CONVERSATION SUMMARY OF EARLIER MESSAGES]\n${text.slice(0, 4_000)}\n`;
+}
+
 /** Sent (hybrid) when do_on_computer starts so the UI shows progress, not dead air. */
 export function actionStartedFrame(task: string): string {
   return JSON.stringify({ type: "ava.action", task });
 }
 
-/** Sent (hybrid) per agent tool call so the client can narrate each step via TTS. */
+/** Sent per agent tool call for visual progress only; it is never spoken via TTS. */
 export function stepFrame(tool: string, args: unknown): string {
   return JSON.stringify({ type: "ava.step", tool, args });
 }
 
-/** Sent (hybrid) with the task's final result; the client speaks it via TTS. */
+/** Display/control copy of the result; the realtime model speaks the same result. */
 export function actionResultFrame(text: string): string {
   return JSON.stringify({ type: "ava.result", text });
 }
 
 /**
- * Sent when the owner talks OVER Ava (voice barge-in): the proxy has cancelled
- * her in-flight response upstream, and this tells the client to stop playing her
- * audio locally and open the new turn instead of letting her tail keep speaking.
+ * Sent after an accepted owner transcript talks OVER Ava (voice barge-in): the
+ * proxy has cancelled her in-flight response upstream, and this tells the client
+ * to stop local playback. Raw VAD onset is deliberately insufficient.
  */
 export function bargeInFrame(): string {
   return JSON.stringify({ type: "ava.barge_in" });
@@ -611,13 +756,46 @@ export function recoverFrame(reason: string): string {
 }
 
 /**
- * Satisfy the model's do_on_computer call WITHOUT a response.create, so the
- * realtime model stays silent — the client narrates the steps and speaks the
- * result instead (one voice per task). Contrast toolResultFrames, which also
- * asks the model to speak.
+ * Sent in hands-free mode when a finished transcript is dropped at the gate
+ * (echo, noise, a cough). The client pauses AVA's audio the instant speech
+ * starts; this tells it the interruption was a false alarm so it can resume
+ * exactly where it paused instead of waiting out its fallback timer.
  */
-export function silentToolResultFrame(callId: string, output: string): string {
-  return JSON.stringify({ type: "conversation.item.create", item: { type: "function_call_output", call_id: callId, output } });
+/** Combine what several delegated actions saved before the reply that reports them. */
+export { mergeRoomPosts, mergeSavedItems } from "./voice-live.js";
+import { mergeSavedItems } from "./voice-live.js";
+
+/** GPT-Live could not start; the browser retries this visit on the standard engine. */
+export function liveUnavailableFrame(): string {
+  return JSON.stringify({
+    type: "ava.session_error",
+    code: "live_unavailable",
+    message: "GPT-Live could not start, so AVA is using the standard voice for now.",
+    retryable: true,
+  });
+}
+
+/** Today's date and zone, so GPT-Live can talk about "today" and "tomorrow" correctly. */
+export function liveClockLine(now = new Date(), timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"): string {
+  const when = new Intl.DateTimeFormat("en-GB", { timeZone, dateStyle: "full", timeStyle: "short" }).format(now);
+  return `\n\nIt is ${when} in Sir's time zone (${timeZone}).`;
+}
+
+export function speechDismissedFrame(reason: string): string {
+  return JSON.stringify({ type: "ava.speech_dismissed", reason });
+}
+
+/** A structurally incomplete automatic-VAD turn is visible, but not actionable. */
+export function transcriptPendingFrame(text: string): string {
+  return JSON.stringify({ type: "ava.transcript_pending", text });
+}
+
+/** Emit a gated/possibly-coalesced user caption with a stable protocol shape. */
+export function acceptedTranscriptFrame(text: string): string {
+  return JSON.stringify({
+    type: "conversation.item.input_audio_transcription.completed",
+    transcript: text,
+  });
 }
 
 /**
@@ -714,6 +892,11 @@ export function forwardFrame(target: Pick<WebSocket, "send">, data: RawData, isB
   target.send(data, { binary: isBinary });
 }
 
+/** A response.cancel is valid only after OpenAI has confirmed response.created. */
+export function shouldForwardResponseCancel(responseActive: boolean): boolean {
+  return responseActive;
+}
+
 export interface RealtimeProxyDeps {
   db: Db;
   apiKey: string | null;
@@ -728,7 +911,25 @@ export interface RealtimeProxyDeps {
    * runs this — the full /api/chat agent — and the result is spoken back. When
    * absent, the proxy stays transcribe-only (model never speaks).
    */
-  runAction?: (sessionId: string | null, task: string, onStep?: (tool: string, args: unknown) => void, signal?: AbortSignal) => Promise<{ text: string; sessionId: string | null }>;
+  runAction?: (
+    sessionId: string | null,
+    task: string,
+    onStep?: (tool: string, args: unknown) => void,
+    signal?: AbortSignal,
+    observability?: ObservabilityParentContext,
+  ) => Promise<{ text: string; sessionId: string | null; savedItems?: MessageSavedItems | null; roomPosts?: MessageRoomPosts | null }>;
+  /** Shared AVA-owned event stream. Hume remains explicitly out of v1 coverage. */
+  observability?: ObservabilityService;
+  /** Shared post-turn durable-memory gate used by chat and both voice providers. */
+  memoryAutoCapture?: AutoMemoryCapture;
+  /** Memory v2 archive: explicit changes during a GPT-Live call are pushed to it at once. */
+  memoryArchive?: MemoryArchive;
+  /** Read-only voice questions answered from AVA's data without the full agent. */
+  fastLookup?: FastLookup;
+  /** Shared source-verified retrieval gate used before chat/voice model replies. */
+  memoryIndex?: MemoryIndexService;
+  /** Test seam: open the GPT-Live upstream socket. */
+  liveConnect?: (url: string, headers: Record<string, string>) => WebSocket;
   /** Voice for the realtime model's spoken output (hybrid mode). */
   voice?: string;
   /**
@@ -748,6 +949,10 @@ export interface RealtimeProxy {
 }
 
 const PATH = "/api/voice/realtime";
+const fragmentHoldOverride = Number(process.env.VOICE_FRAGMENT_HOLD_MS);
+const VOICE_FRAGMENT_HOLD_MS = Number.isFinite(fragmentHoldOverride) && fragmentHoldOverride > 0
+  ? Math.max(500, fragmentHoldOverride)
+  : 2400;
 
 export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
   const log = deps.log ?? { info: () => {}, warn: () => {}, error: () => {} };
@@ -775,16 +980,26 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         socket.destroy();
         return;
       }
-      const sessionIdParam = url.searchParams.get("sessionId");
-      // "+new conversation" control: force a fresh session instead of resuming.
-      const wantNew = url.searchParams.get("new") === "1";
       // Endpointing mode picked by the client. "enter_push_to_talk" disables the
       // server's automatic VAD/turn-detection for this session; anything else
       // (incl. absent) keeps the default VAD behaviour.
       const pushToTalk = url.searchParams.get("inputMode") === "enter_push_to_talk";
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startSession(ws, sessionIdParam, deviceId, pushToTalk, wantNew).catch((err) => {
+        startSession(ws, url.searchParams, deviceId, pushToTalk).catch((err) => {
+          if (err instanceof SessionBindingError) {
+            const unavailable = err.code === "session_unavailable";
+            try {
+              ws.send(JSON.stringify({
+                type: "ava.session_error",
+                code: err.code,
+                message: unavailable ? "This conversation is unavailable." : "Invalid conversation binding request.",
+                retryable: false,
+              }));
+            } catch { /* client closed */ }
+            try { ws.close(unavailable ? 4404 : 4400, err.code); } catch { /* client closed */ }
+            return;
+          }
           log.error("realtime session error:", err instanceof Error ? err.message : err);
           try { ws.close(1011, "session error"); } catch { /* ignore */ }
         });
@@ -792,33 +1007,170 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     });
   }
 
-  async function startSession(client: WebSocket, requestedSessionId: string | null, _deviceId: string, pushToTalk = false, wantNew = false) {
+  async function startSession(client: WebSocket, params: URLSearchParams, deviceId: string, pushToTalk = false) {
+    // Resolve once before provider initialization (including OAuth/fallback).
+    // The acknowledgement establishes the client pointer, never turn recency.
+    const binding = resolveConversation(deps.db, {
+      actor: "human",
+      deviceId,
+      ...readVoiceSessionRequest(params),
+      title: "Voice chat",
+    });
+    // An explicit per-connection engine (the browser's one-visit fallback) wins
+    // over the stored preference.
+    const requestedEngine = params.get("engine");
+    const engine = isVoiceEngine(requestedEngine) ? requestedEngine : getVoiceEngine(deps.db);
+    if (engine === "live") {
+      const system = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation" });
+      const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
+      const summary = buildVoiceConversationSummary(getSessionFull(deps.db, binding.sessionId)?.summary);
+      const opened = await startLiveSession({
+        client,
+        binding,
+        db: deps.db,
+        apiKey: deps.apiKey!,
+        instructions: `${system}\n\n${LIVE_VOICE_GUIDANCE}${updates}${summary}${liveClockLine()}`,
+        runAction: deps.runAction,
+        memoryIndex: deps.memoryIndex,
+        memoryAutoCapture: deps.memoryAutoCapture,
+        memoryArchive: deps.memoryArchive,
+        fastLookup: deps.fastLookup,
+        observability: deps.observability,
+        log,
+        hello: (mode) => JSON.stringify({ type: "ava.session", sessionId: binding.sessionId, mode, binding }),
+        connect: deps.liveConnect,
+      });
+      if (opened || client.readyState !== WebSocket.OPEN) return;
+      log.warn("realtime: GPT-Live did not start; telling the browser to use the standard engine");
+      try { client.send(liveUnavailableFrame()); } catch { /* client closed */ }
+      try { client.close(4503, "live_unavailable"); } catch { /* client closed */ }
+      return;
+    }
     // PROVIDER BRANCH. The dashboard voice toggle (voice_engine_pref) selects the
     // provider, read here at connect so a toggle change takes effect on reconnect.
     // When the toggle is "hume" AND Hume is configured (HUME_API_KEY in env), try
     // Hume first; if its socket can't be established, fall through to the proven
-    // OpenAI path below. No client handlers are attached until Hume actually opens,
-    // so a failed attempt leaves the connection clean for the OpenAI fallback.
-    if (getVoiceEngine(deps.db) === "hume" && providerConfig.hume) {
+    // OpenAI path below. A failed attempt detaches its client handlers so the
+    // connection is clean for the OpenAI fallback.
+    if (engine === "hume" && providerConfig.hume) {
       // Resolve the upstream URL here (async): prefers OAuth access-token auth when
       // a secret key is set, else the raw api_key. Done before the session Promise
       // so the executor stays synchronous.
       const humeUrl = await resolveHumeWsUrl(providerConfig.hume);
-      const opened = await tryStartHumeSession(client, requestedSessionId, providerConfig.hume, humeUrl, pushToTalk);
+      if (client.readyState !== WebSocket.OPEN) return;
+      const opened = await tryStartHumeSession(client, binding, providerConfig.hume, humeUrl, pushToTalk);
       if (opened) return;
+      if (client.readyState !== WebSocket.OPEN) return;
       log.warn("realtime: hume upstream did not establish — falling back to OpenAI");
     }
     // The realtime model always speaks for the OpenAI provider (hybrid: it speaks
     // chitchat AND routes do_on_computer to the full agent).
     const hybrid = !!deps.runAction;
-    // In hybrid mode the proxy owns the action handoff; the session id is tracked
-    // here and may be (re)assigned when an action turn creates one.
-    let sessionId = requestedSessionId;
-    // Aborts any in-flight do_on_computer agent run when THIS connection drops, so
-    // a mid-task disconnect (1006) doesn't leave a zombie run burning tokens and
-    // holding the shared browser — and so a reconnect starts clean instead of
-    // double-executing the command.
-    const actionAbort = new AbortController();
+    // A delegated action may report its session, but cannot redirect this socket.
+    const sessionId = binding.sessionId;
+    // Exactly one action may own this connection. Each action gets its own abort
+    // controller + epoch, so Stop/replacement retires the old promise and a late
+    // completion can never publish a result or restart AVA's voice.
+    const actionRuns = new VoiceActionCoordinator();
+    const voiceSessionRunId = `voice_session_${nanoid(12)}`;
+    const voiceTraceId = `trace_voice_${nanoid(14)}`;
+    let voiceSessionObserved = false;
+    try {
+      deps.observability?.startRun({
+        id: voiceSessionRunId,
+        traceId: voiceTraceId,
+        rootTaskId: voiceSessionRunId,
+        sessionId,
+        runKind: "voice_session",
+        runtimeId: "ava:voice",
+        runtimeType: "ava",
+        ownerType: "ava",
+        ownerId: "realtime-proxy",
+        ownerRole: "voice-orchestrator",
+        title: "AVA voice session",
+        objective: "Maintain a realtime voice conversation and route approved actions through AVA.",
+        privacyLevel: "personal",
+        staleAfterMs: 75_000,
+      });
+      voiceSessionObserved = !!deps.observability;
+    } catch (error) {
+      log.warn("[mission-control] voice session start failed", error instanceof Error ? error.message : error);
+    }
+    const recordVoiceSession = (input: Parameters<ObservabilityService["record"]>[1]) => {
+      if (!voiceSessionObserved || !deps.observability) return null;
+      try {
+        return deps.observability.record(voiceSessionRunId, input);
+      } catch (error) {
+        log.warn("[mission-control] voice event failed", error instanceof Error ? error.message : error);
+        return null;
+      }
+    };
+    type ActiveVoiceTurn = {
+      runId: string;
+      spanId: string;
+      acceptedAt: number;
+      firstAudioSeen: boolean;
+      unregisterStop: () => void;
+    };
+    let currentObservedTurn: ActiveVoiceTurn | null = null;
+    const finishObservedTurn = (
+      turn: ActiveVoiceTurn,
+      input: {
+        type: string;
+        status: string;
+        title: string;
+        summary?: string;
+        payload?: unknown;
+        runStatus: ObservabilityRunStatus;
+        outcome: string;
+        responseText?: string;
+        verificationStatus?: "verified" | "partially_verified" | "not_verified" | "not_recorded";
+        providerRequestId?: string | null;
+        inputTokens?: number | null;
+        outputTokens?: number | null;
+        cachedTokens?: number | null;
+      },
+    ) => {
+      try {
+        deps.observability?.record(turn.runId, {
+          producerId: "ava:voice",
+          spanId: turn.spanId,
+          type: input.type,
+          status: input.status,
+          title: input.title,
+          summary: input.summary,
+          visibility: input.responseText ? "sensitive_collapsed" : "summary",
+          payload: input.responseText
+            ? { response: input.responseText, ...((input.payload as object | undefined) ?? {}) }
+            : input.payload,
+          providerRequestId: input.providerRequestId,
+          inputTokens: input.inputTokens,
+          outputTokens: input.outputTokens,
+          cachedTokens: input.cachedTokens,
+          durationMs: Math.max(0, Date.now() - turn.acceptedAt),
+          terminal: true,
+          runStatus: input.runStatus,
+          outcome: input.outcome,
+          verificationStatus: input.verificationStatus ?? "not_recorded",
+          compactSummary: input.summary ?? (
+            input.responseText ? "AVA completed the realtime voice response." : undefined
+          ),
+        });
+      } catch (error) {
+        log.warn("[mission-control] voice turn close failed", error instanceof Error ? error.message : error);
+      } finally {
+        turn.unregisterStop();
+        if (currentObservedTurn === turn) currentObservedTurn = null;
+      }
+    };
+    // Semantic VAD can still split one sentence into two transcription items.
+    // Hold structurally incomplete pieces and expose only a complete turn.
+    const voiceTurns = new VoiceTurnAccumulator();
+    let fragmentTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearFragmentTimer = () => {
+      if (fragmentTimer) clearTimeout(fragmentTimer);
+      fragmentTimer = null;
+    };
 
     // No `OpenAI-Beta: realtime=v1` header: that selects the beta protocol, and
     // we're now speaking the GA session schema over the GA `/v1/realtime` path.
@@ -834,31 +1186,275 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     // VAD onset timestamp of the in-flight utterance, used to measure speech
     // duration so the gate can drop sub-threshold blips.
     let speechStartMs: number | null = null;
+    let speechEndMs: number | null = null;
     // True while Ava is mid-response (between response.created and response.done).
     // A transcript that lands during this window is almost always a hallucination
     // / echo, and starting a new response would cut Ava off — so we ignore it.
     let responseActive = false;
+    // response.create was sent, but OpenAI has not confirmed response.created.
+    // Keeping this separate prevents invalid response.cancel races.
+    let responseRequested = false;
+    // Stop can land in the tiny response.create → response.created gap. OpenAI
+    // rejects response.cancel before creation, so retire that response the instant
+    // it appears and suppress its events. A real user turn may queue one fresh
+    // response behind that cancellation.
+    let cancelResponseOnCreate = false;
+    let suppressCurrentResponse = false;
+    let responseAfterCancellation = false;
+    // Retrieval sits between an accepted transcript and response.create. This
+    // separate epoch prevents a slow lookup from responding to a superseded or
+    // stopped utterance while keeping response.cancel protocol-valid.
+    let memoryRetrievalEpoch = 0;
+    let memoryRetrievalPending = false;
+    // Highest stored message already represented upstream. Voice can remain
+    // connected while another client writes typed turns; this high-water makes
+    // importing those turns before the next utterance deterministic/idempotent.
+    let persistedHistoryHighWater = 0;
+    const recordObservedTurn = (
+      turn: ActiveVoiceTurn,
+      input: Parameters<ObservabilityService["record"]>[1],
+    ) => {
+      try {
+        return deps.observability?.record(turn.runId, {
+          producerId: "ava:voice",
+          parentSpanId: turn.spanId,
+          ...input,
+        }) ?? null;
+      } catch (error) {
+        log.warn("[mission-control] voice turn event failed", error instanceof Error ? error.message : error);
+        return null;
+      }
+    };
+    const cancelObservedTurn = (
+      reason: string,
+      title = "Voice turn cancelled",
+    ) => {
+      const turn = currentObservedTurn;
+      if (!turn) return;
+      finishObservedTurn(turn, {
+        type: "voice.turn.cancelled",
+        status: "cancelled",
+        title,
+        summary: `The turn stopped before completion (${reason}).`,
+        payload: { reason },
+        runStatus: "cancelled",
+        outcome: reason,
+        verificationStatus: "not_verified",
+      });
+    };
+    const beginObservedTurn = (transcript: string): ActiveVoiceTurn | null => {
+      if (!deps.observability || !voiceSessionObserved) return null;
+      if (currentObservedTurn) {
+        cancelObservedTurn("replaced_by_new_turn", "Voice turn replaced by a newer utterance");
+      }
+      const turn: ActiveVoiceTurn = {
+        runId: `voice_turn_${nanoid(12)}`,
+        spanId: `span_voice_turn_${nanoid(12)}`,
+        acceptedAt: Date.now(),
+        firstAudioSeen: false,
+        unregisterStop: () => {},
+      };
+      try {
+        deps.observability.startRun({
+          id: turn.runId,
+          traceId: voiceTraceId,
+          parentRunId: voiceSessionRunId,
+          rootTaskId: voiceSessionRunId,
+          sessionId,
+          runKind: "voice_turn",
+          runtimeId: "ava:voice",
+          runtimeType: "ava",
+          hostRuntimeId: "openai:realtime",
+          ownerType: "ava",
+          ownerId: "realtime-proxy",
+          ownerRole: "voice-orchestrator",
+          title: "Voice request",
+          objective: transcript,
+          privacyLevel: "personal",
+          staleAfterMs: 75_000,
+          startedAt: turn.acceptedAt,
+        });
+        turn.unregisterStop = deps.observability.registerStopHandler(turn.runId, async () => {
+          if (currentObservedTurn !== turn) return false;
+          actionRuns.cancel();
+          if (responseActive) {
+            try { upstream.send(JSON.stringify({ type: "response.cancel" })); } catch { /* upstream closed */ }
+            responseActive = false;
+          } else if (responseRequested) {
+            cancelResponseOnCreate = true;
+          }
+          try {
+            if (client.readyState === WebSocket.OPEN) client.send(bargeInFrame());
+          } catch { /* client closed */ }
+          cancelObservedTurn("cancelled_by_user", "Voice turn stopped by Niko");
+          return true;
+        });
+        currentObservedTurn = turn;
+        recordObservedTurn(turn, {
+          spanId: turn.spanId,
+          type: "voice.transcript.accepted",
+          status: "success",
+          title: "Owner transcript accepted",
+          summary: "The transcript passed the voice gate and became an executable AVA turn.",
+          visibility: "sensitive_collapsed",
+          privacyLevel: "personal",
+          payload: { transcript },
+          occurredAt: turn.acceptedAt,
+        });
+        return turn;
+      } catch (error) {
+        turn.unregisterStop();
+        log.warn("[mission-control] voice turn start failed", error instanceof Error ? error.message : error);
+        return null;
+      }
+    };
+    let voiceSessionEnded = false;
+    let unregisterVoiceSessionStop = () => {};
+    const finishObservedSession = (
+      runStatus: "completed" | "failed" | "cancelled",
+      outcome: string,
+      summary: string,
+      error?: string,
+    ) => {
+      if (voiceSessionEnded) return;
+      voiceSessionEnded = true;
+      unregisterVoiceSessionStop();
+      if (!voiceSessionObserved || !deps.observability) return;
+      try {
+        const run = deps.observability.getRun(voiceSessionRunId);
+        if (!run || TERMINAL_RUN_STATUSES.has(run.status)) return;
+        deps.observability.record(voiceSessionRunId, {
+          producerId: "ava:voice",
+          type: `voice.session.${runStatus}`,
+          status: runStatus === "completed" ? "success" : runStatus,
+          title: summary,
+          summary,
+          error,
+          terminal: true,
+          runStatus,
+          outcome,
+          verificationStatus: "not_recorded",
+        });
+      } catch (missionError) {
+        log.warn("[mission-control] voice session close failed", missionError instanceof Error ? missionError.message : missionError);
+      }
+    };
+    unregisterVoiceSessionStop = deps.observability?.registerStopHandler(
+      voiceSessionRunId,
+      async () => {
+        actionRuns.cancel();
+        cancelObservedTurn("parent_session_stopped", "Voice turn stopped with its session");
+        if (responseActive) {
+          try { upstream.send(JSON.stringify({ type: "response.cancel" })); } catch { /* upstream closed */ }
+        }
+        try {
+          if (client.readyState === WebSocket.OPEN) client.send(bargeInFrame());
+        } catch { /* client closed */ }
+        finishObservedSession("cancelled", "cancelled_by_user", "Voice session stopped by Niko");
+        try { client.close(1000, "stopped from Mission Control"); } catch { /* already closed */ }
+        try { upstream.close(1000, "stopped from Mission Control"); } catch { /* already closed */ }
+        return true;
+      },
+    ) ?? (() => {});
+    const missionHeartbeat = setInterval(() => {
+      recordVoiceSession({
+        producerId: "ava:voice",
+        type: "runtime.heartbeat",
+        status: "running",
+        title: "Voice runtime heartbeat",
+        visibility: "system_only",
+      });
+      const turn = currentObservedTurn;
+      if (turn) {
+        recordObservedTurn(turn, {
+          type: "runtime.heartbeat",
+          status: "running",
+          title: "Voice turn heartbeat",
+          visibility: "system_only",
+        });
+      }
+    }, 30_000);
+    missionHeartbeat.unref?.();
     // One spoken reply arrives as SEVERAL `…audio_transcript.done` segments (one per
     // sentence). Buffer them and persist the whole turn as ONE message on
     // `response.done`, so chat history (and the voice recollection that re-seeds it)
     // sees coherent turns instead of clause-fragments.
     let assistantTurnBuf = "";
-    const flushAssistantTurn = () => {
+    let lastAcceptedUserMessageId: number | null = null;
+    let pendingMemoryContext: MessageMemoryContext | null = null;
+    // What a delegated action saved; shown on the spoken reply that reports it.
+    let pendingSavedItems: MessageSavedItems | null = null;
+    let pendingRoomPosts: MessageRoomPosts | null = null;
+    const flushAssistantTurn = (eligibleForMemory = false): string => {
       const text = assistantTurnBuf.trim();
       assistantTurnBuf = "";
+      const sourceUserMessageId = eligibleForMemory ? lastAcceptedUserMessageId : null;
+      if (eligibleForMemory) lastAcceptedUserMessageId = null;
       if (hybrid && sessionId && text) {
-        appendMessage(deps.db, { sessionId, role: "assistant", content: text });
+        const memoryContext = pendingMemoryContext;
+        pendingMemoryContext = null;
+        const savedItems = pendingSavedItems;
+        pendingSavedItems = null;
+        const roomPosts = pendingRoomPosts;
+        pendingRoomPosts = null;
+        const metadata: MessageMetadata = {
+          ...(memoryContext ? { memoryContext } : {}),
+          ...(savedItems ? { savedItems } : {}),
+          ...(roomPosts ? { roomPosts } : {}),
+        };
+        const stored = appendMessage(deps.db, {
+          sessionId,
+          role: "assistant",
+          content: text,
+          ...(Object.keys(metadata).length ? { metadata } : {}),
+        });
+        persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
         touchSession(deps.db, sessionId);
+        if (sourceUserMessageId !== null && deps.memoryAutoCapture) {
+          const captureInput = {
+            sessionId,
+            userMessageId: sourceUserMessageId,
+            assistantMessageId: stored.id,
+            channel: "voice" as const,
+          };
+          void deps.memoryAutoCapture(captureInput).catch((err) => {
+            log.warn("realtime: automatic memory capture failed", err instanceof Error ? err.message : err);
+          });
+        }
+      }
+      return text;
+    };
+    const syncTypedHistoryIntoRealtime = () => {
+      if (!hybrid || !sessionId || !upstreamReady) return;
+      const pending = listMessagesAfterId(deps.db, sessionId, persistedHistoryHighWater);
+      for (const message of pending) {
+        for (const frame of openAiHistoryFrames([message])) upstream.send(frame);
+        // System notices are not valid Realtime roles, but still advance the
+        // cursor so a later sync cannot repeatedly inspect the same row.
+        persistedHistoryHighWater = message.id;
       }
     };
     const pendingFromClient: Array<{ data: RawData; isBinary: boolean }> = [];
-    log.info("realtime: client connected, opening upstream to gpt-realtime (transcribe-only)");
+    log.info(
+      `realtime: client connected, opening upstream to ${REALTIME_MODEL} ` +
+      `(${hybrid ? "hybrid" : "transcribe-only"})`,
+    );
+    recordVoiceSession({
+      producerId: "ava:voice",
+      type: "voice.upstream.connecting",
+      status: "running",
+      title: "Connecting to OpenAI Realtime",
+      payload: { model: REALTIME_MODEL, mode: hybrid ? "hybrid" : "transcribe_only" },
+    });
 
     upstream.on("open", () => {
       upstreamReady = true;
       // The reasoning toggle ("fast"/"thorough") also controls voice snappiness.
       const vad = vadForReasoning(vadConfig, getReasoningLevel(deps.db));
-      log.info(`realtime: upstream open, sending ${hybrid ? "hybrid (speak+tool)" : "transcribe-only"} session.update (${pushToTalk ? "push-to-talk, VAD off" : `vad silence=${vad.silenceMs}ms`})`);
+      log.info(
+        `realtime: upstream open, sending ${hybrid ? "hybrid (speak+tool)" : "transcribe-only"} ` +
+        `session.update (${pushToTalk ? "push-to-talk, VAD off" : `${vad.mode ?? "semantic_vad"} eagerness=${vad.semanticEagerness ?? "low"}`})`,
+      );
       // Configure the realtime session on connect.
       const system = buildSystemPrompt({
         memoryDir: deps.memoryDir,
@@ -867,34 +1463,50 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // Ava's real changelog so "what's your latest update?" isn't confabulated.
       // (Recent conversation history is seeded below as conversation items.)
       const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
+      const conversationSummary = hybrid && sessionId
+        ? buildVoiceConversationSummary(getSessionFull(deps.db, sessionId)?.summary)
+        : "";
       const sessionUpdate = hybrid
         ? buildHybridSessionUpdate(
-            system + VOICE_PERSONA_INSTRUCTIONS + updates,
+            system + VOICE_PERSONA_INSTRUCTIONS + updates + conversationSummary,
             vad,
             deps.voice ?? DEFAULT_VOICE,
             { pushToTalk },
           )
         : buildRealtimeSessionUpdate(system, vad, { pushToTalk });
       upstream.send(JSON.stringify(sessionUpdate));
-      // HYBRID: unify voice with chat. Voice from the orb may have no session
-      // (requestedSessionId === null). RESUME the most-recent conversation by
-      // default so voice↔chat stay one continuous memory — re-entering voice and
-      // asking "what did you do?" recalls what just happened, instead of landing
-      // in a brand-new empty "Voice chat" session (the old bug: each entry minted
-      // a fresh session). `?new=1` (the client's "+new" control) forces a fresh
-      // one. The hello below sends whichever id we land on; the client latches
-      // `ava.session` and adopts it.
-      if (hybrid && !sessionId) {
-        const { resumeId } = chooseResumeOrNew(wantNew, listSessions(deps.db)[0]?.id ?? null);
-        sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
+      // Warm the memory path while Sir is still opening his mouth: the first
+      // embedding call on a cold connection measured ~1.8 s, which would
+      // otherwise land on his first turn. Results are discarded.
+      if (hybrid && deps.memoryIndex) {
+        void deps.memoryIndex.search("voice session warm-up", { limit: 1 }).catch(() => { /* optional */ });
       }
+      // Both providers and modes share the binding resolved at the ingress.
+      if (voiceSessionObserved && deps.observability) {
+        try {
+          deps.observability.updateRunContext(voiceSessionRunId, { sessionId });
+        } catch { /* telemetry cannot block voice */ }
+      }
+      recordVoiceSession({
+        producerId: "ava:voice",
+        type: "voice.upstream.connected",
+        status: "success",
+        title: "OpenAI Realtime connected",
+        summary: "The live speech connection is ready.",
+        payload: {
+          model: REALTIME_MODEL,
+          voice: deps.voice ?? DEFAULT_VOICE,
+          inputMode: pushToTalk ? "push_to_talk" : "automatic_vad",
+        },
+      });
       // Seed the realtime model with recent conversation history so voice no
       // longer forgets what was typed (and vice-versa). Context only — NO
       // response.create — and bounded by N (env-tunable) because every seeded
       // item is OpenAI cost per connect, so the default stays small.
       if (hybrid && sessionId) {
         const N = Number(process.env.REALTIME_SEED_TURNS ?? 12);
-        for (const m of listMessages(deps.db, sessionId).slice(-N)) {
+        const stored = listMessages(deps.db, sessionId);
+        for (const m of stored.slice(-N)) {
           if (m.role !== "user" && m.role !== "assistant") continue;
           upstream.send(JSON.stringify({
             type: "conversation.item.create",
@@ -909,11 +1521,14 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             },
           }));
         }
+        // Older rows outside the bounded recent seed are represented by the
+        // durable summary and must not later look like newly typed turns.
+        persistedHistoryHighWater = stored.at(-1)?.id ?? 0;
       }
       // Echo the client's current session id back, and tell it the proxy mode so
       // it knows whether to play audio (hybrid) or own the reply (transcribe).
       try {
-        client.send(sessionHelloFrame(sessionId, hybrid));
+        client.send(sessionHelloFrame(sessionId, hybrid, binding));
       } catch { /* ignore */ }
       // Drain anything the client sent before upstream was ready, preserving
       // each frame's text/binary kind.
@@ -927,6 +1542,61 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         pendingFromClient.push({ data, isBinary });
         return;
       }
+      if (!isBinary) {
+        try {
+          const event = JSON.parse(data.toString("utf8")) as { type?: string };
+          // With VAD disabled, this commit is the ordering boundary immediately
+          // before OpenAI creates the spoken user item. Import typed turns first.
+          if (event.type === "input_audio_buffer.commit") {
+            syncTypedHistoryIntoRealtime();
+          }
+          if (event.type === "response.cancel") {
+            // This frame is also AVA's general Stop signal. During a computer
+            // action there is usually no active OpenAI response to cancel, so
+            // retire the action independently and suppress any late result.
+            const cancelledAction = actionRuns.cancel();
+            if (cancelledAction) {
+              log.info("realtime: cancelled active do_on_computer run");
+            }
+            if (!shouldForwardResponseCancel(responseActive)) {
+              if (memoryRetrievalPending) {
+                memoryRetrievalEpoch += 1;
+                memoryRetrievalPending = false;
+                cancelObservedTurn("cancelled_during_memory_retrieval", "Voice turn stopped by Niko");
+                return;
+              }
+              if (responseRequested) {
+                cancelResponseOnCreate = true;
+                log.info("realtime: queued cancellation for requested response");
+                return;
+              }
+              log.info(
+                cancelledAction
+                  ? "realtime: action stopped; no model response was active"
+                  : "realtime: ignored response.cancel because no response is active",
+              );
+              return;
+            }
+            responseActive = false;
+            responseRequested = false;
+            const partial = flushAssistantTurn();
+            if (currentObservedTurn) {
+              finishObservedTurn(currentObservedTurn, {
+                type: "voice.turn.cancelled",
+                status: "cancelled",
+                title: "Voice turn stopped by Niko",
+                summary: "Playback and generation were stopped from the voice interface.",
+                payload: partial ? { partialResponse: partial } : undefined,
+                runStatus: "cancelled",
+                outcome: "cancelled_by_user",
+                verificationStatus: "not_verified",
+              });
+            }
+          }
+        } catch {
+          // Non-JSON frames are forwarded unchanged below.
+        }
+      }
       // Forward client events preserving text framing — the mic audio is
       // base64 inside a JSON text event, and OpenAI rejects binary frames.
       forwardFrame(upstream, data, isBinary);
@@ -938,10 +1608,20 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         | {
             type?: string;
             transcript?: string;
+            item_id?: string;
             audio_start_ms?: number;
             audio_end_ms?: number;
             logprobs?: Array<{ logprob?: number }> | null;
             error?: { type?: string; code?: string; message?: string };
+            response?: {
+              id?: string;
+              status?: string;
+              usage?: {
+                input_tokens?: number;
+                output_tokens?: number;
+                input_token_details?: { cached_tokens?: number };
+              };
+            };
           }
         | null = null;
       try {
@@ -954,16 +1634,83 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // Track VAD timing + surface lifecycle/errors. Never throw out of here.
       if (evt) {
         if (evt.type === "input_audio_buffer.speech_started") {
+          // WebSocket events are ordered on one channel. VAD has detected the
+          // next utterance but has not committed its conversation item yet, so
+          // this is the safe point to insert typed turns ahead of that question.
+          syncTypedHistoryIntoRealtime();
           speechStartMs = typeof evt.audio_start_ms === "number" ? evt.audio_start_ms : 0;
+          speechEndMs = null;
+          // Do not cancel on raw energy onset. Speaker echo/background noise used
+          // to shred replies before the transcript gate could reject it. A real
+          // interruption is cancelled below after its completed text is accepted.
+        } else if (evt.type === "input_audio_buffer.speech_stopped") {
+          speechEndMs = typeof evt.audio_end_ms === "number" ? evt.audio_end_ms : null;
         } else if (evt.type === "response.created") {
           responseActive = true;
+          responseRequested = false;
+          if (currentObservedTurn) {
+            recordObservedTurn(currentObservedTurn, {
+              type: "model.response.started",
+              status: "running",
+              title: "Realtime response started",
+              summary: "OpenAI Realtime began producing this turn.",
+              payload: { model: REALTIME_MODEL, responseId: evt.response?.id ?? null },
+            });
+          }
+          if (cancelResponseOnCreate) {
+            cancelResponseOnCreate = false;
+            suppressCurrentResponse = true;
+            try { upstream.send(JSON.stringify({ type: "response.cancel" })); } catch { /* */ }
+          }
         } else if (evt.type === "response.done") {
           responseActive = false;
-          flushAssistantTurn(); // persist the whole spoken turn as one message
+          responseRequested = false;
+          const responseCompleted = evt.response?.status == null || evt.response.status === "completed";
+          const spokenText = flushAssistantTurn(!suppressCurrentResponse && responseCompleted); // persist the whole spoken turn as one message
+          if (suppressCurrentResponse) {
+            suppressCurrentResponse = false;
+            if (responseAfterCancellation) {
+              responseAfterCancellation = false;
+              responseRequested = true;
+              try { upstream.send(JSON.stringify({ type: "response.create" })); } catch { /* */ }
+            }
+            return; // cancelled generation stays invisible to the browser
+          }
+          if (currentObservedTurn) {
+            finishObservedTurn(currentObservedTurn, {
+              type: "voice.response.completed",
+              status: "success",
+              title: "AVA finished the voice response",
+              summary: spokenText
+                ? "The realtime response completed and its spoken transcript was stored."
+                : "The realtime response completed without a transcript payload.",
+              responseText: spokenText || undefined,
+              payload: { model: REALTIME_MODEL },
+              runStatus: "completed",
+              outcome: spokenText ? "spoken_response_completed" : "response_completed_without_transcript",
+              verificationStatus: "not_recorded",
+              providerRequestId: evt.response?.id ?? null,
+              inputTokens: evt.response?.usage?.input_tokens ?? null,
+              outputTokens: evt.response?.usage?.output_tokens ?? null,
+              cachedTokens: evt.response?.usage?.input_token_details?.cached_tokens ?? null,
+            });
+          }
         } else if (evt.type === "error") {
           log.warn(
             `realtime upstream error event: code=${evt.error?.code} type=${evt.error?.type} message=${evt.error?.message}`,
           );
+          if (currentObservedTurn) {
+            finishObservedTurn(currentObservedTurn, {
+              type: "voice.turn.failed",
+              status: "error",
+              title: "Realtime voice turn failed",
+              summary: evt.error?.message ?? "OpenAI Realtime returned an error.",
+              payload: { code: evt.error?.code, type: evt.error?.type },
+              runStatus: "failed",
+              outcome: "realtime_error",
+              verificationStatus: "not_verified",
+            });
+          }
         } else if (evt.type === "session.created" || evt.type === "session.updated") {
           log.info(`realtime ${evt.type} (model=${REALTIME_MODEL})`);
         } else if (
@@ -972,16 +1719,35 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         ) {
           // BUFFER one segment of Ava's SPOKEN reply (chitchat). The model emits
           // several of these per spoken turn (one per sentence); we accumulate and
-          // persist the whole turn as ONE message on response.done (above). This
-          // fires only when the model actually speaks — during a do_on_computer task
-          // it stays silent (silentToolResultFrame omits response.create → no output
-          // transcript), so it never overlaps the do_on_computer result stored in (E).
+          // persist the whole turn as ONE message on response.done (above).
           // Do NOT return: keep forwarding so the client's captions still update.
           const t = (evt as { transcript?: string }).transcript ?? "";
           if (hybrid && sessionId && t.trim()) {
             assistantTurnBuf += (assistantTurnBuf ? " " : "") + t.trim();
           }
+        } else if (
+          evt.type === "response.output_audio.delta" ||
+          evt.type === "response.audio.delta"
+        ) {
+          const turn = currentObservedTurn;
+          if (turn && !turn.firstAudioSeen) {
+            turn.firstAudioSeen = true;
+            recordObservedTurn(turn, {
+              type: "voice.audio.first_chunk",
+              status: "running",
+              title: "First audio reached AVA",
+              summary: "Audio bytes are intentionally not stored.",
+              durationMs: Math.max(0, Date.now() - turn.acceptedAt),
+            });
+          }
         }
+      }
+
+      // A response that was requested before Stop arrived is cancelled on create.
+      // Drop all of its response-scoped frames, including function calls and late
+      // audio, while still allowing unrelated input/VAD events through.
+      if (suppressCurrentResponse && evt?.type?.startsWith("response.")) {
+        return;
       }
 
       // Hybrid: the model called do_on_computer → run the real /api/chat agent
@@ -991,44 +1757,129 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         if (call && call.name === "do_on_computer" && deps.runAction) {
           const task = String((call.args as { task?: unknown }).task ?? "");
           log.info(`realtime: do_on_computer task=${JSON.stringify(task)}`);
+          const action = actionRuns.begin();
+          const observedTurn = currentObservedTurn;
+          const delegationSpanId = `span_voice_delegate_${nanoid(12)}`;
+          const delegated = observedTurn
+            ? recordObservedTurn(observedTurn, {
+                spanId: delegationSpanId,
+                type: "agent.delegation.assigned",
+                status: "running",
+                title: "Voice delegated work to AVA's tool agent",
+                summary: "The realtime model requested an AVA-controlled computer action.",
+                visibility: "sensitive_collapsed",
+                payload: { task, target: "ava:agent" },
+                actionOwner: "router",
+              })
+            : null;
           // Tell the client an action started so it can show progress instead of
           // dead air while the (possibly multi-second) agent run executes.
           try { client.send(actionStartedFrame(task)); } catch { /* */ }
           void (async () => {
             try {
-              // Narrate each agent step to the client (it speaks them via TTS).
-              // actionAbort.signal ties this run to the connection: if the client
-              // drops mid-task, runVoiceAction aborts its fetches and kills the
-              // loopback run instead of finishing into a dead socket.
+              // Send each agent step for visual progress only. The client does
+              // not synthesize these with a second, mismatched voice.
+              // Stop/replacement/socket close aborts this run. Epoch checks also
+              // suppress a dependency that resolves after its signal was aborted.
               const r = await deps.runAction!(sessionId, task, (tool, args) => {
+                if (!actionRuns.isCurrent(action.id)) return;
                 try { client.send(stepFrame(tool, args)); } catch { /* */ }
-              }, actionAbort.signal);
-              sessionId = r.sessionId ?? sessionId;
-              try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
-              // Persist the action RESULT as Ava's turn. The user's raw words were
-              // already stored as the accepted transcript (C), so we do NOT store
-              // the task here — doing so would double the user turn. The internal
-              // /api/chat run that executed the tools stores nothing (persist:false).
-              if (sessionId) {
-                appendMessage(deps.db, { sessionId, role: "assistant", content: r.text || "Done." });
-                touchSession(deps.db, sessionId);
+                if (observedTurn) {
+                  recordObservedTurn(observedTurn, {
+                    parentSpanId: delegationSpanId,
+                    type: "agent.delegation.progress",
+                    status: "running",
+                    title: `${tool} is running`,
+                    summary: "Progress reported by the delegated AVA agent; execution is counted on the child run only.",
+                    visibility: "detail",
+                    payload: { tool, args },
+                    actionOwner: "observer",
+                  });
+                }
+              }, action.signal, observedTurn ? {
+                traceId: voiceTraceId,
+                parentRunId: observedTurn.runId,
+                parentSpanId: delegationSpanId,
+                causationEventId: delegated?.event?.eventId ?? null,
+              } : undefined);
+              if (!actionRuns.isCurrent(action.id)) {
+                log.info("realtime: discarded late result from retired action");
+                if (observedTurn) {
+                  recordObservedTurn(observedTurn, {
+                    parentSpanId: delegationSpanId,
+                    type: "agent.delegation.result_discarded",
+                    status: "cancelled",
+                    title: "Late delegated result discarded",
+                    summary: "A retired action completed after cancellation; AVA did not speak or apply it.",
+                    actionOwner: "observer",
+                  });
+                }
+                return;
               }
-              // The client speaks the result via TTS; the realtime model stays
-              // silent (silentToolResultFrame omits response.create). One voice
-              // per task. formatSpeechText smooths "Sir" punctuation for speech.
-              try { client.send(actionResultFrame(formatSpeechText(r.text || "Done."))); } catch { /* */ }
-              upstream.send(silentToolResultFrame(call.callId, r.text || "Done."));
+              try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
+              pendingSavedItems = mergeSavedItems(pendingSavedItems, r.savedItems);
+              pendingRoomPosts = mergeRoomPosts(pendingRoomPosts, r.roomPosts);
+              // Feed the result back to the SAME realtime model and ask it to
+              // speak. Its output transcript is the single persisted assistant
+              // turn, so stored history matches exactly what Sir heard.
+              const result = r.text || "The action ended without a verifiable result.";
+              if (observedTurn) {
+                recordObservedTurn(observedTurn, {
+                  spanId: delegationSpanId,
+                  type: "agent.delegation.completed",
+                  status: "success",
+                  title: "Delegated AVA action completed",
+                  summary: "The child agent returned a result for the realtime model to speak.",
+                  visibility: "sensitive_collapsed",
+                  payload: { result },
+                  actionOwner: "observer",
+                  terminal: true,
+                });
+              }
+              try { client.send(actionResultFrame(formatSpeechText(result))); } catch { /* */ }
+              responseRequested = true;
+              actionRuns.finish(action.id);
+              // A typed turn may have landed while the delegated action was
+              // running. Give it to the same realtime conversation before the
+              // tool result asks the model to speak.
+              syncTypedHistoryIntoRealtime();
+              for (const frame of toolResultFrames(call.callId, result)) upstream.send(frame);
             } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              try { client.send(actionResultFrame(formatSpeechText(`That didn't work, Sir — ${msg}`))); } catch { /* */ }
-              // Store the failure as Ava's turn too, so the conversation reflects
-              // what was spoken aloud (same single-source-of-truth as the success
-              // path; the user turn is still only stored once, in C).
-              if (sessionId) {
-                appendMessage(deps.db, { sessionId, role: "assistant", content: `That didn't work, Sir — ${msg}` });
-                touchSession(deps.db, sessionId);
+              if (!actionRuns.isCurrent(action.id) || action.signal.aborted) {
+                log.info("realtime: action ended after cancellation; no result will be spoken");
+                if (observedTurn) {
+                  recordObservedTurn(observedTurn, {
+                    parentSpanId: delegationSpanId,
+                    type: "agent.delegation.cancelled",
+                    status: "cancelled",
+                    title: "Delegated action cancelled",
+                    actionOwner: "observer",
+                  });
+                }
+                return;
               }
-              upstream.send(silentToolResultFrame(call.callId, `error: ${msg}`));
+              if (e instanceof Error && e.name === "AbortError") {
+                actionRuns.finish(action.id);
+                log.info("realtime: action was killed; no result will be spoken");
+                return;
+              }
+              actionRuns.finish(action.id);
+              const msg = e instanceof Error ? e.message : String(e);
+              if (observedTurn) {
+                recordObservedTurn(observedTurn, {
+                  spanId: delegationSpanId,
+                  type: "agent.delegation.failed",
+                  status: "error",
+                  title: "Delegated AVA action failed",
+                  error: msg,
+                  actionOwner: "observer",
+                  terminal: true,
+                });
+              }
+              const result = `That didn't work, Sir — ${msg}`;
+              try { client.send(actionResultFrame(formatSpeechText(result))); } catch { /* */ }
+              responseRequested = true;
+              for (const frame of toolResultFrames(call.callId, `error: ${msg}`)) upstream.send(frame);
             }
           })();
           return; // don't forward the raw function_call item to the client
@@ -1040,25 +1891,116 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // push-to-talk the gate skips its hallucination heuristics (a held commit is
       // real speech), so short deliberate commands ("okay"/"yeah") get through.
       const decision = evt
-        ? decideTranscriptForward(evt, speechStartMs, gateConfig, pushToTalk)
+        ? decideTranscriptForward(
+            speechEndMs == null ? evt : { ...evt, audio_end_ms: evt.audio_end_ms ?? speechEndMs },
+            speechStartMs,
+            gateConfig,
+            pushToTalk,
+          )
         : null;
       if (decision?.isTranscript) {
         speechStartMs = null; // consume the in-flight utterance's timing
+        speechEndMs = null;
         // Log the reason code only — never the raw audio. Transcript text is
         // short and useful for tuning; audio append frames are never logged.
         if (!decision.forward) {
           log.info(
             `realtime: dropped transcript reason=${decision.reason} speechMs=${decision.speechMs ?? "?"} text=${JSON.stringify(decision.text)}`,
           );
+          recordVoiceSession({
+            producerId: "ava:voice",
+            type: "voice.transcript.rejected",
+            status: "skipped",
+            title: "Transcript rejected by the voice gate",
+            summary: `Reason: ${decision.reason}. No AVA task was created.`,
+            visibility: "sensitive_collapsed",
+            privacyLevel: "personal",
+            payload: {
+              transcript: decision.text,
+              reason: decision.reason,
+              speechMs: decision.speechMs,
+            },
+          });
           // Push-to-talk: the client is stuck in "thinking" after its commit and
           // no reply is coming. Tell it to recover deterministically instead of
           // waiting out its safety timer (an empty/blank commit is the only PTT
           // drop now that the gate skips the denylist for held commits).
           if (pushToTalk) {
             try { if (client.readyState === WebSocket.OPEN) client.send(recoverFrame(decision.reason)); } catch { /* */ }
+          } else {
+            try { if (client.readyState === WebSocket.OPEN) client.send(speechDismissedFrame(decision.reason)); } catch { /* */ }
           }
           return; // do not forward — no phantom turn, no /api/chat call
         }
+        // Application-level completeness gate. Semantic VAD is probabilistic and
+        // the real trace still split "I want you to go" / "into WhatsApp".
+        // Push-to-talk has an explicit owner-chosen boundary, so only automatic
+        // hands-free turns are accumulated here.
+        let acceptedText = decision.text;
+        if (!pushToTalk) {
+          const offered = voiceTurns.offer(
+            decision.text,
+            typeof evt?.item_id === "string" ? evt.item_id : null,
+          );
+          for (const itemId of offered.discardedItemIds) {
+            try {
+              upstream.send(JSON.stringify({ type: "conversation.item.delete", item_id: itemId }));
+            } catch { /* */ }
+          }
+          if (offered.kind === "hold") {
+            clearFragmentTimer();
+            log.info(`realtime: holding incomplete transcript text=${JSON.stringify(offered.text)}`);
+            recordVoiceSession({
+              producerId: "ava:voice",
+              type: "voice.transcript.pending",
+              status: "waiting",
+              title: "Waiting for the rest of an utterance",
+              summary: "AVA held an incomplete fragment instead of executing it.",
+              visibility: "sensitive_collapsed",
+              privacyLevel: "personal",
+              payload: { transcript: offered.text },
+            });
+            try {
+              if (client.readyState === WebSocket.OPEN) {
+                client.send(transcriptPendingFrame(offered.text));
+              }
+            } catch { /* */ }
+            fragmentTimer = setTimeout(() => {
+              fragmentTimer = null;
+              const expired = voiceTurns.expire();
+              if (!expired) return;
+              log.info(`realtime: expired incomplete transcript text=${JSON.stringify(expired.text)}`);
+              recordVoiceSession({
+                producerId: "ava:voice",
+                type: "voice.transcript.expired",
+                status: "skipped",
+                title: "Incomplete utterance expired",
+                summary: "The held fragment was discarded without execution.",
+                visibility: "sensitive_collapsed",
+                privacyLevel: "personal",
+                payload: { transcript: expired.text },
+              });
+              // Remove discarded items from the model's context so a later,
+              // unrelated command cannot accidentally complete the old fragment.
+              for (const itemId of expired.itemIds) {
+                try {
+                  if (upstream.readyState === WebSocket.OPEN) {
+                    upstream.send(JSON.stringify({ type: "conversation.item.delete", item_id: itemId }));
+                  }
+                } catch { /* */ }
+              }
+              try {
+                if (client.readyState === WebSocket.OPEN) {
+                  client.send(recoverFrame("incomplete_fragment"));
+                }
+              } catch { /* */ }
+            }, VOICE_FRAGMENT_HOLD_MS);
+            return;
+          }
+          clearFragmentTimer();
+          acceptedText = offered.text;
+        }
+
         if (hybrid && responseActive) {
           // VOICE BARGE-IN: the owner talked OVER Ava (VAD keeps the mic forwarding
           // during "responding"). Reaching here means the transcript already passed
@@ -1067,14 +2009,41 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
           // turn with these words instead of dropping them (the old behaviour, which
           // made "talk over her to stop her" do nothing). The gate + browser echo
           // cancellation keep Ava's own tail from retriggering this.
-          log.info(`realtime: barge-in — owner spoke over Ava; cancelling response for ${JSON.stringify(decision.text)}`);
+          log.info(`realtime: barge-in — accepted owner speech; cancelling response for ${JSON.stringify(acceptedText)}`);
           try { upstream.send(JSON.stringify({ type: "response.cancel" })); } catch { /* */ }
           responseActive = false;
-          flushAssistantTurn(); // persist whatever Ava managed to say before the cut
+          responseRequested = false;
+          const partial = flushAssistantTurn(); // persist whatever Ava managed to say before the cut
+          if (currentObservedTurn) {
+            finishObservedTurn(currentObservedTurn, {
+              type: "voice.turn.interrupted",
+              status: "cancelled",
+              title: "Niko interrupted AVA",
+              summary: "Accepted owner speech stopped the previous response.",
+              payload: partial ? { partialResponse: partial } : undefined,
+              runStatus: "cancelled",
+              outcome: "interrupted_by_user",
+              verificationStatus: "not_verified",
+            });
+          }
           try { if (client.readyState === WebSocket.OPEN) client.send(bargeInFrame()); } catch { /* */ }
           // fall through: persist the user turn + response.create for the new turn
+        } else if (hybrid && memoryRetrievalPending) {
+          memoryRetrievalEpoch += 1;
+          memoryRetrievalPending = false;
+          cancelObservedTurn("replaced_during_memory_retrieval", "Voice turn replaced by a newer utterance");
+          try { if (client.readyState === WebSocket.OPEN) client.send(bargeInFrame()); } catch { /* */ }
+        } else if (hybrid && responseRequested) {
+          // The prior response has only been requested, so response.cancel would
+          // currently be invalid. Cancel it on response.created, then create one
+          // response for this accepted turn after the cancelled response ends.
+          cancelResponseOnCreate = true;
+          responseAfterCancellation = true;
+          cancelObservedTurn("interrupted_before_response_started", "Niko replaced the pending voice response");
+          try { if (client.readyState === WebSocket.OPEN) client.send(bargeInFrame()); } catch { /* */ }
         }
-        log.info(`realtime: accepted transcript text=${JSON.stringify(decision.text)}`);
+        log.info(`realtime: accepted transcript text=${JSON.stringify(acceptedText)}`);
+        const observedTurn = beginObservedTurn(acceptedText);
         // SINGLE place the spoken USER turn is stored. Both earlier branches
         // (rejected transcript, "Ava is speaking") have already returned, so this
         // runs once per real utterance — no phantom turns. The internal /api/chat
@@ -1083,16 +2052,94 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         // an action. HYBRID only: transcribe-only persists via /api/chat, so
         // storing here too would double the user turn.
         if (hybrid && sessionId) {
-          appendMessage(deps.db, { sessionId, role: "user", content: decision.text });
-          touchSession(deps.db, sessionId);
+          const stored = deps.db.transaction(() => {
+            const message = appendMessage(deps.db, { sessionId: sessionId!, role: "user", content: acceptedText, metadata: { inputModality: "voice" } });
+            markHumanActivity(deps.db, sessionId!, message.created_at);
+            touchSession(deps.db, sessionId!);
+            return message;
+          })();
+          persistedHistoryHighWater = Math.max(persistedHistoryHighWater, stored.id);
+          lastAcceptedUserMessageId = stored.id;
         }
-        if (hybrid) {
+        // Send the caption first. Because upstream and browser are different
+        // sockets, this ordering arms the browser's new-turn audio gate before
+        // an exceptionally fast response.created/audio delta can arrive.
+        try {
+          if (client.readyState === WebSocket.OPEN) client.send(acceptedTranscriptFrame(acceptedText));
+        } catch { /* client probably closed */ }
+        if (hybrid && !responseActive && !responseRequested) {
           // Model didn't auto-reply (create_response:false). Now that the
           // transcript passed the gate, ask it to respond — speak or call a tool.
-          responseActive = true; // optimistic; confirmed by response.created
-          try { upstream.send(JSON.stringify({ type: "response.create" })); } catch { /* */ }
+          const epoch = ++memoryRetrievalEpoch;
+          memoryRetrievalPending = true;
+          void (async () => {
+            const memoryProject = (() => {
+              try { return detectProject(acceptedText, loadProjectIndex(deps.memoryDir))?.slug ?? null; }
+              catch { return null; }
+            })();
+            // Memory may not hold the reply hostage. A slow embedding degrades
+            // the lookup to keywords only; past the total budget AVA answers
+            // without memory. A late result is recorded, never injected into a
+            // turn that is already being answered (or into a newer one).
+            const budget = voiceMemoryBudget(acceptedText);
+            const budgetMs = budget.totalMs;
+            const lookup = retrieveAutomaticMemory(deps.memoryIndex, {
+              query: acceptedText,
+              channel: "openai_voice",
+              currentSessionId: sessionId,
+              project: memoryProject,
+              semanticBudgetMs: budget.semanticMs,
+            });
+            const outcome = await withinBudget(lookup, budgetMs);
+            if (epoch !== memoryRetrievalEpoch || !memoryRetrievalPending) return;
+            memoryRetrievalPending = false;
+            if (outcome.status === "ready") {
+              const memory = outcome.value;
+              pendingMemoryContext = memoryContextFromDecision(memory);
+              if (observedTurn) {
+                recordAutomaticMemoryDecision(deps.observability, observedTurn.runId, memory, "ava:voice-memory");
+              }
+              const memoryFrame = openAiMemoryContextFrame(memory.prompt);
+              if (memoryFrame) {
+                try { upstream.send(memoryFrame); } catch { /* upstream closed */ }
+              }
+            } else {
+              pendingMemoryContext = null;
+              if (observedTurn) {
+                recordObservedTurn(observedTurn, {
+                  type: "memory.retrieval.deferred",
+                  status: "skipped",
+                  title: "Answered without waiting for memory",
+                  summary: outcome.status === "late"
+                    ? `The memory lookup took longer than ${budgetMs} ms, so AVA answered without it.`
+                    : "The memory lookup failed, so AVA answered without it.",
+                  payload: { budgetMs, elapsedMs: Math.round(outcome.elapsedMs), reason: outcome.status },
+                });
+                if (outcome.status === "late") {
+                  const turn = observedTurn;
+                  void lookup
+                    .then((memory) => recordAutomaticMemoryDecision(deps.observability, turn.runId, memory, "ava:voice-memory"))
+                    .catch(() => { /* already answered without it */ });
+                }
+              }
+              if (outcome.status === "failed") {
+                log.warn("realtime: memory retrieval failed", outcome.error instanceof Error ? outcome.error.message : outcome.error);
+              }
+            }
+            if (upstream.readyState !== WebSocket.OPEN || client.readyState !== WebSocket.OPEN) return;
+            responseRequested = true;
+            try { upstream.send(JSON.stringify({ type: "response.create" })); } catch { responseRequested = false; }
+          })().catch((error) => {
+            if (epoch !== memoryRetrievalEpoch) return;
+            memoryRetrievalPending = false;
+            log.warn("realtime: memory retrieval failed", error instanceof Error ? error.message : error);
+            if (upstream.readyState === WebSocket.OPEN && client.readyState === WebSocket.OPEN) {
+              responseRequested = true;
+              try { upstream.send(JSON.stringify({ type: "response.create" })); } catch { responseRequested = false; }
+            }
+          });
         }
-        // fall through to forward the (accepted) transcript verbatim
+        return; // accepted transcript was forwarded above exactly once
       }
 
       // Forward everything else (and accepted transcripts) verbatim, preserving
@@ -1104,8 +2151,29 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
 
     // ─── Lifecycle ────────────────────────────────────────────────────
     upstream.on("close", (code, reason) => {
-      flushAssistantTurn(); // don't lose a turn the model spoke before the socket dropped
+      memoryRetrievalEpoch += 1;
+      memoryRetrievalPending = false;
+      clearInterval(missionHeartbeat);
+      const partial = flushAssistantTurn(); // don't lose a turn the model spoke before the socket dropped
       const r = reason?.toString() || "(no reason)";
+      if (currentObservedTurn) {
+        finishObservedTurn(currentObservedTurn, {
+          type: "voice.turn.disconnected",
+          status: code === 1000 ? "cancelled" : "error",
+          title: "Voice turn ended when the upstream closed",
+          summary: `OpenAI Realtime closed with code ${code}.`,
+          payload: { closeCode: code, reason: r, partialResponse: partial || undefined },
+          runStatus: code === 1000 ? "cancelled" : "failed",
+          outcome: code === 1000 ? "voice_connection_closed" : "upstream_disconnected",
+          verificationStatus: "not_verified",
+        });
+      }
+      finishObservedSession(
+        code === 1000 ? "completed" : "failed",
+        code === 1000 ? "voice_session_closed" : "upstream_disconnected",
+        code === 1000 ? "Voice session closed" : "OpenAI Realtime disconnected unexpectedly",
+        code === 1000 ? undefined : r,
+      );
       log.info(`realtime upstream closed: code=${code} reason="${r}" model=${REALTIME_MODEL}`);
       // Forward the close reason to the client so the user sees something
       // actionable instead of "code=1000".
@@ -1118,7 +2186,22 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       try { client.close(code, r); } catch { /* ignore */ }
     });
     upstream.on("error", (err) => {
+      memoryRetrievalEpoch += 1;
+      memoryRetrievalPending = false;
       log.error("realtime upstream error:", err.message);
+      clearInterval(missionHeartbeat);
+      if (currentObservedTurn) {
+        finishObservedTurn(currentObservedTurn, {
+          type: "voice.turn.failed",
+          status: "error",
+          title: "Voice upstream failed",
+          summary: err.message,
+          runStatus: "failed",
+          outcome: "upstream_error",
+          verificationStatus: "not_verified",
+        });
+      }
+      finishObservedSession("failed", "upstream_error", "Voice upstream failed", err.message);
       try {
         client.send(JSON.stringify({ type: "error", error: { message: err.message } }));
       } catch { /* ignore */ }
@@ -1126,12 +2209,36 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
     });
 
     client.on("close", () => {
-      try { actionAbort.abort(); } catch { /* ignore */ } // cancel any in-flight do_on_computer run
+      memoryRetrievalEpoch += 1;
+      memoryRetrievalPending = false;
+      clearInterval(missionHeartbeat);
+      clearFragmentTimer();
+      voiceTurns.clear();
+      actionRuns.cancel();
+      cancelObservedTurn("client_disconnected", "Voice turn ended when the interface closed");
+      finishObservedSession("completed", "client_closed", "Voice interface closed");
       try { upstream.close(); } catch { /* ignore */ }
     });
     client.on("error", (err) => {
+      memoryRetrievalEpoch += 1;
+      memoryRetrievalPending = false;
       log.warn("realtime client error:", err.message);
-      try { actionAbort.abort(); } catch { /* ignore */ }
+      clearInterval(missionHeartbeat);
+      clearFragmentTimer();
+      voiceTurns.clear();
+      actionRuns.cancel();
+      if (currentObservedTurn) {
+        finishObservedTurn(currentObservedTurn, {
+          type: "voice.turn.failed",
+          status: "error",
+          title: "Voice interface connection failed",
+          summary: err.message,
+          runStatus: "failed",
+          outcome: "client_socket_error",
+          verificationStatus: "not_verified",
+        });
+      }
+      finishObservedSession("failed", "client_socket_error", "Voice interface connection failed", err.message);
       try { upstream.close(); } catch { /* ignore */ }
     });
   }
@@ -1140,33 +2247,57 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
    * Attempt a Hume EVI session. Resolves `true` once the Hume socket OPENS and
    * the bridge is wired (the session then runs independently); resolves `false`
    * if the socket errors/closes before opening, so the caller can fall back to
-   * OpenAI. No client handlers are attached until the socket opens, leaving the
-   * connection pristine for the fallback. Never logs a secret — upstream errors
+   * OpenAI. Pre-open failure detaches this attempt's client handlers, leaving the
+   * connection pristine for fallback. Never logs a secret — upstream errors
    * are redacted with the API key before they reach a log or the client.
    */
   function tryStartHumeSession(
     client: WebSocket,
-    requestedSessionId: string | null,
+    binding: SessionBinding,
     hume: HumeProviderConfig,
     wsUrl: string,
     pushToTalk = false,
   ): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const hybrid = !!deps.runAction;
-      let sessionId = requestedSessionId;
-      const actionAbort = new AbortController();
+      const sessionId = binding.sessionId;
+      const actionRuns = new VoiceActionCoordinator();
       let opened = false;
       // Hume emits one `assistant_message` per sentence; buffer the segments and
       // persist the whole spoken turn as ONE message on `assistant_end` (turnEnd),
       // so history isn't a pile of clause-fragments (which also poisons the recall
       // we seed back into the prompt).
       let assistantTurnBuf = "";
-      const flushAssistantTurn = () => {
+      let lastAcceptedUserMessageId: number | null = null;
+      let currentTurnMemoryEligible = true;
+      let pendingMemoryContext: MessageMemoryContext | null = null;
+      const flushAssistantTurn = (eligibleForMemory = false) => {
         const text = assistantTurnBuf.trim();
         assistantTurnBuf = "";
+        const sourceUserMessageId = eligibleForMemory && currentTurnMemoryEligible
+          ? lastAcceptedUserMessageId
+          : null;
+        if (eligibleForMemory) lastAcceptedUserMessageId = null;
         if (hybrid && sessionId && text) {
-          appendMessage(deps.db, { sessionId, role: "assistant", content: text });
+          const memoryContext = pendingMemoryContext;
+          pendingMemoryContext = null;
+          const stored = appendMessage(deps.db, {
+            sessionId,
+            role: "assistant",
+            content: text,
+            ...(memoryContext ? { metadata: { memoryContext } } : {}),
+          });
           touchSession(deps.db, sessionId);
+          if (sourceUserMessageId !== null && deps.memoryAutoCapture) {
+            void deps.memoryAutoCapture({
+              sessionId,
+              userMessageId: sourceUserMessageId,
+              assistantMessageId: stored.id,
+              channel: "voice",
+            }).catch((err) => {
+              log.warn("realtime(hume): automatic memory capture failed", err instanceof Error ? err.message : err);
+            });
+          }
         }
       };
       const redact = (m: string) => redactSecrets(m, [hume.apiKey, hume.secretKey, hume.configId, hume.voiceId]);
@@ -1181,16 +2312,24 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       }
 
       const pendingFromClient: string[] = [];
+      let abandoned = false;
+      const failToOpen = () => {
+        if (opened || abandoned) return;
+        abandoned = true;
+        client.off("message", onClientMessage);
+        client.off("close", onClientClose);
+        client.off("error", onClientClose);
+        pendingFromClient.length = 0;
+        try { upstream.close(); } catch { /* already closed */ }
+        resolve(false);
+      };
 
-      upstream.on("open", () => {
-        opened = true;
-        // Resolve the session FIRST (resume the latest, like the OpenAI path) so we
-        // can seed its recent history into Hume's prompt. Without this Hume starts
-        // blank on every connect — no recollection of prior voice/chat turns.
-        if (hybrid && !sessionId) {
-          const { resumeId } = chooseResumeOrNew(false, listSessions(deps.db)[0]?.id ?? null);
-          sessionId = resumeId ?? createSession(deps.db, { title: "Voice chat" }).id;
+      upstream.on("open", async () => {
+        if (abandoned) {
+          try { upstream.close(); } catch { /* already closed */ }
+          return;
         }
+        opened = true;
         // Hume truncates the prompt at ~12k, so build it COMPACT + identity-first
         // (buildHumeVoicePrompt): drop the tool-map Hume can't use, and order the
         // anti-confabulation persona + real changelog + recent history AHEAD of the
@@ -1200,12 +2339,41 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         // (now-surviving) prompt is the guaranteed channel.
         const compactBase = buildSystemPrompt({ memoryDir: deps.memoryDir, mode: "conversation", compact: true });
         const seedN = Number(process.env.REALTIME_SEED_TURNS ?? 12);
-        const history = hybrid && sessionId ? buildHumeHistoryBlock(listMessages(deps.db, sessionId), seedN) : "";
+        const summary = hybrid && sessionId
+          ? buildVoiceConversationSummary(getSessionFull(deps.db, sessionId)?.summary)
+          : "";
+        const storedHistory = hybrid && sessionId ? listMessages(deps.db, sessionId) : [];
+        let history = hybrid && sessionId
+          ? summary + buildHumeHistoryBlock(storedHistory, seedN)
+          : "";
+        // Hume begins reasoning while audio is still streaming, before its
+        // user_message transcript reaches this proxy. The safe v1 boundary is
+        // therefore connection-time retrieval from the active chat's latest
+        // typed/user context. This fixes chat -> Hume continuity without
+        // claiming current spoken-only semantic lookup the protocol path cannot
+        // deterministically provide yet.
+        const retrievalQuery = [...storedHistory].reverse().find((message) => message.role === "user")?.content ?? "";
+        const memoryProject = (() => {
+          try { return detectProject(retrievalQuery, loadProjectIndex(deps.memoryDir))?.slug ?? null; }
+          catch { return null; }
+        })();
+        const memory = await retrieveAutomaticMemory(deps.memoryIndex, {
+          query: retrievalQuery,
+          channel: "hume_voice",
+          currentSessionId: sessionId,
+          project: memoryProject,
+        });
+        pendingMemoryContext = memoryContextFromDecision(memory);
+        if (memory.prompt) history += `\n\n${memory.prompt}`;
+        log.info(
+          `realtime(hume): memory retrieval status=${memory.status} selected=${memory.selected.length} `
+          + `semantic=${memory.semanticAvailable ? "available" : "unavailable"}`,
+        );
         const updates = buildVoiceUpdatesBlock(readDevLog(dirname(deps.memoryDir), 8));
         const humePrompt = buildHumeVoicePrompt({ voicePersona: VOICE_PERSONA_INSTRUCTIONS, updates, history, base: compactBase });
         const contextText = (updates + history).trim();
         try { upstream.send(JSON.stringify(buildHumeSessionSettings(humePrompt, hume, contextText))); } catch { /* */ }
-        try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
+        try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
         log.info("realtime: hume session open (voice via Hume EVI)");
         // Drain client frames buffered before open, translating mic audio.
         for (const raw of pendingFromClient) {
@@ -1217,15 +2385,24 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       });
 
       // Client → Hume: translate OpenAI-shaped mic frames to Hume audio_input.
-      client.on("message", (data, isBinary) => {
+      function onClientMessage(data: RawData, isBinary: boolean) {
         const raw = isBinary ? data.toString("utf8") : (typeof data === "string" ? data : data.toString("utf8"));
+        try {
+          const control = JSON.parse(raw) as { type?: string };
+          if (control.type === "response.cancel") {
+            actionRuns.cancel();
+            return;
+          }
+        } catch { /* audio frame or non-JSON */ }
         if (!opened) { pendingFromClient.push(raw); return; }
         const f = translateClientFrameToHume(raw);
         if (f) try { upstream.send(f); } catch { /* */ }
-      });
+      }
+      client.on("message", onClientMessage);
 
       // Hume → Client: translate to the OpenAI-shaped frames the browser handles.
       upstream.on("message", (data) => {
+        if (!opened || abandoned) return;
         let evt: Parameters<typeof translateHumeEvent>[0] | null = null;
         try { evt = JSON.parse(typeof data === "string" ? data : data.toString("utf8")); } catch { evt = null; }
         if (!evt) return;
@@ -1243,12 +2420,20 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
             log.info(`realtime(hume): dropped transcript reason=${decision.reason} text=${JSON.stringify(decision.text)}`);
             if (pushToTalk) {
               try { if (client.readyState === WebSocket.OPEN) client.send(recoverFrame(decision.reason)); } catch { /* */ }
+            } else {
+              try { if (client.readyState === WebSocket.OPEN) client.send(speechDismissedFrame(decision.reason)); } catch { /* */ }
             }
             return;
           }
           if (hybrid && sessionId) {
-            appendMessage(deps.db, { sessionId, role: "user", content: decision.text });
-            touchSession(deps.db, sessionId);
+            const stored = deps.db.transaction(() => {
+              const message = appendMessage(deps.db, { sessionId: sessionId!, role: "user", content: decision.text, metadata: { inputModality: "voice" } });
+              markHumanActivity(deps.db, sessionId!, message.created_at);
+              touchSession(deps.db, sessionId!);
+              return message;
+            })();
+            lastAcceptedUserMessageId = stored.id;
+            currentTurnMemoryEligible = true;
           }
           try {
             if (client.readyState === WebSocket.OPEN) {
@@ -1262,21 +2447,42 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         if (t.toolCall && t.toolCall.name === "do_on_computer" && deps.runAction) {
           const task = String((t.toolCall.args as { task?: unknown }).task ?? "");
           const callId = t.toolCall.callId;
+          const action = actionRuns.begin();
           try { client.send(actionStartedFrame(task)); } catch { /* */ }
           void (async () => {
             try {
               const r = await deps.runAction!(sessionId, task, (tool, args) => {
+                if (!actionRuns.isCurrent(action.id)) return;
                 try { client.send(stepFrame(tool, args)); } catch { /* */ }
-              }, actionAbort.signal);
-              sessionId = r.sessionId ?? sessionId;
-              try { client.send(sessionHelloFrame(sessionId, hybrid)); } catch { /* */ }
+              }, action.signal);
+              if (!actionRuns.isCurrent(action.id)) return;
+              try { client.send(sessionHelloFrame(sessionId, hybrid, binding)); } catch { /* */ }
               if (sessionId) {
-                appendMessage(deps.db, { sessionId, role: "assistant", content: r.text || "Done." });
+                const savedItems = mergeSavedItems(null, r.savedItems);
+                const roomPosts = mergeRoomPosts(null, r.roomPosts);
+                appendMessage(deps.db, {
+                  sessionId,
+                  role: "assistant",
+                  content: r.text || "Done.",
+                  ...((savedItems || roomPosts) ? { metadata: {
+                    ...(savedItems ? { savedItems } : {}),
+                    ...(roomPosts ? { roomPosts } : {}),
+                  } } : {}),
+                });
                 touchSession(deps.db, sessionId);
               }
-              try { client.send(actionResultFrame(formatSpeechText(r.text || "Done."))); } catch { /* */ }
-              try { upstream.send(humeToolResultFrame(callId, r.text || "Done.")); } catch { /* */ }
+              const result = r.text || "The action ended without a verifiable result.";
+              try { client.send(actionResultFrame(formatSpeechText(result))); } catch { /* */ }
+              actionRuns.finish(action.id);
+              try { upstream.send(humeToolResultFrame(callId, result)); } catch { /* */ }
             } catch (e) {
+              if (!actionRuns.isCurrent(action.id) || action.signal.aborted) return;
+              if (e instanceof Error && e.name === "AbortError") {
+                actionRuns.finish(action.id);
+                return;
+              }
+              actionRuns.finish(action.id);
+              currentTurnMemoryEligible = false;
               const msg = e instanceof Error ? e.message : String(e);
               try { client.send(actionResultFrame(formatSpeechText(`That didn't work, Sir — ${msg}`))); } catch { /* */ }
               if (sessionId) {
@@ -1294,7 +2500,7 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
         if (t.assistantText && hybrid && sessionId && t.assistantText.trim()) {
           assistantTurnBuf += (assistantTurnBuf ? " " : "") + t.assistantText.trim();
         }
-        if (t.turnEnd) flushAssistantTurn();
+        if (t.turnEnd) flushAssistantTurn(true);
 
         // Forward translated frames (audio, captions, errors) to the client.
         for (const frame of t.frames) {
@@ -1307,31 +2513,29 @@ export function buildRealtimeProxy(deps: RealtimeProxyDeps): RealtimeProxy {
       // problem is diagnosable instead of a blank "error before open".
       upstream.on("unexpected-response", (_req, res) => {
         log.warn({ status: res.statusCode }, "realtime: hume upstream rejected the connection (HTTP status)");
-        if (!opened) { resolve(false); return; }
+        if (!opened) { failToOpen(); return; }
       });
       upstream.on("error", (err) => {
         const msg = redact(err.message);
-        if (!opened) { log.warn({ err: msg }, "realtime: hume upstream error before open"); resolve(false); return; }
+        if (!opened) { log.warn({ err: msg }, "realtime: hume upstream error before open"); failToOpen(); return; }
         log.error({ err: msg }, "realtime: hume upstream error");
         try { client.send(JSON.stringify({ type: "error", error: { message: msg } })); } catch { /* */ }
         try { client.close(1011, "upstream error"); } catch { /* */ }
       });
       upstream.on("close", (code, reason) => {
-        if (!opened) { resolve(false); return; }
+        if (!opened) { failToOpen(); return; }
         flushAssistantTurn(); // don't lose a turn Ava spoke before the socket dropped
         const r = redact(reason?.toString() || "(no reason)");
         try { client.send(JSON.stringify({ type: "error", error: { message: `upstream closed (code=${code}): ${r}` } })); } catch { /* */ }
         try { client.close(code, r); } catch { /* */ }
       });
 
-      client.on("close", () => {
-        try { actionAbort.abort(); } catch { /* */ }
+      function onClientClose() {
+        actionRuns.cancel();
         try { upstream.close(); } catch { /* */ }
-      });
-      client.on("error", () => {
-        try { actionAbort.abort(); } catch { /* */ }
-        try { upstream.close(); } catch { /* */ }
-      });
+      }
+      client.on("close", onClientClose);
+      client.on("error", onClientClose);
     });
   }
 

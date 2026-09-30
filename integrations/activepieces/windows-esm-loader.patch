@@ -1,0 +1,15 @@
+diff --git a/packages/server/engine/src/lib/core/piece/piece-child.ts b/packages/server/engine/src/lib/core/piece/piece-child.ts
+index 9fe447e1..c6d664c5 100644
+--- a/packages/server/engine/src/lib/core/piece/piece-child.ts
++++ b/packages/server/engine/src/lib/core/piece/piece-child.ts
+@@ -3,2 +3,4 @@ import { Piece } from '@activepieces/pieces-framework'
+ import { extractPieceFromModule } from '@activepieces/shared'
++import { isAbsolute } from 'node:path'
++import { pathToFileURL } from 'node:url'
+ import { buildContext } from './piece-context-builder'
+@@ -39,3 +41,4 @@ async function handleParentMessage(message: ParentMessage): Promise<void> {
+ async function loadPiece({ piecePath, pieceName, pieceVersion }: { piecePath: string, pieceName: string, pieceVersion: string }): Promise<Piece> {
+-    const pieceModule = await import(piecePath)
++    const moduleSpecifier = isAbsolute(piecePath) ? pathToFileURL(piecePath).href : piecePath
++    const pieceModule = await import(moduleSpecifier)
+     return extractPieceFromModule<Piece>({ module: pieceModule, pieceName, pieceVersion })

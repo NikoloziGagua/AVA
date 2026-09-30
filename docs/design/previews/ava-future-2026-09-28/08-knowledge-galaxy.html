@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Knowledge Galaxy · AVA Future</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .cols { grid-template-columns: 1fr 320px; align-items: stretch; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .stage { position: relative; height: 620px; padding: 0; overflow: hidden; }
+  #g { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+  #g:active { cursor: grabbing; }
+  .hint { position: absolute; left: 16px; bottom: 14px; font-size: 12.5px; color: var(--ink-3); }
+  .time { position: absolute; left: 16px; right: 16px; top: 14px; display: flex; gap: 12px; align-items: center; font-size: 13px; color: var(--ink-2); }
+  .time input { flex: 1; accent-color: #9cc4ff; }
+  .legend { display: grid; gap: 6px; margin: 12px 0; font-size: 13px; color: var(--ink-2); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: middle; box-shadow: 0 0 8px currentColor; }
+  .links { display: grid; gap: 6px; margin-top: 8px; }
+  .links button { text-align: left; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--glass); cursor: pointer; font-size: 13.5px; }
+  .links button:hover { border-color: var(--line-2); }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <a class="back" href="index.html">← All concepts</a>
+    <span class="eyebrow">Concept 08 · Spectacle layer</span>
+    <span class="badge demo">DEMO · synthetic graph</span>
+  </div>
+  <h1><span class="silver">Knowledge Galaxy</span></h1>
+  <p class="lede">Your goals, projects, decisions, notes and people as one living constellation. Pull a thread and see what's connected, then scrub time to watch a project form.</p>
+
+  <section class="grid cols">
+    <div class="card stage glow">
+      <div class="time"><span>Sep 2</span><input type="range" min="0" max="26" value="26" id="t" aria-label="Show knowledge up to this date" /><span id="tl">Sep 28</span></div>
+      <canvas id="g" aria-label="3D knowledge graph. Use the list on the right to explore connections." role="img"></canvas>
+      <div class="hint">Drag to rotate · click a star to follow its threads</div>
+    </div>
+    <aside class="card">
+      <div class="eyebrow">Selected</div>
+      <h2 id="selName" style="margin:6px 0 4px">AVA</h2>
+      <p class="faint" id="selKind" style="margin:0">Project</p>
+      <div class="links" id="links"></div>
+      <div class="legend">
+        <span><i style="background:#ffc07a;color:#ffc07a"></i>Goal</span>
+        <span><i style="background:#9cc4ff;color:#9cc4ff"></i>Project</span>
+        <span><i style="background:#c6a8ff;color:#c6a8ff"></i>Decision</span>
+        <span><i style="background:#e6e9f0;color:#e6e9f0"></i>Note</span>
+        <span><i style="background:#86e3be;color:#86e3be"></i>Person (fictional)</span>
+      </div>
+      <a class="btn" href="01-decision-replay.html" style="width:100%">Open decisions in Replay →</a>
+    </aside>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>Every node and link is invented.</li><li>The 3D view is a lightweight custom canvas renderer made for this preview.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>Nodes are exact records: Notes, calendar events, confirmed goals, recorded decisions.</li><li>Links are explicit (cited, filed in, decided because of), never guessed similarity.</li></ul></div>
+    <div class="card"><h3>How it plugs into AVA</h3><p>A visual layer over Decision Replay and Notes, not a new database. AVA already ships React Flow (MIT). For true 3D, <a href="https://github.com/vasturiano/3d-force-graph" target="_blank" rel="noopener">3d-force-graph</a> is MIT-licensed.</p></div>
+    <div class="card"><h3>Honest take</h3><p>This is the "wow" layer. On its own it's graph ornament; it earns its place only on top of real decision links (Codex's review). Build it after Decision Replay, not before.</p><p class="faint" style="margin-top:6px">Effort: medium · Risk: low · Wow: very high · Daily value: medium</p></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  var COL = { goal: "#ffc07a", project: "#9cc4ff", decision: "#c6a8ff", note: "#e6e9f0", person: "#86e3be" };
+  var KIND = { goal: "Goal", project: "Project", decision: "Decision", note: "Note", person: "Person (fictional)" };
+  var N = [
+    ["g1", "goal", "Ship a product people pay for", 0], ["g2", "goal", "Get great at AI engineering", 0], ["g3", "goal", "Kickboxing + running", 0],
+    ["p1", "project", "AVA", 0], ["p2", "project", "Tabby", 2],
+    ["d1", "decision", "Target student houses", 9], ["d2", "decision", "Pivot to auto-chasing", 14], ["d3", "decision", "€2 per house", 20],
+    ["d4", "decision", "AVA ideas: off by default", 26], ["d5", "decision", "Voice-first AVA", 5],
+    ["n1", "note", "House bills rant", 2], ["n2", "note", "Survey: 9 housemates", 8], ["n3", "note", "Interviews: 3 houses", 13], ["n4", "note", "Pricing test", 19],
+    ["n5", "note", "Voice latency plan", 25], ["n6", "note", "Initiative UX", 26], ["n7", "note", "Training plan 10k", 4],
+    ["h1", "person", "Housemate A", 2], ["h2", "person", "Mentor B", 11],
+  ];
+  var E = [["g1", "p2"], ["g1", "p1"], ["g2", "p1"], ["g3", "n7"], ["p2", "d1"], ["p2", "d2"], ["p2", "d3"], ["p1", "d4"], ["p1", "d5"],
+    ["d1", "n2"], ["d2", "n3"], ["d3", "n4"], ["d2", "n1"], ["n1", "h1"], ["n3", "h2"], ["d4", "n6"], ["d5", "n5"], ["p1", "n5"], ["p1", "n6"], ["h2", "d3"]];
+  // Hand-placed so clusters read clearly: AVA's world on the left, Tabby's on the right, goals above.
+  var POS = {
+    p1: [-0.4, 0.1, 0], p2: [0.9, -0.1, 0.3],
+    g1: [0.5, -1.2, 0.3], g2: [-0.8, -1.1, -0.4], g3: [-1.6, -0.6, 0.7],
+    d1: [1.5, 0.35, 0.8], d2: [1.75, -0.55, -0.25], d3: [1.2, 0.85, -0.6], d4: [-1.0, 0.75, 0.85], d5: [-0.35, 0.95, -0.9],
+    n1: [2.3, -0.1, 0.3], n2: [2.0, 1.0, 0.95], n3: [2.35, -1.0, 0.5], n4: [1.65, 1.45, -0.3], n5: [-1.45, 0.35, -0.95], n6: [-1.55, 1.25, 0.45], n7: [-2.1, -1.25, 0.25],
+    h1: [2.75, 0.75, -0.55], h2: [2.55, -0.35, -1.05],
+  };
+  var mean = [0, 0, 0], ids = Object.keys(POS);
+  ids.forEach(function (id) { for (var k = 0; k < 3; k++) mean[k] += POS[id][k] / ids.length; });
+  var nodes = N.map(function (n) { var p = POS[n[0]]; return { id: n[0], kind: n[1], label: n[2], day: n[3], x: (p[0] - mean[0]) * 0.8, y: (p[1] - mean[1]) * 0.8, z: (p[2] - mean[2]) * 0.8 }; });
+  var byId = {}; nodes.forEach(function (n) { byId[n.id] = n; });
+  var canvas = document.getElementById("g"), ctx = canvas.getContext("2d");
+  var dpr = Math.min(window.devicePixelRatio || 1, 2), W = 0, H = 0;
+  var rotY = 0.4, rotX = -0.2, dragging = false, lx = 0, ly = 0, moved = 0, selected = byId.p1, day = 26, proj = [];
+  function resize() { W = canvas.clientWidth; H = canvas.clientHeight; canvas.width = W * dpr; canvas.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+  function project(n) {
+    var cy = Math.cos(rotY), sy = Math.sin(rotY), cx = Math.cos(rotX), sx = Math.sin(rotX);
+    var x = n.x * cy - n.z * sy, z = n.x * sy + n.z * cy, y = n.y * cx - z * sx; z = n.y * sx + z * cx;
+    var f = 3.4 / (3.4 + z), s = Math.min(W, H) * 0.23;
+    return { x: W / 2 + x * s * f, y: H / 2 + 20 + y * s * f, z: z, f: f };
+  }
+  function linked(n) { return E.filter(function (e) { return e[0] === n.id || e[1] === n.id; }).map(function (e) { return byId[e[0] === n.id ? e[1] : e[0]]; }); }
+  function frame() {
+    if (!dragging && !AVAF.reduced) rotY += 0.0022;
+    ctx.clearRect(0, 0, W, H);
+    proj = nodes.map(function (n) { return { n: n, p: project(n) }; });
+    var P = {}; proj.forEach(function (q) { P[q.n.id] = q.p; });
+    var near = linked(selected).map(function (n) { return n.id; });
+    E.forEach(function (e) {
+      var a = byId[e[0]], b = byId[e[1]]; if (a.day > day || b.day > day) return;
+      var hot = e[0] === selected.id || e[1] === selected.id, pa = P[a.id], pb = P[b.id];
+      var g = ctx.createLinearGradient(pa.x, pa.y, pb.x, pb.y);
+      g.addColorStop(0, COL[a.kind]); g.addColorStop(1, COL[b.kind]);
+      ctx.strokeStyle = hot ? g : "rgba(255,255,255,.10)"; ctx.globalAlpha = hot ? 0.9 : 1; ctx.lineWidth = hot ? 1.6 : 1;
+      ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke(); ctx.globalAlpha = 1;
+    });
+    proj.slice().sort(function (a, b) { return b.p.z - a.p.z; }).forEach(function (q) {
+      var n = q.n, p = q.p; if (n.day > day) return;
+      var isSel = n === selected, isNear = near.indexOf(n.id) >= 0, r = (n.kind === "project" ? 9 : n.kind === "goal" ? 7.5 : 5) * p.f;
+      var glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * (isSel ? 6 : 4));
+      glow.addColorStop(0, COL[n.kind]); glow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.globalAlpha = isSel ? 0.55 : isNear ? 0.35 : 0.18; ctx.fillStyle = glow; ctx.beginPath(); ctx.arc(p.x, p.y, r * (isSel ? 6 : 4), 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1; ctx.fillStyle = COL[n.kind]; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+      if (isSel || isNear || n.kind === "project" || n.kind === "goal") {
+        ctx.fillStyle = isSel ? "#fff" : "rgba(244,244,245,.75)"; ctx.font = (isSel ? "600 13px " : "12px ") + "Geist, system-ui";
+        ctx.fillText(n.label, p.x + r + 6, p.y + 4);
+      }
+    });
+    if (!AVAF.reduced || dragging) requestAnimationFrame(frame);
+  }
+  function side() {
+    document.getElementById("selName").textContent = selected.label;
+    document.getElementById("selKind").textContent = KIND[selected.kind] + (selected.day ? " · since Sep " + (selected.day + 2) : "");
+    document.getElementById("links").innerHTML = linked(selected).filter(function (n) { return n.day <= day; }).map(function (n) {
+      return '<button type="button" data-id="' + n.id + '"><span style="color:' + COL[n.kind] + '">●</span> ' + AVAF.esc(n.label) + ' <span class="faint">· ' + KIND[n.kind] + "</span></button>";
+    }).join("") || '<p class="faint">Nothing linked yet at this point in time.</p>';
+    document.querySelectorAll("#links button").forEach(function (b) { b.addEventListener("click", function () { selected = byId[b.dataset.id]; side(); if (AVAF.reduced) frame(); }); });
+  }
+  canvas.addEventListener("pointerdown", function (e) { dragging = true; moved = 0; lx = e.clientX; ly = e.clientY; canvas.setPointerCapture(e.pointerId); if (AVAF.reduced) requestAnimationFrame(frame); });
+  canvas.addEventListener("pointermove", function (e) { if (!dragging) return; rotY += (e.clientX - lx) * 0.006; rotX = Math.max(-1.2, Math.min(1.2, rotX + (e.clientY - ly) * 0.006)); moved += Math.abs(e.clientX - lx) + Math.abs(e.clientY - ly); lx = e.clientX; ly = e.clientY; });
+  canvas.addEventListener("pointerup", function (e) {
+    dragging = false;
+    if (moved < 6) {
+      var r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, best = null, bd = 22;
+      proj.forEach(function (q) { if (q.n.day > day) return; var d = Math.hypot(q.p.x - x, q.p.y - y); if (d < bd) { bd = d; best = q.n; } });
+      if (best) { selected = best; side(); }
+    }
+    if (AVAF.reduced) frame();
+  });
+  document.getElementById("t").addEventListener("input", function (e) {
+    day = Number(e.target.value); document.getElementById("tl").textContent = "Sep " + (day + 2);
+    if (selected.day > day) selected = byId.p1; side(); if (AVAF.reduced) frame();
+  });
+  resize(); window.addEventListener("resize", function () { resize(); if (AVAF.reduced) frame(); });
+  side(); frame();
+})();
+</script>
+</body>
+</html>

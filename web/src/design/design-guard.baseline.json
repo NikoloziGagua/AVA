@@ -1,0 +1,296 @@
+{
+  "migrated": [
+    "calendar/CalendarScreen.tsx",
+    "calendar/EventEditor.tsx",
+    "approvals/ApprovalCard.tsx",
+    "chat/AssistantMarkdown.tsx",
+    "chat/ChatScreen.tsx",
+    "chat/MemoryContextCapsule.tsx",
+    "chat/MessageActions.tsx",
+    "chat/MessageList.tsx",
+    "chat/RoomPostReceipt.tsx",
+    "chat/SavedItemsCard.tsx",
+    "chat/StepsSheet.tsx",
+    "chat/TaskReceiptCard.tsx",
+    "chat/ThinkingIndicator.tsx",
+    "chat/ToolCallChip.tsx",
+    "home/HomeScreen.tsx",
+    "home/oneThing.ts",
+    "ideas/IdeasScreen.tsx",
+    "notes/NotesScreen.tsx",
+    "notes/NotesPrimitives.tsx",
+    "notes/FolderTree.tsx",
+    "notes/NoteFileList.tsx",
+    "notes/NotePager.tsx",
+    "schedule/ScheduleScreen.tsx",
+    "reminders/ReminderStatusChip.tsx",
+    "reminders/WhenField.tsx",
+    "today/TodayScreen.tsx",
+    "orbit/ChatListScreen.tsx",
+    "voice/HoldToTalkButton.tsx",
+    "voice/VoiceExactTextDialog.tsx",
+    "voice/VoiceScreen.tsx",
+    "memory/MemoryScreen.tsx",
+    "memory/MemoryExtras.tsx",
+    "memory/MemoryMap.tsx",
+    "projects/ProjectsScreen.tsx",
+    "training/TrainingScreen.tsx"
+  ],
+  "files": {
+    "App.tsx": {
+      "tinyText": 1,
+      "rawColour": 0,
+      "backdrop": 1
+    },
+    "auth/PairingScreen.tsx": {
+      "tinyText": 1,
+      "rawColour": 1,
+      "backdrop": 2
+    },
+    "capabilities/CapabilitiesScreen.tsx": {
+      "tinyText": 16,
+      "rawColour": 16,
+      "backdrop": 0
+    },
+    "chat/ActivityPanel.tsx": {
+      "tinyText": 5,
+      "rawColour": 7,
+      "backdrop": 0
+    },
+    "chat/CommandBar.tsx": {
+      "tinyText": 0,
+      "rawColour": 6,
+      "backdrop": 0
+    },
+    "chat/Composer.tsx": {
+      "tinyText": 1,
+      "rawColour": 22,
+      "backdrop": 2
+    },
+    "components/ava/EdgeFade.tsx": {
+      "tinyText": 0,
+      "rawColour": 0,
+      "backdrop": 3
+    },
+    "components/ava/FlowingLines.tsx": {
+      "tinyText": 0,
+      "rawColour": 2,
+      "backdrop": 0
+    },
+    "components/ava/MagicRings.tsx": {
+      "tinyText": 0,
+      "rawColour": 8,
+      "backdrop": 0
+    },
+    "components/ava/MemoryBrain.tsx": {
+      "tinyText": 0,
+      "rawColour": 31,
+      "backdrop": 1
+    },
+    "components/ava/NebulaBackground.tsx": {
+      "tinyText": 0,
+      "rawColour": 3,
+      "backdrop": 0
+    },
+    "components/ava/NeuralField.tsx": {
+      "tinyText": 0,
+      "rawColour": 3,
+      "backdrop": 0
+    },
+    "components/ava/Orb.tsx": {
+      "tinyText": 0,
+      "rawColour": 5,
+      "backdrop": 0
+    },
+    "components/ava/PanelShell.tsx": {
+      "tinyText": 1,
+      "rawColour": 9,
+      "backdrop": 0
+    },
+    "components/ava/SegmentedTabs.tsx": {
+      "tinyText": 1,
+      "rawColour": 0,
+      "backdrop": 0
+    },
+    "components/ava/ShiningText.tsx": {
+      "tinyText": 0,
+      "rawColour": 4,
+      "backdrop": 0
+    },
+    "components/ui/dialog.tsx": {
+      "tinyText": 0,
+      "rawColour": 0,
+      "backdrop": 2
+    },
+    "explorer/CapabilityAtlas.tsx": {
+      "tinyText": 51,
+      "rawColour": 36,
+      "backdrop": 1
+    },
+    "explorer/DiscoverView.tsx": {
+      "tinyText": 0,
+      "rawColour": 5,
+      "backdrop": 0
+    },
+    "explorer/ExplorerScreen.tsx": {
+      "tinyText": 35,
+      "rawColour": 11,
+      "backdrop": 0
+    },
+    "explorer/HealthView.tsx": {
+      "tinyText": 28,
+      "rawColour": 2,
+      "backdrop": 0
+    },
+    "explorer/LearnedWorkflowsView.tsx": {
+      "tinyText": 35,
+      "rawColour": 21,
+      "backdrop": 0
+    },
+    "explorer/LiveTasksView.tsx": {
+      "tinyText": 20,
+      "rawColour": 10,
+      "backdrop": 0
+    },
+    "explorer/runtime.ts": {
+      "tinyText": 0,
+      "rawColour": 1,
+      "backdrop": 0
+    },
+    "explorer/TaskInspector.tsx": {
+      "tinyText": 61,
+      "rawColour": 46,
+      "backdrop": 0
+    },
+    "explorer/WorkflowMap.tsx": {
+      "tinyText": 2,
+      "rawColour": 22,
+      "backdrop": 0
+    },
+    "lib/deckMotion.ts": {
+      "tinyText": 0,
+      "rawColour": 7,
+      "backdrop": 0
+    },
+    "memory/MemoryIndexSection.tsx": {
+      "tinyText": 15,
+      "rawColour": 3,
+      "backdrop": 0
+    },
+    "memory/PeopleSection.tsx": {
+      "tinyText": 5,
+      "rawColour": 0,
+      "backdrop": 0
+    },
+    "memory/PersonaProfileCard.tsx": {
+      "tinyText": 7,
+      "rawColour": 3,
+      "backdrop": 0
+    },
+    "memory/PlaybooksSection.tsx": {
+      "tinyText": 8,
+      "rawColour": 2,
+      "backdrop": 0
+    },
+    "memory/WatchesSection.tsx": {
+      "tinyText": 6,
+      "rawColour": 0,
+      "backdrop": 0
+    },
+    "mission-control/MissionControlScreen.tsx": {
+      "tinyText": 52,
+      "rawColour": 6,
+      "backdrop": 0
+    },
+    "notes/ProjectBrief.tsx": {
+      "tinyText": 27,
+      "rawColour": 3,
+      "backdrop": 0
+    },
+    "reminders/presenter.ts": {
+      "tinyText": 0,
+      "rawColour": 1,
+      "backdrop": 0
+    },
+    "rules/DevRoomSection.tsx": {
+      "tinyText": 2,
+      "rawColour": 0,
+      "backdrop": 0
+    },
+    "rules/RulesScreen.tsx": {
+      "tinyText": 6,
+      "rawColour": 3,
+      "backdrop": 0
+    },
+    "self/SelfScreen.tsx": {
+      "tinyText": 24,
+      "rawColour": 13,
+      "backdrop": 0
+    },
+    "self/transparency-pilot/DecisionScorecardView.tsx": {
+      "tinyText": 14,
+      "rawColour": 7,
+      "backdrop": 0
+    },
+    "self/transparency-pilot/RunEvidenceView.tsx": {
+      "tinyText": 26,
+      "rawColour": 7,
+      "backdrop": 0
+    },
+    "self/transparency-pilot/TransparencyPilotMockup.tsx": {
+      "tinyText": 6,
+      "rawColour": 4,
+      "backdrop": 0
+    },
+    "self/transparency-pilot/WorkflowComparisonView.tsx": {
+      "tinyText": 10,
+      "rawColour": 5,
+      "backdrop": 0
+    },
+    "strategy/StrategyRoomScreen.tsx": {
+      "tinyText": 12,
+      "rawColour": 10,
+      "backdrop": 0
+    },
+    "theme.css": {
+      "tinyText": 22,
+      "rawColour": 331,
+      "backdrop": 15
+    },
+    "visuals/render.ts": {
+      "tinyText": 0,
+      "rawColour": 3,
+      "backdrop": 0
+    },
+    "visuals/ResearchVisualCanvas.tsx": {
+      "tinyText": 7,
+      "rawColour": 39,
+      "backdrop": 2
+    },
+    "visuals/ResearchVisualCard.tsx": {
+      "tinyText": 17,
+      "rawColour": 3,
+      "backdrop": 1
+    },
+    "visuals/VisualFlowCanvas.tsx": {
+      "tinyText": 0,
+      "rawColour": 6,
+      "backdrop": 0
+    },
+    "visuals/VisualMessageCard.tsx": {
+      "tinyText": 13,
+      "rawColour": 3,
+      "backdrop": 1
+    },
+    "visuals/VisualsScreen.tsx": {
+      "tinyText": 3,
+      "rawColour": 0,
+      "backdrop": 0
+    },
+    "watches/WatchesScreen.tsx": {
+      "tinyText": 11,
+      "rawColour": 0,
+      "backdrop": 0
+    }
+  }
+}

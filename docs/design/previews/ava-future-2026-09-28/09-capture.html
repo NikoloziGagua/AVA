@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Capture Anywhere · AVA Future</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .cols { grid-template-columns: 380px 1fr; align-items: start; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .phone { border-radius: 38px; padding: 14px; border: 1px solid var(--line-2); background: linear-gradient(180deg, #0c1018, #06080d); box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+  .screen { position: relative; border-radius: 28px; height: 660px; overflow: hidden; background: #0a0d13; }
+  .web { padding: 22px 18px; }
+  .web .url { font: 12px var(--mono); color: var(--ink-3); padding: 7px 10px; border-radius: 10px; background: rgba(255,255,255,.05); margin-bottom: 16px; }
+  .web h3 { font-size: 20px; line-height: 1.25; }
+  .web p { font-size: 14px; color: var(--ink-2); }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; padding: 16px 16px 22px; border-radius: 22px 22px 0 0; background: #151a24; border-top: 1px solid var(--line-2); transform: translateY(105%); transition: transform .5s var(--ease); }
+  .sheet.up { transform: none; }
+  .apps { display: flex; gap: 14px; overflow: hidden; padding: 6px 0 12px; }
+  .app { display: grid; justify-items: center; gap: 6px; font-size: 11.5px; color: var(--ink-2); background: none; border: 0; cursor: pointer; }
+  .app i { width: 52px; height: 52px; border-radius: 14px; background: rgba(255,255,255,.08); display: grid; place-items: center; font-style: normal; font-size: 20px; }
+  .app.ava i { background: radial-gradient(circle at 35% 30%, #fff, #9cb4ff 40%, #3a2f7a 90%); box-shadow: 0 0 18px rgba(126,156,255,.6); }
+  .pick { display: grid; gap: 8px; }
+  .dest { display: flex; justify-content: space-between; gap: 10px; align-items: center; text-align: left; width: 100%; padding: 11px 13px; border-radius: 14px; border: 1px solid var(--line); background: rgba(255,255,255,.04); cursor: pointer; font-size: 14px; }
+  .dest.best { border-color: rgba(156,196,255,.55); background: rgba(156,196,255,.08); }
+  .dest small { display: block; color: var(--ink-3); font-size: 12px; }
+  .receipt { position: absolute; left: 14px; right: 14px; top: 16px; padding: 12px 14px; border-radius: 16px; background: #f4f4f5; color: #06080c; font-size: 14px; transform: translateY(-140%); transition: transform .5s var(--ease); box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  .receipt.down { transform: none; }
+  .receipt b { font-weight: 650; }
+  .receipt .acts { display: flex; gap: 14px; margin-top: 6px; font-size: 13px; }
+  .receipt .acts a { color: #2b4fc4; text-decoration: none; }
+  .voice { position: absolute; inset: 0; display: none; flex-direction: column; justify-content: flex-end; gap: 12px; padding: 18px; background: radial-gradient(ellipse at 50% 100%, rgba(126,156,255,.25), transparent 60%), #0a0d13; }
+  .voice.show { display: flex; }
+  .mic { width: 84px; height: 84px; border-radius: 50%; align-self: center; border: 0; cursor: pointer; background: #f4f4f5; color: #06080c; font-size: 30px; box-shadow: 0 0 0 10px rgba(244,244,245,.08); }
+  .mic.rec { animation: pulse 1.2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(244,244,245,.35); } 100% { box-shadow: 0 0 0 26px rgba(244,244,245,0); } }
+  .wave { display: flex; gap: 3px; align-items: center; justify-content: center; height: 40px; }
+  .wave i { width: 4px; border-radius: 3px; background: var(--ink); height: 6px; }
+  .bubble { padding: 10px 12px; border-radius: 14px; font-size: 14px; animation: fadeIn .4s var(--ease) both; }
+  .bubble.me { background: var(--ink); color: #06080c; align-self: flex-end; }
+  .bubble.ava { background: rgba(255,255,255,.07); border: 1px solid var(--line); align-self: flex-start; }
+  .tabs { display: inline-flex; border: 1px solid var(--line-2); border-radius: 999px; padding: 3px; background: var(--glass); margin-bottom: 14px; }
+  .tabs button { border: 0; background: none; padding: 7px 14px; border-radius: 999px; cursor: pointer; color: var(--ink-2); }
+  .tabs button[aria-selected="true"] { background: var(--ink); color: #06080c; }
+  .how { display: grid; gap: 10px; }
+  .how div { padding: 12px 14px; border-radius: 14px; border: 1px solid var(--line); background: var(--glass); font-size: 14px; color: var(--ink-2); }
+  .how b { color: var(--ink); }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <a class="back" href="index.html">← All concepts</a>
+    <span class="eyebrow">Concept 09 · Your #4 pick</span>
+    <span class="badge demo">DEMO · phone mock</span>
+  </div>
+  <h1><span class="silver">Capture Anywhere</span></h1>
+  <p class="lede">See something, share it to AVA. Have a thought, say it. AVA files it in the right project, tells you exactly where it went, and lets you undo. If it isn't sure, it asks instead of guessing.</p>
+  <div class="tabs" role="tablist"><button role="tab" aria-selected="true" data-tab="share">Share a link</button><button role="tab" aria-selected="false" data-tab="voice">Voice memo</button></div>
+
+  <section class="grid cols">
+    <div class="phone"><div class="screen" id="screen">
+      <div class="web" id="web">
+        <div class="url">example-blog.com/how-group-payments-grow</div>
+        <h3>How group-payment apps win student houses</h3>
+        <p>An (invented) article about reminders, habits and why the second month decides everything…</p>
+        <button class="btn solid" id="shareBtn" style="margin-top:10px">Share ⇪</button>
+        <div aria-hidden="true" style="margin-top:18px;height:150px;border-radius:14px;background:linear-gradient(135deg,#1d2b4a,#3b2f63 55%,#6b4c7d);position:relative;overflow:hidden"><div style="position:absolute;inset:auto 16px 14px;height:10px;border-radius:6px;background:rgba(255,255,255,.35)"></div></div>
+        <div aria-hidden="true" style="display:grid;gap:9px;margin-top:16px">
+          <i style="height:9px;border-radius:5px;background:rgba(255,255,255,.12);width:96%"></i><i style="height:9px;border-radius:5px;background:rgba(255,255,255,.12);width:88%"></i>
+          <i style="height:9px;border-radius:5px;background:rgba(255,255,255,.12);width:92%"></i><i style="height:9px;border-radius:5px;background:rgba(255,255,255,.12);width:70%"></i>
+          <i style="height:9px;border-radius:5px;background:rgba(255,255,255,.12);width:94%"></i><i style="height:9px;border-radius:5px;background:rgba(255,255,255,.12);width:82%"></i>
+        </div>
+      </div>
+      <div class="sheet" id="sheet">
+        <div class="apps" id="apps"><button class="app ava" id="toAva"><i></i>AVA</button><span class="app"><i>✉</i>Mail</span><span class="app"><i>💬</i>Messages</span><span class="app"><i>📋</i>Copy</span></div>
+        <div class="pick" id="pick" hidden>
+          <div class="faint">Where should this go?</div>
+          <button class="dest best" data-d="Tabby / Research"><span>Tabby / Research<small>It's about group payments and second-month retention, like your pricing note</small></span><span>✓</span></button>
+          <button class="dest" data-d="AVA / Ideas"><span>AVA / Ideas<small>Less likely</small></span></button>
+          <button class="dest" data-d="Inbox (sort later)"><span>Inbox, I'll sort it later<small>Always an option</small></span></button>
+        </div>
+      </div>
+      <div class="receipt" id="receipt" role="status"></div>
+      <div class="voice" id="voice">
+        <div id="vlog" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div class="wave" id="wave" aria-hidden="true"></div>
+        <button class="mic" id="mic" aria-label="Record a voice memo">🎙</button>
+        <p class="faint" style="text-align:center;margin:0">Tap to speak · tap again to stop</p>
+      </div>
+    </div></div>
+    <div class="how">
+      <div><b>One tap from anywhere.</b> AVA appears in the phone's share sheet (a PWA share target). On iPhone, a Shortcut ("Hey Siri, tell AVA…") covers voice.</div>
+      <div><b>Filed where it belongs.</b> AVA suggests a project folder and explains why. If it's unsure, it asks, and "Inbox" is always an option.</div>
+      <div><b>An exact receipt.</b> "Saved to Tabby / Research", with Undo and a link back to the original page.</div>
+      <div><b>Offline-safe.</b> With no signal, it's kept on the phone and sent once when you're back. A retry never creates a duplicate note.</div>
+      <div><b>Feeds everything else.</b> Captures are what "AVA starts a conversation" and Decision Replay are built from.</div>
+    </div>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>The article, folder suggestions and transcript are scripted.</li><li>This phone is a drawing, not the real share sheet.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>A PWA share target plus an iOS Shortcut.</li><li>Folder suggestions from your real Notes folders.</li><li>Idempotent saves with a receipt ID; voice memos transcribed by AVA's existing dictation.</li></ul></div>
+    <div class="card"><h3>How it plugs into AVA</h3><p>This is M1 in the plan (capture anything). Notes, folders, dictation and push receipts already exist. The new part is the share target and the "file it for me" step, verified on your iPhone.</p></div>
+    <div class="card"><h3>Why for you</h3><p>You note things down constantly, and ideas die in camera rolls and chat histories. Capture is the foundation every other concept here feeds on.</p><p class="faint" style="margin-top:6px">Effort: medium · Risk: low · Daily value: very high</p></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  var sheet = document.getElementById("sheet"), pick = document.getElementById("pick"), receipt = document.getElementById("receipt");
+  document.getElementById("shareBtn").addEventListener("click", function () { receipt.classList.remove("down"); pick.hidden = true; sheet.classList.add("up"); });
+  document.getElementById("toAva").addEventListener("click", function () { pick.hidden = false; });
+  document.querySelectorAll(".dest").forEach(function (b) {
+    b.addEventListener("click", function () {
+      sheet.classList.remove("up");
+      receipt.innerHTML = "<b>Saved to " + AVAF.esc(b.dataset.d) + '</b> · 21:14<br><span style="color:#444">"How group-payment apps win student houses", linked to its source</span><div class="acts"><a href="#" onclick="return false">Undo</a><a href="#" onclick="return false">Open note</a></div>';
+      setTimeout(function () { receipt.classList.add("down"); }, 250);
+    });
+  });
+  // Voice memo
+  var wave = document.getElementById("wave"), mic = document.getElementById("mic"), vlog = document.getElementById("vlog"), timer = null, recording = false;
+  for (var i = 0; i < 26; i++) wave.appendChild(document.createElement("i"));
+  mic.addEventListener("click", async function () {
+    if (!recording) {
+      recording = true; mic.classList.add("rec"); mic.textContent = "■";
+      timer = setInterval(function () { wave.querySelectorAll("i").forEach(function (b) { b.style.height = (6 + Math.random() * 30) + "px"; }); }, 110);
+      return;
+    }
+    recording = false; mic.classList.remove("rec"); mic.textContent = "🎙"; clearInterval(timer);
+    wave.querySelectorAll("i").forEach(function (b) { b.style.height = "6px"; });
+    var me = document.createElement("div"); me.className = "bubble me"; vlog.appendChild(me);
+    await AVAF.type(me, "Idea: Tabby could split groceries too. Ask the pilot houses if they'd use it.", 18);
+    await AVAF.sleep(500);
+    var ava = document.createElement("div"); ava.className = "bubble ava"; vlog.appendChild(ava);
+    await AVAF.type(ava, "Filed as an idea in Tabby / Ideas, linked to your pilot plan. Want it in tomorrow's check-in?", 16);
+  });
+  document.querySelectorAll(".tabs button").forEach(function (t) {
+    t.addEventListener("click", function () {
+      document.querySelectorAll(".tabs button").forEach(function (x) { x.setAttribute("aria-selected", String(x === t)); });
+      document.getElementById("voice").classList.toggle("show", t.dataset.tab === "voice");
+      sheet.classList.remove("up"); receipt.classList.remove("down");
+    });
+  });
+})();
+</script>
+</body>
+</html>

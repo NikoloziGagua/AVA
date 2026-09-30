@@ -5,6 +5,8 @@ import { PanelSection } from "../components/ava/PanelShell.js";
 import { useGSAP } from "../lib/gsap.js";
 import { useReducedMotion } from "../lib/useReducedMotion.js";
 import { hoverLift } from "../lib/deckMotion.js";
+import { presentReminder } from "../reminders/presenter.js";
+import { ReminderStatusChip } from "../reminders/ReminderStatusChip.js";
 
 /** Light refresh so last-check lines stay fresh while the panel is open. */
 const REFRESH_MS = 30_000;
@@ -46,6 +48,11 @@ const STATUS_GLYPH = {
   triggered: { glyph: "●", cls: "text-[var(--ac)]", label: "triggered" },
   error: { glyph: "✗", cls: "text-[var(--ac-stop)]", label: "error" },
   unclear: { glyph: "?", cls: "text-white/45", label: "unclear" },
+  busy: { glyph: "◌", cls: "text-[var(--ac-warn)]", label: "waiting for target" },
+  dispatching: { glyph: "↗", cls: "text-[var(--ac-exec)]", label: "dispatching" },
+  delivered: { glyph: "●", cls: "text-[var(--ac-exec)]", label: "delivered" },
+  running: { glyph: "◌", cls: "text-[var(--ac-exec)]", label: "running" },
+  completed: { glyph: "✓", cls: "text-[var(--ac)]", label: "completed" },
 } as const;
 
 function statusGlyph(status: WatchRow["last_status"]) {
@@ -122,8 +129,9 @@ export function WatchesSection() {
 
 /**
  * One watch row: enabled toggle · prompt (truncated, tap to expand) · schedule
- * caption · last-check line (status glyph + result + relative time) · a two-tap
- * delete (first tap arms "sure?", second deletes; disarms itself after 2.5s).
+ * caption · last-check line (status glyph + result + relative time), or for a
+ * direct one-off reminder its transport receipt · a two-tap delete (first tap
+ * arms "sure?", second deletes; disarms itself after 2.5s).
  */
 function WatchCard({ watch: w, onToggle, onDelete }: {
   watch: WatchRow;
@@ -143,12 +151,15 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
 
   const on = Boolean(w.enabled);
   const status = statusGlyph(w.last_status);
+  // Direct one-off reminders show their transport receipt; the historical
+  // last_status/last_result ("delivered") is not proof and is not shown.
+  const receipt = presentReminder(w);
 
   return (
     <div
       className={
         "lg-slab lg-sweep relative flex items-start gap-3 rounded-xl px-4 py-3 text-xs " +
-        (on ? "" : "opacity-60")
+        (receipt ? "ds-legacy-reminder-row" : on ? "" : "opacity-60")
       }
       style={{ "--sweep-x": "-130%" } as CSSProperties}
       onMouseEnter={contextSafe((e: React.MouseEvent<HTMLDivElement>) => hoverLift(e.currentTarget, true, reduced))}
@@ -166,7 +177,7 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
         <span className="tgl-knob" />
       </button>
 
-      <div className="min-w-0 flex-1">
+      <div className={"min-w-0 flex-1 " + (receipt ? "ds-legacy-reminder-body" : "")}>
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
@@ -181,9 +192,18 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 hud text-[9px] tracking-[0.16em] text-white/40">
           <span>{scheduleLabel(w)}</span>
           {w.kind === "reminder" && <span className="text-[var(--ac-exec)]/85">reminder</span>}
+          {w.kind === "codex" && <span className="text-[var(--ac)]/85">Codex task</span>}
+          {w.kind === "codex" && w.continue_cycle ? <span>continuous cycle</span> : null}
         </div>
 
-        {w.last_run_at != null ? (
+        {receipt ? (
+          <div className="ds-legacy-reminder-receipt mt-1.5 flex flex-wrap items-start gap-2 text-xs leading-relaxed">
+            <ReminderStatusChip presentation={receipt} />
+            <span className="min-w-0 flex-1 basis-44 whitespace-normal break-words text-white/75">
+              {receipt.detail}
+            </span>
+          </div>
+        ) : w.last_run_at != null ? (
           <div className="mt-1.5 flex items-baseline gap-2 text-[11px] leading-relaxed">
             <span className={"shrink-0 " + status.cls} aria-label={`last check: ${status.label}`}>
               {status.glyph}
@@ -202,6 +222,24 @@ function WatchCard({ watch: w, onToggle, onDelete }: {
           </div>
         ) : (
           <div className="mt-1.5 text-[11px] text-white/35">no checks yet</div>
+        )}
+
+        {w.kind === "codex" && w.continue_cycle && w.successor_status && (
+          <div
+            className={
+              "mt-2 rounded-lg border px-2.5 py-2 text-[10px] leading-relaxed " +
+              (w.successor_status === "blocked"
+                ? "border-[var(--ac-stop)]/25 bg-[var(--ac-stop)]/[0.06] text-white/65"
+                : w.successor_status === "scheduled"
+                  ? "border-[var(--ac)]/20 bg-[var(--ac)]/[0.05] text-white/60"
+                  : "border-[var(--ac-warn)]/20 bg-[var(--ac-warn)]/[0.05] text-white/60")
+            }
+            aria-label={`successor planning: ${w.successor_status}`}
+          >
+            <span className="hud mr-2 tracking-[0.14em] text-white/45">NEXT</span>
+            {w.successor_result || w.successor_status}
+            {w.successor_attempted_at ? ` · ${timeAgo(w.successor_attempted_at)}` : ""}
+          </div>
         )}
       </div>
 

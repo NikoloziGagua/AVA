@@ -1,0 +1,50 @@
+export {
+  CAPABILITY_BY_ID,
+  DOMAIN_BY_ID,
+  EXPLORER_CAPABILITIES,
+  EXPLORER_DOMAINS,
+  EXPLORER_REGISTRY,
+  getCapability,
+  getChildCapabilities,
+  getDomainCapabilities,
+  validateExplorerRegistry,
+} from "./registry.js";
+
+export type {
+  RegistryValidationCode,
+  RegistryValidationIssue,
+} from "./registry.js";
+
+export type {
+  CapabilityImplementation,
+  CapabilityInput,
+  CapabilityOutput,
+  CapabilityRuntimeBinding,
+  CapabilityRuntimeEvidence,
+  CapabilitySafety,
+  CapabilityStability,
+  CapabilityVerification,
+  DependencyRelationship,
+  DependencyTargetType,
+  EvidenceKind,
+  ExplorerCapability,
+  ExplorerCapabilityId,
+  ExplorerDependency,
+  ExplorerDomain,
+  ExplorerDomainId,
+  ExplorerRegistry,
+  ExplorerWorkflow,
+  ExplorerWorkflowEdge,
+  ExplorerWorkflowId,
+  ExplorerWorkflowNode,
+  ExplorerWorkflowNodeId,
+  ReadinessDimension,
+  ReadinessObservation,
+  ReadinessRequirement,
+  RuntimeEvidenceState,
+  RuntimeSnapshotBinding,
+  SourceReference,
+  WorkflowEdgeKind,
+  WorkflowNodeKind,
+} from "./types.js";
+

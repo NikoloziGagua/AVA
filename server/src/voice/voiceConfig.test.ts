@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_SPEECH_RATE,
+  DEFAULT_REALTIME_SPEECH_RATE,
   MIN_SPEECH_RATE,
   MAX_SPEECH_RATE,
   resolveSpeechRate,
@@ -10,6 +11,10 @@ describe("voice speech rate config", () => {
   it("defaults to a faster-than-neutral rate (Sir's preference)", () => {
     expect(DEFAULT_SPEECH_RATE).toBeGreaterThan(1.0);
     expect(DEFAULT_SPEECH_RATE).toBe(1.15);
+  });
+
+  it("keeps native realtime speech at the model's natural cadence", () => {
+    expect(DEFAULT_REALTIME_SPEECH_RATE).toBe(1.0);
   });
 
   it("falls back to the faster default when no rate is requested", () => {

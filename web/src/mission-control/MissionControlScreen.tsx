@@ -1,0 +1,937 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  AlarmClock,
+  AlertTriangle,
+  ArrowLeft,
+  Bot,
+  Box,
+  CheckCircle2,
+  ChevronRight,
+  CircleDot,
+  Clock3,
+  Coins,
+  Download,
+  Eye,
+  FileJson,
+  MessagesSquare,
+  Octagon,
+  Radio,
+  RefreshCw,
+  Route,
+  ShieldCheck,
+  Square,
+  TerminalSquare,
+  Workflow,
+} from "lucide-react";
+import {
+  ApiError,
+  fetchMissionExport,
+  fetchMissionMeta,
+  fetchMissionRun,
+  fetchMissionRuns,
+  saveMissionExport,
+  stopMissionRun,
+  subscribeMissionEvents,
+  type MissionEvent,
+  type MissionEvidenceExport,
+  type MissionExportScope,
+  type MissionControlNavigation,
+  type MissionRun,
+  type MissionRunCategory,
+} from "../api.js";
+
+const ACTIVE = new Set([
+  "queued",
+  "starting",
+  "running",
+  "waiting_for_agent",
+  "waiting_for_user",
+  "waiting_for_approval",
+  "retrying",
+  "verifying",
+  "cancelling",
+]);
+const MISSION_RUN_LINK_ID = /^[A-Za-z0-9_.:-]{1,200}$/;
+
+function readMissionControlEntry(): { runId: string | null; fromWatches: boolean } {
+  if (typeof window === "undefined") return { runId: null, fromWatches: false };
+  const params = new URLSearchParams(window.location.search);
+  const fromWatches = params.get("from") === "watches";
+  const requested = params.get("run");
+  return {
+    runId: fromWatches && requested && MISSION_RUN_LINK_ID.test(requested) ? requested : null,
+    fromWatches,
+  };
+}
+
+function formatAge(at: number): string {
+  const delta = Math.max(0, Date.now() - at);
+  if (delta < 1_000) return "now";
+  if (delta < 60_000) return `${Math.floor(delta / 1_000)}s`;
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m`;
+  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h`;
+  return new Date(at).toLocaleDateString();
+}
+
+function formatDuration(ms: number | null): string {
+  if (ms == null) return "—";
+  if (ms < 1_000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1_000).toFixed(ms < 10_000 ? 1 : 0)}s`;
+  return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1_000)}s`;
+}
+
+function elapsed(run: MissionRun): number {
+  return Math.max(0, (run.completedAt ?? Date.now()) - run.startedAt);
+}
+
+function operationalSummary(run: MissionRun): string {
+  if (ACTIVE.has(run.status)) {
+    return run.status === "waiting_for_approval"
+      ? "AVA is waiting for an approval decision."
+      : run.status === "waiting_for_user"
+        ? "AVA is waiting for more information from Niko."
+        : "AVA is actively processing this run. Open the sanitized request in Run context if needed.";
+  }
+  if (run.status === "completed") {
+    return run.verificationStatus === "verified"
+      ? "The run completed with recorded verification evidence."
+      : "The run completed, but its external outcome is not independently verified.";
+  }
+  if (run.status === "cancelled") return "The run was cancelled before normal completion.";
+  if (run.status === "failed" || run.status === "timed_out" || run.status === "orphaned") {
+    return "The run did not complete normally. Inspect errors and the final timeline events.";
+  }
+  return "Mission Control has recorded the run state.";
+}
+
+function statusColor(status: string): string {
+  if (status === "completed" || status === "success") return "var(--ac-live)";
+  if (status === "failed" || status === "error" || status === "timed_out") return "var(--ac-stop)";
+  if (status === "cancelled" || status === "skipped" || status === "orphaned") return "#94a3b8";
+  if (status.includes("waiting") || status === "retrying" || status === "cancelling") return "var(--ac-exec)";
+  return "var(--ac)";
+}
+
+function eventIcon(event: MissionEvent) {
+  if (event.type.startsWith("tool.")) return TerminalSquare;
+  if (event.type.startsWith("agent.delegation")) return Route;
+  if (event.type.startsWith("approval.")) return ShieldCheck;
+  if (event.type.startsWith("voice.")) return Radio;
+  if (event.status === "error") return AlertTriangle;
+  if (event.status === "success") return CheckCircle2;
+  return CircleDot;
+}
+
+function safeJson(value: unknown): string {
+  if (value == null) return "";
+  try { return JSON.stringify(value, null, 2); }
+  catch { return String(value); }
+}
+
+type ApprovalPolicyView = {
+  availability: "recorded" | "unavailable";
+  risk: string;
+  timeout: string;
+  deadline: string;
+};
+
+function approvalPolicyView(event: MissionEvent): ApprovalPolicyView | null {
+  if (!event.type.startsWith("approval.")) return null;
+  const payload = event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+    ? event.payload as Record<string, unknown>
+    : null;
+  const riskTier = payload?.riskTier;
+  const timeoutBehavior = payload?.timeoutBehavior;
+  const deadlineAt = payload?.deadlineAt;
+  const validPair = (riskTier === "medium" && timeoutBehavior === "auto_approve")
+    || (riskTier === "high" && timeoutBehavior === "auto_deny");
+  if (!validPair || typeof deadlineAt !== "number" || !Number.isFinite(deadlineAt)) {
+    return {
+      availability: "unavailable",
+      risk: "Not recorded",
+      timeout: "Not recorded",
+      deadline: "Not recorded",
+    };
+  }
+  return {
+    availability: "recorded",
+    risk: riskTier === "high" ? "High risk" : "Medium risk",
+    timeout: timeoutBehavior === "auto_deny"
+      ? "Silence auto-denies; the action does not run"
+      : "Silence auto-approves; the action may continue",
+    deadline: new Date(deadlineAt).toLocaleString(),
+  };
+}
+
+function flattenRunTree(runs: MissionRun[]): Array<{ run: MissionRun; depth: number }> {
+  const byParent = new Map<string | null, MissionRun[]>();
+  for (const run of runs) {
+    const key = run.parentRunId && runs.some((candidate) => candidate.id === run.parentRunId)
+      ? run.parentRunId
+      : null;
+    const children = byParent.get(key) ?? [];
+    children.push(run);
+    byParent.set(key, children);
+  }
+  for (const group of byParent.values()) {
+    group.sort((a, b) => {
+      const liveDelta = Number(ACTIVE.has(b.status)) - Number(ACTIVE.has(a.status));
+      return liveDelta || b.updatedAt - a.updatedAt;
+    });
+  }
+  const result: Array<{ run: MissionRun; depth: number }> = [];
+  const visit = (run: MissionRun, depth: number) => {
+    result.push({ run, depth });
+    for (const child of byParent.get(run.id) ?? []) visit(child, depth + 1);
+  };
+  for (const root of byParent.get(null) ?? []) visit(root, 0);
+  return result;
+}
+
+type CommunicationAvailability = "pending" | "sanitized_recorded" | "not_recorded" | "unavailable";
+
+function communicationPayload(events: MissionEvent[]): Record<string, unknown> | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const value = events[index]?.payload;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      if (typeof record.communicationSource === "string") return record;
+    }
+  }
+  return null;
+}
+
+function communicationAvailability(
+  payload: Record<string, unknown> | null,
+  key: "requestAvailability" | "responseAvailability",
+): CommunicationAvailability {
+  const value = payload?.[key];
+  return value === "pending" || value === "sanitized_recorded" || value === "not_recorded" || value === "unavailable"
+    ? value
+    : "not_recorded";
+}
+
+function availabilityLabel(value: CommunicationAvailability): string {
+  if (value === "sanitized_recorded") return "Sanitized evidence recorded";
+  if (value === "pending") return "Pending";
+  if (value === "unavailable") return "Unavailable";
+  return "Not recorded by this transport";
+}
+
+function responseEvidenceLabel(payload: Record<string, unknown> | null): string {
+  const provenance = payload?.responseEvidenceProvenance;
+  if (provenance === "exact_thread_terminal_result") return "Exact-thread terminal result";
+  if (provenance === "provider_result_boundary") return "Provider result boundary";
+  const availability = communicationAvailability(payload, "responseAvailability");
+  if (availability === "pending") return "Pending";
+  if (availability === "unavailable") return "Result source unavailable";
+  if (availability === "not_recorded") return "No result content recorded";
+  return "AVA-observed result boundary";
+}
+
+function communicationActor(run: MissionRun): string {
+  const label = run.runtimeType.replaceAll("_", " ");
+  return label.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function MissionControlScreen() {
+  const [entry] = useState(readMissionControlEntry);
+  const [runs, setRuns] = useState<MissionRun[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(entry.runId);
+  const [selectedRun, setSelectedRun] = useState<MissionRun | null>(null);
+  const [events, setEvents] = useState<MissionEvent[]>([]);
+  const [navigation, setNavigation] = useState<MissionControlNavigation>(null);
+  const [selectedEvent, setSelectedEvent] = useState<MissionEvent | null>(null);
+  const [streamState, setStreamState] = useState<"connecting" | "live" | "reconnecting" | "offline">("connecting");
+  const [technical, setTechnical] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [streamReady, setStreamReady] = useState(false);
+  const [exportSupported, setExportSupported] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<MissionExportScope>("run");
+  const [exporting, setExporting] = useState(false);
+  const [exportReceipt, setExportReceipt] = useState<MissionEvidenceExport | null>(null);
+  const [category, setCategory] = useState<MissionRunCategory>("all");
+  const refreshTimer = useRef<number | null>(null);
+  const cursor = useRef(0);
+
+  const loadRuns = useCallback(async () => {
+    const next = await fetchMissionRuns(75, category);
+    setRuns(next);
+    setSelectedId((current) => {
+      if (current && next.some((run) => run.id === current)) return current;
+      if (current && current === entry.runId) return current;
+      return next.find((run) => ACTIVE.has(run.status))?.id ?? next[0]?.id ?? null;
+    });
+  }, [category, entry.runId]);
+
+  const loadDetail = useCallback(async (id: string, expectWatcherReceipt = false) => {
+    const detail = await fetchMissionRun(id);
+    setSelectedRun(detail.run);
+    setEvents(detail.events);
+    setNavigation(expectWatcherReceipt && detail.navigation?.kind !== "watcher"
+      ? { kind: "watcher", availability: "unavailable" }
+      : detail.navigation ?? null);
+    setRuns((current) => current.some((run) => run.id === detail.run.id)
+      ? current
+      : [detail.run, ...current]);
+    cursor.current = Math.max(cursor.current, ...detail.events.map((event) => event.seq), 0);
+  }, []);
+
+  const failClosedWatcherNavigation = useCallback(() => {
+    setNavigation((current) => current?.kind === "watcher"
+      ? { kind: "watcher", availability: "unavailable" }
+      : current);
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      await loadRuns();
+      if (selectedId) await loadDetail(selectedId);
+      setError(null);
+    } catch (cause) {
+      failClosedWatcherNavigation();
+      setError(cause instanceof Error ? cause.message : "Mission Control could not refresh.");
+    }
+  }, [failClosedWatcherNavigation, loadDetail, loadRuns, selectedId]);
+
+  useEffect(() => {
+    document.title = "AVA Mission Control";
+    void (async () => {
+      try {
+        // A new window needs live events from "now", not a replay of every
+        // retained heartbeat. Reconnects still use the advancing local cursor.
+        const meta = await fetchMissionMeta();
+        cursor.current = Math.max(cursor.current, meta.eventBounds.max ?? 0);
+        setExportSupported(meta.evidenceExport?.enabled === true);
+        await loadRuns();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setStreamReady(true);
+      }
+    })();
+  }, [loadRuns]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setSelectedRun(null);
+      setEvents([]);
+      setNavigation(null);
+      return;
+    }
+    setSelectedEvent(null);
+    setNavigation(null);
+    setExportOpen(false);
+    setExportReceipt(null);
+    void loadDetail(selectedId).catch((cause) => {
+      failClosedWatcherNavigation();
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, [failClosedWatcherNavigation, loadDetail, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || navigation?.kind !== "watcher" || navigation.availability !== "available") return;
+    let disposed = false;
+    let timer: number | null = null;
+    let running = false;
+    let delayMs = 5_000;
+    const schedule = (delay: number) => {
+      if (disposed) return;
+      if (timer != null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void revalidate(), delay);
+    };
+    const revalidate = async () => {
+      if (disposed || running) return;
+      if (document.visibilityState !== "visible") {
+        schedule(5_000);
+        return;
+      }
+      running = true;
+      try {
+        await loadDetail(selectedId, true);
+        delayMs = 5_000;
+        setError(null);
+      } catch {
+        failClosedWatcherNavigation();
+        delayMs = Math.min(30_000, delayMs * 2);
+        setError("Mission Control could not revalidate this evidence.");
+      } finally {
+        running = false;
+        schedule(delayMs);
+      }
+    };
+    const immediate = () => {
+      delayMs = 5_000;
+      schedule(0);
+    };
+    const visible = () => { if (document.visibilityState === "visible") immediate(); };
+    schedule(delayMs);
+    window.addEventListener("focus", immediate);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      disposed = true;
+      if (timer != null) window.clearTimeout(timer);
+      window.removeEventListener("focus", immediate);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [failClosedWatcherNavigation, loadDetail, navigation?.availability, navigation?.kind, selectedId]);
+
+  useEffect(() => {
+    if (!streamReady) return;
+    return subscribeMissionEvents({
+      after: cursor.current,
+      onState: setStreamState,
+      onGap: () => void refresh(),
+      onEvent: (event) => {
+        cursor.current = Math.max(cursor.current, event.seq);
+        if (event.runId === selectedId && event.visibility !== "system_only") {
+          setEvents((current) => current.some((item) => item.seq === event.seq)
+            ? current
+            : [...current, event].sort((a, b) => a.seq - b.seq));
+        }
+        if (refreshTimer.current != null) window.clearTimeout(refreshTimer.current);
+        refreshTimer.current = window.setTimeout(() => void refresh(), 180);
+      },
+    });
+  }, [refresh, selectedId, streamReady]);
+
+  useEffect(() => () => {
+    if (refreshTimer.current != null) window.clearTimeout(refreshTimer.current);
+  }, []);
+
+  const tree = useMemo(() => flattenRunTree(runs), [runs]);
+  const visibleEvents = useMemo(
+    () => events.filter((event) => technical || event.visibility !== "system_only"),
+    [events, technical],
+  );
+  const activeCount = runs.filter((run) => ACTIVE.has(run.status)).length;
+  const detailEvent = selectedEvent;
+  const detailApproval = detailEvent ? approvalPolicyView(detailEvent) : null;
+  const selectedCommunication = selectedRun?.runKind === "agent_communication"
+    ? communicationPayload(events)
+    : null;
+
+  const stop = async () => {
+    if (!selectedRun?.controlAvailable || stopping) return;
+    setStopping(true);
+    setError(null);
+    try {
+      const next = await stopMissionRun(selectedRun.id, selectedRun.version);
+      setSelectedRun(next);
+      await refresh();
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === "stale_version") {
+        await refresh();
+        setError("The run changed while Stop was pressed. Mission Control refreshed it; press Stop again if it is still active.");
+      } else {
+        setError(cause instanceof Error ? cause.message : "Stop could not reach the run owner.");
+      }
+    } finally {
+      setStopping(false);
+    }
+  };
+
+  const exportEvidence = async () => {
+    if (!selectedRun || !exportSupported || exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const next = await fetchMissionExport(selectedRun.id, exportScope);
+      saveMissionExport(next);
+      setExportReceipt(next);
+    } catch (cause) {
+      setExportReceipt(null);
+      setError(cause instanceof Error ? cause.message : "Mission Control could not export this evidence scope.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <main className="h-full min-h-screen w-full overflow-hidden bg-black text-white">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_0%,rgba(92,242,255,0.09),transparent_34%),radial-gradient(circle_at_82%_8%,rgba(124,92,255,0.08),transparent_28%)]" />
+      <header className="relative z-10 flex h-[72px] items-center justify-between border-b border-white/10 px-6">
+        <div className="flex items-center gap-4">
+          {entry.fromWatches && (
+            <button
+              type="button"
+              onClick={() => window.history.back()}
+              aria-label="Back to Watches"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-white/55 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70"
+            >
+              <ArrowLeft size={15} />
+            </button>
+          )}
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-300/20 bg-cyan-300/8">
+            <Activity size={20} style={{ color: "var(--ac)" }} />
+          </div>
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-lg font-medium tracking-tight">Mission Control</h1>
+              <span className="hud rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 text-[8px] text-white/45">AVA authority</span>
+            </div>
+            <p className="mt-0.5 text-xs text-white/40">One correlated view of voice, agents, tools and evidence</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.035] px-3 py-1.5 text-[11px] text-white/55">
+            <span className="h-1.5 w-1.5 rounded-full" style={{ background: streamState === "live" ? "var(--ac-live)" : "var(--ac-exec)" }} />
+            {streamState}
+          </div>
+          <div className="hud text-[9px] text-white/35">{activeCount} active · {runs.length} visible</div>
+          <button
+            onClick={() => void refresh()}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-white/55 transition hover:text-white"
+            aria-label="refresh Mission Control"
+          >
+            <RefreshCw size={15} />
+          </button>
+        </div>
+      </header>
+
+      {error && (
+        <div role="alert" className="relative z-20 mx-6 mt-3 flex items-center gap-2 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-100">
+          <AlertTriangle size={14} /> {error}
+        </div>
+      )}
+
+      <div className="relative z-10 grid h-[calc(100vh-72px)] min-h-0 grid-cols-1 overflow-y-auto xl:grid-cols-[300px_minmax(460px,1fr)_360px] xl:overflow-hidden">
+        <aside className="max-h-[38vh] min-h-0 overflow-y-auto border-b border-white/10 bg-white/[0.015] p-3 xl:max-h-none xl:border-b-0 xl:border-r">
+          <div className="mb-3 flex items-center justify-between px-2">
+            <span className="hud text-[9px] text-white/40">Observed work</span>
+            <Workflow size={13} className="text-white/30" />
+          </div>
+          <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-white/8 bg-black/25 p-1" role="group" aria-label="Mission Control view">
+            {([
+              { id: "all", label: "All activity", icon: Activity },
+              { id: "communications", label: "Communications", icon: MessagesSquare },
+            ] as const).map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setCategory(id)}
+                aria-pressed={category === id}
+                className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-[10px] transition ${
+                  category === id
+                    ? "bg-cyan-300/10 text-cyan-100"
+                    : "text-white/38 hover:bg-white/[0.04] hover:text-white/68"
+                }`}
+              >
+                <Icon size={11} /> {label}
+              </button>
+            ))}
+          </div>
+          {tree.length === 0 && (
+            <div className="rounded-xl border border-dashed border-white/10 p-5 text-center text-xs leading-5 text-white/35">
+              {category === "communications"
+                ? "No recorded AVA-to-agent communications yet. Claude discussions and Codex watcher handoffs will appear here."
+                : "No instrumented runs yet. Start a voice turn or send AVA a message."}
+            </div>
+          )}
+          <div className="space-y-1">
+            {tree.map(({ run, depth }) => (
+              <button
+                key={run.id}
+                onClick={() => setSelectedId(run.id)}
+                className={`group flex w-full items-start gap-2 rounded-xl border px-3 py-3 text-left transition ${
+                  run.id === selectedId
+                    ? "border-cyan-300/20 bg-cyan-300/[0.075]"
+                    : "border-transparent hover:border-white/8 hover:bg-white/[0.035]"
+                }`}
+                style={{ paddingLeft: `${12 + Math.min(depth, 4) * 15}px` }}
+              >
+                {depth > 0 && <ChevronRight size={12} className="mt-1 shrink-0 text-white/25" />}
+                <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: statusColor(run.status) }} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] font-medium text-white/80">{run.title}</span>
+                  <span className="mt-1 flex items-center gap-1.5 text-[9px] uppercase tracking-wider text-white/35">
+                    {run.runtimeType} · {run.runKind.replaceAll("_", " ")}
+                  </span>
+                </span>
+                <span className="shrink-0 text-[9px] text-white/25">{formatAge(run.updatedAt)}</span>
+              </button>
+            ))}
+          </div>
+        </aside>
+
+        <section className="min-h-[520px] overflow-y-auto p-5 xl:min-h-0">
+          {!selectedRun ? (
+            <div className="flex h-full items-center justify-center text-sm text-white/35">Select an observed run.</div>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-5">
+                <div className="min-w-0">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="hud rounded-full border px-2 py-1 text-[8px]" style={{ color: statusColor(selectedRun.status), borderColor: `color-mix(in srgb, ${statusColor(selectedRun.status)} 28%, transparent)` }}>
+                      {selectedRun.status.replaceAll("_", " ")}
+                    </span>
+                    <span className="hud text-[8px] text-white/30">{selectedRun.runtimeId}</span>
+                    {selectedRun.stale && <span className="hud text-[8px] text-amber-300">stale signal</span>}
+                  </div>
+                  <h2 className="truncate text-xl font-medium tracking-tight">{selectedRun.title}</h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-white/48">
+                    {operationalSummary(selectedRun)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {exportSupported && (
+                    <button
+                      onClick={() => setExportOpen((current) => !current)}
+                      aria-expanded={exportOpen}
+                      className="flex items-center gap-2 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.055] px-4 py-2 text-xs font-medium text-cyan-100 transition hover:bg-cyan-300/10"
+                    >
+                      <Download size={13} /> Export evidence
+                    </button>
+                  )}
+                  {selectedRun.controlAvailable && (
+                    <button
+                      onClick={() => void stop()}
+                      disabled={stopping}
+                      className="flex shrink-0 items-center gap-2 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-2 text-xs font-medium text-red-100 transition hover:bg-red-400/15 disabled:opacity-50"
+                    >
+                      <Square size={12} fill="currentColor" /> {stopping ? "Stopping…" : `Stop ${selectedRun.runKind.replaceAll("_", " ")}`}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {(selectedCommunication || navigation?.kind === "watcher") && (
+                <section className="mt-5 rounded-2xl border border-violet-300/15 bg-[linear-gradient(135deg,rgba(124,92,255,0.08),rgba(92,242,255,0.035))] p-4" aria-label="Communication evidence">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-medium text-white/80">
+                        <MessagesSquare size={14} className="text-violet-200" /> AVA → {communicationActor(selectedRun)}
+                      </div>
+                      <p className="mt-1 text-[11px] leading-5 text-white/42">
+                        Read-only communication evidence from AVA's authoritative event stream.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 text-[9px] uppercase tracking-wider">
+                      <span className="rounded-full border border-white/10 px-2 py-1 text-white/45">{selectedRun.status.replaceAll("_", " ")}</span>
+                      <span className="rounded-full border border-white/10 px-2 py-1 text-white/45">{selectedRun.verificationStatus.replaceAll("_", " ")}</span>
+                    </div>
+                  </div>
+                  {navigation?.kind === "watcher" && (
+                    <div className="mt-4 rounded-xl border border-white/8 bg-black/20 p-3" aria-label="Watcher origin" aria-live="polite">
+                      {navigation.availability === "available" ? (
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2 text-[11px] font-medium text-white/72">
+                              <AlarmClock size={13} className="text-cyan-200" /> Exact watcher record available
+                            </div>
+                            <p className="mt-1 text-[10px] leading-5 text-white/38">
+                              This link uses the stable watcher identity recorded by AVA, not text inferred from the prompt or result.
+                            </p>
+                          </div>
+                          <a
+                            href={`/?view=watches&watch=${encodeURIComponent(navigation.watcherId)}&from=mission-control`}
+                            aria-label="Open exact watcher in Watches"
+                            className="flex items-center gap-2 rounded-lg border border-cyan-300/20 bg-cyan-300/[0.07] px-3 py-2 text-[11px] font-medium text-cyan-100 transition hover:bg-cyan-300/12 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70"
+                          >
+                            <AlarmClock size={13} /> Open in Watches
+                          </a>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-2 text-[11px] leading-5 text-white/45">
+                          <AlarmClock size={13} className="mt-1 shrink-0 text-white/32" />
+                          <span>
+                            Watcher record unavailable. It may no longer be retained or may not be visible in this scope.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {selectedCommunication ? (
+                  <dl className="mt-4 grid gap-2 text-[10px] sm:grid-cols-2">
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3">
+                      <dt className="uppercase tracking-wider text-white/28">Request</dt>
+                      <dd className="mt-1 text-white/62">{availabilityLabel(communicationAvailability(selectedCommunication, "requestAvailability"))}</dd>
+                    </div>
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3">
+                      <dt className="uppercase tracking-wider text-white/28">Response</dt>
+                      <dd className="mt-1 text-white/62">{availabilityLabel(communicationAvailability(selectedCommunication, "responseAvailability"))}</dd>
+                    </div>
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3">
+                      <dt className="uppercase tracking-wider text-white/28">Correlation</dt>
+                      <dd className="mt-1 break-all text-white/62">{selectedRun.parentRunId ? `Parent ${selectedRun.parentRunId}` : `Root trace ${selectedRun.traceId}`}</dd>
+                    </div>
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3">
+                      <dt className="uppercase tracking-wider text-white/28">Provider usage / cost</dt>
+                      <dd className="mt-1 text-white/62">Not reported</dd>
+                    </div>
+                    <div className="rounded-xl border border-white/8 bg-black/20 p-3 sm:col-span-2">
+                      <dt className="uppercase tracking-wider text-white/28">Result evidence</dt>
+                      <dd className="mt-1 text-white/62">{responseEvidenceLabel(selectedCommunication)}</dd>
+                    </div>
+                  </dl>
+                  ) : (
+                    <div className="mt-4 rounded-xl border border-white/8 bg-black/20 p-3 text-[11px] leading-5 text-white/45">
+                      Detailed communication evidence is unavailable or no longer retained.
+                    </div>
+                  )}
+                  {(selectedRun.objective || selectedRun.compactSummary) && (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {selectedRun.objective && (
+                        <details className="rounded-xl border border-white/8 bg-black/20 p-3">
+                          <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-white/40">Sanitized request summary</summary>
+                          <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-5 text-white/55">{selectedRun.objective}</p>
+                        </details>
+                      )}
+                      {selectedRun.compactSummary && (
+                        <details className="rounded-xl border border-white/8 bg-black/20 p-3">
+                          <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-white/40">Sanitized outcome summary</summary>
+                          <p className="mt-2 whitespace-pre-wrap break-words text-[11px] leading-5 text-white/55">{selectedRun.compactSummary}</p>
+                        </details>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {exportOpen && (
+                <section className="mt-4 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.035] p-4" aria-label="Evidence export">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 text-xs font-medium text-white/78"><FileJson size={14} /> Privacy-safe JSON evidence</div>
+                      <p className="mt-1 max-w-2xl text-[11px] leading-5 text-white/40">
+                        AVA exports a fixed SQLite snapshot, re-applies redaction, and leaves collapsed prompts and sensitive payload bodies out of the file.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {(["run", "trace"] as MissionExportScope[]).map((scope) => (
+                        <button
+                          key={scope}
+                          onClick={() => { setExportScope(scope); setExportReceipt(null); }}
+                          aria-pressed={exportScope === scope}
+                          className={`rounded-lg border px-3 py-1.5 text-[10px] uppercase tracking-wider transition ${
+                            exportScope === scope
+                              ? "border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
+                              : "border-white/10 text-white/38 hover:text-white/65"
+                          }`}
+                        >
+                          {scope}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => void exportEvidence()}
+                        disabled={exporting}
+                        className="flex items-center gap-2 rounded-lg border border-white/15 bg-white/[0.07] px-3 py-1.5 text-[10px] text-white/72 transition hover:bg-white/10 disabled:opacity-50"
+                      >
+                        <Download size={11} /> {exporting ? "Preparing..." : "Download JSON"}
+                      </button>
+                    </div>
+                  </div>
+                  {exportReceipt && (
+                    <div className={`mt-3 rounded-xl border p-3 text-[10px] leading-5 ${
+                      exportReceipt.completeness.partial
+                        ? "border-amber-300/20 bg-amber-300/[0.05] text-amber-100/75"
+                        : "border-emerald-300/15 bg-emerald-300/[0.04] text-emerald-100/70"
+                    }`}>
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                        <span>Export schema v{exportReceipt.exportSchemaVersion}</span>
+                        <span>{exportReceipt.scope.type} scope</span>
+                        <span>{exportReceipt.bounds.rows.total} rows</span>
+                        <span>Snapshot through event {exportReceipt.snapshot.highWaterEventSeq}</span>
+                        <span>{new Date(exportReceipt.generatedAt).toLocaleString()}</span>
+                        <span>Sanitizer reapplied</span>
+                        <span>{exportReceipt.completeness.partial ? "Evidence partial" : "Complete at snapshot"}</span>
+                      </div>
+                      {exportReceipt.completeness.reasons.map((reason) => <div key={reason} className="mt-1">{reason}</div>)}
+                    </div>
+                  )}
+                </section>
+              )}
+
+              <div className="mt-5 grid grid-cols-5 gap-2">
+                {[
+                  { icon: Clock3, label: "Elapsed", value: formatDuration(elapsed(selectedRun)) },
+                  { icon: Activity, label: "Events", value: String(selectedRun.eventCount) },
+                  { icon: Coins, label: "Direct cost", value: selectedRun.directCostMicrousd ? `$${(selectedRun.directCostMicrousd / 1_000_000).toFixed(4)}` : "Not reported" },
+                  {
+                    icon: Bot,
+                    label: "Tokens",
+                    value: selectedRun.inputTokens + selectedRun.outputTokens > 0
+                      ? (selectedRun.inputTokens + selectedRun.outputTokens).toLocaleString()
+                      : "Not reported",
+                  },
+                  { icon: Eye, label: "Verification", value: selectedRun.verificationStatus.replaceAll("_", " ") },
+                ].map(({ icon: Icon, label, value }) => (
+                  <div key={label} className="rounded-xl border border-white/8 bg-white/[0.025] p-3">
+                    <div className="flex items-center gap-1.5 text-[9px] uppercase tracking-wider text-white/30"><Icon size={11} /> {label}</div>
+                    <div className="mt-2 truncate text-xs text-white/72">{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-6 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Radio size={14} style={{ color: "var(--ac)" }} />
+                  <h3 className="hud text-[10px] text-white/55">Live timeline</h3>
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-[10px] text-white/35">
+                  <input type="checkbox" checked={technical} onChange={(event) => setTechnical(event.target.checked)} className="accent-cyan-300" />
+                  technical signals
+                </label>
+              </div>
+
+              <div className="relative mt-3 space-y-2 before:absolute before:bottom-4 before:left-[17px] before:top-4 before:w-px before:bg-white/10">
+                {visibleEvents.map((event) => {
+                  const Icon = eventIcon(event);
+                  return (
+                    <button
+                      key={event.seq}
+                      onClick={() => setSelectedEvent(event)}
+                      className={`relative flex w-full items-start gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                        selectedEvent?.seq === event.seq
+                          ? "border-cyan-300/20 bg-cyan-300/[0.055]"
+                          : "border-white/7 bg-black/25 hover:border-white/14"
+                      }`}
+                    >
+                      <span className="relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/10 bg-[#090c11]" style={{ color: statusColor(event.status) }}>
+                        <Icon size={13} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-2">
+                          <span className="text-[12px] font-medium text-white/78">{event.title}</span>
+                          {event.late && <span className="hud rounded bg-amber-300/10 px-1.5 py-0.5 text-[7px] text-amber-200">late · not applied</span>}
+                          {event.actionOwner === "observer" && <span className="hud rounded bg-white/5 px-1.5 py-0.5 text-[7px] text-white/30">observer only</span>}
+                        </span>
+                        {event.summary && <span className="mt-1 block text-[11px] leading-5 text-white/42">{event.summary}</span>}
+                        <span className="mt-1.5 flex gap-3 text-[9px] uppercase tracking-wider text-white/25">
+                          <span>{event.runtimeType}</span>
+                          <span>{event.actorRole ?? event.actorType}</span>
+                          {event.durationMs != null && <span>{formatDuration(event.durationMs)}</span>}
+                        </span>
+                      </span>
+                      <time className="shrink-0 text-[9px] text-white/28">{new Date(event.occurredAt).toLocaleTimeString()}</time>
+                    </button>
+                  );
+                })}
+                {visibleEvents.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-white/10 p-5 text-center text-xs text-white/35">Waiting for the first event…</div>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+
+        <aside className="min-h-[360px] overflow-y-auto border-t border-white/10 bg-white/[0.015] p-5 xl:min-h-0 xl:border-l xl:border-t-0">
+          <div className="flex items-center gap-2">
+            <Box size={14} className="text-white/35" />
+            <h3 className="hud text-[10px] text-white/50">{detailEvent ? "Event evidence" : "Run context"}</h3>
+          </div>
+          {detailEvent ? (
+            <div className="mt-5 space-y-5">
+              <div>
+                <div className="text-sm font-medium text-white/80">{detailEvent.title}</div>
+                <div className="mt-2 text-xs leading-5 text-white/45">{detailEvent.summary ?? "No operational summary."}</div>
+              </div>
+              <dl className="space-y-3 text-[11px]">
+                {[
+                  ["Event", detailEvent.type],
+                  ["Runtime", `${detailEvent.runtimeType} · ${detailEvent.runtimeId}`],
+                  ["Actor", detailEvent.actorRole ?? detailEvent.actorType],
+                  ["Span", detailEvent.spanId],
+                  ["Caused by", detailEvent.causationEventId ?? "root/local"],
+                  ["Privacy", detailEvent.privacyLevel],
+                  ["Accounting", detailEvent.accountingApplied ? "applied at this leaf" : "not counted here"],
+                ].map(([label, value]) => (
+                  <div key={label} className="grid grid-cols-[82px_1fr] gap-3">
+                    <dt className="text-white/28">{label}</dt>
+                    <dd className="break-all text-white/58">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              {detailEvent.error && (
+                <div className="rounded-xl border border-red-400/20 bg-red-400/8 p-3 text-xs leading-5 text-red-100">{detailEvent.error}</div>
+              )}
+              {detailApproval && (
+                <section
+                  aria-label="Approval policy evidence"
+                  className="rounded-xl border border-amber-300/15 bg-amber-300/[0.035] p-3"
+                >
+                  <div className="text-[10px] uppercase tracking-wider text-amber-100/55">Authoritative approval policy</div>
+                  {detailApproval.availability === "recorded" ? (
+                    <dl className="mt-3 space-y-2 text-[11px]">
+                      <div className="grid grid-cols-[70px_1fr] gap-3"><dt className="text-white/28">Risk</dt><dd className="text-white/65">{detailApproval.risk}</dd></div>
+                      <div className="grid grid-cols-[70px_1fr] gap-3"><dt className="text-white/28">Timeout</dt><dd className="text-white/65">{detailApproval.timeout}</dd></div>
+                      <div className="grid grid-cols-[70px_1fr] gap-3"><dt className="text-white/28">Deadline</dt><dd className="text-white/65">{detailApproval.deadline}</dd></div>
+                    </dl>
+                  ) : (
+                    <p className="mt-2 text-[11px] leading-5 text-white/42">
+                      Risk and timeout behavior were not recorded for this retained event. Mission Control will not infer them.
+                    </p>
+                  )}
+                </section>
+              )}
+              {detailEvent.payload != null && (
+                <details className="rounded-xl border border-white/8 bg-black/25 p-3" open={detailEvent.visibility !== "sensitive_collapsed"}>
+                  <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-white/40">
+                    Sanitized {detailEvent.visibility === "sensitive_collapsed" ? "· collapsed by default" : "payload"}
+                  </summary>
+                  <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-white/48">{safeJson(detailEvent.payload)}</pre>
+                </details>
+              )}
+              <button onClick={() => setSelectedEvent(null)} className="text-[10px] text-cyan-200/60 hover:text-cyan-100">Back to run context</button>
+            </div>
+          ) : selectedRun ? (
+            <div className="mt-5 space-y-5">
+              <dl className="space-y-3 text-[11px]">
+                {[
+                  ["Authority", selectedRun.ownerType],
+                  ["Owner", selectedRun.ownerRole ?? selectedRun.ownerId ?? "AVA"],
+                  ["Trace", selectedRun.traceId],
+                  ["Parent", selectedRun.parentRunId ?? "root"],
+                  ["Runtime", `${selectedRun.runtimeType} · ${selectedRun.runtimeId}`],
+                  ["Outcome", selectedRun.outcome ?? "pending"],
+                  ["Privacy", selectedRun.privacyLevel],
+                ].map(([label, value]) => (
+                  <div key={label} className="grid grid-cols-[76px_1fr] gap-3">
+                    <dt className="text-white/28">{label}</dt>
+                    <dd className="break-all text-white/58">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="rounded-xl border border-cyan-300/12 bg-cyan-300/[0.035] p-4">
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-cyan-100/55"><ShieldCheck size={12} /> Evidence rule</div>
+                <p className="mt-2 text-[11px] leading-5 text-white/38">
+                  A returned response is not proof of an external outcome. Verification remains explicit and leaf actions are counted only once.
+                </p>
+              </div>
+              {selectedRun.objective && (
+                <details className="rounded-xl border border-white/8 bg-black/25 p-3">
+                  <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-white/40">
+                    Sanitized request · collapsed by default
+                  </summary>
+                  <pre className="mt-3 whitespace-pre-wrap break-words text-[10px] leading-5 text-white/48">{selectedRun.objective}</pre>
+                </details>
+              )}
+              {selectedRun.compactSummary && (
+                <details className="rounded-xl border border-white/8 bg-black/25 p-3">
+                  <summary className="cursor-pointer text-[10px] uppercase tracking-wider text-white/40">
+                    Compact outcome · collapsed by default
+                  </summary>
+                  <pre className="mt-3 whitespace-pre-wrap break-words text-[10px] leading-5 text-white/48">{selectedRun.compactSummary}</pre>
+                </details>
+              )}
+              {(selectedRun.errorCount > 0 || selectedRun.retryCount > 0) && (
+                <div className="flex gap-2">
+                  <span className="rounded-lg bg-red-400/10 px-2 py-1 text-[10px] text-red-200">{selectedRun.errorCount} errors</span>
+                  <span className="rounded-lg bg-amber-300/10 px-2 py-1 text-[10px] text-amber-100">{selectedRun.retryCount} retries</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="mt-5 text-xs text-white/30">No run selected.</div>
+          )}
+          <div className="mt-8 border-t border-white/8 pt-4 text-[9px] leading-5 text-white/25">
+            Prompts, responses and diffs are sanitized and collapsed. Credentials, cookies, hidden reasoning and raw audio are never available here.
+          </div>
+        </aside>
+      </div>
+    </main>
+  );
+}

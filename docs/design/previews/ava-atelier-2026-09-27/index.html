@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>AVA — Design Atelier</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23181a20'/%3E%3Ctext x='8' y='23' fill='white' font-size='22'%3EA%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./studies.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body data-scene="nocturne" data-material="alloy">
+  <a class="skip-link" href="#content">Skip to workspace</a>
+  <div class="atmosphere" aria-hidden="true"><canvas id="atmosphere"></canvas><div class="grain"></div></div>
+  <header class="studio-header">
+    <a class="brand" href="#cards" aria-label="AVA design atelier"><span class="brand-mark">A</span><span>AVA <em>atelier / 03</em></span></a>
+    <nav aria-label="Design studies" class="main-tabs">
+      <a href="#cards" data-tab="cards">Cards</a><a href="#navigation" data-tab="navigation">Navigation</a><a href="#talk" data-tab="talk">Talk</a><a href="#calendar" data-tab="calendar">Calendar</a><a href="#notes" data-tab="notes">Notes</a><a href="#references" data-tab="references">Research</a>
+    </nav>
+    <div class="header-actions"><span class="demo-label">INTERACTIVE CONCEPT</span><button id="motion-toggle" class="icon-button" aria-label="Pause motion" title="Pause motion"></button></div>
+  </header>
+  <main id="content" tabindex="-1"></main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <dialog id="editor-dialog" aria-labelledby="dialog-title"></dialog>
+  <dialog id="choices-dialog" aria-labelledby="choices-title"></dialog>
+</body>
+</html>

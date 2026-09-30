@@ -1,5 +1,7 @@
 import type { ToolDef, RunCtx } from "../tools/ava-mcp.js";
 import type { ToolDefinition, ToolCall, ToolResult } from "./llm/types.js";
+import { sanitizeToolVerification } from "./verification-evidence.js";
+import { sanitizeMessageRoomPostReceipt, sanitizeMessageSavedItem } from "../state/messages.js";
 
 export type ToolRegistry = {
   toolDefinitions(): ToolDefinition[];
@@ -69,7 +71,18 @@ export function buildToolRegistry(opts: { tools: ToolDef[]; ctx: RunCtx }): Tool
         const args = (typeof call.args === "object" && call.args !== null)
           ? (call.args as Record<string, unknown>) : {};
         const r = await td.run(args, signal ? { ...opts.ctx, signal } : opts.ctx);
-        return { call_id: call.id, output: r.text, is_error: !r.ok };
+        const verification = sanitizeToolVerification(r.verification);
+        // A failed call never claims to have saved anything.
+        const saved = r.ok ? sanitizeMessageSavedItem(r.saved) : null;
+        const roomPost = r.ok ? sanitizeMessageRoomPostReceipt(r.roomPost) : null;
+        return {
+          call_id: call.id,
+          output: r.text,
+          is_error: !r.ok,
+          ...(verification ? { verification } : {}),
+          ...(saved ? { saved } : {}),
+          ...(roomPost ? { roomPost } : {}),
+        };
       } catch (err) {
         return {
           call_id: call.id,

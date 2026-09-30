@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "version": "1.0.0",
+  "seed": 1096171825,
+  "counts": {
+    "stipple": 60000,
+    "glow": 32000,
+    "landmarks": 478,
+    "depthSize": 200
+  },
+  "crop": {
+    "cx": 0.484,
+    "cy": 0.52,
+    "halfX": 0.4,
+    "halfY": 0.4
+  },
+  "depthFit": {
+    "a": -0.0025638982642232394,
+    "b": 0.534444202871188
+  },
+  "correlation": -0.886180597908605,
+  "pointBounds": {
+    "minU": 0.07114002108573914,
+    "maxU": 0.9922233819961548,
+    "minV": 0.000007056165486574173,
+    "maxV": 0.974200427532196
+  },
+  "depthBounds": {
+    "min": 4,
+    "max": 254
+  },
+  "models": [
+    {
+      "name": "MediaPipe Face Landmarker",
+      "version": "@mediapipe/tasks-vision@0.10.14; model float16/1",
+      "sha256": "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff"
+    },
+    {
+      "name": "Depth Anything V2 Small",
+      "version": "@huggingface/transformers@3.8.1; revision 4472b7362082ad9968fee890ca0f1e5aca36b93d",
+      "sha256": "afb6a5c28f3b6bf1618c6e43f02073ef9dfdc70e937502d51603e57b0a1df10c"
+    }
+  ],
+  "method": {
+    "stipple": "weighted Voronoi stippling (deterministic Lloyd relaxation)",
+    "iterations": 6,
+    "density": "(1 - L)^1.35 + 0.03; L <= 0.07 excluded; bottom fade",
+    "glowDensity": "smooth(0.07, 0.95, L)^0.85; L <= 0.07 excluded; bottom fade",
+    "crop": "source-normalised portrait-specific crop; private source study",
+    "prefixHistogram": {
+      "prefix": 42000,
+      "grid": "8x8",
+      "maximumNormalisedDelta": 0.000019047619047619924,
+      "tolerance": 0.0025
+    }
+  },
+  "licences": [
+    {
+      "name": "MediaPipe Face Landmarker",
+      "licence": "Apache-2.0"
+    },
+    {
+      "name": "Depth Anything V2 Small",
+      "licence": "Apache-2.0"
+    }
+  ],
+  "source": "private AI portrait (not committed)",
+  "file": "ava-face.50720bd1.bin",
+  "sha256": "50720bd116665ff2015d31e38bc67eb074da7a6b365a85b22a2df299313d0841",
+  "bytes": 505800
+}

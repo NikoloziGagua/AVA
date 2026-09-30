@@ -14,7 +14,12 @@ describe("playbook capture -> recall", () => {
   it("captures from a run, then matches + reads it locally on a similar request", async () => {
     const d = mkdtempSync(join(tmpdir(), "ava-recall-"));
     const steps: RunStep[] = [{ tool: "chrome_navigate", args: { url: "https://x" }, ok: true }, { tool: "fs_write", args: { path: "C:/Users/x/Downloads/bill.pdf" }, ok: true }];
-    await maybeCapture({ memoryDir: d, provider: distiller(), goal: "get my electricity bill", steps, outcome: "saved", succeeded: true, today: "2026-06-02" });
+    await maybeCapture({
+      memoryDir: d, provider: distiller(), goal: "get my electricity bill", steps,
+      resultText: "saved", learningOutcome: "verified",
+      evidence: { taskId: "task-bill", method: "fixture_file_readback", observedAt: 123 },
+      today: "2026-06-02",
+    });
 
     const index = loadPlaybookIndex(d);
     expect(index.length).toBe(1);

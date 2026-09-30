@@ -7,6 +7,17 @@ describe("classifyRealtimeEvent", () => {
       .toEqual({ kind: "audio", b64: "AAAA" });
   });
 
+  it("tracks the assistant output item needed for WebSocket truncation", () => {
+    expect(classifyRealtimeEvent({
+      type: "response.output_item.added",
+      item: { id: "item_123", type: "message" },
+    })).toEqual({ kind: "output_item", itemId: "item_123", contentIndex: 0 });
+    expect(classifyRealtimeEvent({
+      type: "response.output_item.added",
+      item: { id: "call_123", type: "function_call" },
+    })).toEqual({ kind: "ignore" });
+  });
+
   it("still recognizes the legacy beta audio delta", () => {
     expect(classifyRealtimeEvent({ type: "response.audio.delta", delta: "AAAA" }))
       .toEqual({ kind: "audio", b64: "AAAA" });
@@ -42,6 +53,13 @@ describe("classifyRealtimeEvent", () => {
     expect(classifyRealtimeEvent({ type: "ava.recover" })).toEqual({ kind: "recover", reason: "" });
   });
 
+  it("recognizes the dismissed-speech frame that lets a paused Ava resume", () => {
+    expect(classifyRealtimeEvent({ type: "ava.speech_dismissed", reason: "noise" }))
+      .toEqual({ kind: "speech_dismissed", reason: "noise" });
+    expect(classifyRealtimeEvent({ type: "ava.speech_dismissed" }))
+      .toEqual({ kind: "speech_dismissed", reason: "" });
+  });
+
   it("carries the proxy mode on the session hello (hybrid vs transcribe)", () => {
     expect(classifyRealtimeEvent({ type: "ava.session", sessionId: "s1", mode: "hybrid" }))
       .toEqual({ kind: "session", sessionId: "s1", mode: "hybrid" });
@@ -62,6 +80,11 @@ describe("classifyRealtimeEvent", () => {
       .toEqual({ kind: "action_step", tool: "shell", args: { command: "ls" } });
   });
 
+  it("recognizes a held, non-actionable partial user turn", () => {
+    expect(classifyRealtimeEvent({ type: "ava.transcript_pending", text: "I want you to go" }))
+      .toEqual({ kind: "user_transcript_pending", text: "I want you to go" });
+  });
+
   it("ignores a step frame with no tool", () => {
     expect(classifyRealtimeEvent({ type: "ava.step", args: { command: "ls" } }))
       .toEqual({ kind: "ignore" });
@@ -75,5 +98,36 @@ describe("classifyRealtimeEvent", () => {
   it("ignores unknown events and missing types", () => {
     expect(classifyRealtimeEvent({ type: "something.else" })).toEqual({ kind: "ignore" });
     expect(classifyRealtimeEvent({})).toEqual({ kind: "ignore" });
+  });
+
+  it("carries the authoritative binding with the session hello", () => {
+    expect(classifyRealtimeEvent({
+      type: "ava.session",
+      sessionId: "s1",
+      mode: "hybrid",
+      binding: { version: 1, sessionId: "s1", origin: "human", resolution: "created", bindingRequestId: "k1" },
+    })).toEqual({
+      kind: "session",
+      sessionId: "s1",
+      mode: "hybrid",
+      binding: { origin: "human", resolution: "created", bindingRequestId: "k1" },
+    });
+  });
+
+  it("drops a binding that names a different session than its frame", () => {
+    expect(classifyRealtimeEvent({
+      type: "ava.session",
+      sessionId: "s1",
+      binding: { sessionId: "other", bindingRequestId: "k1" },
+    })).toEqual({ kind: "session", sessionId: "s1", mode: undefined });
+  });
+
+  it("classifies an unavailable exact conversation as a typed session error", () => {
+    expect(classifyRealtimeEvent({
+      type: "ava.session_error",
+      code: "session_unavailable",
+      message: "This conversation is unavailable.",
+      retryable: false,
+    })).toEqual({ kind: "session_error", code: "session_unavailable", message: "This conversation is unavailable." });
   });
 });

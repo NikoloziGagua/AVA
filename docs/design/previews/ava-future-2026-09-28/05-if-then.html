@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>If-Then Nudges · AVA Future</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .sentence { font-size: clamp(20px, 2.6vw, 30px); line-height: 1.35; letter-spacing: -.01em; }
+  .slot { display: inline-block; padding: 0 10px; border-radius: 10px; border: 1px solid rgba(156,196,255,.5); background: rgba(156,196,255,.08); color: #dbe8ff; }
+  .slot.then { border-color: rgba(198,168,255,.5); background: rgba(198,168,255,.08); color: #eadcff; }
+  .pickers { grid-template-columns: 1fr 1fr; margin-top: 18px; }
+  @media (max-width: 820px) { .pickers { grid-template-columns: 1fr; } }
+  .opt { display: flex; justify-content: space-between; gap: 10px; width: 100%; text-align: left; padding: 11px 13px; border-radius: 12px; border: 1px solid var(--line); background: var(--glass); cursor: pointer; margin-bottom: 8px; font-size: 14px; transition: all .2s var(--ease); }
+  .opt:hover { border-color: var(--line-2); }
+  .opt[aria-pressed="true"] { border-color: var(--ink); background: rgba(255,255,255,.1); }
+  .opt:disabled { opacity: .45; cursor: not-allowed; }
+  .kind { font: 11.5px var(--mono); padding: 2px 8px; border-radius: 99px; border: 1px solid var(--line-2); color: var(--ink-3); white-space: nowrap; align-self: center; }
+  .kind.observed { color: var(--good); border-color: rgba(134,227,190,.45); }
+  .kind.time { color: var(--accent); border-color: rgba(156,196,255,.45); }
+  .kind.off { color: var(--ink-3); }
+  .sim { margin-top: 18px; }
+  .track { position: relative; height: 92px; margin: 14px 4px 6px; }
+  .axis { position: absolute; left: 0; right: 0; top: 46px; height: 2px; background: var(--line-2); }
+  .tick { position: absolute; top: 54px; font: 12px var(--mono); color: var(--ink-3); transform: translateX(-50%); }
+  .ev { position: absolute; top: 14px; transform: translateX(-50%); font-size: 12.5px; color: var(--ink-2); white-space: nowrap; text-align: center; }
+  .ev::after { content: ""; display: block; width: 1px; height: 18px; background: var(--line-2); margin: 3px auto 0; }
+  .fire { position: absolute; top: 36px; width: 22px; height: 22px; border-radius: 50%; transform: translateX(-50%); background: var(--accent-2); box-shadow: 0 0 0 6px rgba(198,168,255,.18), 0 0 24px rgba(198,168,255,.9); transition: left .8s var(--ease); }
+  .explain { font-size: 14.5px; color: var(--ink-2); min-height: 44px; }
+  .list { display: grid; gap: 8px; margin-top: 12px; }
+  .saved { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--glass); font-size: 14px; animation: fadeIn .4s var(--ease) both; }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <div class="topbar">
+    <a class="back" href="index.html">← All concepts</a>
+    <span class="eyebrow">Concept 05 · Top pick (with 04)</span>
+    <span class="badge demo">DEMO · simulated day</span>
+  </div>
+  <h1><span class="silver">If-Then Nudges</span></h1>
+  <p class="lede">Not "remind me at 6", but "<em>when</em> I finish uni, remind me to buy printer paper." You say it naturally, and AVA shows exactly what will trigger it. Every trigger says honestly whether it's time-based or something you actually do.</p>
+
+  <section class="card glow">
+    <div class="sentence" aria-live="polite">When <span class="slot" id="sWhen"></span>, <span class="slot then" id="sThen"></span>.</div>
+    <div class="grid pickers">
+      <div><div class="eyebrow" style="margin-bottom:8px">When…</div><div id="whenOpts"></div></div>
+      <div><div class="eyebrow" style="margin-bottom:8px">Then…</div><div id="thenOpts"></div></div>
+    </div>
+  </section>
+
+  <section class="card sim">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">When would it fire today?</h2><span class="faint">Simulated Monday: the lecture ends at 16:00, and you actually leave at 16:25</span></div>
+    <div class="track" id="track"><div class="axis"></div><div class="fire" id="fire" aria-hidden="true"></div></div>
+    <p class="explain" id="explain"></p>
+    <div class="row"><button class="btn solid" id="save">Save this nudge</button><span class="faint">Saved nudges stay editable. Nothing sends a message on your behalf.</span></div>
+    <div class="list" id="list"></div>
+  </section>
+
+  <section class="truth">
+    <div class="card"><h3>What's demo</h3><ul><li>The day, times and saved nudges are simulated in this page only.</li><li>The location trigger is shown as unavailable on purpose.</li></ul></div>
+    <div class="card"><h3>What would be real</h3><ul><li>Time-based triggers use AVA's reminders and calendar.</li><li>Observed triggers fire only when you tell AVA (voice, chat or a tap).</li><li>Conditions are checked against what you've recorded, never guessed.</li></ul></div>
+    <div class="card"><h3>How it plugs into AVA</h3><p>It extends one-off reminders (contract i4) with calendar events as triggers, and adds "I'm done" as an explicit observed event. The label distinguishes "the calendar says it ended" from "you said you left".</p></div>
+    <div class="card"><h3>Grounding</h3><p>If-then plans ("implementation intentions") are among the best-evidenced ways to follow through: a <a href="https://cancercontrol.cancer.gov/sites/default/files/2020-06/goal_intent_attain.pdf" target="_blank" rel="noopener">meta-analysis of 94 studies</a> (Gollwitzer &amp; Sheeran) found a medium-to-large effect on goal attainment (d≈0.65).</p><p class="faint" style="margin-top:6px">Effort: low–medium · Risk: low · Daily value: high</p></div>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  // Positions are hours on a 12:00–19:00 track.
+  var WHEN = [
+    { id: "lecture-end", label: "my lecture ends", kind: "time", kindLabel: "time-based", fire: 16,
+      explain: "Fires at 16:00, when the calendar says the lecture ends, even though you left at 16:25. It's based on time, not proof you've finished." },
+    { id: "say-done", label: "I tell AVA I'm done at uni", kind: "observed", kindLabel: "observed · you tell me", fire: 16.42,
+      explain: "Fires at 16:25, the moment you say 'done at uni' by voice, chat or a tap. It uses what you actually did, and never fires on its own." },
+    { id: "not-started", label: "AVA auth hasn't started by 13:00", kind: "time", kindLabel: "condition at a time", fire: 13,
+      explain: "At 13:00, AVA checks what you've recorded. If the build block wasn't started, it asks what's in the way. Silence is never taken as 'done'." },
+    { id: "clock", label: "it's 17:45", kind: "time", kindLabel: "time-based", fire: 17.75,
+      explain: "A plain clock reminder at 17:45." },
+    { id: "home", label: "I get home", kind: "off", kindLabel: "needs location · off", fire: null, disabled: true,
+      explain: "" },
+  ];
+  var THEN = [
+    { id: "remind", label: "remind me to buy printer paper" },
+    { id: "ask", label: "ask me how it went" },
+    { id: "block", label: "hold 30 minutes to review lecture notes" },
+    { id: "draft", label: "draft a message to my study group (I send it)" },
+  ];
+  var when = WHEN[1], then = THEN[0], saved = [];
+  var track = document.getElementById("track");
+  var pos = function (h) { return ((h - 12) / 7 * 100) + "%"; };
+  [12, 13, 14, 15, 16, 17, 18, 19].forEach(function (h) { var t = document.createElement("span"); t.className = "tick"; t.style.left = pos(h); t.textContent = h + ":00"; track.appendChild(t); });
+  [[13, "build block"], [15, "lecture"], [16, "calendar end"], [16.42, "you leave"]].forEach(function (e) { var d = document.createElement("span"); d.className = "ev"; d.style.left = pos(e[0]); d.textContent = e[1]; track.appendChild(d); });
+  function opts(box, list, get, set) {
+    box.innerHTML = "";
+    list.forEach(function (o) {
+      var b = document.createElement("button"); b.type = "button"; b.className = "opt"; b.disabled = !!o.disabled;
+      b.setAttribute("aria-pressed", String(get() === o));
+      b.innerHTML = "<span>" + AVAF.esc(o.label) + "</span>" + (o.kindLabel ? '<span class="kind ' + o.kind + '">' + AVAF.esc(o.kindLabel) + "</span>" : "");
+      b.addEventListener("click", function () { set(o); render(); });
+      box.appendChild(b);
+    });
+  }
+  function render() {
+    document.getElementById("sWhen").textContent = when.label;
+    document.getElementById("sThen").textContent = then.label;
+    opts(document.getElementById("whenOpts"), WHEN, function () { return when; }, function (o) { when = o; });
+    opts(document.getElementById("thenOpts"), THEN, function () { return then; }, function (o) { then = o; });
+    document.getElementById("fire").style.left = pos(when.fire);
+    document.getElementById("explain").textContent = when.explain + " Then AVA will " + then.label.replace(/^./, function (c) { return c; }) + ".";
+  }
+  document.getElementById("save").addEventListener("click", function () {
+    saved.unshift({ when: when, then: then });
+    document.getElementById("list").innerHTML = saved.slice(0, 5).map(function (s) {
+      return '<div class="saved"><span>When ' + AVAF.esc(s.when.label) + " → " + AVAF.esc(s.then.label) + '</span><span class="kind ' + s.when.kind + '">' + AVAF.esc(s.when.kindLabel) + "</span></div>";
+    }).join("");
+  });
+  render();
+})();
+</script>
+</body>
+</html>

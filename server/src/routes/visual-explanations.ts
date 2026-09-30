@@ -1,0 +1,87 @@
+import { Router, type RequestHandler } from "express";
+import type { Db } from "../state/db.js";
+import {
+  createVisualExplanation,
+  createResearchVisual,
+  getVisualExplanation,
+  listVisualExplanations,
+} from "../state/visual-explanations.js";
+import {
+  StaleVisualRevisionError,
+  VisualExplanationValidationError,
+  type CreateVisualExplanationInput,
+} from "../visual-explanations/model.js";
+import type { CreateResearchVisualInput } from "../visual-explanations/research-model.js";
+
+export function visualExplanationRoutes(db: Db, auth: RequestHandler): Router {
+  const router = Router();
+
+  router.get("/", auth, (req, res) => {
+    const raw = req.query.limit;
+    const limit = raw === undefined ? 40 : Number(raw);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+      res.status(400).json({ error: "bad_request", message: "limit must be an integer from 1 to 50" });
+      return;
+    }
+    res.json({ visuals: listVisualExplanations(db, limit) });
+  });
+
+  router.get("/:id", auth, (req, res) => {
+    const id = typeof req.params.id === "string" ? req.params.id : "";
+    if (!/^visual_[A-Za-z0-9_-]{8,32}$/.test(id)) {
+      res.status(400).json({ error: "bad_request", message: "invalid visual explanation ID" });
+      return;
+    }
+    const rawRevision = req.query.revision;
+    const revision = rawRevision === undefined ? null : Number(rawRevision);
+    if (revision !== null && (!Number.isInteger(revision) || revision < 1)) {
+      res.status(400).json({ error: "bad_request", message: "revision must be a positive integer" });
+      return;
+    }
+    const visual = getVisualExplanation(db, id, revision);
+    if (!visual) {
+      res.status(404).json({ error: "visual_explanation_not_found" });
+      return;
+    }
+    res.json({ visual });
+  });
+
+  router.post("/", auth, (req, res) => {
+    try {
+      const result = createVisualExplanation(db, req.body as CreateVisualExplanationInput, { source: "manual" });
+      res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+      if (error instanceof VisualExplanationValidationError) {
+        res.status(400).json({ error: "invalid_visual_explanation", issues: error.issues });
+        return;
+      }
+      if (error instanceof StaleVisualRevisionError) {
+        res.status(409).json({ error: "stale_visual_revision", currentRevision: error.currentRevision });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  // Research artifacts share immutable VisualMessage revisions but use a
+  // separate typed write boundary so flowchart callers cannot accidentally
+  // smuggle an unvalidated renderer/data payload into the richer schema.
+  router.post("/research", auth, (req, res) => {
+    try {
+      const result = createResearchVisual(db, req.body as CreateResearchVisualInput, { source: "manual" });
+      res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+      if (error instanceof VisualExplanationValidationError) {
+        res.status(400).json({ error: "invalid_research_visual", issues: error.issues });
+        return;
+      }
+      if (error instanceof StaleVisualRevisionError) {
+        res.status(409).json({ error: "stale_visual_revision", currentRevision: error.currentRevision });
+        return;
+      }
+      throw error;
+    }
+  });
+
+  return router;
+}

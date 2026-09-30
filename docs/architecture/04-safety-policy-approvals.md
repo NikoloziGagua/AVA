@@ -320,12 +320,12 @@ The `already_decided` guard means a late tap (after the 15s window auto-resolved
 
 The card is rendered inline in the chat transcript when an `approval_required` SSE event arrives, and replaced with a compact resolved line when `approval_resolved` arrives.
 
-- **Live countdown.** A `remaining` state ticks 15→0 each second, mirrored as a shrinking progress bar. The copy reads *"Auto-approving in Ns — Cancel to stop."* This countdown is purely cosmetic — it mirrors the server's authoritative timer; the server decides the real outcome. (`ApprovalCard.tsx:24-31`, `83-91`, `104-109`)
-- **Actions.** *Approve now* → `POST …/approve`; *Cancel* → `POST …/deny`. After a tap the buttons disable (`busy`) and show "Settling…"; the card does **not** clear itself — it waits for the `approval_resolved` SSE event to swap to the resolved state, keeping client and server in lockstep. (`ApprovalCard.tsx:53-65`, `126-144`)
+- **Risk-aware live countdown.** The server event carries `riskTier`, `timeoutBehavior`, `requestedAt`, `deadlineAt`, and `timeoutMs`. The card derives its remaining time from that absolute deadline, so reload/reconnect cannot restart the window. Medium copy says *"Auto-approving…"*; high copy says *"Auto-denying…"*. The progress bar is still only a mirror — the server decides the real outcome.
+- **Actions.** *Approve now* → `POST …/approve`; *Cancel* → `POST …/deny`. After a tap the buttons disable and say whether approval or denial is being submitted; the card does **not** clear itself — it waits for the `approval_resolved` SSE event to swap to the resolved state, keeping client and server in lockstep.
 - **Resolved state.** Renders a one-line `✓ Approved` / `✕ Denied` / `○ Expired` with `data-testid="approval-card-resolved"` and `data-status`. (`ApprovalCard.tsx:33-51`)
 - **Details disclosure.** A collapsible `▸ details` shows the raw tool name + pretty-printed args. The human-readable verb comes from `humanizeTool(tool, args)`. (`ApprovalCard.tsx:111-121`)
 
-> **A subtle but important point:** the 15s the card shows is *cosmetic mirroring*. If you let it hit zero, the **server's** `waitForDecision` is what fires — and for a `high`-tier action that means **expire/deny**, even though the card's copy says "Auto-approving." The card's wording matches the `medium` case (the common one); for destructive actions the server is stricter than the UI text implies. (Worth keeping in mind if that copy ever confuses you — the server, not the card, is authoritative.)
+> **The server remains authoritative.** Reaching zero in a card does not locally approve or deny anything; the card says it is waiting for server confirmation until `approval_resolved` arrives. A high-risk `expired` result is presented as not approved/action not run. A medium-risk `expired` result means Stop, cancellation, or another expiry boundary prevented execution; it is never presented as an auto-approval.
 
 ---
 
@@ -452,7 +452,7 @@ The **only** difference for a `medium` action (e.g. `claude_code`) is step 6/7's
 
 ## 15. Unresolved questions / things worth a second look
 
-- **`ApprovalCard` copy vs. server behavior.** The card always says "Auto-approving in Ns," but for `high`-tier actions the server **auto-denies** on timeout. The UI doesn't distinguish the tier, so the countdown text is misleading for destructive actions. Consider passing the tier to the card and showing "Auto-cancelling…" for `high`.
+- **Approval timing is event-scoped, not DB-schema-scoped.** Active/replayed SSE and Mission Control events retain risk, timeout behavior and the absolute deadline. Older retained events that predate these fields render neutral “not recorded” copy rather than having a tier inferred from their tool label.
 - **No persisted audit trail of decisions.** Approvals live in the `approvals` table with `decided_at`, but there's no separate immutable log of *who/what* triggered each high-risk attempt over time. For a security-sensitive layer, an append-only decision log would help post-hoc review.
 - **`computer_use` and `control_app` reach the live desktop.** `computer_use` is `medium` (auto-approves on silence) yet can click/type anywhere on screen — outside the path allowlist and shell gate entirely. `control_app`'s destructive check only scans its `script` arg for the *shell* destructive patterns, which may not capture every UI-Automation/SendKeys way to do damage. Worth confirming these GUI tools can't be used to drive a destructive action that the text-based blocklists never see.
 - **Rule parsing depends on an LLM.** A rule's `allow`/`deny` semantics are only as good as the model's translation of your sentence to JSON. A subtly mis-parsed rule could over-grant. There's no confirmation step showing you the parsed JSON before it goes `active`.

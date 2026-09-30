@@ -20,8 +20,11 @@ export type BrainNode = {
   date?: string;
 };
 
+/** The part of memory the brain draws. The Memory tab builds it from memory v2 records. */
+export type BrainMemory = Pick<MemoryView, "personality" | "observations" | "preferences" | "projects">;
+
 export interface MemoryBrainProps {
-  memory: MemoryView;
+  memory: BrainMemory;
   /** Everything else Ava knows — each becomes a cortical lobe when present. */
   people?: PersonRow[];
   playbooks?: PlaybookRow[];
@@ -168,7 +171,7 @@ function fibDir(i: number, total: number, seed: number, out: THREE.Vector3): THR
 type BrainExtras = { people: PersonRow[]; playbooks: PlaybookRow[]; watches: WatchRow[] };
 
 /** Build the node + edge model and the one-shot layout from everything Ava knows. */
-function buildGraph(memory: MemoryView, extras: BrainExtras): { nodes: GraphNode[]; edges: GraphEdge[] } {
+function buildGraph(memory: BrainMemory, extras: BrainExtras): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
 
@@ -302,7 +305,9 @@ function buildGraph(memory: MemoryView, extras: BrainExtras): { nodes: GraphNode
   {
     const hub = getHub("skills");
     extras.playbooks.forEach((b, i) => {
-      const record = `used ${b.uses}×${b.succ || b.fail ? `, ${b.succ}W/${b.fail}L` : ""}${b.avg_secs ? `, ~${b.avg_secs}s` : ""}`;
+      const verified = Number(b.learning?.verified) || 0;
+      const contradicted = Number(b.learning?.contradicted) || 0;
+      const record = `used ${b.uses}×, ${verified} verified${contradicted ? `, ${contradicted} contradicted` : ""}${verified > 0 && b.avg_secs ? `, ~${b.avg_secs}s verified avg` : ""}`;
       hub.leaves.push({
         id: `pb:${b.slug}`,
         kind: "playbook" as const,
@@ -498,7 +503,7 @@ function buildGraph(memory: MemoryView, extras: BrainExtras): { nodes: GraphNode
 // construction (the effect only READS pos/color into GL buffers) and at most one
 // MemoryBrain is ever mounted at a time.
 let _graphCache: { sig: string; graph: { nodes: GraphNode[]; edges: GraphEdge[] } } | null = null;
-function buildGraphMemo(memory: MemoryView, extras: BrainExtras): { nodes: GraphNode[]; edges: GraphEdge[] } {
+function buildGraphMemo(memory: BrainMemory, extras: BrainExtras): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const sig = JSON.stringify({ memory, extras });
   if (_graphCache && _graphCache.sig === sig) return _graphCache.graph;
   const graph = buildGraph(memory, extras);

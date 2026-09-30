@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { OpenAIProvider } from "./openai-provider.js";
-import type { Message } from "./types.js";
+import type { Message, StreamEvent } from "./types.js";
 
 // The provider talks to the Responses API; the SDK exposes it as
 // client.responses.create(). Our typing uses `any` casts internally because
@@ -38,6 +38,12 @@ function fakeOpenAIStream(events: object[]) {
 }
 
 describe("OpenAIProvider.complete", () => {
+  it("defaults AVA actions to GPT-5.6 Sol and side work to GPT-5.6 Luna", () => {
+    const p = new OpenAIProvider({ client: fakeOpenAIComplete("ok") });
+    expect(p.defaultOrchestratorModel).toBe("gpt-5.6");
+    expect(p.defaultSideModel).toBe("gpt-5.6-luna");
+  });
+
   it("extracts output_text from the message item", async () => {
     const client = fakeOpenAIComplete("ok");
     const p = new OpenAIProvider({ client });
@@ -81,6 +87,43 @@ describe("OpenAIProvider.stream", () => {
     }
     expect(out.join("")).toBe("Hello, Sir.");
     expect(done).toBe("end_turn");
+  });
+
+  it("emits provider-reported token usage with its response id", async () => {
+    const client = fakeOpenAIStream([
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_usage_1",
+          model: "gpt-5.6",
+          status: "completed",
+          usage: {
+            input_tokens: 200,
+            output_tokens: 40,
+            input_tokens_details: { cached_tokens: 75 },
+          },
+        },
+      },
+    ]);
+    const p = new OpenAIProvider({ client });
+    const events: StreamEvent[] = [];
+    for await (const event of p.stream({
+      model: "gpt-5.6",
+      system: "S",
+      messages: [{ role: "user", content: "hi" }],
+      tools: [],
+      abort: new AbortController().signal,
+    })) events.push(event);
+    expect(events.find((event) => event.kind === "usage")).toEqual({
+      kind: "usage",
+      usage: {
+        providerRequestId: "resp_usage_1",
+        model: "gpt-5.6",
+        inputTokens: 200,
+        outputTokens: 40,
+        cachedTokens: 75,
+      },
+    });
   });
 
   it("accumulates function_call argument deltas and emits a tool_call on item.done", async () => {
@@ -197,6 +240,22 @@ describe("OpenAIProvider.stream", () => {
       const args = ((client as any).responses.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
       expect(args.reasoning).toEqual({ effort: expected });
     }
+  });
+
+  it("uses the current `none` reasoning spelling for GPT-5.6", async () => {
+    const client = fakeOpenAIStream([
+      { type: "response.completed", response: { status: "completed" } },
+    ]);
+    const p = new OpenAIProvider({ client });
+    const ac = new AbortController();
+    for await (const _ of p.stream({
+      model: "gpt-5.6", system: "",
+      messages: [{ role: "user", content: "x" }],
+      tools: [], abort: ac.signal, reasoningEffort: "none",
+    })) { /* drain */ }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const args = ((client as any).responses.create as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
+    expect(args.reasoning).toEqual({ effort: "none" });
   });
 
   it("forwards reasoning_summary_text.delta as thought events", async () => {

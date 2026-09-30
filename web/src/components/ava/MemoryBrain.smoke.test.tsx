@@ -6,6 +6,19 @@ import type { MemoryView } from "../../api.js";
 
 const TINY: MemoryView = {
   personality: "calm, direct.",
+  personaProfile: {
+    version: "2.0",
+    architecture: "identity + collaboration + context registers",
+    registers: [],
+    lab: {
+      kind: "deterministic_contract",
+      scenarioCount: 50,
+      coverage: { casual: 10, execution: 10, brainstorming: 10, repair: 10, high_stakes: 10 },
+      channels: ["chat", "voice"],
+      valid: true,
+      caveat: "Contract coverage is not a live-model preference score.",
+    },
+  },
   memoryIndex: "",
   preferences: { lines: ["prefers cyan", "no emojis"] },
   observations: {

@@ -17,10 +17,29 @@ describe("humanizeTool", () => {
     expect(humanizeTool("chrome_navigate", {})).toBe("Opening a page");
   });
 
+  it("describes the direct Google route without exposing a raw tool name", () => {
+    expect(humanizeTool("chrome_google_search", { query: "fast browser routing" }))
+      .toBe("Searching Google for fast browser routing");
+    expect(humanizeTool("chrome_google_search")).toBe("Searching Google");
+  });
+
+  it("describes direct website and YouTube routes without raw tool names", () => {
+    expect(humanizeTool("chrome_open_url", { url: "https://www.youtube.com/" })).toBe("Opening youtube.com");
+    expect(humanizeTool("chrome_open_url")).toBe("Opening a website");
+    expect(humanizeTool("chrome_youtube_search", { query: "ambient coding music" }))
+      .toBe("Searching YouTube for ambient coding music");
+    expect(humanizeTool("chrome_youtube_search")).toBe("Searching YouTube");
+  });
+
   it("gives friendly phrases for the common tools", () => {
     expect(humanizeTool("take_screenshot")).toBe("Taking a screenshot");
     expect(humanizeTool("claude_code")).toBe("Writing code");
     expect(humanizeTool("memory_remember")).toBe("Saving to memory");
+    expect(humanizeTool("notes_capture", { project: "AVA Voice" })).toBe("Saving to AVA Voice Notes");
+    expect(humanizeTool("notes_capture", { folder_path: "University/Agile Development" })).toBe("Saving to Agile Development Notes");
+    expect(humanizeTool("notes_folders", { action: "create" })).toBe("Creating a Notes folder");
+    expect(humanizeTool("notes_folders", { action: "list" })).toBe("Checking Notes folders");
+    expect(humanizeTool("notes_promote", { target: "task" })).toBe("Turning a note into a task");
     expect(humanizeTool("self_improve")).toBe("Queuing a self-improvement");
   });
 

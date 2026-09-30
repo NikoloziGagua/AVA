@@ -45,6 +45,70 @@ describe("buildToolRegistry", () => {
     expect(r).toEqual({ call_id: "c1", output: "boom", is_error: true });
   });
 
+  it("passes a valid saved item through, and never from a failed call", async () => {
+    const saved = { kind: "note" as const, id: "note_1", title: "Groceries" };
+    const ok = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({ text: "ok", ok: true, saved }))],
+      ctx: { runId: "r1" },
+    });
+    await expect(ok.dispatch({ id: "c1", name: "a", args: {} })).resolves.toMatchObject({ saved });
+
+    const failed = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({ text: "no", ok: false, saved }))],
+      ctx: { runId: "r1" },
+    });
+    await expect(failed.dispatch({ id: "c2", name: "a", args: {} })).resolves.not.toHaveProperty("saved");
+
+    const malformed = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({ text: "ok", ok: true, saved: { kind: "script", id: "x", title: "t" } }))],
+      ctx: { runId: "r1" },
+    });
+    await expect(malformed.dispatch({ id: "c3", name: "a", args: {} })).resolves.not.toHaveProperty("saved");
+  });
+
+  it("passes only authoritative room post receipts and drops them on failure", async () => {
+    const roomPost = { schemaVersion: 1 as const, messageId: 42, roomName: "klevar", correlationId: "run_1", postedAt: 100 };
+    const ok = buildToolRegistry({
+      tools: [defOf("room_post", vi.fn().mockResolvedValue({ text: "posted", ok: true, roomPost }))],
+      ctx: { runId: "run_1" },
+    });
+    await expect(ok.dispatch({ id: "c1", name: "room_post", args: {} })).resolves.toMatchObject({ roomPost });
+
+    const failed = buildToolRegistry({
+      tools: [defOf("room_post", vi.fn().mockResolvedValue({ text: "failed", ok: false, roomPost }))],
+      ctx: { runId: "run_1" },
+    });
+    await expect(failed.dispatch({ id: "c2", name: "room_post", args: {} })).resolves.not.toHaveProperty("roomPost");
+  });
+
+  it("preserves only valid structured verification evidence", async () => {
+    const verification = {
+      state: "verified" as const,
+      scope: "task_outcome" as const,
+      method: "fixture_readback",
+      summary: "The fixture matched; token: sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+    };
+    const valid = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({ text: "ok", ok: true, verification }))],
+      ctx: { runId: "r1" },
+    });
+    const validResult = await valid.dispatch({ id: "c1", name: "a", args: {} });
+    expect(validResult.verification).toMatchObject({
+      state: "verified", scope: "task_outcome", method: "fixture_readback",
+    });
+    expect(validResult.verification?.summary).not.toContain("abcdefghijklmnopqrstuvwxyz123456");
+
+    const malformed = buildToolRegistry({
+      tools: [defOf("a", vi.fn().mockResolvedValue({
+        text: "ok", ok: true,
+        verification: { state: "verified", scope: "task_outcome", method: "", summary: "" },
+      }))],
+      ctx: { runId: "r1" },
+    });
+    await expect(malformed.dispatch({ id: "c2", name: "a", args: {} }))
+      .resolves.not.toHaveProperty("verification");
+  });
+
   it("returns an error result for an unknown tool", async () => {
     const reg = buildToolRegistry({ tools: [defOf("a")], ctx: { runId: "r1" } });
     const r = await reg.dispatch({ id: "c1", name: "ghost", args: {} });

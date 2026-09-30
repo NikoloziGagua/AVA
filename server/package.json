@@ -4,10 +4,25 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json && node -e \"const fs=require('node:fs');fs.copyFileSync('src/state/schema.sql','dist/state/schema.sql');fs.copyFileSync('src/self/SELF.md','dist/self/SELF.md')\"",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.scripts.json && node -e \"const fs=require('node:fs'),crypto=require('node:crypto');fs.copyFileSync('src/state/schema.sql','dist/state/schema.sql');fs.copyFileSync('src/self/SELF.md','dist/self/SELF.md');fs.writeFileSync('dist/build-id.txt',crypto.randomUUID()+'\\n')\"",
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:memory-retrieval": "tsx scripts/memory-retrieval-smoke.ts",
+    "smoke:memory-governance": "tsx scripts/memory-governance-smoke.ts",
+    "smoke:improvement-index": "tsx scripts/improvement-index-smoke.ts",
+    "smoke:ufo-experiment": "tsx scripts/ufo-experiment-smoke.ts",
+    "setup:ufo-runtime": "tsx scripts/install-ufo-runtime.ts",
+    "smoke:ufo-runtime": "tsx scripts/ufo-runtime-smoke.ts",
+    "smoke:computer-routing": "tsx scripts/computer-execution-smoke.ts",
+    "face:provision": "node scripts/face/provision-face-models.mjs",
+    "face:build": "node scripts/face/build-face-assets.mjs",
+    "face:test": "node --test scripts/face/face-assets.test.mjs",
+    "setup:activepieces": "tsx scripts/provision-activepieces-system-report.ts",
+    "setup:activepieces-report": "tsx scripts/provision-activepieces-system-report.ts",
+    "smoke:activepieces-playbooks": "tsx scripts/activepieces-system-report-live-smoke.ts",
+    "smoke:activepieces-generated": "tsx scripts/activepieces-generated-playbook-live-smoke.ts",
+    "smoke:activepieces-report": "tsx scripts/activepieces-system-report-live-smoke.ts",
     "pair": "tsx scripts/mint-pairing-code.ts",
     "self:loop": "tsx scripts/auto-improve-loop.ts"
   },
@@ -32,6 +47,8 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@huggingface/transformers": "3.8.1",
+    "@mediapipe/tasks-vision": "0.10.14",
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.11",
     "@types/express": "^5.0.0",
@@ -40,6 +57,7 @@
     "@types/supertest": "^7.2.0",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
+    "sharp": "0.34.1",
     "supertest": "^7.2.2",
     "tsx": "^4.19.0",
     "vitest": "^2.1.4"

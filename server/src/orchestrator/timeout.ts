@@ -5,11 +5,12 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   shell: 130_000,
   fs_read: 5_000, fs_write: 5_000, fs_list: 5_000, fs_stat: 5_000, fs_delete: 5_000,
   claude_code: 600_000,
-  chrome_navigate: 30_000, chrome_click: 10_000, chrome_type: 10_000,
+  chrome_open_url: 45_000, chrome_navigate: 30_000, chrome_click: 10_000, chrome_type: 10_000,
   chrome_press_key: 5_000, chrome_read_page: 15_000, chrome_screenshot: 15_000, chrome_tabs: 5_000,
   chrome_snapshot: 15_000,
   // App-module workflows chain several navigations + verification reads.
-  instagram_send_dm: 90_000, instagram_open_chat: 60_000, instagram_read_chat: 60_000,
+  instagram_send_dm: 90_000, instagram_open_profile: 45_000,
+  instagram_open_chat: 60_000, instagram_read_chat: 60_000,
   instagram_status: 45_000, instagram_login: 60_000, instagram_submit_code: 30_000,
   whatsapp_send_message: 90_000, whatsapp_open_chat: 60_000, whatsapp_status: 45_000,
   whatsapp_read_chat: 60_000,
@@ -17,6 +18,7 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   // budget blowout. The dispatch-level abort (agent.ts) now cancels the loop on
   // timeout; 120s gives real visual tasks room to finish.
   computer_use: 120_000,
+  chrome_google_search: 45_000, chrome_youtube_search: 45_000,
   control_app: 30_000,
   // Capture + one vision call on a multi-MB PNG — 30s default is too tight
   // when the vision model queues.
@@ -25,6 +27,14 @@ export const TOOL_BUDGET_MS: Record<string, number> = {
   // 20s each — the 30s unknown-tool default rejected exactly the sweeps the
   // tool exists for.
   find_places: 120_000,
+  ufo_experiment_observe: 15_000,
+  ufo_experiment_action: 15_000,
+  automation_status: 10_000,
+  automation_system_report: 45_000,
+  automation_operations_brief: 45_000,
+  automation_playbook_activate: 45_000,
+  automation_run_playbook: 90_000,
+  ufo_runtime_run: 610_000,
 };
 
 export function withTimeout<T>(p: Promise<T>, ms: number, tag: string): Promise<T> {

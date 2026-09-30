@@ -1,0 +1,15 @@
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { LivingFace } from "./LivingFace.js";
+const spy=vi.hoisted(()=>({reduced:false,release:vi.fn(),dispose:vi.fn(),draw:vi.fn(),presence:vi.fn(),fail:false,frames:[] as FrameRequestCallback[]}));
+vi.mock("../motion.js",()=>({useReducedMotion:()=>spy.reduced}));
+vi.mock("../face/FaceStage.js",()=>({claimFaceSlot:()=>spy.release}));
+vi.mock("../face/asset.js",()=>({sharedFaceAsset:async()=>({glow:{count:30000}})}));
+vi.mock("../face/model.js",()=>({buildPoints:()=>({data:new Float32Array(),count:0})}));
+vi.mock("../face/FaceStill.js",()=>({FaceStill:({label}:{label:string})=><span role="img" aria-label={label}>Still face</span>}));
+vi.mock("../face/renderer.js",()=>({FaceRenderer:class {constructor(){if(spy.fail)throw Error("No WebGL");}setPoints(){}setPresence(gain:number){spy.presence(gain);}resize(){}draw(t:number,a:{profile:string;state:{think:number;breath:number;drift:number}}){spy.draw(t,{...a.state},a.profile);}dispose(){spy.dispose();}}}));
+beforeEach(()=>{spy.reduced=false;spy.fail=false;spy.frames=[];vi.clearAllMocks();vi.stubGlobal("ResizeObserver",class{observe(){}disconnect(){}});vi.stubGlobal("IntersectionObserver",class{observe(){}disconnect(){}});vi.stubGlobal("requestAnimationFrame",(cb:FrameRequestCallback)=>{spy.frames.push(cb);return spy.frames.length;});vi.stubGlobal("cancelAnimationFrame",vi.fn());});
+afterEach(()=>{cleanup();vi.unstubAllGlobals();});
+it("opts into natural attention/breath/drift without faking a thinking pose and releases resources",async()=>{const {unmount}=render(<LivingFace mode="idle" label="AVA"/>);await waitFor(()=>expect(spy.draw).toHaveBeenCalled());expect(spy.draw.mock.calls[0]?.[2]).toBe("lively");expect(spy.presence).toHaveBeenCalledWith(1.12);expect(spy.frames).toHaveLength(1);spy.frames.shift()!(performance.now()+20);const frame=spy.draw.mock.calls.at(-1)!;expect(frame[1].think).toBe(0);expect(frame[1].drift).toBeGreaterThan(0);expect(frame[1].breath).toBeGreaterThan(0);unmount();expect(spy.release).toHaveBeenCalledOnce();expect(spy.dispose).toHaveBeenCalledOnce();});
+it("uses a static frame without breathing/drift or a continuous loop for reduced motion",async()=>{spy.reduced=true;render(<LivingFace mode="listening" label="AVA"/>);await waitFor(()=>expect(spy.draw).toHaveBeenCalledOnce());expect(spy.draw.mock.calls[0]?.[0]).toBe(0);expect(spy.draw.mock.calls[0]?.[1]).toMatchObject({think:0,breath:0,drift:0});expect(spy.frames).toHaveLength(0);});
+it("falls back accessibly if the renderer cannot start",async()=>{spy.fail=true;render(<LivingFace mode="idle" label="AVA fallback"/>);await waitFor(()=>expect(screen.getByText("Still face")).toBeTruthy());expect(screen.getByRole("img",{name:"AVA fallback"})).toBeTruthy();await waitFor(()=>expect(spy.release).toHaveBeenCalledOnce());});

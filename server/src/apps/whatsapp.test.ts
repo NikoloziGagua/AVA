@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Chrome } from "../tools/chrome.js";
 import { detectWaState, ensureReady, openChat, sendMessage, type WaDeps } from "./whatsapp.js";
-import { upsertPerson } from "./people.js";
+import { listPeople, upsertPerson } from "./people.js";
 
 const QR_TEXT = "Use WhatsApp on your computer\nScan the QR code with your phone\nLog into WhatsApp Web";
 const APP_TEXT = "Chats\nSearch or start a new chat\nLasha\nyesterday\nMom\nMonday";
@@ -102,6 +102,41 @@ describe("openChat (wrong-recipient regressions)", () => {
     expect(res.ok).toBe(true);
     expect(res.detail).toContain("header verified");
     expect(chrome.click).toHaveBeenCalledWith("aria-ref=e10");
+  });
+
+  it("opens the modern Search control before locating its textbox", async () => {
+    upsertPerson(dir, { name: "Lasha", whatsapp: { username: "Lasha" } });
+    const chrome = makeChrome();
+    (chrome.click as ReturnType<typeof vi.fn>).mockImplementation(async (selector: string) => (
+      selector.startsWith("aria-ref=")
+        ? { ok: true }
+        : { ok: false, reason: "no matches" }
+    ));
+    (chrome.snapshot as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ ok: true, text: '- button "Search" [ref=e1]' })
+      .mockResolvedValueOnce({ ok: true, text: '- textbox "Search" [ref=e2]' })
+      .mockResolvedValueOnce({ ok: true, text: '- listitem "Lasha" [ref=e10]' })
+      .mockResolvedValueOnce({ ok: true, text: '- main [ref=e50]:\n  - generic "Lasha"' });
+
+    const res = await openChat(depsWith(chrome), "Lasha");
+
+    expect(res.ok).toBe(true);
+    expect(chrome.click).toHaveBeenCalledWith("aria-ref=e1");
+    expect(chrome.type).toHaveBeenCalledWith("aria-ref=e2", "Lasha");
+    expect(chrome.click).toHaveBeenCalledWith("aria-ref=e10");
+  });
+
+  it("uses and learns a first-time exact display name after header verification", async () => {
+    const chrome = makeChrome();
+    (chrome.snapshot as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ ok: true, text: '- listitem "Lasha" [ref=e10]' })
+      .mockResolvedValueOnce({ ok: true, text: '- main [ref=e50]:\n  - generic "Lasha"' });
+
+    const res = await openChat(depsWith(chrome), "Lasha");
+
+    expect(res.ok).toBe(true);
+    expect(res.detail).toContain("learned");
+    expect(listPeople(dir)[0]?.whatsapp?.username).toBe("Lasha");
   });
 });
 

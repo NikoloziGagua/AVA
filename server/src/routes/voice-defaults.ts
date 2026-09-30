@@ -9,9 +9,9 @@
 /**
  * Default voice/speaker id used when no saved preference is supplied.
  *
- * "shimmer" is a female voice supported by BOTH the `gpt-4o-mini-tts` HTTP speech
- * model and the GA `gpt-realtime` audio-output model, so a single constant can
- * back both delivery paths. Callers may still override per request; only this
- * unspecified-preference fallback is defined here.
+ * "marin" is supported by BOTH the `gpt-4o-mini-tts` HTTP speech model and the
+ * current realtime audio-output model. OpenAI recommends marin or cedar for best
+ * quality, so one shared default keeps AVA consistent across both delivery paths.
+ * Callers may still override per request.
  */
-export const DEFAULT_VOICE = "shimmer";
+export const DEFAULT_VOICE = "marin";

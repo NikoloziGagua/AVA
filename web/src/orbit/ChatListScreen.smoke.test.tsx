@@ -4,11 +4,12 @@ import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/re
 import type { SessionRow } from "../api.js";
 
 // Mock the api module so the screen mounts without real network in jsdom.
-const fetchSessions = vi.fn();
+const fetchSessionPage = vi.fn();
 const setSessionPinned = vi.fn();
 const deleteSession = vi.fn();
 vi.mock("../api.js", () => ({
-  fetchSessions: () => fetchSessions(),
+  fetchSessionPage: (input: unknown) => fetchSessionPage(input),
+  lastHumanActivity: (s: { last_human_activity_at?: number | null; created_at: number }) => s.last_human_activity_at ?? s.created_at,
   api: {
     setSessionPinned: (...a: unknown[]) => setSessionPinned(...a),
     deleteSession: (...a: unknown[]) => deleteSession(...a),
@@ -30,7 +31,7 @@ function row(over: Partial<SessionRow>): SessionRow {
 }
 
 beforeEach(() => {
-  fetchSessions.mockReset();
+  fetchSessionPage.mockReset();
   setSessionPinned.mockReset().mockResolvedValue(undefined);
   deleteSession.mockReset().mockResolvedValue(undefined);
 });
@@ -45,32 +46,137 @@ describe("ChatListScreen", () => {
   });
 
   it("renders the empty state when there are no chats", async () => {
-    fetchSessions.mockResolvedValue([]);
+    fetchSessionPage.mockResolvedValue({ sessions: [], nextCursor: null });
     render(<ChatListScreen onClose={() => {}} onOpenChat={() => {}} />);
-    expect(await screen.findByText("NO CHATS YET")).toBeTruthy();
+    expect(await screen.findByText("No conversations yet")).toBeTruthy();
   });
 
   it("renders a distinct error state when the fetch fails (failure ≠ empty)", async () => {
-    fetchSessions.mockRejectedValue(new Error("boom"));
+    fetchSessionPage.mockRejectedValue(new Error("boom"));
     render(<ChatListScreen onClose={() => {}} onOpenChat={() => {}} />);
-    expect(await screen.findByText(/error: .*boom/)).toBeTruthy();
-    expect(screen.queryByText("NO CHATS YET")).toBeNull();
+    expect(await screen.findByText("Couldn't load your conversations.")).toBeTruthy();
+    expect(screen.getByText(/boom/)).toBeTruthy();
+    expect(screen.queryByText("No conversations yet")).toBeNull();
   });
 
-  it("shows pinned chats in the strip and unpinned in the table, and toggles a pin", async () => {
-    fetchSessions.mockResolvedValue([
+  it("shows pinned chats first and the rest by day, and toggles a pin", async () => {
+    fetchSessionPage.mockResolvedValue({ sessions: [
       row({ id: "p", title: "Pinned chat", pinned: 1 }),
       row({ id: "r", title: "Regular chat", pinned: 0 }),
-    ]);
+    ], nextCursor: null });
     render(<ChatListScreen onClose={() => {}} onOpenChat={() => {}} />);
 
-    // Both sections render their chats.
-    expect(await screen.findByText("Important chats")).toBeTruthy();
+    // Pinned first, then the rest under the day they were last used.
+    expect(await screen.findByText("Pinned")).toBeTruthy();
     expect(screen.getByText("Pinned chat")).toBeTruthy();
     expect(screen.getByText("Regular chat")).toBeTruthy();
 
-    // The unpinned row has a "pin" control; clicking it persists pinned=true.
-    fireEvent.click(screen.getByRole("button", { name: "pin" }));
+    // The unpinned row has a pin control named for it; clicking it persists pinned=true.
+    fireEvent.click(screen.getByRole("button", { name: "Pin Regular chat" }));
     await waitFor(() => expect(setSessionPinned).toHaveBeenCalledWith("r", true));
+  });
+
+  it("groups conversations under the day they were last used", async () => {
+    const now = Date.now();
+    fetchSessionPage.mockResolvedValue({ sessions: [
+      row({ id: "t", title: "This morning", last_human_activity_at: now, updated_at: now }),
+      row({ id: "y", title: "Last night", last_human_activity_at: now - 86_400_000, updated_at: now - 86_400_000 }),
+    ], nextCursor: null });
+    render(<ChatListScreen onClose={() => {}} onOpenChat={() => {}} />);
+    const today = await screen.findByRole("heading", { name: "Today" });
+    const yesterday = screen.getByRole("heading", { name: "Yesterday" });
+    expect(today.closest("section")!.textContent).toContain("This morning");
+    expect(yesterday.closest("section")!.textContent).toContain("Last night");
+  });
+
+  it("searches loaded conversations by title and says so when more are not loaded yet", async () => {
+    fetchSessionPage.mockResolvedValue({ sessions: [
+      row({ id: "a", title: "Agile exam plan" }),
+      row({ id: "b", title: "Groceries" }),
+    ], nextCursor: "more" });
+    render(<ChatListScreen onClose={() => {}} onOpenChat={() => {}} />);
+    await screen.findByText("Groceries");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search conversations" }), { target: { value: "agile" } });
+    expect(screen.getByText("Agile exam plan")).toBeTruthy();
+    expect(screen.queryByText("Groceries")).toBeNull();
+    expect(screen.getByText(/Searching the conversations loaded so far/)).toBeTruthy();
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search conversations" }), { target: { value: "zzz" } });
+    expect(screen.getByText(/No loaded conversation matches/)).toBeTruthy();
+  });
+
+  it("opens a conversation from a keyboard-focusable title button exactly once", async () => {
+    fetchSessionPage.mockResolvedValue({ sessions: [row({ id: "r", title: "Regular chat" })], nextCursor: null });
+    const onOpenChat = vi.fn();
+    render(<ChatListScreen onClose={() => {}} onOpenChat={onOpenChat} />);
+    const title = await screen.findByRole("button", { name: "Regular chat" });
+    // A native button: reachable with Tab, activated by Enter and Space.
+    expect(title.tagName).toBe("BUTTON");
+    title.focus();
+    expect(document.activeElement).toBe(title);
+    fireEvent.click(title);
+    expect(onOpenChat).toHaveBeenCalledTimes(1);
+    expect(onOpenChat).toHaveBeenCalledWith("r", undefined);
+  });
+
+  it("lists only Nika's conversations first, bounded, with a cursor to show more", async () => {
+    fetchSessionPage.mockImplementation(async (input: { scope: string; cursor?: string | null }) => (
+      input.cursor
+        ? { sessions: [row({ id: "h2", title: "Second page chat" })], nextCursor: null }
+        : { sessions: [row({ id: "h1", title: "First page chat" })], nextCursor: "c1" }
+    ));
+    render(<ChatListScreen onClose={() => {}} onOpenChat={() => {}} />);
+    expect(await screen.findByText("First page chat")).toBeTruthy();
+    expect(fetchSessionPage).toHaveBeenCalledWith({ scope: "human", limit: 30, cursor: null });
+    // History and automation are not fetched until asked for.
+    expect(fetchSessionPage).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(await screen.findByText("Second page chat")).toBeTruthy();
+    expect(fetchSessionPage).toHaveBeenLastCalledWith({ scope: "human", limit: 30, cursor: "c1" });
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
+  it("opens automated runs for reference only, never as the current chat", async () => {
+    fetchSessionPage.mockImplementation(async (input: { scope: string }) => (
+      input.scope === "automation"
+        ? { sessions: [row({ id: "auto", title: "Nightly watch run", origin: "automation" })], nextCursor: null }
+        : { sessions: [], nextCursor: null }
+    ));
+    const onOpenChat = vi.fn();
+    render(<ChatListScreen onClose={() => {}} onOpenChat={onOpenChat} />);
+    await screen.findByText("No conversations yet");
+
+    const automation = screen.getByRole("button", { name: "Show automated runs" });
+    fireEvent.click(automation);
+    expect(automation.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(await screen.findByText("Nightly watch run"));
+    expect(onOpenChat).toHaveBeenCalledWith("auto", { audit: true });
+    // Automated runs cannot be pinned into Nika's own list.
+    expect(screen.queryByRole("button", { name: /^Pin / })).toBeNull();
+  });
+
+  it("shows older history on demand and does not repeat a pinned older chat", async () => {
+    fetchSessionPage.mockImplementation(async (input: { scope: string }) => (
+      input.scope === "legacy"
+        ? {
+            sessions: [
+              row({ id: "old-pinned", title: "Pinned older chat", pinned: 1, origin: "unknown" }),
+              row({ id: "old", title: "Plain older chat", origin: "unknown" }),
+            ],
+            nextCursor: null,
+          }
+        : {
+            sessions: [row({ id: "old-pinned", title: "Pinned older chat", pinned: 1, origin: "unknown" })],
+            nextCursor: null,
+          }
+    ));
+    const onOpenChat = vi.fn();
+    render(<ChatListScreen onClose={() => {}} onOpenChat={onOpenChat} />);
+    expect(await screen.findByText("Pinned older chat")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show older history" }));
+    fireEvent.click(await screen.findByText("Plain older chat"));
+    expect(onOpenChat).toHaveBeenCalledWith("old", undefined);
+    expect(screen.getAllByText("Pinned older chat")).toHaveLength(1);
   });
 });

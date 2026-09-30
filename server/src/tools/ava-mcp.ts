@@ -5,6 +5,8 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import type { ToolVerificationEvidence } from "../orchestrator/verification-evidence.js";
+import type { MessageRoomPostReceipt, MessageSavedItem } from "../state/messages.js";
 
 export type RunCtx = {
   runId: string;
@@ -17,7 +19,15 @@ export type RunCtx = {
 
 export type ToolDef = {
   tool: Tool;
-  run: (args: Record<string, unknown>, ctx: RunCtx) => Promise<{ text: string; ok: boolean }>;
+  run: (args: Record<string, unknown>, ctx: RunCtx) => Promise<{
+    text: string;
+    ok: boolean;
+    verification?: ToolVerificationEvidence;
+    /** Report only after the write succeeded; it becomes the reply's Saved card. */
+    saved?: MessageSavedItem;
+    /** Report only after agentroom returned a durable message id. */
+    roomPost?: MessageRoomPostReceipt;
+  }>;
 };
 
 export function buildAvaMcp(opts: { tools: ToolDef[]; ctx: RunCtx }): Server {

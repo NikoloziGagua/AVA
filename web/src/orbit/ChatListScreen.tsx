@@ -1,53 +1,104 @@
-import { useEffect, useRef, useState } from "react";
-import { Trash2, Plus, Star, ArrowUpRight } from "lucide-react";
-import { api, fetchSessions, type SessionRow } from "../api.js";
-import { Alert, AlertDescription } from "../components/ui/alert.js";
-import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
-import { igniteBorder, douseBorder } from "../components/ava/BorderGlow.js";
-import { ContainerScroll } from "../components/ava/ContainerScroll.js";
-import { Flip, gsap, useGSAP } from "../lib/gsap.js";
-import { useReducedMotion } from "../lib/useReducedMotion.js";
-import { press } from "../lib/deckMotion.js";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { ChevronDown, Plus, Search, Star, Trash2, X } from "lucide-react";
+import { api, fetchSessionPage, lastHumanActivity, type SessionRow, type SessionScope } from "../api.js";
+import { Button } from "../design/Button.js";
+import { TextInput } from "../design/Field.js";
+import { Page, PageHeader, Section } from "../design/Page.js";
+import { EmptyState, ErrorState, Skeleton } from "../design/States.js";
+import { cn } from "../design/cn.js";
 
-/**
- * How many pinned chats get a starred card in the "Important chats" rail; any
- * further pins overflow into the table (with a lit star) so a 4th+ pin is never
- * invisible. Three wide cards fill the deck row exactly.
- */
-const MAX_PINNED_CARDS = 3;
+const PAGE_SIZE = 30;
+const DAY = 86_400_000;
 
 export interface ChatListScreenProps {
   // Kept for API parity with App.tsx; the persistent nav now handles "back",
   // so no in-panel back button is rendered.
   onClose: () => void;
-  onOpenChat: (sessionId: string | null) => void;
+  /** `audit` opens an automated run for reference without making it the current chat. */
+  onOpenChat: (sessionId: string | null, options?: { audit?: boolean }) => void;
 }
+
+/** Nika's conversations, older unclassified history, and AVA's own automated runs. */
+type Section = "human" | "legacy" | "automation";
 
 interface PendingDelete {
   session: SessionRow;
+  section: Section;
   timeoutId: ReturnType<typeof setTimeout>;
 }
 
+interface Page {
+  rows: SessionRow[];
+  cursor: string | null;
+  loading: boolean;
+  error: string | null;
+  loaded: boolean;
+}
+
+const EMPTY_PAGE: Page = { rows: [], cursor: null, loading: false, error: null, loaded: false };
 const UNDO_WINDOW_MS = 5000;
 
-/** "Mon · 14:32" style last-active label used by both the strip and the table. */
-function lastActive(s: SessionRow): string {
-  const d = new Date(s.updated_at);
-  return `${d.toLocaleDateString()} · ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+function startOfDay(at: number): number {
+  const d = new Date(at);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/** "Today", "Yesterday", a weekday this week, else a date. */
+export function dayLabel(at: number, now = Date.now()): string {
+  const days = Math.round((startOfDay(now) - startOfDay(at)) / DAY);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  const d = new Date(at);
+  if (days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  const sameYear = d.getFullYear() === new Date(now).getFullYear();
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "long", ...(sameYear ? {} : { year: "numeric" }) });
+}
+
+function clockTime(at: number): string {
+  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** "14:32" today, otherwise the day and time. */
+function formatWhen(at: number): string {
+  const day = dayLabel(at);
+  return day === "Today" ? clockTime(at) : `${day} · ${clockTime(at)}`;
+}
+
+/** Rows grouped under their day, newest day first, keeping the given order inside a day. */
+function groupByDay(rows: SessionRow[], when: (row: SessionRow) => number): Array<{ label: string; rows: SessionRow[] }> {
+  const groups: Array<{ label: string; rows: SessionRow[] }> = [];
+  for (const row of rows) {
+    const label = dayLabel(when(row));
+    const group = groups.find((g) => g.label === label);
+    if (group) group.rows.push(row);
+    else groups.push({ label, rows: [row] });
+  }
+  return groups;
+}
+
+const matches = (row: SessionRow, query: string) => (row.title ?? "Untitled").toLocaleLowerCase().includes(query);
+
+function withoutDuplicates(existing: SessionRow[], incoming: SessionRow[]): SessionRow[] {
+  const seen = new Set(existing.map((row) => row.id));
+  return [...existing, ...incoming.filter((row) => !seen.has(row.id))];
 }
 
 export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  // Fetch failure is its own state (MemoryScreen's err pattern) — swallowing it
-  // into the empty list lied with "NO CHATS YET" when the server was down.
-  const [err, setErr] = useState<string | null>(null);
+  const [pages, setPages] = useState<Record<Section, Page>>({
+    human: { ...EMPTY_PAGE, loading: true },
+    legacy: EMPTY_PAGE,
+    automation: EMPTY_PAGE,
+  });
+  const [openHistory, setOpenHistory] = useState<Record<"legacy" | "automation", boolean>>({
+    legacy: false,
+    automation: false,
+  });
   // A QUEUE of pending deletes, each with its OWN 5s timer — deleting a second
-  // chat no longer silently flushes the first's undo window (the old single-slot
-  // state committed the prior delete immediately). The toast reflects the latest;
-  // undo is LIFO.
+  // chat no longer silently flushes the first's undo window. The toast reflects
+  // the latest; undo is LIFO.
   const [pendingDeletes, setPendingDeletes] = useState<PendingDelete[]>([]);
-  const reduced = useReducedMotion();
+  const [query, setQuery] = useState("");
 
   // Mirror the queue into a ref so the unmount cleanup can commit any still-open
   // deletes without re-subscribing (deps: []). Leaving the screen mid-undo must
@@ -58,317 +109,307 @@ export function ChatListScreen({ onOpenChat }: ChatListScreenProps) {
   useEffect(() => () => {
     for (const p of pendingRef.current) {
       clearTimeout(p.timeoutId);
-      commitDelete(p.session);
+      commitDelete(p);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Flip snapshot taken in a list-mutating handler; consumed by the layout-effect
-  // below after React commits the new DOM (per deckMotion §3a pattern). Covers BOTH
-  // the delete/undo reorder AND a pin/unpin move between the strip and the table.
-  const flipState = useRef<Flip.FlipState | null>(null);
-  const listScope = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    fetchSessions()
-      .then((s) => setSessions(s))
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoading(false));
+  const setPage = useCallback((section: Section, update: (page: Page) => Page) => {
+    setPages((prev) => ({ ...prev, [section]: update(prev[section]) }));
   }, []);
 
-  // The "Important chats" rail shows at most MAX_PINNED_CARDS pinned chats; any
-  // pinned beyond that OVERFLOW into the table (with a lit star) so a 4th+ pin is
-  // never invisible. The table therefore lists overflow-pinned first, then unpinned.
-  const pinned = sessions.filter((s) => s.pinned);
-  const unpinned = sessions.filter((s) => !s.pinned);
-  const stripPinned = pinned.slice(0, MAX_PINNED_CARDS);
-  const tableRows = [...pinned.slice(MAX_PINNED_CARDS), ...unpinned];
+  const loadPage = useCallback(async (section: Section, cursor: string | null) => {
+    setPage(section, (page) => ({ ...page, loading: true, error: null }));
+    try {
+      const result = await fetchSessionPage({ scope: section as SessionScope, limit: PAGE_SIZE, cursor });
+      setPage(section, (page) => ({
+        rows: cursor ? withoutDuplicates(page.rows, result.sessions) : result.sessions,
+        cursor: result.nextCursor,
+        loading: false,
+        error: null,
+        loaded: true,
+      }));
+    } catch (error) {
+      setPage(section, (page) => ({ ...page, loading: false, error: String(error), loaded: true }));
+    }
+  }, [setPage]);
 
-  // Stagger the rows in on first paint, Flip them when the list reorders (delete /
-  // undo / pin / unpin), and pulse the loading skeletons. All reduced-motion gated.
-  useGSAP(
-    () => {
-      // List reorder/delete/pin: replay the captured layout via Flip. We snapshot
-      // BOTH the table rows and the strip cards so a row can fly from one to the other.
-      if (flipState.current) {
-        if (!reduced) {
-          Flip.from(flipState.current, {
-            duration: 0.5,
-            ease: "power2.inOut",
-            absolute: true,
-            stagger: 0.04,
-          });
-        }
-        flipState.current = null;
-        return;
-      }
-      if (reduced) return;
-      // Loading: gentle opacity yoyo on the skeleton slabs.
-      if (loading) {
-        gsap.to(".chat-skel", {
-          opacity: 0.35,
-          duration: 0.7,
-          ease: "sine.inOut",
-          repeat: -1,
-          yoyo: true,
-          stagger: 0.12,
-        });
-        return;
-      }
-      // Initial reveal — cascade the individual rows in beneath the section.
-      gsap.from(".chat-row", {
-        y: 12,
-        opacity: 0,
-        duration: 0.45,
-        ease: "power2.out",
-        stagger: 0.04,
-        clearProps: "transform,opacity",
-      });
-    },
-    { dependencies: [sessions, loading, reduced], scope: listScope },
-  );
+  useEffect(() => { void loadPage("human", null); }, [loadPage]);
 
-  // Snapshot every element that can move in a reorder: the table rows AND the pinned
-  // rail cards (so a row Flips smoothly into/out of the "Important chats" rail).
-  function snapshotForFlip() {
-    flipState.current = reduced ? null : Flip.getState(".chat-row, .pin-card");
-  }
+  const toggleHistory = (section: "legacy" | "automation") => {
+    const next = !openHistory[section];
+    setOpenHistory((prev) => ({ ...prev, [section]: next }));
+    if (next && !pages[section].loaded && !pages[section].loading) void loadPage(section, null);
+  };
 
-  function commitDelete(s: SessionRow) {
-    api.deleteSession(s.id).catch(() => {
-      setSessions((prev) => (prev.some((x) => x.id === s.id) ? prev : [s, ...prev]));
+  const human = pages.human;
+  // A pinned older conversation is listed with Nika's own; don't show it twice.
+  const humanIds = new Set(human.rows.map((row) => row.id));
+  const legacyRows = pages.legacy.rows.filter((row) => !humanIds.has(row.id));
+
+  // Pinned conversations come first; the rest are grouped by the day Niko last
+  // used them. Search narrows what is loaded; "Show more" loads further back.
+  const needle = query.trim().toLocaleLowerCase();
+  const visible = (rows: SessionRow[]) => (needle ? rows.filter((row) => matches(row, needle)) : rows);
+  const pinned = visible(human.rows.filter((s) => s.pinned));
+  const unpinned = visible(human.rows.filter((s) => !s.pinned));
+  const days = groupByDay(unpinned, lastHumanActivity);
+
+  function commitDelete(p: { session: SessionRow; section: Section }) {
+    api.deleteSession(p.session.id).catch(() => {
+      setPage(p.section, (page) => (
+        page.rows.some((row) => row.id === p.session.id)
+          ? page
+          : { ...page, rows: [p.session, ...page.rows] }
+      ));
     });
   }
 
-  function handleDelete(s: SessionRow) {
-    snapshotForFlip();
-    setSessions((prev) => prev.filter((x) => x.id !== s.id));
+  function handleDelete(session: SessionRow, section: Section) {
+    setPage(section, (page) => ({ ...page, rows: page.rows.filter((row) => row.id !== session.id) }));
     // Each delete gets its own independent timer; prior pending deletes keep
     // their full undo window (no silent flush).
     const timeoutId = setTimeout(() => {
-      commitDelete(s);
-      setPendingDeletes((prev) => prev.filter((p) => p.session.id !== s.id));
+      commitDelete({ session, section });
+      setPendingDeletes((prev) => prev.filter((p) => p.session.id !== session.id));
     }, UNDO_WINDOW_MS);
-    setPendingDeletes((prev) => [...prev, { session: s, timeoutId }]);
+    setPendingDeletes((prev) => [...prev, { session, section, timeoutId }]);
   }
 
-  // Undo the most recent pending delete (LIFO — matches the toast, which shows
-  // the latest).
+  // Undo the most recent pending delete (LIFO — matches the toast, which shows the latest).
   function handleUndo() {
     const last = pendingDeletes[pendingDeletes.length - 1];
     if (!last) return;
-    snapshotForFlip();
     clearTimeout(last.timeoutId);
-    setSessions((prev) => [last.session, ...prev]);
+    setPage(last.section, (page) => ({ ...page, rows: [last.session, ...page.rows] }));
     setPendingDeletes((prev) => prev.filter((p) => p !== last));
   }
 
   // Commit a specific pending delete now (the toast's dismiss/X).
   function commitNow(p: PendingDelete) {
     clearTimeout(p.timeoutId);
-    commitDelete(p.session);
+    commitDelete(p);
     setPendingDeletes((prev) => prev.filter((x) => x !== p));
   }
 
-  // Optimistic pin/unpin: flip s.pinned locally (which moves the row between the table
-  // and the strip), wrap the move in a Flip reorder, then persist. On rejection, revert.
-  function handleTogglePin(s: SessionRow) {
-    const next = s.pinned ? 0 : 1;
-    snapshotForFlip();
-    setSessions((prev) => prev.map((x) => (x.id === s.id ? { ...x, pinned: next } : x)));
-    api.setSessionPinned(s.id, next === 1).catch(() => {
-      setSessions((prev) => prev.map((x) => (x.id === s.id ? { ...x, pinned: s.pinned } : x)));
+  // Optimistic pin/unpin, then persist; revert on rejection. Pinning an older
+  // conversation is an explicit choice, so it joins Nika's own list.
+  function handleTogglePin(session: SessionRow, section: Section) {
+    const next = session.pinned ? 0 : 1;
+    const updated = { ...session, pinned: next };
+    if (section === "legacy") {
+      setPage("legacy", (page) => ({ ...page, rows: page.rows.filter((row) => row.id !== session.id) }));
+      setPage("human", (page) => ({ ...page, rows: [updated, ...page.rows] }));
+    } else {
+      setPage(section, (page) => ({ ...page, rows: page.rows.map((row) => (row.id === session.id ? updated : row)) }));
+    }
+    api.setSessionPinned(session.id, next === 1).catch(() => {
+      if (section === "legacy") {
+        setPage("human", (page) => ({ ...page, rows: page.rows.filter((row) => row.id !== session.id) }));
+        setPage("legacy", (page) => ({ ...page, rows: [session, ...page.rows] }));
+      } else {
+        setPage(section, (page) => ({ ...page, rows: page.rows.map((row) => (row.id === session.id ? session : row)) }));
+      }
     });
   }
 
-  const newChatBtn = (
-    <button
-      onClick={() => onOpenChat(null)}
-      onPointerDown={(e) => press(e.currentTarget, true, reduced)}
-      onPointerUp={(e) => press(e.currentTarget, false, reduced)}
-      onPointerLeave={(e) => press(e.currentTarget, false, reduced)}
-      aria-label="new chat"
-      className="btn-deck btn-ghost"
-    >
-      <Plus size={14} />
-      <span>New</span>
-    </button>
+  const renderRows = (rows: SessionRow[], section: Section) => (
+    <ul className="grid gap-2">
+      {rows.map((s) => {
+        const title = s.title ?? "Untitled";
+        const open = () => onOpenChat(s.id, section === "automation" ? { audit: true } : undefined);
+        return (
+          <li key={s.id} className="flex min-h-14 items-center gap-1 rounded-card bg-surface py-1.5 pl-4 pr-1.5 shadow-e1 transition-colors hover:bg-surface-strong">
+            <button
+              type="button"
+              onClick={open}
+              aria-labelledby={`${section}-${s.id}-title`}
+              aria-describedby={`${section}-${s.id}-when`}
+              className="ds-focus grid min-w-0 flex-1 gap-0.5 rounded-control py-1 text-left"
+            >
+              <span id={`${section}-${s.id}-title`} className="truncate text-body text-ink">{title}</span>
+              <span id={`${section}-${s.id}-when`} className="text-meta text-ink-3">
+                {formatWhen(section === "human" ? lastHumanActivity(s) : s.updated_at)}
+              </span>
+            </button>
+            {section !== "automation" && (
+              <IconButton
+                label={`${s.pinned ? "Unpin" : "Pin"} ${title}`}
+                pressed={Boolean(s.pinned)}
+                onClick={() => handleTogglePin(s, section)}
+              >
+                <Star size={16} fill={s.pinned ? "currentColor" : "none"} aria-hidden="true" />
+              </IconButton>
+            )}
+            <IconButton label={`Delete ${title}`} onClick={() => handleDelete(s, section)} danger>
+              <Trash2 size={16} aria-hidden="true" />
+            </IconButton>
+          </li>
+        );
+      })}
+    </ul>
   );
 
+  const renderMore = (section: Section) => {
+    const page = pages[section];
+    if (!page.cursor) return null;
+    return (
+      <div className="flex justify-center">
+        <Button variant="glass" size="sm" loading={page.loading} disabled={page.loading} onClick={() => void loadPage(section, page.cursor)}>
+          {page.loading ? "Loading…" : "Show more"}
+        </Button>
+      </div>
+    );
+  };
+
+  const renderHistory = (section: "legacy" | "automation", title: string, description: string) => {
+    const page = pages[section];
+    const rows = visible(section === "legacy" ? legacyRows : page.rows);
+    const open = openHistory[section];
+    const regionId = `chat-history-${section}`;
+    return (
+      <section className="grid gap-3">
+        <button
+          type="button"
+          aria-label={`${open ? "Hide" : "Show"} ${title.toLowerCase()}`}
+          aria-expanded={open}
+          aria-controls={regionId}
+          onClick={() => toggleHistory(section)}
+          className="ds-focus flex items-center justify-between gap-3 rounded-card bg-glass px-4 py-3 text-left transition-colors hover:bg-glass-strong"
+        >
+          <span className="grid gap-0.5">
+            <span className="text-body font-medium text-ink">{title}</span>
+            <span className="text-meta text-ink-2">{description}</span>
+          </span>
+          <ChevronDown size={18} aria-hidden="true" className={cn("shrink-0 text-ink-3 transition-transform", open && "rotate-180")} />
+        </button>
+        {open && (
+          <div id={regionId} className="grid gap-3">
+            {page.loading && !page.loaded && <Skeleton lines={3} />}
+            {page.error && <ErrorState title="Couldn't load these conversations." body={page.error} onRetry={() => void loadPage(section, null)} />}
+            {page.loaded && !page.error && rows.length === 0 && <p className="px-1 text-meta text-ink-2">Nothing here.</p>}
+            {rows.length > 0 && renderRows(rows, section)}
+            {renderMore(section)}
+          </div>
+        )}
+      </section>
+    );
+  };
+
+  const latest = pendingDeletes[pendingDeletes.length - 1];
+
   return (
-    <PanelShell title="Chats">
-      <div ref={listScope}>
-        {/* IMPORTANT CHATS — only when something is pinned. A rail of up to three
-            wide starred cards (the old skew-stack smeared into an unreadable pile;
-            this reads instantly and ignites per-card on hover). */}
-        {pinned.length > 0 && (
-          <PanelSection title="Important chats" right={<span className="chip chip-ac">{pinned.length}</span>}>
-            <ContainerScroll>
-              <div className="pin-grid">
-                {stripPinned.map((s) => (
-                  <div
-                    key={s.id}
-                    role="button"
-                    tabIndex={0}
-                    className="pin-card bg-card cursor-pointer px-5 py-4"
-                    onClick={() => onOpenChat(s.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        onOpenChat(s.id);
-                      }
-                    }}
-                    onPointerMove={reduced ? undefined : igniteBorder}
-                    onPointerLeave={reduced ? undefined : douseBorder}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <span className="hud text-[9px] tracking-[0.22em] text-[var(--ac)]/75">
-                        ★ PINNED
-                      </span>
-                      <button
-                        aria-label="unpin"
-                        title="Unpin"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleTogglePin(s);
-                        }}
-                        className="pin-star -mr-1 -mt-1 rounded-md p-1 text-[var(--ac)] transition-colors hover:text-white"
-                      >
-                        <Star size={14} fill="currentColor" strokeWidth={1.5} />
-                      </button>
-                    </div>
-                    <div className="pin-title mt-2 text-[15px] font-medium leading-snug text-white/92">
-                      {s.title ?? "Untitled"}
-                    </div>
-                    <div className="mt-3 flex items-center justify-between">
-                      <span className="hud text-[10px] tracking-[0.16em] text-white/40">{lastActive(s)}</span>
-                      <span className="pin-open flex items-center gap-1 hud text-[9px] tracking-[0.2em] text-white/35">
-                        OPEN <ArrowUpRight size={11} />
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </ContainerScroll>
-          </PanelSection>
+    <div className="ds-root absolute inset-0 overflow-y-auto bg-canvas font-ui text-ink">
+      <Page width="narrow">
+        <PageHeader
+          title="Conversations"
+          actions={(
+            <Button variant="solid" size="sm" leading={<Plus size={16} aria-hidden="true" />} onClick={() => onOpenChat(null)}>
+              New conversation
+            </Button>
+          )}
+        />
+
+        <label className="relative block">
+          <span className="sr-only">Search conversations</span>
+          <Search size={17} aria-hidden="true" className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ink-3" />
+          <TextInput
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search by title"
+            className="pl-11"
+          />
+        </label>
+        {needle && human.cursor && (
+          <p className="-mt-4 px-1 text-meta text-ink-3">Searching the conversations loaded so far. Show more to look further back.</p>
         )}
 
-        {/* ALL CHATS — the deck table. */}
-        <PanelSection title="All chats" right={newChatBtn}>
-          {loading && (
-            <div className="grid grid-cols-1 gap-3">
-              {[0, 1, 2].map((i) => (
-                <div key={i} className="chat-skel lg-slab h-[52px] rounded-xl opacity-70" />
-              ))}
-            </div>
-          )}
+        {pinned.length > 0 && (
+          <Section label="Pinned">{renderRows(pinned, "human")}</Section>
+        )}
 
-          {!loading && err && (
-            <div className="py-10 text-center text-sm text-red-400">error: {err}</div>
-          )}
+        {human.loading && !human.loaded && <Skeleton lines={4} />}
 
-          {!loading && !err && sessions.length === 0 && (
-            <div className="flex flex-col items-center gap-5 py-14 text-center">
-              <div className="hud text-[12px] tracking-[0.22em] text-white/45">NO CHATS YET</div>
-              <button
-                onClick={() => onOpenChat(null)}
-                onPointerDown={(e) => press(e.currentTarget, true, reduced)}
-                onPointerUp={(e) => press(e.currentTarget, false, reduced)}
-                onPointerLeave={(e) => press(e.currentTarget, false, reduced)}
-                aria-label="new chat"
-                className="btn-deck btn-primary"
-              >
-                <Plus size={14} />
-                <span>New chat</span>
-              </button>
-            </div>
-          )}
+        {human.loaded && human.error && (
+          <ErrorState title="Couldn't load your conversations." body={human.error} onRetry={() => void loadPage("human", null)} />
+        )}
 
-          {!loading && tableRows.length === 0 && pinned.length > 0 && (
-            <div className="hud py-8 text-center text-[11px] tracking-[0.2em] text-white/35">
-              ALL CHATS ARE PINNED
-            </div>
-          )}
+        {human.loaded && !human.error && human.rows.length === 0 && (
+          <EmptyState
+            title="No conversations yet"
+            body="Start one from the bar below, or here."
+            action={<Button variant="solid" onClick={() => onOpenChat(null)}>Start a conversation</Button>}
+          />
+        )}
 
-          {!loading && tableRows.length > 0 && (
-            <table className="chat-table">
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th>Last active</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tableRows.map((s) => (
-                  <tr
-                    key={s.id}
-                    className="chat-row"
-                    onClick={() => onOpenChat(s.id)}
-                  >
-                    <td>
-                      <div className="truncate text-sm text-white/90">{s.title ?? "Untitled"}</div>
-                    </td>
-                    <td>
-                      <div className="hud text-[10px] tracking-[0.16em] text-white/40">
-                        {lastActive(s)}
-                      </div>
-                    </td>
-                    <td>
-                      <div className="chat-actions">
-                        <button
-                          aria-label={s.pinned ? "unpin" : "pin"}
-                          data-on={s.pinned ? "true" : "false"}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleTogglePin(s);
-                          }}
-                          className="chat-act chat-act-star"
-                        >
-                          <Star size={14} fill={s.pinned ? "currentColor" : "none"} strokeWidth={1.5} />
-                        </button>
-                        <button
-                          aria-label="delete"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(s);
-                          }}
-                          className="chat-act chat-act-del"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </PanelSection>
-      </div>
+        {human.loaded && !human.error && human.rows.length > 0 && needle && pinned.length === 0 && unpinned.length === 0 && (
+          <p className="px-1 text-body text-ink-2">No loaded conversation matches “{query.trim()}”.</p>
+        )}
 
-      {pendingDeletes.length > 0 && (() => {
-        const latest = pendingDeletes[pendingDeletes.length - 1]!;
-        const extra = pendingDeletes.length - 1;
-        return (
-          <div className="sticky bottom-6 z-20 mx-auto max-w-md">
-            <Alert
-              variant="info"
-              close
-              className="lg-slab border-0"
-              onClose={() => commitNow(latest)}
-            >
-              <AlertDescription>
-                Deleted "{latest.session.title ?? "Untitled"}"
-                {extra > 0 ? ` (+${extra} more)` : ""}.
-                <button className="ml-2 underline decoration-[var(--ac)] underline-offset-2 hover:text-[var(--ac)]" onClick={handleUndo}>
-                  undo
-                </button>
-              </AlertDescription>
-            </Alert>
-          </div>
-        );
-      })()}
-    </PanelShell>
+        {human.loaded && !needle && unpinned.length === 0 && pinned.length > 0 && (
+          <p className="px-1 text-meta text-ink-2">All your conversations are pinned.</p>
+        )}
+
+        {days.map((day) => (
+          <Section key={day.label} label={day.label}>{renderRows(day.rows, "human")}</Section>
+        ))}
+        {renderMore("human")}
+
+        {renderHistory(
+          "legacy",
+          "Older history",
+          "Conversations from before AVA separated your chats from automated runs. Open one to continue it.",
+        )}
+        {renderHistory(
+          "automation",
+          "Automated runs",
+          "Watches and other work AVA did on its own. Shown for reference; they never become your current chat.",
+        )}
+      </Page>
+
+      {latest && (
+        <div
+          role="status"
+          className="ds-root ds-rise fixed inset-x-0 z-30 mx-auto flex w-[calc(100%-2rem)] max-w-md items-center gap-2 rounded-full bg-solid py-1.5 pl-5 pr-1.5 text-meta text-on-solid shadow-e3"
+          style={{ bottom: "calc(var(--ds-bar-space, 72px) + env(safe-area-inset-bottom, 0px) + 0.75rem)" }}
+        >
+          <span className="min-w-0 flex-1 truncate">
+            Deleted “{latest.session.title ?? "Untitled"}”{pendingDeletes.length > 1 ? ` (+${pendingDeletes.length - 1} more)` : ""}.
+          </span>
+          <button type="button" onClick={handleUndo} className="ds-focus rounded-full px-3 py-2 font-medium underline underline-offset-2">
+            Undo
+          </button>
+          <button type="button" aria-label="Delete now" onClick={() => commitNow(latest)} className="ds-focus grid h-9 w-9 place-items-center rounded-full">
+            <X size={16} aria-hidden="true" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IconButton({ label, onClick, pressed, danger, children }: {
+  label: string;
+  onClick: () => void;
+  pressed?: boolean;
+  danger?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={cn(
+        "ds-focus grid h-11 w-11 shrink-0 place-items-center rounded-full transition-colors",
+        pressed ? "text-ink" : "text-ink-3",
+        danger ? "hover:bg-danger-soft hover:text-danger" : "hover:bg-glass hover:text-ink",
+      )}
+    >
+      {children}
+    </button>
   );
 }

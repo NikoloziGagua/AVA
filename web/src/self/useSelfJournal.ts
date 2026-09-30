@@ -8,6 +8,28 @@ export type Intent = {
   outcome?: string;
   /** While awaiting_approval this holds the drafted plan (prefixed "PLAN:"). */
   diff_summary?: string | null;
+  worker_provider?: "claude" | "codex";
+  commit_sha?: string | null;
+  last_known_good?: string | null;
+  error?: string | null;
+  cancellation_source?: "self_stop" | "global_stop" | "system_abort" | null;
+};
+
+export type WorkerOption = {
+  provider: "claude" | "codex";
+  label: string;
+  installed: boolean;
+  configuration: "not_checked" | "unavailable";
+  available: boolean;
+  version: string | null;
+  reason: string | null;
+};
+
+export type WorkerState = {
+  provider: "claude" | "codex";
+  version: number;
+  updatedAt: number;
+  options: WorkerOption[];
 };
 
 const POLL_MS = 4000;
@@ -27,14 +49,19 @@ function jsonAuthHeaders(): HeadersInit {
  * array) to `{improvements, paused}`. Parse all three shapes so the UI never breaks
  * mid-deploy; a shape with no `paused` field means the server can't pause → false.
  */
-async function getSelf(): Promise<{ intents: Intent[]; paused: boolean } | null> {
+async function getSelf(): Promise<{ intents: Intent[]; paused: boolean; worker: WorkerState | null; repositoryHead: string | null } | null> {
   const r = await fetch("/api/self", { headers: authHeaders() });
   if (!r.ok) return null;
   const j: unknown = await r.json();
-  if (Array.isArray(j)) return { intents: j as Intent[], paused: false };
+  if (Array.isArray(j)) return { intents: j as Intent[], paused: false, worker: null, repositoryHead: null };
   if (j && typeof j === "object") {
-    const o = j as { improvements?: Intent[]; intents?: Intent[]; paused?: boolean };
-    return { intents: o.improvements ?? o.intents ?? [], paused: o.paused === true };
+    const o = j as { improvements?: Intent[]; intents?: Intent[]; paused?: boolean; worker?: WorkerState; repositoryHead?: string };
+    return {
+      intents: o.improvements ?? o.intents ?? [],
+      paused: o.paused === true,
+      worker: o.worker ?? null,
+      repositoryHead: typeof o.repositoryHead === "string" ? o.repositoryHead : null,
+    };
   }
   return null;
 }
@@ -42,6 +69,11 @@ async function getSelf(): Promise<{ intents: Intent[]; paused: boolean } | null>
 export function useSelfJournal() {
   const [intents, setIntents] = useState<Intent[]>([]);
   const [paused, setPausedState] = useState(false);
+  const [worker, setWorkerState] = useState<WorkerState | null>(null);
+  const [workerError, setWorkerError] = useState<string | null>(null);
+  const [selectingWorker, setSelectingWorker] = useState(false);
+  const [repositoryHead, setRepositoryHead] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const intentsRef = useRef<Intent[]>([]);
   intentsRef.current = intents;
 
@@ -51,6 +83,8 @@ export function useSelfJournal() {
       if (!s) return; // transient failure — keep the last good view
       setIntents(s.intents);
       setPausedState(s.paused);
+      setWorkerState(s.worker);
+      setRepositoryHead(s.repositoryHead);
     } catch {
       /* best-effort polling */
     }
@@ -90,9 +124,72 @@ export function useSelfJournal() {
   // Cancel a running/queued self-improvement (the Stop for self-dev). The server
   // aborts the worker + verify subprocess; refresh reflects the cancelled state.
   const cancel = useCallback((id: string) => act(id, "cancel"), [act]);
-  // Approve / reject a plan parked at awaiting_approval.
-  const approve = useCallback((id: string) => act(id, "approve"), [act]);
+  // Approval locks the currently displayed worker/version. If another client
+  // changes the selector first, the server refuses the stale approval instead
+  // of silently running a different provider.
+  const approve = useCallback(async (id: string) => {
+    const selected = worker;
+    if (!selected) {
+      setWorkerError("AVA has not loaded the implementation worker yet.");
+      return;
+    }
+    setWorkerError(null);
+    try {
+      const response = await fetch(`/api/self/${id}/approve`, {
+        method: "POST",
+        headers: jsonAuthHeaders(),
+        body: JSON.stringify({ expectedWorkerVersion: selected.version }),
+      });
+      const body = await response.json().catch(() => ({})) as {
+        error?: string;
+        reason?: string;
+      };
+      if (!response.ok) {
+        if (body.error === "stale_version") {
+          setWorkerError("The worker choice changed elsewhere. Review it and approve again.");
+        } else if (body.error === "worker_unavailable") {
+          setWorkerError(body.reason ?? "The selected worker is unavailable.");
+        } else {
+          setWorkerError("AVA could not approve this plan. Refresh and try again.");
+        }
+      }
+    } catch {
+      setWorkerError("Couldn't approve the plan. Check AVA's connection and try again.");
+    }
+    await refresh();
+  }, [refresh, worker]);
+  // Reject does not need a worker lock because no provider is launched.
   const reject = useCallback((id: string) => act(id, "reject"), [act]);
+
+  const resumeSwap = useCallback(async (intent: Intent) => {
+    if (!intent.commit_sha || !repositoryHead) {
+      setRecoveryError("AVA cannot identify the preserved candidate or current repository version.");
+      return;
+    }
+    setRecoveryError(null);
+    try {
+      const response = await fetch(`/api/self/${intent.id}/resume-swap`, {
+        method: "POST",
+        headers: jsonAuthHeaders(),
+        body: JSON.stringify({
+          expectedCandidateSha: intent.commit_sha,
+          expectedHead: repositoryHead,
+        }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        const stale = body.error === "stale_head" || body.error === "stale_candidate";
+        setRecoveryError(stale
+          ? "The repository or candidate changed. AVA refreshed the safe retry boundary."
+          : body.error === "busy"
+            ? "Another Self task is active. Retry after it reaches a clean boundary."
+            : "AVA could not start safe installation recovery.");
+      }
+    } catch {
+      setRecoveryError("Couldn't reach AVA to resume safe installation.");
+    }
+    await refresh();
+  }, [refresh, repositoryHead]);
 
   // Ask Ava to start a self-improvement from a user-written goal. Unlike the journal
   // actions this surfaces failure to the caller — the initiator input needs to tell
@@ -108,8 +205,12 @@ export function useSelfJournal() {
           body: JSON.stringify({ goal: trimmed }),
         });
         if (!r.ok) {
-          if (r.status === 409)
+          if (r.status === 409) {
+            const body = await r.json().catch(() => ({})) as { error?: string; reason?: string };
+            if (body.error === "worker_unavailable")
+              return { ok: false, error: body.reason ?? "the selected worker is unavailable" };
             return { ok: false, error: "self-improvement is paused — resume it first" };
+          }
           return { ok: false, error: `couldn't start (HTTP ${r.status})` };
         }
         await refresh();
@@ -140,12 +241,49 @@ export function useSelfJournal() {
     }
   }, []);
 
-  return { intents, paused, setPaused, improve, revertLast, cancel, approve, reject };
+  const selectWorker = useCallback(async (provider: "claude" | "codex") => {
+    const current = worker;
+    if (!current || current.provider === provider || selectingWorker) return;
+    setSelectingWorker(true);
+    setWorkerError(null);
+    try {
+      const r = await fetch("/api/self/worker", {
+        method: "POST",
+        headers: jsonAuthHeaders(),
+        body: JSON.stringify({ provider, expectedVersion: current.version }),
+      });
+      const body = await r.json().catch(() => ({})) as {
+        error?: string;
+        reason?: string;
+        worker?: Omit<WorkerState, "options">;
+      };
+      if (!r.ok) {
+        setWorkerError(body.error === "stale_version"
+          ? "The worker choice changed elsewhere. Refreshed the latest setting."
+          : body.reason ?? "That worker is unavailable.");
+        await refresh();
+        return;
+      }
+      if (body.worker) setWorkerState({ ...body.worker, options: current.options });
+      await refresh();
+    } catch {
+      setWorkerError("Couldn't change the worker. Check AVA's connection and try again.");
+    } finally {
+      setSelectingWorker(false);
+    }
+  }, [refresh, selectingWorker, worker]);
+
+  return {
+    intents, paused, setPaused, improve, revertLast, cancel, approve, reject,
+    worker, workerError, selectingWorker, selectWorker,
+    repositoryHead, recoveryError, resumeSwap,
+  };
 }
 
 /** A self-improvement is still in flight (cancellable) in these states. */
 export function isRunningStatus(status: string): boolean {
-  return status === "queued" || status === "reflecting" || status === "implementing" || status === "verifying";
+  return status === "queued" || status === "reflecting" || status === "implementing"
+    || status === "verifying" || status === "recovering";
 }
 
 /** Strip the "PLAN:" prefix off the parked plan for display. */

@@ -111,6 +111,27 @@ describe("WatchesSection", () => {
     expect(await screen.findByText(/No standing watches/)).toBeTruthy();
   });
 
+  it("makes pinned Codex delivery and cycle state visible", async () => {
+    fetchWatches.mockResolvedValue([watch({
+      id: "codex-1",
+      prompt: "build the Notes system",
+      kind: "codex",
+      continue_cycle: 1,
+      last_status: "running",
+      last_result: "Codex accepted the watcher instruction and is still working",
+      successor_status: "blocked",
+      successor_result: "AVA could not select the next Codex task: provider quota exhausted",
+      successor_attempted_at: Date.now() - 60_000,
+    })]);
+    render(<WatchesSection />);
+
+    expect(await screen.findByText("Codex task")).toBeTruthy();
+    expect(screen.getByText("continuous cycle")).toBeTruthy();
+    expect(screen.getByLabelText("last check: running")).toBeTruthy();
+    expect(screen.getByLabelText("successor planning: blocked")).toBeTruthy();
+    expect(screen.getByText(/provider quota exhausted/)).toBeTruthy();
+  });
+
   it("renders defensively: missing new columns + unknown status do not crash", async () => {
     fetchWatches.mockResolvedValue([
       // Base-schema row: no run_at / daily_at / kind at all, bogus status.
@@ -149,5 +170,59 @@ describe("WatchesSection", () => {
     expect(timeAgo(now - 5 * 60_000, now)).toBe("5m ago");
     expect(timeAgo(now - 3 * 3_600_000, now)).toBe("3h ago");
     expect(timeAgo(now - 2 * 86_400_000, now)).toBe("2d ago");
+  });
+});
+
+describe("WatchesSection reminder receipts (i4 v2)", () => {
+  it("never truncates the phone-receipt caveat behind prompt expansion", async () => {
+    const dueAt = Date.now() - 60_000;
+    fetchWatches.mockResolvedValue([watch({
+      id: "accepted", prompt: "A reminder", kind: "reminder", run_at: dueAt, once: 1, enabled: 0,
+      reminder_status: {
+        version: 1, occurrenceId: `reminder:accepted:${dueAt}`, revision: 1, state: "accepted", dueAt, timeZone: "Europe/Dublin",
+        expiresAt: dueAt + 900_000, attempts: 1, attemptedAt: dueAt, nextAttemptAt: null, acceptedAt: dueAt,
+        subscriptions: { total: 1, accepted: 1, rejectedTransient: 0, rejectedPermanent: 0, unknown: 0 },
+        reasonCode: null, phoneReceipt: "unconfirmed",
+      },
+    })]);
+    render(<WatchesSection />);
+    await screen.findByText("Accepted by notification service");
+    const detail = screen.getByText(/can't confirm your phone showed it/);
+    expect(detail.classList.contains("truncate")).toBe(false);
+    expect(detail.classList.contains("whitespace-normal")).toBe(true);
+    expect(detail.parentElement?.classList.contains("flex-wrap")).toBe(true);
+    expect(detail.closest(".lg-slab")?.classList.contains("opacity-60")).toBe(false);
+    expect(detail.closest(".ds-legacy-reminder-row")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "A reminder" }).getAttribute("aria-expanded")).toBe("false");
+    expect(setWatchEnabled).not.toHaveBeenCalled();
+    expect(deleteWatchApi).not.toHaveBeenCalled();
+  });
+
+  it("shows a direct reminder's receipt instead of its old 'delivered' glyph", async () => {
+    const dueAt = Date.now() - 60_000;
+    fetchWatches.mockResolvedValue([watch({
+      id: "r1", prompt: "Stretch", kind: "reminder", run_at: dueAt, once: 1,
+      last_status: "delivered", last_result: "delivered",
+      reminder_status: {
+        version: 1, occurrenceId: `reminder:r1:${dueAt}`, revision: 1, state: "acceptance_unknown", dueAt, timeZone: "Europe/London",
+        expiresAt: dueAt + 900_000, attempts: 1, attemptedAt: dueAt, nextAttemptAt: null, acceptedAt: null,
+        subscriptions: { total: 1, accepted: 0, rejectedTransient: 0, rejectedPermanent: 0, unknown: 1 },
+        reasonCode: "transport_timeout", phoneReceipt: "unconfirmed",
+      },
+    })]);
+    render(<WatchesSection />);
+    expect(await screen.findByText("Acceptance unknown")).toBeTruthy();
+    expect(screen.getByText(/didn't answer in time/)).toBeTruthy();
+    expect(screen.queryByLabelText(/last check: delivered/)).toBeNull();
+  });
+
+  it("leaves checks and recurring reminders on their existing last-check line", async () => {
+    fetchWatches.mockResolvedValue([
+      watch(),
+      watch({ id: "d1", prompt: "Drink water", kind: "reminder", daily_at: "09:00", last_status: "delivered", last_result: "sent" }),
+    ]);
+    render(<WatchesSection />);
+    expect(await screen.findByLabelText("last check: ok")).toBeTruthy();
+    expect(screen.getByLabelText("last check: delivered")).toBeTruthy();
   });
 });

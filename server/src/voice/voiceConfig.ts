@@ -11,6 +11,14 @@
  */
 export const DEFAULT_SPEECH_RATE = 1.15;
 
+/**
+ * Realtime speech is generated natively by the audio model. Respeeding that
+ * stream made AVA sound rushed/processed and unlike OpenAI's reference voice.
+ * Keep realtime at the model's natural cadence; the faster HTTP-TTS preference
+ * above remains available for legacy/non-realtime clips.
+ */
+export const DEFAULT_REALTIME_SPEECH_RATE = 1.0;
+
 /** Hard bounds the TTS engine accepts; out-of-range requests are clamped. */
 export const MIN_SPEECH_RATE = 0.25;
 export const MAX_SPEECH_RATE = 4.0;

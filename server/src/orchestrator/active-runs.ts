@@ -7,6 +7,12 @@ export type ActiveRun = {
   runId: string;
   abort: AbortController;
   buffer: SseBuffer;
+  /**
+   * Publishes the user-visible cancellation boundary synchronously when Stop is
+   * pressed. The agent still owns cleanup, but the stream must not close before
+   * the receipt and `killed` event enter the replay buffer.
+   */
+  cancel?: () => void;
 };
 
 export class ActiveRuns {
@@ -24,6 +30,12 @@ export class ActiveRuns {
    *  kill endpoint uses it to look up the run's child PIDs and kill the tree. */
   getRunId(sessionId: string): string | null {
     return this.runs.get(sessionId)?.runId ?? null;
+  }
+
+  /** Snapshot the process-local runs that are genuinely active right now.
+   * Explorer uses this instead of treating stale database rows as live work. */
+  list(): ActiveRun[] {
+    return [...this.runs.values()];
   }
 
   unregister(sessionId: string, run?: ActiveRun): void {

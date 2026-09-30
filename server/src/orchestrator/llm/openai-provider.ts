@@ -68,10 +68,13 @@ function toResponsesTools(tools: ToolDefinition[]) {
 // Passing "none" raw returns a 400 ("Unsupported value: 'none'") — which is
 // silent death for any caller that swallows errors (e.g. playbook capture).
 function toOpenAIEffort(
+  model: string,
   effort: "none" | "low" | "medium" | "high" | "xhigh",
-): "minimal" | "low" | "medium" | "high" {
+): "none" | "minimal" | "low" | "medium" | "high" {
   switch (effort) {
-    case "none": return "minimal";
+    // GPT-5.6 uses the current `none` spelling; older GPT-5 models used
+    // `minimal`. Keep explicit-model compatibility for side jobs/tests.
+    case "none": return model.startsWith("gpt-5.6") ? "none" : "minimal";
     case "xhigh": return "high";
     default: return effort;
   }
@@ -79,8 +82,11 @@ function toOpenAIEffort(
 
 export class OpenAIProvider implements LLMProvider {
   readonly name = "openai" as const;
-  readonly defaultOrchestratorModel = "gpt-5.5";
-  readonly defaultSideModel = "gpt-5";
+  // GPT-5.6 Sol is the current flagship and drives AVA's tool/action agent.
+  // Luna handles tiny titles/summaries economically without downgrading the
+  // model generation.
+  readonly defaultOrchestratorModel = "gpt-5.6";
+  readonly defaultSideModel = "gpt-5.6-luna";
   private client: OpenAI;
 
   constructor(opts: { client: OpenAI }) {
@@ -99,7 +105,7 @@ export class OpenAIProvider implements LLMProvider {
       // playbook distill). Without this, gpt-5.x defaults to MEDIUM reasoning —
       // burning thinking tokens on a 32-token title and sometimes eating the
       // whole maxTokens budget as reasoning before any text.
-      reasoning: { effort: "minimal" },
+      reasoning: { effort: input.model.startsWith("gpt-5.6") ? "none" : "minimal" },
     })) as { output?: Array<{ type: string; content?: Array<{ type: string; text?: string }> }> };
 
     const messages = (r.output ?? []).filter((o) => o.type === "message");
@@ -130,7 +136,7 @@ export class OpenAIProvider implements LLMProvider {
       prompt_cache_key: "ava-main",
       ...(input.tools.length ? { tools: toResponsesTools(input.tools) } : {}),
       ...(input.reasoningEffort
-        ? { reasoning: { effort: toOpenAIEffort(input.reasoningEffort) } }
+        ? { reasoning: { effort: toOpenAIEffort(input.model, input.reasoningEffort) } }
         : {}),
     }, { signal: input.abort })) as AsyncIterable<ResponsesStreamEvent>;
 
@@ -214,6 +220,19 @@ export class OpenAIProvider implements LLMProvider {
 
         if (type === "response.completed") {
           const status = event.response?.status;
+          const usage = event.response?.usage;
+          if (usage) {
+            yield {
+              kind: "usage",
+              usage: {
+                providerRequestId: event.response?.id ?? null,
+                model: event.response?.model ?? input.model,
+                inputTokens: usage.input_tokens ?? 0,
+                outputTokens: usage.output_tokens ?? 0,
+                cachedTokens: usage.input_tokens_details?.cached_tokens ?? 0,
+              },
+            };
+          }
           if (status === "incomplete") {
             stopReason = "max_tokens";
           } else {
@@ -254,7 +273,16 @@ type ResponsesStreamEvent = {
     name?: string;
     arguments?: string;
   };
-  response?: { status?: string };
+  response?: {
+    id?: string;
+    model?: string;
+    status?: string;
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      input_tokens_details?: { cached_tokens?: number };
+    };
+  };
   error?: { message?: string };
   message?: string;
 };

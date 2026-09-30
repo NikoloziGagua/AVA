@@ -3,6 +3,32 @@ import { join } from "node:path";
 import { readFile, writeFile } from "../memory/store.js";
 
 export type Stakes = "routine" | "consequential";
+export type PlaybookLearningStats = {
+  verified: number;
+  partially_verified: number;
+  unverified: number;
+  contradicted: number;
+  failed: number;
+  not_applicable: number;
+  last_task_id: string;
+  last_method: string;
+  last_evidence_at: number;
+  recent_task_ids: string[];
+};
+
+export const EMPTY_PLAYBOOK_LEARNING: PlaybookLearningStats = {
+  verified: 0,
+  partially_verified: 0,
+  unverified: 0,
+  contradicted: 0,
+  failed: 0,
+  not_applicable: 0,
+  last_task_id: "",
+  last_method: "",
+  last_evidence_at: 0,
+  recent_task_ids: [],
+};
+
 export type Playbook = {
   slug: string; trigger: string; keywords: string[];
   created: string; last_used: string; uses: number; stakes: Stakes; steps: string[];
@@ -19,6 +45,9 @@ export type Playbook = {
    *  automation — go straight to wttr.in"). Injected at recall so the same
    *  wall is never hit twice. */
   lessons: string[];
+  /** Evidence-aware outcomes. `succ`/`fail` above are retained as immutable
+   * legacy reported-result counters and are never used as new proof. */
+  learning?: PlaybookLearningStats;
 };
 
 export function slugify(trigger: string): string {
@@ -29,12 +58,23 @@ export function serializePlaybook(pb: Playbook): string {
   // Defensive defaults: callers (and old fixtures) may hold pre-v2 objects
   // without the metrics fields — treat those as version-1 zero-record books.
   const lessons = pb.lessons ?? [];
+  const learning = { ...EMPTY_PLAYBOOK_LEARNING, ...(pb.learning ?? {}) };
   const head = [
     `trigger: ${pb.trigger}`, `keywords: ${pb.keywords.join(", ")}`,
     `created: ${pb.created}`, `last_used: ${pb.last_used}`,
     `uses: ${pb.uses}`, `stakes: ${pb.stakes}`,
     `version: ${pb.version ?? 1}`, `succ: ${pb.succ ?? 0}`, `fail: ${pb.fail ?? 0}`,
     `avg_secs: ${pb.avg_secs ?? 0}`,
+    `learning_verified: ${learning.verified}`,
+    `learning_partial: ${learning.partially_verified}`,
+    `learning_unverified: ${learning.unverified}`,
+    `learning_contradicted: ${learning.contradicted}`,
+    `learning_failed: ${learning.failed}`,
+    `learning_not_applicable: ${learning.not_applicable}`,
+    `learning_last_task: ${learning.last_task_id}`,
+    `learning_last_method: ${learning.last_method}`,
+    `learning_last_at: ${learning.last_evidence_at}`,
+    `learning_recent_tasks: ${learning.recent_task_ids.join(",")}`,
   ].join("\n");
   const steps = pb.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
   const lessonsSection = lessons.length
@@ -72,6 +112,18 @@ export function parsePlaybook(slug: string, content: string): Playbook | null {
     fail: Number(head.fail ?? "0") || 0,
     avg_secs: Number(head.avg_secs ?? "0") || 0,
     lessons,
+    learning: {
+      verified: Number(head.learning_verified ?? "0") || 0,
+      partially_verified: Number(head.learning_partial ?? "0") || 0,
+      unverified: Number(head.learning_unverified ?? "0") || 0,
+      contradicted: Number(head.learning_contradicted ?? "0") || 0,
+      failed: Number(head.learning_failed ?? "0") || 0,
+      not_applicable: Number(head.learning_not_applicable ?? "0") || 0,
+      last_task_id: head.learning_last_task ?? "",
+      last_method: head.learning_last_method ?? "",
+      last_evidence_at: Number(head.learning_last_at ?? "0") || 0,
+      recent_task_ids: (head.learning_recent_tasks ?? "").split(",").map((value) => value.trim()).filter(Boolean).slice(-32),
+    },
   };
 }
 
@@ -95,12 +147,14 @@ export function listPlaybooks(memoryDir: string): Playbook[] {
 }
 export function loadPlaybookIndex(
   memoryDir: string,
-): { slug: string; trigger: string; keywords: string[]; uses: number; succ: number; fail: number }[] {
+): { slug: string; trigger: string; keywords: string[]; uses: number; succ: number; fail: number;
+  learning: PlaybookLearningStats }[] {
   // keywords + uses feed the local recall scorer (match.ts): keywords broaden
   // paraphrase matching, uses breaks ties toward the proven playbook.
   // succ/fail feed demotion — a playbook that keeps failing stops matching.
   return listPlaybooks(memoryDir).map((p) => ({
     slug: p.slug, trigger: p.trigger, keywords: p.keywords, uses: p.uses,
     succ: p.succ, fail: p.fail,
+    learning: { ...EMPTY_PLAYBOOK_LEARNING, ...p.learning },
   }));
 }

@@ -44,6 +44,14 @@ This overview links out to nine companion docs. Each is the authoritative, code-
 
 ### Legend (used in every diagram)
 
+GPT-Live's bounded delegation queue, result continuity, replay/Stop semantics,
+and local Calendar policy are documented in
+[`features/voice-live-continuity.md`](features/voice-live-continuity.md).
+
+The default-off awake-PC initiative engine, source verification, atomic
+assistant-origin inbox publication and push receipts are documented in
+[`features/ava-initiative.md`](features/ava-initiative.md).
+
 ```mermaid
 flowchart LR
   pc[Browser on your PC]:::client
@@ -118,7 +126,7 @@ Before the per-subsystem reference, here are the **cross-cutting flows** that ti
 
 ### W1 — A typed task ("find BMWs under €20k and save the links")
 
-1. The browser **POSTs** the text to `/api/chat`; the server creates/loads the session and registers a **run** (one run per session — a second is rejected 409). [02]
+1. The browser **POSTs** the text to `/api/chat`; the shared conversation resolver applies New, exact resume, or human continuation before the server registers a **run** (one run per session — a second is rejected 409). A missing exact conversation returns 404, never a replacement. [02][06]
 2. The browser opens an **SSE stream** (`GET /api/chat/:id/stream`) and starts rendering live progress. [02][09]
 3. The server assembles the **system prompt** (persona + capabilities + memory + preferences) and may inject a matching **playbook** if Ava has done something similar before. [08]
 4. The **reasoning loop** runs: the LLM streams a plan and **tool calls**; each call is **gated by policy** (classify → rules → maybe approval), then dispatched. [02][04][03]
@@ -149,9 +157,18 @@ sequenceDiagram
   S-->>U: live events → rendered answer
 ```
 
+After the final operational boundary, the chat stream also emits a sanitized
+`receipt` snapshot. The conversation renders it as a compact expected-versus-
+actual result with an expandable evidence trail, last proven-good stage,
+failure/uncertainty observation point, recovery action, and the same run ID used
+by Mission Control. Lifecycle and outcome quality remain separate, and a tool
+return is not promoted to independent external verification. The fast-finish
+replay is held in memory for five minutes; this feature adds no durable store or
+retention policy. See [`features/task-result-receipts.md`](features/task-result-receipts.md).
+
 ### W2 — A voice task ("open WhatsApp and send Luka the link")
 
-1. Your mic audio streams to the **WS voice proxy** `/api/voice/realtime`. The chosen provider (OpenAI `gpt-realtime` by default, or Hume) handles speech. [06]
+1. Your mic audio streams to the **WS voice proxy** `/api/voice/realtime`. The chosen provider (OpenAI `gpt-realtime-2.1` by default, or Hume) handles speech. [06]
 2. Your finished sentence passes the **transcript gate** (silence/noise dropped) and becomes a turn. [06]
 3. For chit-chat the realtime model just talks. For an **action**, it calls `do_on_computer`, which runs the **full `/api/chat` agent** (exactly W1's loop, with all tools) over loopback via `runVoiceAction`. [06][02]
 4. The agent does the work; the **result is spoken** back. The conversation is stored once, in the same session as your typed chats (so voice ↔ chat share memory). [06]
@@ -249,7 +266,7 @@ The loop is bounded by `MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS
 | `watch_create` / `watch_list` / `watch_delete` | `tools/watches-mcp.ts` | Register/list/delete standing background **watches** ("notify me if/when X"). The tools just manage the record; a scheduler runs the checks (see §11). | none (LLM); each *check* is a paid agent run |
 | `discuss_with_claude` / `read_discussion` | `tools/discuss-mcp.ts` | Queues a read-only background Claude consult. | none (subscription) |
 | `memory_read/remember/forget` | `tools/memory-mcp.ts` | Reads/writes durable memory files. | none |
-| `self_improve` / `self_improve_status` | `tools/self-improve-mcp.ts` | Queues a self-improvement and reports status. | none (subscription worker) |
+| `self_improve` / `self_improve_status` | `tools/self-improve-mcp.ts` | Queues an approval-gated self-improvement through the selected Claude Code or Codex worker and reports status. | none at queue time (selected CLI worker later) |
 | `read_claude_updates` | `tools/update-log-mcp.ts` | Reads Claude's dev-log so Ava can honestly say what changed. | none |
 | `read_logs` | `tools/activity-log.ts` | Reads the server's own activity logs. | none |
 | `shopify_list_products / _get_product / _update_product` | `tools/shopify-mcp.ts` | Edits a product's name + description over the **Shopify Admin API** (one `PUT`, no browser); never sends the `images` array. Registered only when `SHOPIFY_STORE` + `SHOPIFY_ADMIN_TOKEN` are set. | none (LLM); uses your Shopify billing |
@@ -269,7 +286,7 @@ The loop is bounded by `MAX_AGENT_TURNS = Number(process.env.AVA_MAX_AGENT_TURNS
 
 **Hard blocks layered underneath:** the **shell allowlist** (allow-by-default + a curated destructive blocklist + `.env`/secret-read block; the whole command is scanned), the **path allowlist** (`fsRoots` = `C:/ai/**`, `C:/projects/**`, `C:/Users/nikug/**`; `.env` + secret-file patterns blocked *before* the allowlist; paths are **realpath-canonicalized** so a junction can't smuggle a blocked target), and **scrub** (secret redaction on all tool output).
 
-**Honest flags** (from the deep dive): the approval card always shows "auto-approving in Ns," but for **`high` (destructive)** actions the server actually **auto-denies** on timeout — the card copy is misleading for destructive ops (the server is authoritative). GUI tools (`computer_use`, `control_app`) reach the live desktop *outside* the shell/path text gates. Rules are LLM-parsed with no confirm-the-parse step. The `*.key` block is deliberately conservative (also refuses `public.key`).
+**Honest flags** (from the deep dive): approval events now carry the authoritative risk tier, timeout behavior and absolute deadline. Chat, voice and Mission Control distinguish **`medium` auto-approval** from **`high` auto-denial**, and reconnects resume the original deadline rather than starting a new countdown. GUI tools (`computer_use`, `control_app`) reach the live desktop *outside* the shell/path text gates. Rules are LLM-parsed with no confirm-the-parse step. The `*.key` block is deliberately conservative (also refuses `public.key`).
 
 ```mermaid
 flowchart TD
@@ -300,10 +317,12 @@ flowchart TD
 
 **Two providers, picked by the `voice_engine_pref` toggle:**
 
-- **OpenAI** (`gpt-realtime`, default) — the proven path. Speaks chit-chat directly and, for an action, calls `do_on_computer`.
+- **OpenAI** (`gpt-realtime-2.1`, default) — the primary path. Speaks chit-chat directly and, for an action, calls `do_on_computer`.
 - **Hume** (Hume EVI, voice "Alice Bennett") — alternate upstream, **only when configured** (`AVA_VOICE_PROVIDER=hume` + `HUME_API_KEY`). If its socket can't open, the proxy falls back to OpenAI.
 
-**Hybrid action handoff** (the clever bit): the realtime model holds the conversation, but `do_on_computer` runs the **real `/api/chat` agent** with the full tool stack via `runVoiceAction` (`index.ts`). It POSTs to loopback, reads the run's `final` off the SSE stream, and feeds it back to be spoken. **Session continuity:** entering voice with no session resumes the most-recent conversation, so voice ↔ chat share one memory; recent turns are seeded into the model on connect.
+**Hybrid action handoff:** the realtime model holds the conversation, but `do_on_computer` runs the **real `/api/chat` agent** with the full tool stack via `runVoiceAction` (`index.ts`). It POSTs to loopback, validates the acknowledgement against the exact expected session before choosing a stream or cancellation target, and returns the result to be spoken. The proxy owns transcript persistence; this internal run uses `persist:false`.
+
+**Session continuity:** `App` remembers this browser's selected chat; Today's voice button resumes that exact ID, while a blank New chat explicitly starts fresh. Chat and both voice providers use `state/session-binding.ts:63` for `new` / `resume` / `continue`. Only when no ID is selected does human continuation choose an eligible human conversation, using human activity rather than background updates or pins. Missing/deleted exact targets fail visibly. Hume-to-OpenAI fallback keeps the binding resolved before provider initialization. Recent turns and the durable summary seed hybrid voice; this is bounded context, not guaranteed recall. Hume refreshes memory on connection, not universally per utterance. Cross-device selected-chat synchronization is not implemented. See [`features/voice-continuity.md`](features/voice-continuity.md).
 
 **Honest flags:** Hume is a **weaker conversational model**, **needs Hume credits** (a zero-credit account returns error `E0300`, which surfaces to you as a generic *"auth failed"* — it's a billing problem, not really auth), and **truncates** long prompts (so recent history is folded into the prompt body). The 48 kHz Hume audio is **resampled to 24 kHz** or it sounds an octave low. The toggle defaults to OpenAI. (Chatterbox, an old local-voice option, is retired but its file still compiles.)
 
@@ -312,8 +331,9 @@ flowchart TB
   mic[🎙️ mic audio<br/>PCM16 @ 24k]:::client
   proxy["/api/voice/realtime — WS proxy"]:::server
   mic --> proxy
-  proxy --> branch{provider?}:::server
-  branch -->|openai default| oai[gpt-realtime WS]:::paid
+  proxy --> bind["Shared resolver: new / exact resume / continue<br/>one canonical session before provider setup"]:::server
+  bind --> branch{provider?}:::server
+  branch -->|openai default| oai[gpt-realtime-2.1 WS]:::paid
   branch -->|hume + configured| hume[Hume EVI WS<br/>Alice Bennett]:::paid
   hume -. socket fails .-> oai
   oai --> gate[transcript gate<br/>drop silence/noise]:::server
@@ -333,7 +353,7 @@ flowchart TB
 
 **What it is:** Ava can change its own code. A goal is queued, an LLM reflects it into a brief, **Claude Code implements it in a throwaway git worktree**, the change is verified + built, then hot-swapped into the live tree — with a watchdog that rolls back if the new build never gets healthy. (See **W5** above for the state diagram.) **→ Full detail + every gap: [07](architecture/07-self-improvement.md).**
 
-**Who does what:** *reflect* uses the configured LLM (OpenAI by default); *implement* uses **Claude Code on your subscription**. This split is intentional — conserve OpenAI, lean on the abundant Claude subscription for the heavy code work. A **single-flight lock** means one improvement mutates the tree at a time; others queue FIFO.
+**Who does what:** *reflect* uses the configured LLM; *implement* uses the versioned **Claude Code or Codex** selection from the Self screen. Both adapters edit an isolated worktree and enter the same approval, verification, safety, swap, watchdog, and rollback gates. A **single-flight lock** means one improvement mutates the tree at a time; others queue FIFO.
 
 **The guardrails that make it safe to run unattended:** worktree isolation (a self-edit can't touch the live repo directly), the full verify+build+boot gate, a **safety-file refusal** (`assertSwapSafe` blocks any diff touching security/policy/auth or the self-improve machinery), the rollback watchdog, a **plan-approval gate** on user-asked improvements (they park at `awaiting_approval` and write no code until you approve), and a **Stop path** that cancels a running improvement end-to-end. (See `features/self-improve-stop-and-gate.md`.)
 
@@ -342,7 +362,7 @@ flowchart TB
 - ✅ **Pause is real.** The Pause/Resume toggle now flips a **server-side gate** (`improvementsPaused()` in `improver.ts`), enforced on both `POST /api/self/improve` (409) and the `self_improve` chat tool. While paused, new intake is refused; a `PAUSED` chip shows. (Was: a client-only no-op. Caveat: the flag is in-memory — it resets to *active* on restart — and it gates *intake*, not the separate overnight-loop process.)
 - ✅ **Every shipped swap appends a self-changelog.** `onSwapped` writes one line to `memory/changelog.md` (`self/changelog.ts`) — Ava keeps a durable record of how it has evolved without re-reading its own code, and Claude gets recent history so it doesn't undo past fixes. (Was: the changelog module existed but was never called.)
 - ✅ **Failures land in the friction ledger, and the overnight loop mines it first.** `onFailed` records a mistake (`self/friction.ts`); the overnight loop now drains grounded friction goals (`trigger:"friction"`) **before** asking Claude to invent ideas, and a shipped fix closes its ledger entry (a recurrence reopens it). The `npm -w server run self:loop` script finally exists to launch that loop. *Honest limit:* today the **only** writer of the ledger is self-improvement's own failures, which the loop deliberately skips — so the friction-first path is live but has no *external* source (a chat correction → ledger) feeding it yet. See [07] §3.
-- ✅ **Stop cancels an in-flight self-improvement** (commit 0bd8b93). Per-improvement `AbortController`; `POST /api/self/:id/cancel` cancels one, the red global Stop (`/kill` → `cancelAllImprovements`) cancels all; recorded `outcome="cancelled"`. *Limit:* can't reach a job inside the **separate overnight-loop process**.
+- ✅ **Stop cancels an in-flight self-improvement** (commit 0bd8b93). Per-improvement `AbortController`; `POST /api/self/:id/cancel` cancels one, the red global Stop (`/kill-all` → `cancelAllImprovements`) cancels all, while routine voice/session interruption (`/kill`) cannot cancel detached Self work. Cancellation records its source. *Limit:* can't reach a job inside the **separate overnight-loop process**.
 - ✅ **User-asked improvements gate behind a plan** (commit c539c75): they pause at `awaiting_approval` until you Approve & run / Reject. The overnight scheduler is intentionally **not** gated. *Limit:* a parked plan **holds the single-flight slot**, so a forgotten plan stalls the queue.
 
 **Remaining honest flags:**
@@ -358,14 +378,44 @@ flowchart TB
 
 **The memory dir** (`server/data/memory/`): `personality.md` (the persona), `MEMORY.md` (the index of durable facts), `preferences.md` (learned preferences — e.g. *"open Chrome as a new tab, never overwrite the current tab"*), `observations.md` (low-confidence notes, auto-pruned), `projects/<slug>.md` (per-project context), `playbooks/*.md` (learned procedures, above), `changelog.md` (one line per shipped self-improvement — Ava's self-evolution record, `self/changelog.ts`), and `friction.json` (the mistakes ledger, `self/friction.ts`).
 
-**Assembly** (`orchestrator/system-prompt.ts`): persona → capability map → memory index → preferences → observations → (action mode only) the tool rubric + writable fsRoots. The same bytes are produced each turn for prompt-cache hits.
+**Assembly** (`server/src/orchestrator/system-prompt.ts:90`): persona →
+collaboration/register guidance → capability map and legacy memory index →
+action-mode tool/context instructions → current memory (Brief when Memory v2 is
+enabled; legacy preferences/observations otherwise) → optional project context
+and active register. Compact voice assembly skips the capability map and legacy
+index. Stable layers precede mutable context to support prompt-cache reuse.
 
-**Learning (playbooks, v2 — commit 1bed65b):** when a multi-step task **reaches a final reply** (≥2 tool steps, a non-failed last step, not mostly-failed), `maybeCapture` distils it into a reusable playbook; on a similar future request the matching playbook's steps are injected into the prompt. Playbooks now **measurably improve instead of resetting**:
+**Persona 3.2 adds active care, reflection and grounded accountability.** The
+identity permits a wider emotional range and worthwhile conversational initiative
+while keeping interpretations tentative, refusals respected and tool/Memory
+consent unchanged (`server/src/memory/personality-content.ts:12`). Prompt
+assembly reads the active identity on each call; bootstrap upgrades only exact
+known defaults, including both shipped 3.1 variants, and preserves other owner
+edits (`server/src/orchestrator/system-prompt.ts:90`,
+`server/src/memory/bootstrap.ts:6`). New voice connections read the file;
+already connected sessions need reconnecting. Hume's existing 11,000-character
+budget can still truncate the persona base. No persistent curiosity state,
+new scheduler or silence-triggered initiation is added. See
+[Persona 3.2](features/persona-v2.md) for delivery layers and verification limits.
+
+**Source-verified retrieval is a separate SQLite layer.** Research, ideas and
+improvement records live in the semantic index, not just the Markdown preference
+files or playbooks. It streams all scoped active candidates rather than only the
+500 newest, retaining at most 20 search or 50 recent results. Ranking uses fresh
+governance state; only selected outputs undergo source verification
+(`server/src/memory-index/store.ts:789`). The automatic gate still enforces
+privacy, relevance and current-checkpoint rules, injecting at most two verified
+source excerpts rather than trusting discovery summaries
+(`server/src/memory-index/auto-retrieve.ts:145`). See
+[Semantic memory index](features/semantic-memory-index.md) for limits and
+provider-specific voice behavior.
+
+**Learning (verified playbook gate):** when a multi-step task reaches its terminal receipt, `maybeCapture` may distil it into a reusable playbook only when independent task-outcome evidence marks the result verified. A final reply and executor `ok` are not proof. On a similar future request the matching playbook's steps are injected into the prompt:
 
 - **Recall is lexical, not an LLM call.** `matchPlaybook` (`playbooks/match.ts`) scores token overlap against each playbook's short canonical trigger + keywords — ~0 ms and free (it replaced a 1.7–2.8 s side-model call before every action turn). *Honest limit:* being lexical, a pure paraphrase with no shared words won't recall — Ava just runs without the hint (a deliberate precision-over-recall trade).
 - **Distillation keeps the success path, and turns failures into lessons.** A run that *recovered* from a mid-run tool failure is prime material: the distiller writes success-path steps plus a `lessons[]` list ("Google bot-walls automation — go straight to wttr.in") injected at recall so the same wall isn't hit twice.
-- **Metrics + merge + demotion.** Each playbook carries `version`, a `succ`/`fail` record, and a rolling `avg_secs`; a recalled playbook's run records a win/loss when the run ends (`recordOutcome`). Re-learning a known task class **merges** into the existing playbook (version bump, track record kept) instead of writing near-duplicates; a playbook that keeps failing on recall gets **demoted** out of matching and eventually pruned.
-- **Sir can finally see them.** `GET /api/playbooks` lists everything with its metrics; `DELETE /api/playbooks/:slug` removes one (`routes/playbooks.ts`).
+- **Evidence + merge + demotion.** Each playbook carries separate verified, partial, unverified, contradicted, failed, and not-applicable counters plus bounded task/method provenance. Re-learning a known task class merges only after verified evidence. Stable recent task IDs prevent replay or recall-plus-merge double-counting. Contradiction or repeated evidence-backed failure demotes the procedure. Pre-gate `succ`/`fail` values are immutable legacy reports.
+- **Visible and auditable.** Mind and Explorer show verification state and legacy data honestly. `GET /api/playbooks` lists everything; `DELETE /api/playbooks/:slug` removes one (`routes/playbooks.ts`). Full contract: [Verified learning gate](features/verified-learning-gate.md).
 
 **Claude → Ava dev log** (`self/dev-log.ts`, `data/claude-updates.jsonl`): Claude appends a `started`/`shipped` line per change; Ava reads it via `read_claude_updates` and the voice path folds recent entries into the prompt, so *"what's your latest update?"* is answered from the real changelog instead of confabulated LLM-training trivia.
 
@@ -388,6 +438,11 @@ flowchart LR
   proj --> sp
   pb -->|recall on match| sp
   sp --> model[LLM system prompt]:::paid
+  mi[(SQLite semantic index)]:::data
+  mi --> rank[Scoped streaming ranking<br/>bounded top-K]:::server
+  rank --> verify[Verify selected sources]:::server
+  verify --> recall[Automatic eligibility gate<br/>at most two source excerpts]:::server
+  recall -->|reference context only| model
   log --> rcu[read_claude_updates]:::tool
   rcu --> model
   classDef data fill:#960,color:#fff
@@ -400,11 +455,13 @@ flowchart LR
 
 ## 9. Web / PWA frontend
 
-**What it is:** the React app you actually use. No router library — a hand-rolled **view state machine** in `App.tsx` switches between the orbit (home), chat, voice, and settings screens. **→ Full detail (every screen, the SSE client, the PWA): [09](architecture/09-web-frontend.md).**
+**What it is:** the React app you actually use. No router library — a hand-rolled **view state machine** in `App.tsx` switches between Home, Today, Talk (chat and voice), Calendar, Notes, Ideas and the System tools. [Atelier](features/atelier-interface.md) adds Light trace to the persistent composer and real-data metal cards/atmospheres. [Notes](features/notes.md) uses a dark-default folder/file/reader composition with phone drill-down over unchanged canonical documents and derived pagination. [Calendar C2](features/calendar.md) is a lazy Month/Week/Day workspace over the existing versioned event authority, with an open editor and separate attendance plan/outcome; the legacy standalone reminder Schedule stays reachable inside it. Event-linked reminder delivery remains unimplemented, not inferred from saving an event. Workspace navigation remains in-memory, not browser-history routing. **→ Full detail (every screen, the SSE client, the PWA): [09](architecture/09-web-frontend.md).**
 
 **Highlights:**
 - **Chat** (`chat/ChatScreen.tsx`): the Composer sends a message; `useChatStream` consumes the SSE stream via `EventSource`; the **Activity panel** renders live tool steps; the final answer arrives as one `final` event and is revealed word-by-word (the streaming *look* is a visual effect — Ava's answer is not token-streamed; the *tool steps* are what stream live).
+- **Today and navigation** (`today/`, `ideas/`, `schedule/`, `components/ava/AppSidebar.tsx`): Today shows Sir's three latest conversations, recent ideas and notes (each opening that exact note) and an honest schedule card. The rail leads with Today, Talk, Schedule, Notes and Ideas; AVA's own tools (Activity, Explore, Watches, Memory, Visuals, Rules, Self) sit under System. The intro plays once per tab. See [`features/life-assistant-navigation.md`](features/life-assistant-navigation.md).
 - **Voice** (`voice/VoiceScreen.tsx` + `useRealtimeVoice.ts`): the WS client, mic capture (AudioWorklet), playback, barge-in, the OpenAI/Hume toggle, and the "+new conversation" control.
+- **Conversation selection** (`App.tsx:195`): one remembered chat shared by typing, voice and the sidebar. Authoritative bindings update it; stale callbacks and an absent list-page row do not. Human recents are paginated separately from older unclassified chats and read-only automated history. Unavailable exact conversations offer explicit recovery instead of changing the selection silently.
 - **Settings screens:** Rules (permission rules), Memory, Self (self-improvement status), Approvals, Pairing.
 - **The PWA** (`sw.ts`): a service worker with `skipWaiting`/`clients.claim` and web-push. **Gotcha:** a rebuilt `web/dist` is **not live until the service worker activates** — if a fix "looks like it didn't deploy," fully close and reopen the app so the new bundle takes over.
 - **Visual system** (`components/ava/`): the locked aesthetic — liquid-mercury orb + cyan command-deck, GSAP/Motion animations, desktop-primary.
@@ -417,24 +474,59 @@ flowchart LR
 
 | Table | One-line purpose |
 |-------|------------------|
-| `sessions` | One conversation thread (title, status, soft-delete, summary, **pinned**). |
-| `messages` | Every user/assistant/tool turn, ordered, FK to its session. |
+| `sessions` | One conversation thread (title, status, soft-delete, summary, **pinned**), immutable `origin` (`human` / `automation` / `unknown`) and nullable `last_human_activity_at`. |
+| `session_binding_requests` | Device-scoped New-request identity. Unique device/key pairs survive target deletion/purge so retries return unavailable rather than create a replacement. |
+| `messages` | Ordered conversation turns with a session FK; metadata includes text/voice modality, typed-exact source and durable interruption-task dedupe keys. |
 | `tool_calls` | **Defined but currently unused** — reserved/forward-looking audit schema. |
-| `device_tokens` | Bearer credentials issued at pairing (incl. the `voice-internal` loopback token). |
+| `device_tokens` | Bearer credentials plus server-owned `session_actor` provenance. Pairing defaults to human; internal rotation stamps automation/voice-action identities without inferring them from display labels. |
 | `pairing_codes` | Short-lived pairing handshake codes (minted only by the systray / a script). |
 | `push_subscriptions` | Web-push endpoints for approval/done notifications. |
 | `rules` | User-defined allow/deny rules consulted by the policy enforcer. |
 | `approvals` | Pending/decided tool-approval requests with their veto status. |
 | `self_improvements` | Self-improvement records (the code type is called `Intent`): goal, status, commit, last-known-good, verify log. |
 | `discussions` | Background Claude consults: topic, status, result, the originating session. |
+| `strategy_rooms` / `strategy_messages` / `strategy_events` | Retained legacy Strategy Room history. The former product surface and runtime route are retired; tables remain untouched for historical recoverability and are never relabelled as development-room evidence. See `features/strategy-room.md`. |
 | `watches` | Standing background monitors (§11): the check prompt, interval, `once`/`enabled`, the chat session holding every check, and the last run's status/result. |
+| `reminder_occurrences` | One-off reminder receipt (§11): unique watch/due-time identity, revision and send lease, fixed expiry, attempts and latest-attempt subscription outcomes. No duplicated prompt or raw transport payload. |
 | `voice_engine_pref` | The voice provider toggle (`openai` · `hume`). |
 | `reasoning_pref` | The Fast↔Thorough level (drives OpenAI reasoning effort + voice VAD snappiness). |
 | `device_state` · `chip_overrides` · `chip_label_cache` | Per-device greeting state, custom quick-action chips, and their cached labels. |
 
+**Migration and recency:** existing sessions remain `unknown` with no inferred
+human timestamp. Only accepted persisted human turns advance human activity;
+connection, assistant output, maintenance, automation and rejected busy turns do
+not. Pinning an unknown session makes it visible in human lists but does not
+make it eligible for automatic continuation. These scopes organize a single
+owner's history, not separate account permissions (`state/sessions.ts:75`).
+
+**Truthful restart recovery:** `state/recovery.ts:8` snapshots unfinished durable
+`chat_agent` / `voice_action` runs, not idle voice connections or `session.active`.
+Startup records one notice per run in the same transaction as orphan projection
+(`index.ts:159`), preserving recency/timestamps. The notice says completion status
+was not recorded and asks Sir to inspect any saved result before retrying; it
+does not imply that the action did nothing or automatically replay it.
+
 ---
 
-## 11. Watches — long-term monitoring
+## 11. Agentroom — AVA, Codex and Claude discussion
+
+AVA can participate in the existing development room through a deliberately
+restricted adapter (`server/src/agentroom/`). The authenticated preference API
+(`routes/agentroom.ts`) verifies that configured credentials resolve to the
+distinct `AVA` / `other` identity before enabling. The tool surface contains
+only bounded read and post operations; AVA cannot claim work, change contracts,
+acknowledge messages, or inherit repository authority from room text.
+
+Room messages enter the model as labelled untrusted discussion context. A
+successful post produces a bounded, sanitized receipt which follows the same
+chat, OpenAI voice, GPT-Live and Hume persistence boundary as other AVA action
+evidence. Credentials remain environment-only, and room outages do not block
+ordinary conversation. See [`features/agentroom.md`](features/agentroom.md) for
+the exact status contract, provenance, persistence and limitations.
+
+---
+
+## 12. Watches — long-term monitoring
 
 **What it is:** Ava's persistence *across time*. A **watch** is a standing
 instruction ("notify me if the RTX 5090 drops below $1800", "tell me when it's
@@ -445,13 +537,14 @@ after the conversation ends. **→ Full write-up: [`features/watches.md`](featur
 **How it works, in one breath:** Ava turns "notify me if/when X" into a watch via
 the `watch_create` tool (`tools/watches-mcp.ts`); the row lives in the `watches`
 table (`state/watches.ts`). A `setInterval` scheduler (`watches/scheduler.ts`,
-60 s tick, started at boot only if an LLM provider exists) finds due watches and
+60 s agent tick enabled only if an LLM provider exists) finds due watches and
 runs each check as a **real agent turn through the server's own `/api/chat`** over
 loopback with an internal bearer token — so a check gets the full tool stack and is
 recorded as an openable chat session you can audit. The check prompt demands a
 strict trailing marker (`WATCH: TRIGGERED — …` / `WATCH: OK — …`); `TRIGGERED`
 fires a web-push and disables a one-shot watch. `GET/POST/DELETE /api/watches`
-(`routes/watches.ts`) is the management API for a future UI.
+(`routes/watches.ts`) is the authenticated management API behind the existing
+Watches workspace and reminder receipts.
 
 ```mermaid
 flowchart LR
@@ -470,14 +563,44 @@ flowchart LR
   classDef data fill:#960,color:#fff
 ```
 
-**Honest flags:** a watch only runs **while Ava is running** (in-process
-`setInterval`, no cloud cron, no back-fill); each check is a **full, paid agent
+**Honest flags for monitoring:** a watch only runs **while Ava is running** (in-process
+`setInterval`, no cloud cron, no replay of every missed check); each check is a **full, paid agent
 run**, so intervals must be frugal (the tool guidance and rubric enforce this only
 by advice, not a spend cap); a check that forgets the marker records `unclear` and
 does **not** notify (a missed alert is preferred over a false one); and there is no
 notification de-dup, so a `once:false` watch can ping on every check while its
 condition holds (which is why one-shot is the default). See the feature doc for the
 complete list and the 2026-07-03 live verification.
+
+**Direct one-off reminders do not use that agent loop.** An exact instant plus
+a named time zone creates a watch and a unique SQLite occurrence in one
+transaction (`server/src/state/watches.ts:66`, `server/src/state/schema.sql:791`).
+An independent one-second timer starts after port ownership, even without an
+LLM provider (`server/src/index.ts:915`, `server/src/watches/scheduler.ts:480`).
+Revision/lease checks protect the sending boundary and stale completions; a
+fixed 15-minute window and at most three transmissions bound recovery.
+
+```mermaid
+flowchart LR
+  request[Exact time and named zone]
+  occurrence[(Watch and reminder occurrence)]
+  timer[Independent reminder timer]
+  transport[Await bounded push result]
+  receipt[Durable receipt]
+  request --> occurrence --> timer --> transport --> receipt
+  receipt --> accepted[Service accepted; phone display unconfirmed]
+  receipt --> known[Known rejection: bounded retry or failure]
+  receipt --> uncertain[Unknown acceptance: no automatic resend]
+```
+
+**The reminder receipt ends at the notification service, not the phone.** Missing
+configuration/subscriptions records zero attempts. Timeout or restart after
+sending starts is uncertain and does not trigger blind resend; an overdue
+unattempted reminder may run only inside its original window. Counts refer to
+subscriptions in the latest attempt, not distinct devices. Legacy recurring
+reminders and historical “delivered” prose do not gain these guarantees.
+See [`features/reminders.md`](features/reminders.md) for the exact phases,
+time-validation, privacy, pause/delete and real-device acceptance boundaries.
 
 ---
 
@@ -496,6 +619,8 @@ complete list and the 2026-07-03 live verification.
 | Self-improvement | `server/src/self/` (incl. `changelog.ts`, `friction.ts`) | [07](architecture/07-self-improvement.md) |
 | Memory / learning | `server/src/memory/`, `playbooks/`, `self/dev-log.ts`, `self/changelog.ts` | [08](architecture/08-memory-learning-identity.md) |
 | Watches (monitoring) | `server/src/watches/`, `state/watches.ts`, `tools/watches-mcp.ts`, `routes/watches.ts` | [`features/watches.md`](features/watches.md) |
+| One-off reminders | `server/src/state/reminders.ts`, `watches/reminders.ts`, `watches/reminder-schedule.ts`, `push/deliver.ts` | [`features/reminders.md`](features/reminders.md) |
+| Development room | `server/src/agentroom/`, `routes/agentroom.ts`, `tools/agentroom-mcp.ts` | [`features/agentroom.md`](features/agentroom.md) |
 | Process / Stop | `server/src/process/` | [02](architecture/02-agent-loop-and-orchestration.md) |
 | Web frontend | `web/src/` | [09](architecture/09-web-frontend.md) |
 

@@ -2,6 +2,9 @@ import { existsSync, readdirSync } from "node:fs";
 import { memoryPaths } from "./paths.js";
 import { readFile } from "./store.js";
 import { parseObservation } from "./observations.js";
+import { PERSONA_VERSION } from "./personality-content.js";
+import { PERSONA_REGISTERS } from "../persona/runtime.js";
+import { getPersonaLabSummary } from "../persona/lab.js";
 
 export type ObsLine = {
   raw: string;
@@ -14,6 +17,12 @@ export type ObsLine = {
 
 export type MemoryView = {
   personality: string;
+  personaProfile: {
+    version: string;
+    architecture: "identity + collaboration + context registers";
+    registers: Array<{ id: string; label: string; summary: string }>;
+    lab: ReturnType<typeof getPersonaLabSummary>;
+  };
   memoryIndex: string;
   preferences: { lines: string[] };
   observations: { lines: ObsLine[] };
@@ -39,6 +48,12 @@ export function readMemoryView(dir: string): MemoryView {
 
   return {
     personality: readFile(p.personality),
+    personaProfile: {
+      version: PERSONA_VERSION,
+      architecture: "identity + collaboration + context registers",
+      registers: PERSONA_REGISTERS.map(({ id, label, summary }) => ({ id, label, summary })),
+      lab: getPersonaLabSummary(),
+    },
     memoryIndex: readFile(p.memoryIndex),
     preferences: {
       lines: prefRaw.split("\n").filter((l) => l.trim().length > 0),

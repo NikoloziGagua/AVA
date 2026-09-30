@@ -8,12 +8,21 @@ const READ_ONLY_TOOLS = new Set([
   "fs_read", "fs_list", "fs_stat",
   "chrome_read_page", "chrome_screenshot", "chrome_tabs", "chrome_snapshot",
   "memory_read",
+  "memory_index_search",
+  "memory_index_open",
   // Pure reads that previously fell through to the unknown-tool default
   // ("medium" → ask) and paid a 15s veto stall on EVERY call — the API tools
   // added for speed were the slowest to start. All of these only read state.
   "read_logs", "read_claude_updates", "read_discussion", "self_improve_status",
   "find_places", "shopify_list_products", "shopify_get_product",
   "watch_list", "person_list",
+  "calendar_query",
+  "notes_search",
+  "visual_explanation_list",
+  "ufo_experiment_status",
+  "ufo_experiment_observe",
+  "automation_status",
+  "room_read",
 ]);
 
 const ENV_RE = /(^|[\\/])\.env(\.[\w-]+)?$|[\\/]\.env([\\/]|$)/i;
@@ -53,8 +62,33 @@ export function classifyRisk(tool: string, args: unknown): Classification {
 
   if (tool === "fs_write") return { tier: "low", reason: "filesystem write within allowlist" };
 
-  if (tool === "chrome_navigate" || tool === "chrome_type" || tool === "chrome_press_key") {
-    return { tier: "low", reason: "low-risk chrome action" };
+  // One validated, reversible local calendar definition, including a bounded
+  // weekly series. This tool sends no invitations and dispatches no reminders.
+  if (tool === "calendar_add") return { tier: "low", reason: "validated local calendar creation" };
+  // v3: versioned, validated local edits with stale-write guards. Update may cancel an
+  // occurrence or split a series locally; nothing is hard-deleted, sent or dispatched.
+  if (tool === "calendar_update" || tool === "calendar_set_attendance") return { tier: "low", reason: "versioned local calendar edit" };
+  // Ending a series or removing an event only hides it: nothing is hard-deleted, both are
+  // versioned, and each can be undone in the Calendar screen. Their descriptions make AVA ask first.
+  if (tool === "calendar_end_series" || tool === "calendar_remove") return { tier: "low", reason: "versioned, reversible local calendar change" };
+
+  if (
+    tool === "chrome_open" ||
+    tool === "chrome_open_url" ||
+    tool === "chrome_google_search" ||
+    tool === "chrome_youtube_search" ||
+    tool === "chrome_navigate" ||
+    tool === "chrome_type" ||
+    tool === "chrome_press_key"
+  ) {
+    return {
+      tier: "low",
+      reason: tool === "chrome_google_search" || tool === "chrome_youtube_search"
+        ? "direct reversible search in AVA Chrome"
+        : tool === "chrome_open_url"
+          ? "direct reversible navigation in AVA Chrome"
+        : "low-risk chrome action",
+    };
   }
 
   if (tool === "chrome_click") {
@@ -68,6 +102,20 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   // Background read-only repo consult (spawns a local `claude -p` with no write
   // permissions). Instant — queueing a consult is not a risky act.
   if (tool === "discuss_with_claude") return { tier: "low", reason: "read-only background consult" };
+  if (tool === "room_post") return { tier: "low", reason: "Niko-authorized discussion through AVA's bounded room identity" };
+  if (tool === "strategy_room_open") return { tier: "low", reason: "bounded read-only Strategy Room discussion" };
+  if (tool === "visual_explanation_create" || tool === "research_visual_create") {
+    return { tier: "low", reason: "validated local visual revision" };
+  }
+  if (tool === "automation_system_report" || tool === "automation_operations_brief") {
+    return { tier: "low", reason: "pinned read-only aggregate snapshot to a verified local report" };
+  }
+  if (tool === "automation_run_playbook") {
+    return { tier: "low", reason: "explicitly approved generated playbook with bounded revalidation" };
+  }
+  if (tool === "automation_playbook_activate") {
+    return { tier: "high", reason: "persistent automation activation requires explicit approval" };
+  }
 
   // Mutates live store products — keep Sir's veto window.
   if (tool === "shopify_update_product") return { tier: "medium", reason: "mutates live Shopify products" };
@@ -91,6 +139,10 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   }
 
   if (tool === "computer_use") return { tier: "medium", reason: "computer_use is GUI scripting" };
+
+  if (tool === "ufo_experiment_action" || tool === "ufo_runtime_run") {
+    return { tier: "high", reason: "experimental computer-use action requires explicit approval" };
+  }
 
   if (tool === "control_app") {
     // control_app runs PowerShell (UI Automation + SendKeys) locally. The
@@ -129,13 +181,27 @@ export function classifyRisk(tool: string, args: unknown): Classification {
   // autonomous sends), and speed is the point — low, no 15s stall. Login/code
   // fill forms in Ava's own browser with values Sir just provided; the people
   // map is local data.
-  if (/^(instagram|whatsapp)_(send_dm|send_message|open_chat|read_chat|status|login|submit_code)$/.test(tool)) {
+  if (/^(instagram|whatsapp)_(send_dm|send_message|open_profile|open_chat|read_chat|status|login|submit_code)$/.test(tool)) {
     return { tier: "low", reason: "app-module action Sir initiated" };
   }
   if (tool === "person_remember") return { tier: "low", reason: "local people-map update" };
 
-  if (tool === "memory_remember" || tool === "memory_forget") {
-    return { tier: "low", reason: "memory mutation stays inside the local memory dir" };
+  if (
+    tool === "memory_remember" || tool === "memory_forget"
+    || tool === "memory_index_capture" || tool === "memory_index_forget"
+    || tool === "memory_index_correct" || tool === "memory_index_pin"
+    || tool === "memory_index_supersede" || tool === "memory_index_conflict"
+  ) {
+    return { tier: "low", reason: "memory mutation stays inside local AVA state" };
+  }
+
+  if (tool === "notes_folders") {
+    return (args as { action?: unknown })?.action === "list"
+      ? { tier: "read-only", reason: "read-only Notes folder listing" }
+      : { tier: "low", reason: "versioned Notes folder organisation stays in local AVA state" };
+  }
+  if (tool === "notes_capture" || tool === "notes_update" || tool === "notes_promote") {
+    return { tier: "low", reason: "Notes mutation stays in local AVA state; downstream improvements retain their own approval gate" };
   }
 
   return { tier: "medium", reason: "unknown tool defaults to ask" };

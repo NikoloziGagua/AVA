@@ -1,8 +1,27 @@
-import { useState, useEffect } from "react";
-import { motion } from "motion/react";
-import { ShieldAlert } from "lucide-react";
+import { useId, useState } from "react";
+import { ChevronDown, ChevronRight, CircleCheck, CircleOff, CircleX, ShieldAlert } from "lucide-react";
 import { approveApproval, denyApproval } from "../api.js";
 import { humanizeTool } from "../chat/humanize.js";
+import { Button } from "../design/Button.js";
+import { cn } from "../design/cn.js";
+import {
+  approvalRiskLabel,
+  approvalTimeoutLabel,
+  pendingApprovalCopy,
+  resolvedApprovalCopy,
+  useApprovalTiming,
+  type ApprovalPolicyEvidence,
+} from "./presentation.js";
+
+/**
+ * AVA asks before a risky action, in the conversation where it came up.
+ *
+ * This stays an inline card rather than a modal sheet on purpose: many
+ * approvals are short veto windows where silence approves. A modal can be
+ * dismissed with Esc or a tap outside, which feels like cancelling while the
+ * countdown keeps running. Here, cancelling is always an explicit button.
+ */
+const serverDecision = (id: string, action: "approve" | "deny") => (action === "approve" ? approveApproval(id) : denyApproval(id));
 
 export function ApprovalCard({
   id,
@@ -10,138 +29,142 @@ export function ApprovalCard({
   args,
   summary,
   resolvedStatus,
+  riskTier,
+  timeoutBehavior,
+  requestedAt,
+  deadlineAt,
+  timeoutMs,
+  decide = serverDecision,
 }: {
   id: string;
   tool: string;
   args: unknown;
   summary: string;
   resolvedStatus: "approved" | "denied" | "expired" | null;
-}) {
-  const [busy, setBusy] = useState(false);
+  /** Sends the decision; the server by default. The design gallery passes a stand-in so it never calls the server. */
+  decide?: (id: string, action: "approve" | "deny") => Promise<unknown>;
+} & ApprovalPolicyEvidence) {
+  const [busyAction, setBusyAction] = useState<"approve" | "deny" | null>(null);
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // Veto window: the server auto-approves after 15s unless Sir declines. This
-  // countdown just mirrors that so he knows how long he has to hit Cancel.
-  const AUTO_APPROVE_S = 15;
-  const [remaining, setRemaining] = useState(AUTO_APPROVE_S);
-  useEffect(() => {
-    if (busy) return; // a tap settles it — stop the countdown
-    const t = setInterval(() => setRemaining((r) => Math.max(0, r - 1)), 1000);
-    return () => clearInterval(t);
-  }, [busy]);
+  const titleId = useId();
+  const statusId = useId();
+  const detailsId = useId();
+  const policyEvidence = { riskTier, timeoutBehavior, requestedAt, deadlineAt, timeoutMs };
+  // The server supplies an absolute deadline. Reconnects/remounts therefore
+  // resume the same veto window instead of showing a false fresh 15 seconds.
+  const timing = useApprovalTiming(policyEvidence, !busyAction && !resolvedStatus);
 
   if (resolvedStatus) {
-    const label =
-      resolvedStatus === "approved" ? "Approved" :
-      resolvedStatus === "denied" ? "Denied" : "Expired";
-    const color =
-      resolvedStatus === "approved" ? "var(--ac-live)" :
-      resolvedStatus === "denied" ? "var(--ac-stop)" : "rgba(255,255,255,0.4)";
+    const Icon = resolvedStatus === "approved" ? CircleCheck : resolvedStatus === "denied" ? CircleX : CircleOff;
     return (
       <div
         data-testid="approval-card-resolved"
         data-status={resolvedStatus}
-        className="my-1 flex items-center gap-1.5 text-[11px]"
-        style={{ color, fontFamily: "var(--font-mono)" }}
+        data-risk-tier={riskTier ?? "unknown"}
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className={cn(
+          "flex w-fit max-w-full items-center gap-2 rounded-full px-3 py-1.5 text-meta",
+          resolvedStatus === "approved" ? "bg-success-soft text-success" : resolvedStatus === "denied" ? "bg-danger-soft text-danger" : "bg-glass text-ink-2",
+        )}
       >
-        <span>{resolvedStatus === "denied" ? "✕" : resolvedStatus === "approved" ? "✓" : "○"}</span>
-        {label} · {humanizeTool(tool, args)}
+        <Icon size={15} aria-hidden="true" className="shrink-0" />
+        <span className="min-w-0">{resolvedApprovalCopy(resolvedStatus, policyEvidence)} · {humanizeTool(tool, args)}</span>
       </div>
     );
   }
 
   async function act(action: "approve" | "deny") {
-    setBusy(true);
+    setBusyAction(action);
     setErr(null);
     try {
-      if (action === "approve") await approveApproval(id);
-      else await denyApproval(id);
+      await decide(id, action);
     } catch (e) {
       setErr(String(e));
-      setBusy(false);
+      setBusyAction(null);
     }
     // Don't clear busy on success — the resolved-state version replaces this
-    // once the SSE approval_resolved event arrives.
+    // once the authoritative SSE approval_resolved event arrives.
   }
 
   return (
-    <motion.div
+    <div
       data-testid="approval-card"
-      layout
-      initial={{ opacity: 0, y: 10, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-      className="my-3 w-full max-w-md overflow-hidden rounded-2xl"
-      style={{
-        background: "linear-gradient(180deg, rgba(20,16,8,0.72), rgba(10,8,4,0.72))",
-        border: "1px solid rgba(255,212,121,0.30)",
-        backdropFilter: "blur(20px) saturate(150%)",
-        WebkitBackdropFilter: "blur(20px) saturate(150%)",
-        boxShadow: "0 20px 60px -20px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.08)",
-      }}
+      data-risk-tier={riskTier ?? "unknown"}
+      data-timeout-behavior={timeoutBehavior ?? "unknown"}
+      role="region"
+      aria-labelledby={titleId}
+      aria-describedby={statusId}
+      className="ds-rise grid w-full max-w-md gap-4 rounded-card bg-surface p-5 shadow-e2"
     >
-      {/* 15s veto-window countdown bar */}
-      <div className="h-[3px] w-full" style={{ background: "rgba(255,255,255,0.06)" }}>
-        <motion.div
-          className="h-full"
-          style={{ background: "var(--ac-exec)" }}
-          animate={{ width: `${(remaining / AUTO_APPROVE_S) * 100}%` }}
-          transition={{ duration: 1, ease: "linear" }}
-        />
+      <div className="flex items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-warning-soft text-warning">
+          <ShieldAlert size={18} aria-hidden="true" />
+        </span>
+        <div className="grid min-w-0 gap-1">
+          <h3 id={titleId} className="text-body-lg font-semibold text-ink">
+            {riskTier === "high" ? "Approve this high-risk action?" : "Approve this action?"}
+          </h3>
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 font-ui-mono text-label uppercase text-ink-3">
+            <span>{approvalRiskLabel(policyEvidence)}</span>
+            <span>{approvalTimeoutLabel(policyEvidence)}</span>
+          </div>
+        </div>
       </div>
 
-      <div className="p-4">
-        <div className="flex items-center gap-2.5">
-          <span
-            className="flex h-7 w-7 items-center justify-center rounded-full"
-            style={{ background: "rgba(255,212,121,0.14)", color: "var(--ac-exec)" }}
-          >
-            <ShieldAlert size={16} />
-          </span>
-          <h3 className="text-[15px] font-semibold text-white">Approve this action?</h3>
-        </div>
+      <p className="text-body text-ink-2">
+        AVA wants to <span className="font-medium text-ink">{humanizeTool(tool, args)}</span>.
+      </p>
 
-        <p className="mt-2 text-[14px] leading-relaxed text-white/85">
-          Ava wants to <span className="font-medium text-white">{humanizeTool(tool, args)}</span>.
+      <div className="grid gap-2">
+        {/* The bar mirrors the server's absolute deadline; it never decides. */}
+        {timing.progressPercent != null && (
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-glass-strong">
+            <div
+              data-testid="approval-deadline-progress"
+              className="h-full rounded-full bg-warning transition-[width] duration-250 ease-linear"
+              style={{ width: `${timing.progressPercent}%` }}
+            />
+          </div>
+        )}
+        <p id={statusId} role="status" aria-live="polite" aria-atomic="true" className="text-meta font-medium text-warning">
+          {busyAction === "approve"
+            ? "Submitting approval…"
+            : busyAction === "deny"
+              ? "Submitting denial…"
+              : pendingApprovalCopy(policyEvidence, timing)}
         </p>
-        <p className="mt-1.5 text-[12px]" style={{ color: "var(--ac-exec)" }}>
-          {busy ? "Settling…" : remaining > 0 ? `Auto-approving in ${remaining}s — Cancel to stop.` : "Approving…"}
-        </p>
+      </div>
 
+      <div className="grid gap-2">
         <button
+          type="button"
           onClick={() => setOpen((v) => !v)}
-          className="mt-2 text-[11px] text-white/40 hover:text-white/70 transition-colors"
+          aria-expanded={open}
+          aria-controls={detailsId}
+          className="ds-focus -ml-1 flex w-fit items-center gap-1 rounded-control px-1 text-meta text-ink-2 hover:text-ink"
         >
-          {open ? "▾ hide details" : "▸ details"}
+          {open ? <ChevronDown size={15} aria-hidden="true" /> : <ChevronRight size={15} aria-hidden="true" />}
+          {open ? "Hide details" : "Details"}
         </button>
         {open && (
-          <pre className="mt-1 max-h-40 overflow-auto rounded-lg bg-black/40 p-2 text-[10.5px] font-mono whitespace-pre-wrap break-words text-white/60">
+          <pre id={detailsId} className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-control bg-glass p-3 font-ui-mono text-label text-ink-2">
             {tool}{"\n"}{JSON.stringify(args, null, 2)}
           </pre>
         )}
-        {err && <div className="mt-2 text-xs text-red-400">{err}</div>}
       </div>
+      {err && <p role="alert" className="text-meta text-danger">{err}</p>}
 
-      <div className="flex border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
-        <button
-          data-testid="approval-deny"
-          onClick={() => act("deny")}
-          disabled={busy}
-          className="flex-1 py-3 text-sm font-medium text-white/60 hover:bg-white/5 hover:text-white/90 disabled:opacity-50 transition-colors"
-        >
+      <div className="grid grid-cols-2 gap-2">
+        <Button data-testid="approval-deny" variant="glass" onClick={() => act("deny")} disabled={busyAction != null}>
           Cancel
-        </button>
-        <div style={{ width: 1, background: "rgba(255,255,255,0.08)" }} />
-        <button
-          data-testid="approval-approve"
-          onClick={() => act("approve")}
-          disabled={busy}
-          className="flex-1 py-3 text-sm font-semibold disabled:opacity-50 transition-colors"
-          style={{ color: "var(--ac)" }}
-        >
+        </Button>
+        <Button data-testid="approval-approve" variant="solid" onClick={() => act("approve")} disabled={busyAction != null}>
           Approve now
-        </button>
+        </Button>
       </div>
-    </motion.div>
+    </div>
   );
 }

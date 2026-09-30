@@ -35,9 +35,14 @@ export function pcm16Base64ToFloat32(b64: string): Float32Array {
  */
 export class PcmStreamPlayer {
   private ctx: AudioContext | null = null;
+  private analyser: AnalyserNode | null = null;
+  private analyserData: Float32Array<ArrayBuffer> | null = null;
   private playhead = 0;
+  private turnStartTime: number | null = null;
+  private turnScheduledEnd = 0;
   private readonly sources = new Set<AudioBufferSourceNode>();
   private readonly sampleRate: number;
+  private isHeld = false;
   /** Called when all scheduled audio has finished playing (queue drained). */
   onEnded: (() => void) | null = null;
   /**
@@ -51,10 +56,27 @@ export class PcmStreamPlayer {
     this.sampleRate = sampleRate;
   }
 
+  /**
+   * Mark the beginning of a new realtime response. This lets the WebSocket
+   * client report exactly how much audio was actually heard when it sends
+   * conversation.item.truncate during a barge-in.
+   */
+  beginTurn(): void {
+    this.turnStartTime = null;
+    this.turnScheduledEnd = 0;
+  }
+
   private ensureCtx(): AudioContext {
     if (!this.ctx) {
       this.ctx = new AudioContext({ sampleRate: this.sampleRate });
       this.playhead = 0;
+      // A parallel measurement tap only. Every source keeps its direct
+      // destination connection below, so measurement cannot alter the audible
+      // path, its gain, or its latency.
+      this.analyser = this.ctx.createAnalyser();
+      this.analyser.fftSize = 256;
+      this.analyser.smoothingTimeConstant = 0;
+      this.analyserData = new Float32Array(this.analyser.fftSize);
     }
     return this.ctx;
   }
@@ -71,17 +93,21 @@ export class PcmStreamPlayer {
       const samples = pcm16Base64ToFloat32(b64);
       if (samples.length === 0) return;
       const ctx = this.ensureCtx();
-      if (ctx.state === "suspended") void ctx.resume();
+      // A held player stays paused: new chunks queue up behind the pause point.
+      if (ctx.state === "suspended" && !this.isHeld) void ctx.resume();
 
       const buffer = ctx.createBuffer(1, samples.length, this.sampleRate);
       buffer.getChannelData(0).set(samples);
       const src = ctx.createBufferSource();
       src.buffer = buffer;
       src.connect(ctx.destination);
+      if (this.analyser) src.connect(this.analyser);
 
       const startAt = Math.max(ctx.currentTime, this.playhead);
+      if (this.turnStartTime == null) this.turnStartTime = startAt;
       src.start(startAt);
       this.playhead = startAt + buffer.duration;
+      this.turnScheduledEnd = this.playhead;
 
       this.sources.add(src);
       src.onended = () => {
@@ -95,9 +121,53 @@ export class PcmStreamPlayer {
     }
   }
 
+  /**
+   * Pause AVA's audio in place because Sir may be interrupting. Everything
+   * scheduled keeps its position, so release() continues mid-word. The player
+   * has its own AudioContext, so the microphone is unaffected.
+   */
+  hold(): void {
+    if (!this.ctx || this.isHeld || this.sources.size === 0) return;
+    this.isHeld = true;
+    void this.ctx.suspend().catch(() => { /* best effort */ });
+  }
+
+  /** Resume exactly where hold() paused: the interruption was a false alarm. */
+  release(): void {
+    if (!this.isHeld) return;
+    this.isHeld = false;
+    void this.ctx?.resume().catch(() => { /* best effort */ });
+  }
+
+  /** True while AVA's audio is paused for a possible interruption. */
+  get held(): boolean {
+    return this.isHeld;
+  }
+
   /** True while any scheduled chunk is still playing. */
   get playing(): boolean {
     return this.sources.size > 0;
+  }
+
+  /** Current bounded RMS of AVA's audible PCM output, for the local face only. */
+  get outputLevel(): number {
+    if (!this.playing || this.isHeld || !this.analyser || !this.analyserData) return 0;
+    try {
+      this.analyser.getFloatTimeDomainData(this.analyserData);
+      let sum = 0;
+      for (const sample of this.analyserData) sum += sample * sample;
+      const rms = Math.sqrt(sum / this.analyserData.length);
+      return Number.isFinite(rms) ? Math.min(1, Math.max(0, rms)) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** Milliseconds from this response that have reached the speakers. */
+  get playedMs(): number {
+    if (!this.ctx || this.turnStartTime == null) return 0;
+    const heardUntil = Math.min(this.ctx.currentTime, this.turnScheduledEnd);
+    return Math.max(0, Math.round((heardUntil - this.turnStartTime) * 1000));
   }
 
   /** Stop and discard everything currently scheduled (no onEnded fired). */
@@ -109,11 +179,21 @@ export class PcmStreamPlayer {
     }
     this.sources.clear();
     if (this.ctx) this.playhead = this.ctx.currentTime;
+    this.turnStartTime = null;
+    this.turnScheduledEnd = 0;
+    // A confirmed interruption ends any pause; the next reply must be audible.
+    if (this.isHeld) {
+      this.isHeld = false;
+      void this.ctx?.resume().catch(() => { /* best effort */ });
+    }
   }
 
   /** Tear down the AudioContext entirely. */
   close(): void {
     this.interrupt();
+    try { this.analyser?.disconnect(); } catch { /* */ }
+    this.analyser = null;
+    this.analyserData = null;
     try { void this.ctx?.close(); } catch { /* */ }
     this.ctx = null;
   }

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../state/db.js";
 import { createSession } from "../state/sessions.js";
-import { appendMessage } from "../state/messages.js";
+import { appendMessage, listMessages } from "../state/messages.js";
 import { ActiveRuns } from "../orchestrator/active-runs.js";
 import { chatRoutes } from "./chat.js";
 import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
@@ -16,10 +16,16 @@ import { MockLLMProvider } from "../orchestrator/llm/mock-provider.js";
 // and never clears `busy`). Instead it replays the session's latest assistant
 // reply as a `final` then `done`, so a late/fast connect terminates with the
 // answer.
-function setup() {
+function setup(runAgentImpl: (opts: { emit: (event: {
+  kind: "final" | "done";
+  payload: Record<string, unknown>;
+}) => void }) => Promise<void> = vi.fn() as never) {
   const dir = mkdtempSync(join(tmpdir(), "ava-streamnr-"));
   const memoryDir = mkdtempSync(join(tmpdir(), "ava-streamnr-mem-"));
   const db = openDb(join(dir, "x.db"));
+  db.prepare(
+    "INSERT INTO device_tokens (id, token_hash, label, created_at) VALUES (?, ?, ?, ?)",
+  ).run("d", "hash-d", "stream replay fixture", Date.now());
   const runs = new ActiveRuns();
   const app = express();
   app.use(express.json());
@@ -31,7 +37,7 @@ function setup() {
       fsRoots: [], memoryDir, dataDir: dir,
       getChrome: async () => ({} as never),
       provider: new MockLLMProvider({ scripts: [] }),
-      runAgentImpl: (vi.fn() as never),
+      runAgentImpl: runAgentImpl as never,
     },
     { anthropic: null, openai: null },
   ));
@@ -106,5 +112,55 @@ describe("chat stream — no active run (fast-finish replay)", () => {
     const ids = res.text.split("\n").filter((l) => l.startsWith("id:")).map((l) => Number(l.slice(3).trim()));
     expect(ids.length).toBeGreaterThan(0);
     for (const id of ids) expect(id).toBeGreaterThan(99);
+  });
+
+  it("replays a fast persist:false final by task id without storing chat messages", async () => {
+    const runAgentImpl = vi.fn(async (opts: { emit: (event: {
+      kind: "final" | "done";
+      payload: Record<string, unknown>;
+    }) => void }) => {
+      opts.emit({ kind: "final", payload: { text: "Fast transient result, Sir." } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const { app, db, runs } = setup(runAgentImpl);
+    const started = await request(app).post("/api/chat").send({
+      text: "Use an unsupported executor and explain the boundary.",
+      persist: false,
+    }).expect(200);
+    await vi.waitFor(() => expect(runs.get(started.body.sessionId)).toBeUndefined());
+
+    const response = await request(app)
+      .get(`/api/chat/${started.body.sessionId}/stream?taskId=${started.body.taskId}`)
+      .expect(200);
+    const events = parseSse(response.text);
+    expect(JSON.parse(events.find((event) => event.event === "final")!.data))
+      .toEqual({ text: "Fast transient result, Sir." });
+    expect(events.some((event) => event.event === "receipt")).toBe(true);
+    expect(events.at(-1)?.event).toBe("done");
+    expect(listMessages(db, started.body.sessionId)).toEqual([]);
+  });
+
+  it("does not replay a transient final to a different task id", async () => {
+    const runAgentImpl = vi.fn(async (opts: { emit: (event: {
+      kind: "final" | "done";
+      payload: Record<string, unknown>;
+    }) => void }) => {
+      opts.emit({ kind: "final", payload: { text: "This belongs to the first task." } });
+      opts.emit({ kind: "done", payload: {} });
+    });
+    const { app, runs } = setup(runAgentImpl);
+    const started = await request(app).post("/api/chat").send({
+      text: "Complete a transient task.",
+      persist: false,
+    }).expect(200);
+    await vi.waitFor(() => expect(runs.get(started.body.sessionId)).toBeUndefined());
+
+    const response = await request(app)
+      .get(`/api/chat/${started.body.sessionId}/stream?taskId=different-task`)
+      .expect(200);
+    const events = parseSse(response.text);
+    expect(events.some((event) => event.event === "final")).toBe(false);
+    expect(events.some((event) => event.event === "receipt")).toBe(false);
+    expect(events.at(-1)?.event).toBe("done");
   });
 });

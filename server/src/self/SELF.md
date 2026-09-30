@@ -32,3 +32,17 @@ Monorepo (npm workspaces).
 - TDD throughout: every module has a co-located `*.test.ts`. Write the failing test first.
 - Small, focused files, one responsibility each.
 - Secrets are scrubbed at the memory store layer and in logs (`security/scrub.ts`).
+
+## Self-improvement workers
+- Explicit improvement intents lock the versioned Self-screen choice (`claude`
+  or `codex`) when their plan is approved; unattended intents snapshot it at intake.
+- Both workers edit only an isolated git worktree and enter the identical approval, verify, safety, swap, watchdog, and rollback gates.
+- Missing or unauthenticated CLIs fail closed; there is no silent provider fallback.
+- A verified candidate that cannot be installed safely is `blocked`, not failed.
+  AVA preserves it under `refs/ava/self-candidates/<intent-id>` and the Self UI
+  offers an explicit version-guarded retry. A newer HEAD is reconciled in a
+  fresh worktree and fully re-verified; conflicting changes remain blocked.
+- Live installation uses `git merge --ff-only`. Disjoint uncommitted tracked
+  edits remain untouched; an overlapping tracked path or Git-protected
+  untracked collision blocks installation. Self never stashes, resets, or
+  discards concurrent work to make an installation succeed.

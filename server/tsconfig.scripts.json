@@ -1,0 +1,21 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "lib": ["ES2024"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/ambient.d.ts",
+    "scripts/auto-improve-loop.ts",
+    "scripts/memory-retrieval-smoke.ts",
+    "scripts/ufo-experiment-smoke.ts",
+    "scripts/install-ufo-runtime.ts",
+    "scripts/ufo-runtime-smoke.ts",
+    "scripts/computer-execution-smoke.ts",
+    "scripts/memory-backfill.ts",
+    "scripts/memory-eval.ts",
+    "scripts/memory-import.ts"
+  ]
+}

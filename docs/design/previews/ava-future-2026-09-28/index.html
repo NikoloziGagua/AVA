@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AVA · Future · 9 concepts</title>
+<link rel="stylesheet" href="shared.css" />
+<style>
+  .hero { display: grid; justify-items: center; text-align: center; padding: 40px 0 26px; }
+  .hero .orb { margin-bottom: 18px; }
+  .hero h1 { font-size: clamp(38px, 6vw, 72px); }
+  .hero .lede { margin: 0 auto; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin: 16px 0 6px; }
+  .tiles { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); margin-top: 24px; }
+  .tile { display: flex; flex-direction: column; gap: 10px; text-decoration: none; color: inherit; transition: transform .35s var(--ease), border-color .3s; min-height: 330px; }
+  .tile:hover { transform: translateY(-4px); border-color: var(--line-2); }
+  .tile .top { display: flex; justify-content: space-between; align-items: center; }
+  .rank { font: 600 13px var(--mono); color: var(--ink-3); }
+  .pick { font: 11.5px var(--mono); letter-spacing: .08em; padding: 3px 8px; border-radius: 99px; background: linear-gradient(90deg, rgba(156,196,255,.25), rgba(198,168,255,.25)); border: 1px solid rgba(156,196,255,.45); }
+  .viz { position: relative; height: 120px; border-radius: 14px; background: rgba(0,0,0,.25); border: 1px solid var(--line); overflow: hidden; }
+  .tile h2 { font-size: 21px; margin: 0; }
+  .tile p { margin: 0; color: var(--ink-2); font-size: 14px; }
+  .meters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: auto; }
+  .meters div { font-size: 11.5px; color: var(--ink-3); font-family: var(--mono); letter-spacing: .04em; }
+  .meters i { display: block; height: 4px; border-radius: 99px; background: rgba(255,255,255,.08); margin-top: 4px; overflow: hidden; }
+  .meters i b { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  /* mini visuals */
+  .v-timeline::before { content: ""; position: absolute; left: 20px; right: 20px; top: 58px; height: 2px; background: var(--line-2); }
+  .v-timeline span { position: absolute; top: 52px; width: 14px; height: 14px; border-radius: 50%; background: #0b0e15; border: 1px solid var(--line-2); }
+  .v-timeline span:nth-child(1) { left: 12%; } .v-timeline span:nth-child(2) { left: 32%; } .v-timeline span:nth-child(3) { left: 52%; } .v-timeline span:nth-child(4) { left: 72%; } .v-timeline span:nth-child(5) { left: 88%; }
+  .v-timeline span { animation: lit 5s infinite; } .v-timeline span:nth-child(2) { animation-delay: 1s; } .v-timeline span:nth-child(3) { animation-delay: 2s; } .v-timeline span:nth-child(4) { animation-delay: 3s; } .v-timeline span:nth-child(5) { animation-delay: 4s; }
+  @keyframes lit { 0%, 18% { background: var(--ink); box-shadow: 0 0 16px rgba(156,196,255,.9); } 22%, 100% { background: #0b0e15; box-shadow: none; } }
+  .v-ring span { position: absolute; width: 16px; height: 16px; border-radius: 50%; background: var(--accent-2); opacity: .3; animation: talk 4s infinite; }
+  .v-ring span:nth-child(1) { left: 20%; top: 18%; } .v-ring span:nth-child(2) { right: 20%; top: 18%; animation-delay: 1s; } .v-ring span:nth-child(3) { left: 20%; bottom: 18%; animation-delay: 2s; } .v-ring span:nth-child(4) { right: 20%; bottom: 18%; animation-delay: 3s; }
+  .v-ring em { position: absolute; left: 50%; top: 50%; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 8px; background: rgba(255,255,255,.12); border: 1px solid var(--line-2); }
+  @keyframes talk { 0%, 20% { opacity: 1; box-shadow: 0 0 18px rgba(198,168,255,.9); } 25%, 100% { opacity: .3; box-shadow: none; } }
+  .v-branch svg, .v-radar svg { width: 100%; height: 100%; }
+  .v-branch path { fill: none; stroke-width: 2.4; stroke-dasharray: 260; stroke-dashoffset: 260; animation: dr 3.2s var(--ease) infinite; }
+  @keyframes dr { 60%, 100% { stroke-dashoffset: 0; } }
+  .v-day i { position: absolute; left: 16px; right: 16px; height: 18px; border-radius: 7px; animation: fadeIn .8s var(--ease) both; }
+  .v-radar::before { content: ""; position: absolute; left: 50%; top: 50%; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%; background: conic-gradient(from 0deg, transparent 0 80%, rgba(156,196,255,.45) 100%); animation: rot 3s linear infinite; }
+  .v-radar::after { content: ""; position: absolute; left: 50%; top: 50%; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%; border: 1px solid var(--line-2); }
+  @keyframes rot { to { transform: rotate(360deg); } }
+  .v-radar span { position: absolute; width: 7px; height: 7px; border-radius: 50%; }
+  .v-gen i { position: absolute; left: 16px; height: 12px; border-radius: 6px; background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.16), rgba(255,255,255,.05)); background-size: 200% 100%; animation: sh 1.4s linear infinite; }
+  @keyframes sh { to { background-position: -200% 0; } }
+  .v-galaxy span { position: absolute; border-radius: 50%; animation: tw 3s ease-in-out infinite; }
+  @keyframes tw { 50% { transform: scale(1.5); opacity: .6; } }
+  .v-phone em { position: absolute; left: 50%; top: 12px; bottom: -30px; width: 76px; margin-left: -38px; border-radius: 16px; border: 1px solid var(--line-2); background: #0a0d13; }
+  .v-phone i { position: absolute; left: 50%; bottom: 10px; width: 64px; margin-left: -32px; height: 34px; border-radius: 10px; background: #151a24; border: 1px solid var(--line-2); animation: up 3s var(--ease) infinite; }
+  @keyframes up { 0%, 30% { transform: translateY(40px); } 50%, 100% { transform: none; } }
+  .plan { margin-top: 34px; }
+  .plan ol { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 8px; color: var(--ink-2); }
+  .plan b { color: var(--ink); }
+</style>
+</head>
+<body>
+<canvas id="stars" aria-hidden="true"></canvas><div class="halo" aria-hidden="true"></div>
+<main class="page">
+  <section class="hero">
+    <div class="orb lg" aria-hidden="true"></div>
+    <div class="eyebrow">For Niko · 28 Sep 2026 · by Claude, with Codex's feasibility review</div>
+    <h1><span class="silver">AVA · Future</span></h1>
+    <p class="lede">Nine clickable concepts for the assistant you described: a builder who tests ideas hard, keeps score, and always asks "where does this put me in 2–5 years?" They're ranked by how much each would help you every day, how impressive it is, and how well it fits the AVA you already have.</p>
+    <div class="legend"><span class="badge demo">Every page is a demo with invented data</span><span class="badge">Each page ends with what's real vs. demo</span><span class="badge">Nothing here touches live AVA</span></div>
+  </section>
+
+  <section class="grid tiles" id="tiles"></section>
+
+  <section class="card plan glow">
+    <h2>What we'd build next, in order</h2>
+    <ol>
+      <li><b>Capture Anywhere (09):</b> the foundation. Everything else feeds on what you save.</li>
+      <li><b>Morning Command Center + If-Then Nudges (04 + 05):</b> the daily loop. It uses reminders, calendar and voice you already have.</li>
+      <li><b>Decision Replay + Challenge Room (01 + 02):</b> the "second brain that argues back". Codex's first pick for real new value.</li>
+      <li><b>Future You (03):</b> the showpiece once your goals are confirmed in AVA. The galaxy (08) and generative views (07) come after, as the wow layer.</li>
+    </ol>
+    <p class="faint" style="margin-top:12px">Already in progress: "AVA starts a conversation" (the dot on your bar). It's accepted in code, and Codex is building its backend now. It stays off until you switch it on.</p>
+  </section>
+</main>
+<script src="shared.js"></script>
+<script>
+(function () {
+  var T = [
+    ["01", "01-decision-replay.html", "Decision Replay", "Scrub back through how an idea evolved: what you decided, what you turned down, how sure you were, and the notes behind it.", "v-timeline", "<span></span><span></span><span></span><span></span><span></span>", [5, 4, 4], true],
+    ["02", "02-challenge-room.html", "Challenge Room", "An investor, an engineer, a customer and a competitor attack your plan. Each gives one objection, one assumption and one cheap test.", "v-ring", "<span></span><span></span><span></span><span></span><em></em>", [4, 5, 4], true],
+    ["03", "03-future-you.html", "Future You", "Branching 2–5-year paths from the goals you confirm, and a chat with a hypothetical you at 26.", "v-branch", '<svg viewBox="0 0 300 120"><path d="M20 60 C90 60 110 30 280 20" stroke="#9cc4ff"/><path d="M20 60 C90 60 120 70 280 62" stroke="#c6a8ff" style="animation-delay:.3s"/><path d="M20 60 C90 60 110 95 280 104" stroke="#ffc07a" style="animation-delay:.6s"/></svg>', [3, 5, 3], true],
+    ["04", "04-morning-command.html", "Morning Command Center", "Overnight brief, then say your plan: it becomes a day with nudges. In the evening: done, moved or skipped, never assumed.", "v-day", '<i style="top:14px;background:rgba(134,227,190,.25)"></i><i style="top:40px;background:rgba(156,196,255,.25);animation-delay:.3s"></i><i style="top:66px;background:rgba(255,255,255,.1);animation-delay:.6s"></i><i style="top:92px;background:rgba(255,192,122,.25);animation-delay:.9s"></i>', [5, 3, 5], true],
+    ["05", "05-if-then.html", "If-Then Nudges", "\"When I finish uni, remind me…\". Every trigger honestly labelled as time-based or something you actually did.", "v-day", '<i style="top:30px;background:rgba(156,196,255,.25)"></i><i style="top:62px;background:rgba(198,168,255,.25);animation-delay:.4s"></i>', [5, 3, 5], true],
+    ["06", "06-opportunity-radar.html", "Opportunity Radar", "Watches sources you pick and pings you only when a hackathon, fellowship or role truly fits your goals.", "v-radar", '<span style="left:55%;top:30%;background:#9cc4ff"></span><span style="left:38%;top:62%;background:#86e3be"></span><span style="left:62%;top:66%;background:#c6a8ff"></span>', [3, 4, 3], false],
+    ["07", "07-generative-view.html", "Generative Views", "Some questions deserve a tool. AVA builds a small interactive decision board you can re-weight live.", "v-gen", '<i style="top:22px;width:60%"></i><i style="top:46px;width:80%"></i><i style="top:70px;width:45%"></i><i style="top:94px;width:70%"></i>', [3, 5, 2], false],
+    ["08", "08-knowledge-galaxy.html", "Knowledge Galaxy", "Goals, projects, decisions, notes and people as a 3D constellation. Drag it, follow threads, scrub time.", "v-galaxy", '<span style="left:30%;top:40%;width:10px;height:10px;background:#9cc4ff;box-shadow:0 0 14px #9cc4ff"></span><span style="left:52%;top:28%;width:7px;height:7px;background:#ffc07a;animation-delay:.5s"></span><span style="left:64%;top:58%;width:6px;height:6px;background:#c6a8ff;animation-delay:1s"></span><span style="left:42%;top:70%;width:5px;height:5px;background:#e6e9f0;animation-delay:1.5s"></span><span style="left:72%;top:32%;width:5px;height:5px;background:#86e3be;animation-delay:2s"></span>', [2, 5, 3], false],
+    ["09", "09-capture.html", "Capture Anywhere", "Share a link or say a thought. AVA files it in the right project with an exact receipt and undo, even offline.", "v-phone", "<em></em><i></i>", [5, 3, 4], "FOUNDATION"],
+  ];
+  var box = document.getElementById("tiles");
+  T.forEach(function (t, i) {
+    var m = t[6];
+    var a = document.createElement("a"); a.href = t[1]; a.className = "card tile fade-in" + (t[7] ? " glow" : ""); a.style.animationDelay = (i * 60) + "ms";
+    a.innerHTML = '<div class="top"><span class="rank">' + t[0] + "</span>" + (t[7] ? '<span class="pick">' + (t[7] === true ? "TOP PICK" : t[7]) + "</span>" : "") + '</div><div class="viz ' + t[4] + '" aria-hidden="true">' + t[5] + "</div><h2>" + t[2] + "</h2><p>" + t[3] + '</p><div class="meters">' +
+      ["Daily value", "Wow", "Fits AVA now"].map(function (l, k) { return "<div>" + l + '<i><b style="width:' + (m[k] * 20) + '%"></b></i></div>'; }).join("") + "</div>";
+    box.appendChild(a);
+  });
+})();
+</script>
+</body>
+</html>

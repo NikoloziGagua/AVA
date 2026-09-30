@@ -17,7 +17,10 @@ const ACTION_PATTERNS: RegExp[] = [
   /\bcomputer[\s_-]?use\b/i,
   /\bfs_(read|write|list|stat|delete)\b/i,
   /\bmemory_(remember|forget|read)\b/i,
-  /\bchrome_(navigate|click|type|read_page|screenshot|tabs|press_key)\b/i,
+  /\bmemory_index_(capture|search|open|forget)\b/i,
+  /\bnotes?_(capture|search|update|promote)\b/i,
+  /\bautomation_(system_report|operations_brief|status)\b/i,
+  /\bchrome_(open|open_url|google_search|youtube_search|navigate|click|type|read_page|screenshot|tabs|press_key)\b/i,
 
   // URLs.
   /https?:\/\/\S+/i,
@@ -36,8 +39,11 @@ const ACTION_PATTERNS: RegExp[] = [
   /\b(kill|stop|restart|terminate)\s+(server|process|build|chrome|node|app)\b/i,
   /\b(read|cat|tail|head)\s+(package\.json|readme(?:\.md)?|tsconfig\.json|\S+\.(?:md|json|ts|tsx|js|jsx|py|rs|go|sql|env))\b/i,
 
-  // Open/navigate to chrome or a URL.
-  /\bopen\s+chrome\b/i,
+  // Open/navigate to Chrome or Google. The Google shape is a common spoken
+  // command and must retain tools so voice reaches the same deterministic
+  // computer route as typed chat.
+  /\bopen\s+(?:chrome|google|youtube|gmail|reddit|github|wikipedia)\b/i,
+  /\bsearch\s+(?:google|youtube)(?:\s+for)?\s+\S+/i,
   /\b(navigate|go|browse)\s+to\s+(?:https?|www\.|[A-Za-z]:[\\/]|the\s+\w+)/i,
 
   /\btake\s+a?\s*screenshot/i,
@@ -47,10 +53,27 @@ const ACTION_PATTERNS: RegExp[] = [
   // and second-person framings ("remember I…", "remember me", "remember you…").
   /\b(remember|forget)\s+(that|what|everything|this|my|i|i'm|me|you|you're|your)\b/i,
   /\bwhat\s+do\s+you\s+remember\b/i,
+  /\b(index|capture|save)\s+(this|that|our)\s+(discussion|research|idea|decision)\b/i,
+  /\bwhat\s+did\s+we\s+(decide|conclude|learn|research)\b/i,
+
+  // Visible Notes workspace. This matters most for voice, whose conservative
+  // classifier would otherwise strip tools from "put this in notes".
+  /\b(put|save|add|capture|write)\b.{0,50}\b(?:in|to)\s+(?:my\s+|the\s+)?notes?\b/i,
+  /\bmake\s+(?:a\s+)?note\s+(?:of|about)\b/i,
+
+  // Exact app-thread navigation remains a tool action in conservative voice
+  // mode even when the person's possessive name replaces the usual article.
+  /\bopen\b.{0,60}\binstagram\s+(chat|conversation|dm|messages?)\b/i,
+
+  // Pinned automation playbooks. Possessive spoken phrasing such as "create
+  // AVA's operations brief" does not match the generic imperative+article
+  // rule above, but it must still reach the tool-capable agent in voice mode.
+  /\b(create|generate|run|prepare|produce)\b.{0,60}\b(system\s+health\s+report|operations\s+brief)\b/i,
+  /\b(check|show|list)\b.{0,40}\b(activepieces|automation)\b.{0,30}\b(status|availability|playbooks?|workflows?)\b/i,
 
   // Direct "use X" phrasing — pulls bare "chrome"/"shell" into action mode
   // when the user explicitly invokes them.
-  /\buse\s+(?:the\s+)?(claude[\s_-]?code|chrome|computer[\s_-]?use|shell|fs_|memory_)/i,
+  /\buse\s+(?:the\s+)?(claude[\s_-]?code|chrome|computer[\s_-]?use|shell|fs_|memory_|notes?_)/i,
 ];
 
 export function classifyIntent(message: string): Intent {

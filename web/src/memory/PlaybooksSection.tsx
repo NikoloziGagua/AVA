@@ -13,20 +13,39 @@ const CHEVRON_OPEN = "M3 5 L8 11 L13 5";
 /** Light refresh so a playbook Ava just distilled shows up without a reload. */
 const REFRESH_MS = 30_000;
 
-/** "v3 · used 12× · 10W/2L · ~42s" — one playbook's optimization vitals. */
+/** Evidence-aware optimization vitals. Legacy W/L values are never presented as proof. */
 export function playbookStatLine(pb: PlaybookRow): string {
   const version = Number(pb.version) || 1;
   const uses = Number(pb.uses) || 0;
-  const succ = Number(pb.succ) || 0;
-  const fail = Number(pb.fail) || 0;
+  const learning = pb.learning;
+  const verified = Number(learning?.verified) || 0;
+  const partial = Number(learning?.partially_verified) || 0;
+  const unverified = Number(learning?.unverified) || 0;
+  const contradicted = Number(learning?.contradicted) || 0;
+  const failed = Number(learning?.failed) || 0;
+  const evidenceCount = verified + partial + unverified + contradicted + failed +
+    (Number(learning?.not_applicable) || 0);
   const avg = Math.round(Number(pb.avg_secs) || 0);
-  return `v${version} · used ${uses}× · ${succ}W/${fail}L · ~${avg}s`;
+  if (evidenceCount === 0) {
+    const legacy = (Number(pb.succ) || 0) + (Number(pb.fail) || 0);
+    return `v${version} · used ${uses}× · ${legacy > 0 ? `${legacy} legacy reports` : "evidence pending"}`;
+  }
+  return [
+    `v${version}`,
+    `used ${uses}×`,
+    `${verified} verified`,
+    partial ? `${partial} partial` : "",
+    unverified ? `${unverified} unverified` : "",
+    contradicted ? `${contradicted} contradicted` : "",
+    failed ? `${failed} failed` : "",
+    verified > 0 && avg > 0 ? `~${avg}s verified avg` : "",
+  ].filter(Boolean).join(" · ");
 }
 
 /**
  * "Learned workflows" — the read surface over Ava's playbooks (GET /api/playbooks).
  * Shows WHAT Ava has learned from repeated multi-step tasks and whether each
- * procedure is actually working (uses, win/loss record, average duration, lessons).
+ * procedure is actually working (verified evidence, uncertainty, duration, lessons).
  * Read-only by design: playbooks are grown conversationally, not edited here.
  */
 export function PlaybooksSection() {
@@ -61,7 +80,7 @@ export function PlaybooksSection() {
         {!rows && !err && <div className="text-xs text-white/40">loading…</div>}
         {rows?.length === 0 && (
           <div className="text-xs text-white/40">
-            Nothing learned yet — playbooks appear after successful multi-step tasks.
+            Nothing verified yet — playbooks appear after verified multi-step tasks.
           </div>
         )}
         {rows?.map((pb) => (
@@ -84,6 +103,12 @@ function PlaybookDisclosure({ pb }: { pb: PlaybookRow }) {
   const steps = Array.isArray(pb.steps) ? pb.steps : [];
   const lessons = Array.isArray(pb.lessons) ? pb.lessons : [];
   const consequential = pb.stakes === "consequential";
+  const learning = pb.learning;
+  const verified = Number(learning?.verified) || 0;
+  const contradicted = Number(learning?.contradicted) || 0;
+  const evidenceCount = verified + (Number(learning?.partially_verified) || 0) +
+    (Number(learning?.unverified) || 0) + contradicted + (Number(learning?.failed) || 0) +
+    (Number(learning?.not_applicable) || 0);
 
   useGSAP(() => {
     const path = chevronRef.current;
@@ -121,6 +146,12 @@ function PlaybookDisclosure({ pb }: { pb: PlaybookRow }) {
                 {typeof pb.stakes === "string" && pb.stakes ? pb.stakes : "routine"}
               </span>
             )}
+            <span className={contradicted > 0
+              ? "chip chip-stop"
+              : verified > 0 ? "chip chip-ac" : "chip"}
+            >
+              {contradicted > 0 ? "CONTRADICTED" : verified > 0 ? "VERIFIED LEARNING" : "EVIDENCE PENDING"}
+            </span>
           </span>
           <span className="mt-1 block hud text-[9px] tracking-[0.16em] text-white/35">
             {playbookStatLine(pb)}
@@ -154,6 +185,16 @@ function PlaybookDisclosure({ pb }: { pb: PlaybookRow }) {
               </div>
             </div>
           )}
+          <div className="border-l border-white/10 pl-3 text-[10px] leading-relaxed text-white/45">
+            {evidenceCount > 0 ? (
+              <>
+                Learning gate: only independently verified task outcomes can replace or strengthen this workflow.
+                {learning?.last_method ? ` Latest method: ${learning.last_method}.` : ""}
+              </>
+            ) : (
+              <>This workflow predates verified learning or has no terminal verification evidence yet.</>
+            )}
+          </div>
         </div>
       )}
     </div>

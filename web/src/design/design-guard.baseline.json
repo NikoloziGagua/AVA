@@ -32,7 +32,8 @@
     "voice/VoiceScreen.tsx",
     "memory/MemoryScreen.tsx",
     "memory/MemoryExtras.tsx",
-    "memory/MemoryMap.tsx"
+    "memory/MemoryMap.tsx",
+    "projects/ProjectsScreen.tsx"
   ],
   "files": {
     "App.tsx": {

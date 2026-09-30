@@ -17,6 +17,7 @@ import {
   Brain,
   CalendarDays,
   House,
+  FolderKanban,
   Lightbulb,
   MessageSquareText,
   NotebookPen,
@@ -52,6 +53,9 @@ import type { InvitationRef } from "./initiative/useInvitation.js";
 // same Markdown/diagram graph, so deferring only one leaves that graph eager.
 const ChatScreen = lazy(async () => ({
   default: (await import("./chat/ChatScreen.js")).ChatScreen,
+}));
+const ProjectsScreen = lazy(async () => ({
+  default: (await import("./projects/ProjectsScreen.js")).ProjectsScreen,
 }));
 const MemoryScreen = lazy(async () => ({
   default: (await import("./memory/MemoryScreen.js")).MemoryScreen,
@@ -98,6 +102,7 @@ type View =
   // `noteId` opens that exact note once; `handoff` makes each navigation distinct.
   | { name: "notes"; noteId?: string; handoff?: number }
   | { name: "ideas" }
+  | { name: "projects" }
   // `focusAt` opens the week of that moment (an idea's calendar source).
   | { name: "schedule"; focusAt?: number; focusOccurrenceKey?: string }
   | { name: "watches"; focusWatchId?: string | null; navigationOrigin?: "mission-control" }
@@ -258,6 +263,7 @@ function destinationForView(v: View): string | null {
     case "schedule": return "calendar";
     case "notes": return "notes";
     case "ideas": return "ideas";
+    case "projects": return "projects";
     case "memory": return "memory";
     case "watches": return "reminders";
     case "capabilities": return "explore";
@@ -276,6 +282,7 @@ const DESTINATIONS: Destination[] = [
   { id: "notes", label: "Notes", icon: <NotebookPen size={18} />, group: "primary" },
   { id: "calendar", label: "Calendar", icon: <CalendarDays size={18} />, group: "primary" },
   { id: "ideas", label: "Ideas", icon: <Lightbulb size={18} />, group: "primary" },
+  { id: "projects", label: "Projects", icon: <FolderKanban size={18} />, group: "primary" },
   { id: "memory", label: "Memory", icon: <Brain size={18} />, group: "system" },
   { id: "reminders", label: "Reminders & watches", icon: <AlarmClock size={18} />, group: "system" },
   { id: "explore", label: "Explore AVA", icon: <Radar size={18} />, group: "system" },
@@ -503,6 +510,7 @@ export function App() {
       case "calendar": setView({ name: "schedule" }); break;
       case "ideas": setView({ name: "ideas" }); break;
       case "memory": setView({ name: "memory" }); break;
+      case "projects": setView({ name: "projects" }); break;
       case "reminders": setView({ name: "watches" }); break;
       case "explore": setView({ name: "capabilities" }); break;
       case "visuals": setView({ name: "visuals" }); break;
@@ -657,6 +665,19 @@ export function App() {
             transition={enterT}
           >
             <IdeasScreen onOpenNote={openNote} />
+          </motion.div>
+        )}
+        {view.name === "projects" && (
+          <motion.div
+            key="projects"
+            data-view="projects"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <ProjectsScreen onOpenNote={openNote} />
           </motion.div>
         )}
         {view.name === "schedule" && (

@@ -8,6 +8,7 @@ import type { MemoryArchive } from "../memory-archive/archive.js";
 import type { MemoryIndexService } from "../memory-index/store.js";
 import { formatRecall, recall, recallIdeas } from "../memory-archive/recall.js";
 import { memoryV2Enabled } from "../memory-archive/brief.js";
+import { fastProjectAction } from "./project-actions.js";
 
 // The fast lane for read-only questions. A voice question like "what's on this
 // week?" used to go through AVA's full agent: a ~23,000-token prompt and two
@@ -39,7 +40,7 @@ export type LookupPlan =
   | { route: "memory"; query: string }
   | { route: "agent" };
 
-export type LookupResult = { route: Exclude<LookupPlan["route"], "agent">; text: string; ms: number };
+export type LookupResult = { route: Exclude<LookupPlan["route"], "agent"> | "projects"; text: string; ms: number };
 
 const ROUTER_SYSTEM = `You route one spoken request from Sir (Niko) to AVA. Decide whether it is a READ-ONLY question AVA can answer by reading its own data, and which data:
 - calendar: what's on, his schedule, classes, plans or free time in a period. Give "from" and "to" as YYYY-MM-DD in Europe/Dublin, inclusive.
@@ -174,6 +175,9 @@ export function createFastLookup(deps: {
   const now = deps.now ?? Date.now;
   return async ({ request, recent, signal }) => {
     const started = now();
+    // Projects first: adding or removing one must never wait for the agent.
+    const projectText = await fastProjectAction(deps, request, recent, signal);
+    if (projectText) return { route: "projects", text: projectText, ms: now() - started };
     if (!lookupCandidate(request) || signal?.aborted) return null;
     let plan: LookupPlan;
     try {

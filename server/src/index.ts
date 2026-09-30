@@ -34,6 +34,7 @@ import { chipsRoutes } from "./routes/chips.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
 import { memoryArchiveRoutes } from "./routes/memory-archive.js";
+import { projectRoutes } from "./routes/projects.js";
 import { notesRoutes } from "./routes/notes.js";
 import { calendarRoutes } from "./routes/calendar.js";
 import { uiPreferencesRoutes } from "./routes/ui-preferences.js";
@@ -829,6 +830,7 @@ app.use("/api/memory/archive", memoryArchiveRoutes(requireToken(db), { db, archi
 app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir, index: memoryIndex }));
 app.use("/api/notes", notesRoutes(db, requireToken(db), { queueSelfImprove }));
 app.use("/api/calendar", calendarRoutes(db, requireToken(db)));
+app.use("/api/projects", projectRoutes(db, requireToken(db)));
 app.use("/api/ui/preferences", uiPreferencesRoutes(db, requireToken(db)));
 app.use("/api/visual-explanations", visualExplanationRoutes(db, requireToken(db)));
 app.use("/api/capabilities", capabilityRoutes(requireToken(db), capabilityRouteDeps));

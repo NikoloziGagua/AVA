@@ -1066,3 +1066,41 @@ CREATE TABLE IF NOT EXISTS memory_extraction_runs (
   started_at INTEGER NOT NULL,
   finished_at INTEGER
 );
+
+-- Projects: Niko's business, build and uni projects, each a workspace with its
+-- own conversation, notes folder, steps, open questions and progress log.
+-- Removing hides a project at once (removed_at) so it can be brought back.
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'business' CHECK (kind IN ('business', 'build', 'uni')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused', 'done')),
+  stage TEXT NOT NULL DEFAULT '',
+  goal TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  next_step TEXT NOT NULL DEFAULT '',
+  folder_id TEXT,
+  session_id TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  removed_at INTEGER
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_live_name
+  ON projects(name COLLATE NOCASE) WHERE removed_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS project_items (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('step', 'question', 'log')),
+  text TEXT NOT NULL,
+  done_at INTEGER,
+  source TEXT NOT NULL DEFAULT 'app',
+  source_session_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_items_project
+  ON project_items(project_id, kind, created_at);

@@ -831,6 +831,25 @@ ul.ds-memory-steps { list-style: disc; }
   .ds-memory-row[aria-pressed="true"], .ds-memory-chips > button[aria-pressed="true"], .ds-memory-rail > button[aria-pressed="true"] { outline: 2px solid Highlight; }
   .ds-memory-button, .ds-memory-edit, .ds-memory-search { border: 1px solid CanvasText; }
 }
+/* Projects: the Calendar v6 workspace (projects, the open project, its conversation). */
+.ds-projects-panel { grid-template-columns: 240px minmax(0, 1fr) 380px; }
+.ds-projects-tabs { padding: 14px 20px 0; }
+.ds-projects-body { display: grid; align-content: start; gap: 28px; padding: 22px 24px 32px; min-width: 0; }
+.ds-projects-notice { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-bottom: 10px; font-size: 13px; color: var(--ds-ink-2); }
+.ds-projects-notice[data-error="true"] { color: var(--ds-danger); }
+.ds-projects-chips { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 14px; scrollbar-width: none; }
+.ds-projects-chips > button { flex: none; }
+.ds-projects-new { margin-bottom: 18px; }
+.ds-projects-prose { font-weight: 400; line-height: 1.65; overflow-wrap: anywhere; }
+.ds-projects-talk { display: flex; flex-direction: column; gap: 14px; min-height: 520px; height: 100%; }
+.ds-projects-messages { flex: 1; display: grid; align-content: start; gap: 16px; max-height: 62vh; overflow-y: auto; overflow-wrap: anywhere; }
+.ds-projects-mine { justify-self: end; max-width: 85%; padding: 12px 16px; border-radius: 20px; background: var(--ds-glass-strong); }
+@media (max-width: 1180px) { .ds-projects-panel { grid-template-columns: minmax(0, 1fr) 340px; } }
+@media (max-width: 860px) {
+  .ds-projects-panel { grid-template-columns: minmax(0, 1fr); }
+  .ds-projects-body { padding: 18px 16px 24px; }
+  .ds-projects-talk { min-height: 420px; }
+}
 /* Small landscape / zoom: permit scrolling rather than hide meaningful content. */
 @media (max-height: 620px) { .ds-atelier-home { overflow-y: auto; } .ds-home-composition { min-height: 560px; } }
 /* Forced colours: surfaces fall back to system colours with real borders. */

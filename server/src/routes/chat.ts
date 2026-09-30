@@ -63,6 +63,8 @@ import type { ToolDef } from "../tools/ava-mcp.js";
 import { buildMemoryTools } from "../tools/memory-mcp.js";
 import { buildNotesTools } from "../tools/notes-mcp.js";
 import { buildCalendarTools } from "../tools/calendar-mcp.js";
+import { buildProjectTools } from "../tools/projects-mcp.js";
+import { projectBrief, projectForSession } from "../projects/store.js";
 import { buildVisualExplanationTools } from "../tools/visual-explanations-mcp.js";
 import { buildUpdateLogTools } from "../tools/update-log-mcp.js";
 import { buildShopifyTools } from "../tools/shopify-mcp.js";
@@ -591,7 +593,14 @@ export function chatRoutes(
         `Do not substitute the ordinary app tool unless the approved playbook reports unavailable.\n[/APPROVED ACTIVEPIECES PLAYBOOK]\n\n`
       : "";
     const roomContext = await roomContextPromise;
-    const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix + generatedPlaybookPrefix
+    // A project's own conversation always starts from where that project stands.
+    const project = projectForSession(db, sessionId);
+    const projectContext = project
+      ? "[PROJECT]\nThis conversation is about one of Sir's projects. Help him move it forward: ask sharp questions, suggest next steps, "
+        + "and keep the project current with the project_* tools (steps, questions, progress, where it stands).\n"
+        + `${projectBrief(db, project)}\n[/PROJECT]\n\n`
+      : "";
+    const promptForAgent = greeting.prefix + summaryHeader + playbookPrefix + generatedPlaybookPrefix + projectContext
       + (resolvedVisualContext ? `${resolvedVisualContext.prompt}\n\n` : "")
       + (memoryRetrieval.prompt ? `${memoryRetrieval.prompt}\n\n` : "")
       + (roomContext ? `${roomContext}\n\n` : "")
@@ -968,6 +977,7 @@ export function chatRoutes(
           sessionId: sid,
           source: parsed.data.voice ? "ava_voice" : "ava_chat",
         });
+        const projectTools = buildProjectTools({ db, sessionId: sid, source: parsed.data.voice ? "voice" : "chat" });
         const visualExplanationTools = buildVisualExplanationTools({
           db,
           sessionId: sid,
@@ -1039,6 +1049,7 @@ export function chatRoutes(
             ...memoryTools,
             ...notesTools,
             ...calendarTools,
+            ...projectTools,
             ...visualExplanationTools,
             ...ufoExperimentTools,
             ...automationTools,
@@ -1068,6 +1079,7 @@ export function chatRoutes(
             ...memoryTools,
             ...notesTools,
             ...calendarTools,
+            ...projectTools,
             ...visualExplanationTools,
             ...ufoExperimentTools.filter((tool) => tool.tool.name === "ufo_experiment_status"),
             ...automationTools,

@@ -196,6 +196,13 @@ export class MemoryArchive {
     ).all(since) as Row[]).map(mapRow);
   }
 
+  /** Replaced and ended records, most recently ended first. */
+  history(limit = 300): MemoryRecord[] {
+    return (this.db.prepare(
+      "SELECT * FROM memory_records WHERE status = 'history' ORDER BY COALESCE(valid_to, updated_at) DESC, seq DESC LIMIT ?",
+    ).all(Math.max(1, Math.min(limit, 1_000))) as Row[]).map(mapRow);
+  }
+
   /** The record's whole version chain, oldest first. */
   chain(id: string): MemoryRecord[] {
     return this.chainRows(id).map(mapRow).sort((a, b) => a.validFrom - b.validFrom || a.createdAt - b.createdAt);
@@ -516,9 +523,9 @@ export class MemoryArchive {
   }
 
   /** Niko confirmed a record that was waiting for him. */
-  confirm(id: string, actor: MemoryActor, sessionId: string | null = null): MemoryWriteResult {
+  confirm(id: string, actor: MemoryActor, sessionId: string | null = null, opts: { expectedVersion?: number } = {}): MemoryWriteResult {
     return this.write((): { result: MemoryWriteResult; changes: MemoryChange[] } => {
-      const target = this.target(id, undefined, ["unconfirmed"]);
+      const target = this.target(id, opts.expectedVersion, ["unconfirmed"]);
       if ("ok" in target) return { result: target, changes: [] };
       const confirmed = this.confirmRow(target, actor, sessionId);
       return { result: confirmed.result, changes: [confirmed.change] };
@@ -533,12 +540,16 @@ export class MemoryArchive {
   forget(
     id: string,
     actor: MemoryActor,
-    opts: { reason?: "forgotten" | "rejected"; sessionId?: string | null } = {},
+    opts: { reason?: "forgotten" | "rejected"; sessionId?: string | null; expectedVersion?: number } = {},
   ): { ok: true; forgotten: number } | MemoryWriteFailure {
     return this.write((): { result: { ok: true; forgotten: number } | MemoryWriteFailure; changes: MemoryChange[] } => {
       const changes: MemoryChange[] = [];
       const target = this.row(id);
       if (!target) return { result: fail("not_found", `No memory with id ${id}.`), changes };
+      // Erasing is permanent: never act on a version Niko has not seen.
+      if (opts.expectedVersion !== undefined && target.version !== opts.expectedVersion) {
+        return { result: fail("stale", `Memory ${id} changed; its current version is ${target.version}.`), changes };
+      }
       const rows = new Map<string, Row>();
       for (const row of this.chainRows(id)) rows.set(row.id, row);
       const sameTopic = this.db.prepare("SELECT * FROM memory_records WHERE kind = ? AND topic_fingerprint = ?")

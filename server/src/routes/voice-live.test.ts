@@ -181,7 +181,7 @@ describe("GPT-Live delegated work continuity", () => {
 });
 
 describe("GPT-Live memory updates during a call", () => {
-  it("pushes Sir's own memory changes in this conversation at once, and never a forget's content", async () => {
+  it("pushes Sir's own memory changes from this conversation or the Memory tab at once, and never a forget's content", async () => {
     const db = openInMemoryDb();
     const sessionId = createSession(db, { title: "Synthetic voice test", origin: "human" }).id;
     const archive = new MemoryArchive(db);
@@ -208,10 +208,14 @@ describe("GPT-Live memory updates during a call", () => {
     expect(appended()).toHaveLength(2);
     expect(appended()[1]).toContain("asked me to forget something");
     expect(appended()[1]).not.toContain("7 pm");
+    // A fix made in the Memory tab belongs to no conversation, and the call hears it too.
+    archive.add({ ...base, topic: "phone", text: "Sir uses an iPhone 16 now." }, "niko", null);
+    expect(appended()).toHaveLength(3);
+    expect(appended()[2]).toContain("Sir uses an iPhone 16 now.");
     client.close();
     await tick();
     archive.add({ ...base, topic: "late", text: "After the call ended." }, "niko", sessionId);
-    expect(appended()).toHaveLength(2);
+    expect(appended()).toHaveLength(3);
   });
 });
 

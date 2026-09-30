@@ -1,706 +1,282 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { Pencil, Trash2, Check, X, Plus, Pause, Play } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Search } from "lucide-react";
+import { Atmosphere } from "../design/metal/Atmosphere.js";
+import { ApiError } from "../api.js";
 import {
-  fetchMemory, fetchPeople, fetchPlaybooks, fetchWatches,
-  type MemoryView, type PersonRow, type PlaybookRow, type WatchRow,
-  patchMemoryLine, postMemoryLine,
-} from "../api.js";
-import { SegmentedTabs } from "../components/ava/SegmentedTabs.js";
-import { PanelShell, PanelSection } from "../components/ava/PanelShell.js";
-import { MemoryBrain, type BrainNode } from "../components/ava/MemoryBrain.js";
-import { PlaybooksSection } from "./PlaybooksSection.js";
-import { WatchesSection } from "./WatchesSection.js";
-import { PeopleSection } from "./PeopleSection.js";
-import { PersonaProfileCard } from "./PersonaProfileCard.js";
-import { MemoryIndexSection } from "./MemoryIndexSection.js";
-import { useGSAP, gsap } from "../lib/gsap.js";
-import { useReducedMotion } from "../lib/useReducedMotion.js";
-import { isCoarsePointer } from "../lib/media.js";
-import { hoverLift, press, settleText, EASE } from "../lib/deckMotion.js";
+  confirmMemory, correctMemory, fetchMemoryDetail, fetchMemoryOverview, forgetMemory, memoryFailure, searchMemory, setMemoryCarry,
+  type MemoryDetail, type MemoryEvent, type MemoryItem, type MemoryKind, type MemoryOverview,
+} from "./archive-api.js";
+import { Contacts, HowTos, useMedia } from "./MemoryExtras.js";
+import { day, moment } from "./memoryTime.js";
 
-const CATEGORIES = ["all", "context", "people", "setup", "skills", "schedule", "preferences"] as const;
-type Filter = typeof CATEGORIES[number];
+const MemoryMap = lazy(async () => ({ default: (await import("./MemoryMap.js")).MemoryMap }));
 
-// Closed (▸) and open (▾) chevron paths for the MorphSVG disclosure toggle.
-const CHEVRON_CLOSED = "M5 3 L11 8 L5 13";
-const CHEVRON_OPEN = "M3 5 L8 11 L13 5";
+type SectionId = "about" | "people" | "projects" | "rules" | "waiting" | "history";
+type ExtraId = "howtos" | "contacts" | "map";
+type View = SectionId | ExtraId;
+type Mode = { id: string; kind: "edit" | "confirm" } | null;
 
-const CONF_COLOR = {
-  high: "var(--conf-high)",
-  medium: "var(--conf-med)",
-  low: "var(--conf-low)",
-} as const;
+const SECTIONS: Array<{ id: SectionId; label: string; short: string; hint: string; empty: string }> = [
+  { id: "about", label: "About you", short: "About you", hint: "Facts about your life, each with when you said it.", empty: "Nothing here yet. Tell me about yourself and I’ll remember it." },
+  { id: "people", label: "People", short: "People", hint: "The people in your life.", empty: "No one yet. Tell me about the people in your life." },
+  { id: "projects", label: "Projects and focus", short: "Projects", hint: "What you’re working on and what matters most right now.", empty: "No projects yet." },
+  { id: "rules", label: "Your rules", short: "Rules", hint: "Your standing rules for how I should do things.", empty: "No rules yet. Tell me how you want things done." },
+  { id: "waiting", label: "Waiting for you", short: "Waiting", hint: "Things I noticed but won’t keep until you say so.", empty: "Nothing waiting. When I hear something private, or I’m not sure I understood, it waits here until you say Keep or Drop." },
+  { id: "history", label: "History", short: "History", hint: "Older versions. I keep them so I never mistake them for current.", empty: "No older versions yet." },
+];
+const EXTRAS: Array<{ id: ExtraId; label: string }> = [{ id: "howtos", label: "Learned how-tos" }, { id: "contacts", label: "Contacts" }, { id: "map", label: "Map" }];
+const KIND_SECTION: Record<MemoryKind, SectionId> = { fact: "about", event: "about", person: "people", project: "projects", decision: "projects", commitment: "projects", preference: "rules" };
+const sectionOf = (item: MemoryItem): SectionId => item.status === "unconfirmed" ? "waiting" : item.status === "history" ? "history" : KIND_SECTION[item.kind];
+const isSection = (view: View): view is SectionId => SECTIONS.some((section) => section.id === view);
+const WHO: Record<MemoryItem["speechAct"], string> = { stated: "you said", decided: "you decided", requested: "you asked me to remember", discussed: "we discussed", inferred: "my guess" };
+const who = (item: MemoryItem) => item.origin === "explicit" && !item.hasSources ? "you wrote" : WHO[item.speechAct];
+const VERB: Record<MemoryEvent["action"], string> = { added: "Learned", updated: "Updated", ended: "No longer true", stopped_carrying: "Stopped bringing up", carried: "Bringing up again", confirmed: "You kept", forgotten: "Forgot" };
 
-type ViewMode = "list" | "mind" | "index";
+/** One forget erases every version of a memory; the feed shows it once. */
+function feedEvents(events: MemoryEvent[]): MemoryEvent[] {
+  return events.filter((event, at) => {
+    const previous = events[at - 1];
+    return !(event.action === "forgotten" && previous?.action === "forgotten" && Math.abs(previous.createdAt - event.createdAt) < 5_000);
+  });
+}
 
+/** What AVA knows about Niko (memory v2): each memory with when he said it, where it came from, and his controls. */
 export function MemoryScreen({ onOpenChat }: { onClose?: () => void; onOpenChat?: (sessionId: string) => void }) {
-  const [m, setM] = useState<MemoryView | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [cat, setCat] = useState<Filter>("all");
-  const [showPersonality, setShowPersonality] = useState(false);
-  const [showProjects, setShowProjects] = useState(false);
-  const [newPref, setNewPref] = useState("");
-  // Mind (the 3D brain) is the front door — the list is the editing back office.
-  const [view, setView] = useState<ViewMode>("mind");
-  const [selected, setSelected] = useState<BrainNode | null>(null);
-  // Surfaced when an edit/delete hits a 409 (the line changed on disk since load
-  // — e.g. Ava wrote memory concurrently). Without this the edit silently vanished.
-  const [notice, setNotice] = useState<string | null>(null);
+  const narrow = useMedia("(max-width: 1180px)"), compact = useMedia("(max-width: 860px)");
+  const [data, setData] = useState<MemoryOverview | null>(null), [loadError, setLoadError] = useState<string | null>(null);
+  const [view, setView] = useState<View>("about"), [selectedId, setSelectedId] = useState<string | null>(null);
+  const [query, setQuery] = useState(""), [hits, setHits] = useState<MemoryItem[] | null>(null);
+  const [detail, setDetail] = useState<MemoryDetail | null>(null), [mode, setMode] = useState<Mode>(null);
+  const [busy, setBusy] = useState(false), [notice, setNotice] = useState<{ text: string; error?: boolean } | null>(null);
+  const generation = useRef(0), holding = useRef(false);
+  holding.current = mode !== null || busy;
 
-  async function load() {
-    try { setM(await fetchMemory()); }
-    catch (e) { setErr(String(e)); }
-  }
-  useEffect(() => { load(); }, []);
-
-  // Every observation/preference mutation goes through here so a conflict is
-  // never silently lost: patchMemoryLine returns {ok:false} on a 409, and we tell
-  // the user their change didn't land before repainting the server's latest.
-  async function patchLine(input: Parameters<typeof patchMemoryLine>[0]) {
-    const res = await patchMemoryLine(input);
-    if (!res.ok) {
-      setNotice("That line changed elsewhere since you opened it — showing the latest. Reapply your edit if you still need it.");
+  const reload = useCallback(async () => {
+    const current = ++generation.current;
+    try {
+      const next = await fetchMemoryOverview();
+      if (current === generation.current) { setData(next); setLoadError(null); }
+    } catch (failure) {
+      if (current === generation.current) setLoadError(failure instanceof ApiError ? failure.message : "Memory couldn’t be loaded. Try again.");
     }
-    await load();
-  }
-
-  // Plain (non-PanelShell) early returns so PanelShell mounts fresh with real
-  // content and its enter stagger plays from the start.
-  if (err) return <div className="flex h-full items-center justify-center bg-black text-sm text-red-400">error: {err}</div>;
-  if (!m) return <MemoryLoading />;
-
-  const obs = cat === "all" ? m.observations.lines : m.observations.lines.filter((l) => l.category === cat);
-
-  return (
-    <PanelShell title="Memory" grid>
-      {notice && (
-        <div className="lg:col-span-12" data-panel-section>
-          <div className="flex items-start justify-between gap-3 rounded-xl border border-[rgba(255,212,121,0.35)] bg-[rgba(255,212,121,0.08)] px-4 py-2.5 text-xs text-[#ffe6ad]">
-            <span className="leading-relaxed">{notice}</span>
-            <button onClick={() => setNotice(null)} className="btn-deck btn-ghost h-7 shrink-0 px-2" aria-label="dismiss notice">
-              <X size={14} strokeWidth={2.5} />
-            </button>
-          </div>
-        </div>
-      )}
-      {/* View toggle — List (dashboard) vs Mind (3D memory brain). Spans the grid. */}
-      <div className="lg:col-span-12 mb-1 flex justify-end" data-panel-section>
-        <SegmentedTabs<ViewMode>
-          options={[
-            { value: "mind", label: "Mind" },
-            { value: "index", label: "Index" },
-            { value: "list", label: "List" },
-          ]}
-          value={view}
-          onChange={(v) => {
-            setView(v);
-            if (v !== "mind") setSelected(null);
-          }}
-          layout="auto"
-        />
-      </div>
-
-      {view === "mind" ? (
-        <MindStage memory={m} selected={selected} onSelect={setSelected} />
-      ) : view === "index" ? (
-        <MemoryIndexSection onOpenChat={onOpenChat} />
-      ) : (
-        <>
-          {/* PRIMARY — the live observation feed (wide left column, the densest content). */}
-          <PanelSection
-        title="Observations"
-        span="lg:col-span-7"
-        right={<CountChip count={m.observations.lines.length} />}
-      >
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <SegmentedTabs<Filter>
-            options={CATEGORIES.map((c) => ({ value: c, label: c }))}
-            value={cat}
-            onChange={setCat}
-            layout="auto"
-            className="flex-wrap"
-          />
-        </div>
-        <ConfidenceLegend />
-        <div className="space-y-2">
-          {obs.length === 0 && <div className="text-xs text-white/40">none.</div>}
-          {obs.map((l) => (
-            <ObservationRow
-              key={l.raw}
-              line={l}
-              onEdit={(newLine) => patchLine({ file: "observations", oldLine: l.raw, newLine })}
-              onDelete={() => patchLine({ file: "observations", oldLine: l.raw })}
-            />
-          ))}
-        </div>
-      </PanelSection>
-
-      {/* SECONDARY — editable preferences (top of the right column). */}
-      <PanelSection
-        title="Preferences"
-        span="lg:col-span-5"
-        right={<CountChip count={m.preferences.lines.length} />}
-      >
-        <div className="space-y-2">
-          {m.preferences.lines.length === 0 && (
-            <div className="text-xs text-white/40">none yet.</div>
-          )}
-          {m.preferences.lines.map((line) => (
-            <PreferenceRow
-              key={line}
-              line={line}
-              onEdit={(newLine) => patchLine({ file: "preferences", oldLine: line, newLine })}
-              onDelete={() => patchLine({ file: "preferences", oldLine: line })}
-            />
-          ))}
-          <NewPreferenceInput
-            value={newPref}
-            onChange={setNewPref}
-            onAdd={async () => {
-              const v = newPref.trim();
-              if (!v) return;
-              await postMemoryLine(v);
-              setNewPref("");
-              await load();
-            }}
-          />
-        </div>
-      </PanelSection>
-
-      {/* TERTIARY — collapsible reference (Personality + Projects) span the lower row. */}
-      <PanelSection
-        title="Personality"
-        span="lg:col-span-6"
-        right={
-          <span className="hud text-[10px] tracking-[0.18em] text-[var(--ac)]/80">
-            {showPersonality ? "hide" : "show"}
-          </span>
-        }
-        onClickHeader={() => setShowPersonality((v) => !v)}
-      >
-        <PersonaProfileCard profile={m.personaProfile} />
-        {showPersonality ? (
-          <Reveal className="mt-4">
-            <pre className="whitespace-pre-wrap text-xs leading-relaxed text-white/75">{m.personality || "(empty)"}</pre>
-            <div className="mt-3 hud text-[9px] tracking-[0.16em] text-white/30">
-              Edit data/memory/personality.md directly to change.
-            </div>
-          </Reveal>
-        ) : (
-          <div className="mt-3 text-xs text-white/40">Tap the header to inspect the identity contract.</div>
-        )}
-      </PanelSection>
-
-      <PanelSection
-        title="Projects"
-        span="lg:col-span-6"
-        right={
-          <span className="flex items-center gap-2">
-            <CountChip count={m.projects.length} />
-            <span className="hud text-[10px] tracking-[0.18em] text-[var(--ac)]/80">
-              {showProjects ? "hide" : "show"}
-            </span>
-          </span>
-        }
-        onClickHeader={() => setShowProjects((v) => !v)}
-      >
-        {showProjects ? (
-          <Reveal className="space-y-1.5">
-            {m.projects.length === 0 && <div className="text-xs text-white/40">no projects.</div>}
-            {m.projects.map((p) => (
-              <ProjectDisclosure key={p.slug} slug={p.slug} body={p.body} />
-            ))}
-          </Reveal>
-        ) : (
-          <div className="text-xs text-white/40">Known project workspaces. Tap to reveal.</div>
-        )}
-      </PanelSection>
-        </>
-      )}
-
-      {/* Learning + monitoring + reach read surfaces — Ava's playbooks, standing
-          watches, and people map stay visible in BOTH views (below the brain in
-          Mind mode). */}
-      <PlaybooksSection />
-      <WatchesSection />
-      <PeopleSection />
-    </PanelShell>
-  );
-}
-
-/**
- * "Mind" mode: the 3D memory brain in a tall full-width stage, with a node
- * inspector that overlays the top-right corner when a node is selected. The brain
- * computes its layout once and disposes its GL resources on unmount.
- */
-type Extras = { people: PersonRow[]; playbooks: PlaybookRow[]; watches: WatchRow[] };
-
-function MindStage({
-  memory,
-  selected,
-  onSelect,
-}: {
-  memory: MemoryView;
-  selected: BrainNode | null;
-  onSelect: (n: BrainNode | null) => void;
-}) {
-  const [spinning, setSpinning] = useState(true);
-  // Everything else Ava knows joins the cortex: people, learned skills, standing
-  // watches. These load BEFORE the first MemoryBrain mount so the three.js scene
-  // is constructed exactly ONCE with full data — the old empty→populated update
-  // changed the effect deps and forced a full GL teardown + rebuild. `null` =
-  // not loaded yet (brain stays behind the skeleton until it resolves).
-  const [extras, setExtras] = useState<Extras | null>(null);
-  // Defer the heavy GL construction OUT of the panel's entry animation window:
-  // only flip ready once the browser is idle after entry settles. Combined with
-  // the extras gate, the brain builds one scene, once, AFTER the transition.
-  const [idleReady, setIdleReady] = useState(false);
-
+  }, []);
+  useEffect(() => { void reload(); }, [reload]);
+  // Pick up what AVA learned while this screen was in the background, never mid-edit.
   useEffect(() => {
+    const focus = () => { if (!document.hidden && !holding.current) void reload(); };
+    window.addEventListener("focus", focus); document.addEventListener("visibilitychange", focus);
+    return () => { window.removeEventListener("focus", focus); document.removeEventListener("visibilitychange", focus); };
+  }, [reload]);
+
+  const searching = query.trim().length > 0;
+  useEffect(() => {
+    const text = query.trim();
+    setHits(null);
+    if (!text) return;
     let alive = true;
-    const load = async () => {
-      const [people, playbooks, watches] = await Promise.all([
-        fetchPeople().catch(() => [] as PersonRow[]),
-        fetchPlaybooks().catch(() => [] as PlaybookRow[]),
-        fetchWatches().catch(() => [] as WatchRow[]),
-      ]);
-      if (!alive) return;
-      const next: Extras = { people, playbooks, watches };
-      // Content-compare so the 60s poll never rebuilds the GL scene unchanged.
-      setExtras((prev) => (prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
-    };
-    void load();
-    const t = setInterval(load, 60_000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
+    const timer = window.setTimeout(() => {
+      searchMemory(text).then((found) => { if (alive) setHits(found); }).catch(() => { if (alive) setHits([]); });
+    }, 200);
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [query, data]);
+
+  const bySection = useMemo(() => {
+    const map = new Map<SectionId, MemoryItem[]>(SECTIONS.map((section) => [section.id, []]));
+    for (const item of data?.records ?? []) map.get(sectionOf(item))!.push(item);
+    map.set("history", data?.history ?? []);
+    return map;
+  }, [data]);
+  const known = useMemo(() => new Map([...(data?.records ?? []), ...(data?.history ?? [])].map((item) => [item.id, item])), [data]);
+  const items = searching ? hits ?? [] : isSection(view) ? bySection.get(view)! : [];
+  // Wide screens always show one memory in the detail pane; phones open one in place when tapped.
+  const selected = items.find((item) => item.id === selectedId) ?? (compact || (!searching && !isSection(view)) ? null : items[0] ?? null);
+  const selectedKey = selected ? `${selected.id}:${selected.version}` : "";
 
   useEffect(() => {
-    const ric = (window as unknown as {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-    }).requestIdleCallback;
-    if (ric) {
-      const id = ric(() => setIdleReady(true), { timeout: 700 });
-      const cic = (window as unknown as { cancelIdleCallback?: (id: number) => void }).cancelIdleCallback;
-      return () => cic?.(id);
+    setDetail(null);
+    if (!selectedKey) return;
+    let alive = true;
+    fetchMemoryDetail(selectedKey.split(":")[0]!).then((next) => { if (alive) setDetail(next); }).catch(() => { if (alive) setDetail(null); });
+    return () => { alive = false; };
+  }, [selectedKey]);
+
+  const go = (next: View) => { setView(next); setSelectedId(null); setMode(null); setQuery(""); };
+  const open = (id: string) => {
+    const item = known.get(id);
+    if (item) { setQuery(""); setView(sectionOf(item)); setSelectedId(id); setMode(null); }
+  };
+  async function change(run: () => Promise<{ text: string; select?: string | null }>) {
+    if (busy) return;
+    setBusy(true); setNotice(null);
+    try {
+      const done = await run();
+      setMode(null);
+      if (done.select !== undefined) setSelectedId(done.select);
+      setNotice({ text: done.text });
+    } catch (failure) {
+      const { message, reload: stale } = memoryFailure(failure);
+      if (stale) setMode(null);
+      setNotice({ text: message, error: true });
+    } finally {
+      setBusy(false);
+      await reload();
     }
-    const t = window.setTimeout(() => setIdleReady(true), 480);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  const ex: Extras = extras ?? { people: [], playbooks: [], watches: [] };
-  const brainReady = extras !== null && idleReady;
-
-  const items =
-    memory.observations.lines.length + memory.preferences.lines.length + memory.projects.length +
-    ex.people.length + ex.playbooks.length + ex.watches.length;
-  const hubLabels = new Set(memory.observations.lines.map((l) => l.category));
-  if (memory.preferences.lines.length) hubLabels.add("preferences");
-  if (memory.projects.length) hubLabels.add("projects");
-  if (ex.people.length) hubLabels.add("people");
-  if (ex.playbooks.length) hubLabels.add("skills");
-  if (ex.watches.length) hubLabels.add("schedule");
-  const hubs = hubLabels.size;
-  return (
-    <div className="lg:col-span-12 -mt-2" data-panel-section>
-      {/* No framing box — the network floats free over the panel backdrop.
-          Height is capped to fit within the 1440×900 fold under the ~290px
-          header (so the brain — the marquee visual — never clips at the bottom). */}
-      <div
-        className="relative w-full overflow-hidden"
-        style={{ height: "min(66vh, calc(100vh - 320px))", minHeight: "420px" }}
-      >
-        {/* Stage atmosphere BEHIND the canvas: a deep radial well that grounds the
-            network in space + a faint cyan breath at its heart. Pure CSS, static. */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(ellipse 62% 56% at 50% 46%, rgba(92,242,255,0.055), transparent 62%)," +
-              "radial-gradient(ellipse 85% 80% at 50% 50%, transparent 38%, rgba(0,0,0,0.55) 86%)",
-          }}
-        />
-        {brainReady ? (
-          <MemoryBrain
-            memory={memory}
-            people={ex.people}
-            playbooks={ex.playbooks}
-            watches={ex.watches}
-            onSelect={onSelect}
-            spinning={spinning}
-          />
-        ) : (
-          <BrainSkeleton />
-        )}
-
-        {/* Telemetry rail, top-left — what the cortex is holding right now. */}
-        <div className="pointer-events-none absolute left-4 top-3 hud text-[9px] tracking-[0.22em] text-white/40">
-          <span style={{ color: "var(--ac)" }}>◉</span> neural map · {items} memories · {hubs} clusters
-        </div>
-
-        {/* Hint rail, bottom-left — zoom gesture depends on the pointer in hand. */}
-        <div className="pointer-events-none absolute bottom-3 left-4 hud text-[9px] tracking-[0.18em] text-white/35">
-          drag to rotate · {isCoarsePointer() ? "pinch" : "scroll"} to zoom · tap a node
-        </div>
-
-        {/* Spin toggle, bottom-right. */}
-        <button
-          onClick={() => setSpinning((s) => !s)}
-          aria-label={spinning ? "pause rotation" : "resume rotation"}
-          aria-pressed={!spinning}
-          className="btn-deck btn-ghost absolute bottom-3 right-4 z-10 h-7 gap-1.5 px-2.5 text-[10px]"
-        >
-          {spinning ? <Pause size={12} /> : <Play size={12} />}
-          <span>{spinning ? "Pause" : "Spin"}</span>
-        </button>
-
-        {/* Inspector card, top-right corner, shown on selection. */}
-        {selected && <NodeInspector node={selected} onClose={() => onSelect(null)} />}
-      </div>
-    </div>
-  );
-}
-
-/** Placeholder shown in the Mind stage while the three.js brain is deferred —
- *  a faint pulsing cyan orb + status line, so the ~idle-defer reads as intentional
- *  (never a blank frame) and no GL is built during the panel's entry animation. */
-function BrainSkeleton() {
-  return (
-    <div className="absolute inset-0 grid place-items-center" aria-hidden>
-      <div
-        className="animate-pulse h-40 w-40 rounded-full"
-        style={{
-          background: "radial-gradient(circle at 50% 45%, rgba(92,242,255,0.28), transparent 68%)",
-          boxShadow: "0 0 80px -12px rgba(92,242,255,0.4)",
-        }}
-      />
-      <div className="hud absolute bottom-6 text-[9px] tracking-[0.22em] text-white/30">
-        forming neural map…
-      </div>
-    </div>
-  );
-}
-
-/** Full-screen memory load state — a lightweight skeleton (pulsing orb + ghost
- *  cards) instead of bare "Loading memory…" text, matching the app's visual bar. */
-function MemoryLoading() {
-  return (
-    <div className="relative flex h-full flex-col items-center justify-center gap-7 overflow-hidden bg-black">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{ background: "radial-gradient(ellipse 60% 50% at 50% 42%, rgba(92,242,255,0.08), transparent 62%)" }}
-      />
-      <div
-        className="animate-pulse h-24 w-24 rounded-full"
-        style={{
-          background: "radial-gradient(circle at 50% 40%, rgba(92,242,255,0.5), rgba(92,242,255,0.05) 70%)",
-          boxShadow: "0 0 60px -10px rgba(92,242,255,0.5)",
-        }}
-      />
-      <div className="hud text-[10px] tracking-[0.22em] text-white/40">assembling memory…</div>
-      <div className="flex w-full max-w-4xl gap-4 px-8">
-        <div className="animate-pulse h-40 flex-1 rounded-2xl border border-white/5 bg-white/[0.03]" />
-        <div className="animate-pulse h-40 flex-1 rounded-2xl border border-white/5 bg-white/[0.03]" />
-      </div>
-    </div>
-  );
-}
-
-const KIND_LABEL: Record<BrainNode["kind"], string> = {
-  core: "core",
-  category: "lobe",
-  observation: "observation",
-  preference: "preference",
-  project: "project",
-  person: "person",
-  playbook: "skill",
-  watch: "watch",
-  neuron: "neuron", // background tissue — unselectable, present for type completeness
-};
-
-/** The selected-node detail card overlaying the brain stage. */
-function NodeInspector({ node, onClose }: { node: BrainNode; onClose: () => void }) {
-  const confColor = node.confidence ? CONF_COLOR[node.confidence] : null;
-  return (
-    // Sleek technical HUD panel (not the bubbly .bg-card): sharp 7px corners, a flat deep
-    // body, a thin cyan top accent bar, restrained glow.
-    <div
-      className="absolute right-4 top-4 z-10 w-[min(20rem,calc(100%-2rem))] p-4"
-      style={{
-        borderRadius: "7px",
-        background: "rgba(8,12,18,0.86)",
-        border: "1px solid rgba(92,242,255,0.22)",
-        boxShadow: "0 18px 50px -26px rgba(0,0,0,0.9)",
-        backdropFilter: "blur(8px)",
-        WebkitBackdropFilter: "blur(8px)",
-      }}
-    >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-px"
-        style={{ background: "linear-gradient(90deg, transparent, var(--ac), transparent)" }}
-      />
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <span className="hud text-[10px] tracking-[0.18em] text-[var(--ac)]/85">
-          {KIND_LABEL[node.kind]}
-        </span>
-        <button onClick={onClose} className="btn-deck btn-ghost h-7 px-2" aria-label="close inspector">
-          <X size={14} strokeWidth={2.5} />
-        </button>
-      </div>
-      <div className="text-sm font-medium leading-snug text-white/90">{node.label}</div>
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 hud text-[9px] tracking-[0.16em] text-white/40">
-        {node.category && <span>{node.category}</span>}
-        {confColor && (
-          <span className="flex items-center gap-1.5">
-            <span
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ background: confColor, boxShadow: `0 0 6px ${confColor}` }}
-            />
-            {node.confidence}
-          </span>
-        )}
-        {node.date && <span>{node.date}</span>}
-      </div>
-      {node.text && node.text !== node.label && (
-        <pre className="mt-3 max-h-48 overflow-y-auto whitespace-pre-wrap border-l border-[rgba(92,242,255,0.25)] pl-3 text-[11px] leading-relaxed text-white/65">
-          {node.text}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-/** A small, reduced-gated fade+rise reveal for disclosure content. */
-function Reveal({ children, className }: { children: React.ReactNode; className?: string }) {
-  const reduced = useReducedMotion();
-  const ref = useRef<HTMLDivElement>(null);
-  useGSAP(() => {
-    const el = ref.current;
-    if (!el || reduced) return;
-    gsap.from(el, { opacity: 0, y: 8, filter: "blur(6px)", duration: 0.4, ease: EASE, clearProps: "filter" });
-  }, { dependencies: [reduced] });
-  return <div ref={ref} className={className}>{children}</div>;
-}
-
-/** Observations count, scramble-settling the digits whenever the count changes. */
-function CountChip({ count }: { count: number }) {
-  const reduced = useReducedMotion();
-  const ref = useRef<HTMLSpanElement>(null);
-  useGSAP(() => {
-    if (ref.current) settleText(ref.current, String(count), reduced);
-  }, { dependencies: [count, reduced] });
-  return (
-    <span className="chip chip-ac">
-      <span ref={ref}>{count}</span>
-    </span>
-  );
-}
-
-/** HIGH / MED / LOW confidence swatch key, drawn above the observation list. */
-function ConfidenceLegend() {
-  return (
-    <div className="mb-3 flex items-center gap-4 hud text-[9px] tracking-[0.18em] text-white/40">
-      {([["HIGH", CONF_COLOR.high], ["MED", CONF_COLOR.medium], ["LOW", CONF_COLOR.low]] as const).map(
-        ([label, color]) => (
-          <span key={label} className="flex items-center gap-1.5">
-            <span
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ background: color, boxShadow: `0 0 6px ${color}` }}
-            />
-            {label}
-          </span>
-        ),
-      )}
-    </div>
-  );
-}
-
-/** The "Add a preference" inline composer with primary button + press feedback. */
-function NewPreferenceInput({ value, onChange, onAdd }: {
-  value: string;
-  onChange: (s: string) => void;
-  onAdd: () => Promise<void> | void;
-}) {
-  const reduced = useReducedMotion();
-  const { contextSafe } = useGSAP();
-  return (
-    <div className="flex gap-2 pt-2">
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") void onAdd(); }}
-        placeholder="Add a preference…"
-        className="h-9 flex-1 rounded-md border border-white/10 bg-white/[0.03] px-3 text-xs text-white placeholder:text-white/40 transition-colors focus:border-[rgba(92,242,255,0.4)] focus:outline-none"
-      />
-      <button
-        onClick={() => void onAdd()}
-        onPointerDown={contextSafe((e: React.PointerEvent<HTMLButtonElement>) => press(e.currentTarget, true, reduced))}
-        onPointerUp={contextSafe((e: React.PointerEvent<HTMLButtonElement>) => press(e.currentTarget, false, reduced))}
-        onPointerLeave={contextSafe((e: React.PointerEvent<HTMLButtonElement>) => press(e.currentTarget, false, reduced))}
-        className="btn-deck btn-primary"
-      >
-        <Plus size={14} strokeWidth={2.5} /> Add
-      </button>
-    </div>
-  );
-}
-
-function PreferenceRow({ line, onEdit, onDelete }: {
-  line: string;
-  onEdit: (s: string) => Promise<void>;
-  onDelete: () => Promise<void>;
-}) {
-  const reduced = useReducedMotion();
-  const { contextSafe } = useGSAP();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(line);
-
-  if (editing) {
-    return (
-      <div className="flex gap-2">
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { setEditing(false); void onEdit(draft); } if (e.key === "Escape") { setEditing(false); setDraft(line); } }}
-          className="h-9 flex-1 rounded-md border border-white/15 bg-white/[0.03] px-3 text-xs text-white focus:border-[rgba(92,242,255,0.4)] focus:outline-none"
-          autoFocus
-        />
-        <button onClick={async () => { setEditing(false); await onEdit(draft); }} className="btn-deck btn-primary px-3" aria-label="save">
-          <Check size={14} strokeWidth={2.5} />
-        </button>
-        <button onClick={() => { setEditing(false); setDraft(line); }} className="btn-deck btn-ghost px-3" aria-label="cancel">
-          <X size={14} strokeWidth={2.5} />
-        </button>
-      </div>
-    );
   }
+  const actions = (item: MemoryItem) => ({
+    fix: (text: string) => void change(async () => ({ text: "Saved. I’ll use this from now on.", select: (await correctMemory(item, text)).id })),
+    carry: (carry: boolean) => void change(async () => {
+      await setMemoryCarry(item, carry);
+      return { text: carry ? "Back in everyday memory." : "Kept, but I’ll only use it when you ask." };
+    }),
+    keep: () => void change(async () => {
+      const kept = await confirmMemory(item);
+      return { text: `Kept. It’s in ${SECTIONS.find((section) => section.id === sectionOf(kept))!.label} now.`, select: null };
+    }),
+    forget: () => void change(async () => {
+      await forgetMemory(item);
+      return { text: item.status === "unconfirmed" ? "Dropped. I won’t keep it." : "Forgotten, along with the lines it came from.", select: null };
+    }),
+  });
 
-  return (
-    <div
-      className="lg-slab lg-sweep group relative rounded-xl px-4 py-2.5 text-xs text-white/85"
-      style={{ "--sweep-x": "-130%" } as CSSProperties}
-      onMouseEnter={contextSafe((e: React.MouseEvent<HTMLDivElement>) => hoverLift(e.currentTarget, true, reduced))}
-      onMouseLeave={contextSafe((e: React.MouseEvent<HTMLDivElement>) => hoverLift(e.currentTarget, false, reduced))}
-    >
-      <span className="block pr-16">{line}</span>
-      <span className="absolute right-3 top-1/2 flex -translate-y-1/2 gap-1 opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <button onClick={() => setEditing(true)} className="btn-deck btn-ghost h-7 px-2" aria-label="edit">
-          <Pencil size={14} />
-        </button>
-        <button onClick={() => void onDelete()} className="btn-deck btn-danger h-7 px-2" aria-label="delete">
-          <Trash2 size={14} />
-        </button>
-      </span>
+  const section = isSection(view) ? SECTIONS.find((entry) => entry.id === view)! : null;
+  const count = (id: SectionId) => bySection.get(id)!.length;
+  const title = searching ? `Results for “${query.trim()}”` : section?.label ?? "";
+  const hint = searching ? hits ? `${hits.length} found, including older versions.` : "Searching…" : section?.hint ?? "";
+  const detailFor = (item: MemoryItem) => <Detail key={`${item.id}:${item.version}`} item={item} detail={detail?.record.id === item.id ? detail : null}
+    busy={busy} mode={mode?.id === item.id ? mode.kind : "view"} setMode={(kind) => setMode(kind === "view" ? null : { id: item.id, kind })}
+    actions={actions(item)} onOpenChat={onOpenChat} />;
+  const feed = (limit: number) => <Feed events={data?.events ?? []} limit={limit} known={known} onOpen={open} />;
+  const extra = !searching && !isSection(view) ? view : null;
+
+  return <section aria-label="Memory" className="ds-root ds-memory h-full overflow-y-auto bg-canvas text-ink">
+    <Atmosphere kind="nocturne" />
+    <div className="ds-memory-content">
+      <header className="ds-memory-header">
+        <div><h1>Memory</h1><p>{data ? `${data.counts.active} ${data.counts.active === 1 ? "thing" : "things"} I know about you, from what you told me.` : "Loading what I know…"}</p></div>
+        <label className="ds-memory-search"><Search size={16} aria-hidden />
+          <input type="search" value={query} placeholder="Search what AVA remembers" aria-label="Search what AVA remembers"
+            onChange={(event) => { setQuery(event.target.value); setSelectedId(null); setMode(null); }}
+            onKeyDown={(event) => { if (event.key === "Escape") setQuery(""); }} />
+        </label>
+      </header>
+      {data && !data.enabled && <p role="status" className="ds-memory-banner">The new memory is switched off, so I’m not using these right now.</p>}
+      {loadError && <div role="alert" className="ds-memory-banner"><span>{loadError}</span><button className="ds-focus ds-memory-button" onClick={() => void reload()}>Try again</button></div>}
+      <p className="ds-memory-notice" role={notice?.error ? "alert" : "status"} data-error={notice?.error ?? false}>{notice?.text}</p>
+      {compact && data && <div className="ds-memory-justnow">{feed(2)}</div>}
+      {narrow && <nav className="ds-memory-chips" aria-label="Memory sections">
+        {SECTIONS.map((entry) => <button key={entry.id} className="ds-focus" aria-label={`${entry.label}, ${count(entry.id)}`} aria-pressed={!searching && view === entry.id} onClick={() => go(entry.id)}>{entry.short}<span>{count(entry.id)}</span></button>)}
+        {EXTRAS.map((entry) => <button key={entry.id} className="ds-focus" aria-pressed={!searching && view === entry.id} onClick={() => go(entry.id)}>{entry.label}</button>)}
+      </nav>}
+      <div className="ds-memory-panel" aria-busy={!data}>
+        {!narrow && <nav className="ds-memory-rail" aria-label="Memory sections">
+          {SECTIONS.map((entry) => <button key={entry.id} className="ds-focus" aria-label={`${entry.label}, ${count(entry.id)}`} aria-pressed={!searching && view === entry.id} onClick={() => go(entry.id)}>{entry.label}<span>{count(entry.id)}</span></button>)}
+          <p className="ds-memory-rail-label">ALSO IN MEMORY</p>
+          {EXTRAS.map((entry) => <button key={entry.id} className="ds-focus" aria-pressed={!searching && view === entry.id} onClick={() => go(entry.id)}>{entry.label}</button>)}
+          <p className="ds-memory-rail-note">Or just tell me: “that’s wrong”, “stop bringing that up”, “forget that”. It changes straight away.</p>
+        </nav>}
+        {extra === "howtos" ? <HowTos compact={compact} onNotice={(text, error) => setNotice({ text, error })} />
+          : extra === "contacts" ? <Contacts compact={compact} />
+          : extra === "map" ? <Suspense fallback={<p role="status" className="ds-memory-map ds-memory-hint">Drawing the map…</p>}><MemoryMap records={data?.records ?? []} /></Suspense>
+          : <>
+            <section className="ds-memory-list" aria-label={title}>
+              <h2>{title}</h2>
+              <p className="ds-memory-hint">{hint}</p>
+              {data && !items.length && (!searching || hits) && <p className="ds-memory-empty">{searching ? "Nothing about that in my memory. Ask me by voice and I’ll look through our past conversations too." : section?.empty}</p>}
+              <ul>{items.map((item) => {
+                const on = item.id === selected?.id;
+                return <li key={item.id} className="ds-memory-item" data-selected={on} data-quiet={item.status === "history"}>
+                  <button className="ds-focus ds-memory-row" aria-pressed={on} onClick={() => { setSelectedId(compact && on ? null : item.id); setMode(null); }}>
+                    <span className="ds-memory-text">{item.text}</span>
+                    <span className="ds-memory-meta">{item.status === "history" ? `until ${item.validTo ? day(item.validTo) : "replaced"}` : `${who(item)} · ${day(item.saidAt)}`}
+                      {item.sensitive && <span className="ds-memory-tag">private</span>}
+                      {searching && item.status === "history" && <span className="ds-memory-tag" data-tone="quiet">old</span>}
+                      {searching && item.status === "unconfirmed" && <span className="ds-memory-tag" data-tone="quiet">waiting</span>}
+                      {item.status === "active" && !item.carry && <span className="ds-memory-tag" data-tone="quiet">only when asked</span>}
+                    </span>
+                  </button>
+                  {compact && on && <div className="ds-memory-inline">{detailFor(item)}</div>}
+                </li>;
+              })}</ul>
+            </section>
+            {!compact && <aside className="ds-memory-detail" aria-label="Selected memory">
+              {selected && <>
+                <p className="ds-memory-kicker">{selected.status === "history" ? "Older version" : selected.status === "unconfirmed" ? "Waiting for you" : "Selected"}</p>
+                <p className="ds-memory-big">{selected.text}</p>
+                <p className="ds-memory-meta">{who(selected)} · {day(selected.saidAt)}</p>
+                {detailFor(selected)}
+              </>}
+              {feed(5)}
+            </aside>}
+          </>}
+      </div>
     </div>
-  );
+  </section>;
 }
 
-function ObservationRow({ line, onEdit, onDelete }: {
-  line: MemoryView["observations"]["lines"][number];
-  onEdit: (s: string) => Promise<void>;
-  onDelete: () => Promise<void>;
+type Actions = { fix: (text: string) => void; carry: (carry: boolean) => void; keep: () => void; forget: () => void };
+
+/** Provenance, status and Niko's controls for one memory. Keyed by version, so a draft never outlives the text it edits. */
+function Detail({ item, detail, busy, mode, setMode, actions, onOpenChat }: {
+  item: MemoryItem; detail: MemoryDetail | null; busy: boolean; mode: "view" | "edit" | "confirm";
+  setMode: (mode: "view" | "edit" | "confirm") => void; actions: Actions; onOpenChat?: (sessionId: string) => void;
 }) {
-  const reduced = useReducedMotion();
-  const { contextSafe } = useGSAP();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(line.raw);
-
-  const color = CONF_COLOR[line.confidence];
-
-  if (editing) {
-    return (
-      <div className="flex gap-2">
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          rows={2}
-          className="flex-1 rounded-md border border-white/15 bg-white/[0.03] px-3 py-2 text-xs text-white focus:border-[rgba(92,242,255,0.4)] focus:outline-none"
-          autoFocus
-        />
-        <div className="flex flex-col gap-1">
-          <button onClick={async () => { setEditing(false); await onEdit(draft); }} className="btn-deck btn-primary h-8 px-2" aria-label="save">
-            <Check size={14} strokeWidth={2.5} />
-          </button>
-          <button onClick={() => { setEditing(false); setDraft(line.raw); }} className="btn-deck btn-ghost h-8 px-2" aria-label="cancel">
-            <X size={14} strokeWidth={2.5} />
-          </button>
+  const [draft, setDraft] = useState(item.text);
+  const waiting = item.status === "unconfirmed", history = item.status === "history";
+  const chain = detail?.chain ?? [];
+  const replacedBy = history ? chain.find((version) => version.id === item.supersededById) : undefined;
+  const before = chain.filter((version) => version.status === "history" && version.id !== item.supersededById && version.saidAt <= item.saidAt)
+    .sort((a, b) => b.saidAt - a.saidAt);
+  const text = draft.trim();
+  return <div className="ds-memory-body">
+    {item.status === "active" && <p className="ds-memory-status" data-carry={item.carry}><strong>{item.carry ? "Always in mind." : "Only when you ask."}</strong> {item.carry ? "I use this in every conversation." : "I keep it, but won’t bring it up myself."}</p>}
+    {waiting && <p className="ds-memory-status" data-carry="false"><strong>Not kept yet.</strong> I won’t use this until you say Keep.</p>}
+    {history && <p className="ds-memory-status">True until {item.validTo ? day(item.validTo) : "it was replaced"}.{!item.supersededById && " Nothing replaced it."}</p>}
+    {replacedBy && <><p className="ds-memory-kicker">Replaced by</p><p className="ds-memory-quote">{replacedBy.text}</p></>}
+    <p className="ds-memory-kicker">Where this came from</p>
+    {!detail ? <p role="status" className="ds-memory-meta">Finding the conversation…</p>
+      : detail.sources.length ? detail.sources.map((source) => <div key={source.id} className="ds-memory-quote">
+        <p><strong>{source.speaker === "niko" ? "You" : "AVA"}, {moment(source.at)}:</strong> “{source.text}”</p>
+        {onOpenChat && <button className="ds-focus ds-memory-link" onClick={() => onOpenChat(source.sessionId)}>Open conversation</button>}
+      </div>)
+      : <p className="ds-memory-meta">{item.origin === "explicit" ? "You wrote this yourself." : item.origin === "migration" ? "Carried over from my older memory." : "The conversation it came from isn’t available any more."}</p>}
+    {before.length > 0 && <><p className="ds-memory-kicker">Before</p>
+      <ul className="ds-memory-past">{before.map((version) => <li key={version.id}>Until {version.validTo ? day(version.validTo) : "replaced"}: {version.text}</li>)}</ul></>}
+    {mode === "edit" ? <form className="ds-memory-form" onSubmit={(event) => { event.preventDefault(); if (text && text !== item.text) actions.fix(text); }}>
+      <label className="ds-memory-kicker" htmlFor={`fix-${item.id}`}>Fix what I remember</label>
+      <textarea id={`fix-${item.id}`} className="ds-focus ds-memory-edit" value={draft} maxLength={600} autoFocus onChange={(event) => setDraft(event.target.value)} />
+      <div className="ds-memory-actions">
+        <button type="submit" className="ds-focus ds-memory-button" data-tone="solid" disabled={busy || !text || text === item.text}>{busy ? "Saving…" : "Save"}</button>
+        <button type="button" className="ds-focus ds-memory-button" disabled={busy} onClick={() => setMode("view")}>Cancel</button>
+      </div>
+    </form>
+      : mode === "confirm" ? <div className="ds-memory-confirm" role="group" aria-label={waiting ? "Confirm drop" : "Confirm forget"}>
+        <p>{waiting ? "Drop this? I won’t keep it, or learn it again from the same lines." : "Forget this for good? I also forget the lines it came from, and won’t learn it again from them."}</p>
+        <div className="ds-memory-actions">
+          <button className="ds-focus ds-memory-button" data-tone="danger" disabled={busy} onClick={actions.forget}>{busy ? "Working…" : waiting ? "Drop" : "Forget"}</button>
+          <button className="ds-focus ds-memory-button" disabled={busy} onClick={() => setMode("view")}>Keep it</button>
         </div>
       </div>
-    );
-  }
-
-  return (
-    <div
-      className="lg-slab lg-sweep group flex items-start gap-3 rounded-xl px-4 py-2.5 text-xs text-white/85"
-      style={{ "--sweep-x": "-130%" } as CSSProperties}
-      onMouseEnter={contextSafe((e: React.MouseEvent<HTMLDivElement>) => hoverLift(e.currentTarget, true, reduced))}
-      onMouseLeave={contextSafe((e: React.MouseEvent<HTMLDivElement>) => hoverLift(e.currentTarget, false, reduced))}
-    >
-      <span
-        className="mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full"
-        style={{ background: color, boxShadow: `0 0 6px ${color}` }}
-      />
-      <div className="min-w-0 flex-1">
-        <div className="leading-relaxed">{line.text}</div>
-        <div className="mt-1 hud text-[9px] tracking-[0.16em] text-white/35">{line.category} · {line.date}</div>
+      : waiting ? <div className="ds-memory-actions">
+        <button className="ds-focus ds-memory-button" data-tone="solid" disabled={busy} onClick={actions.keep}>Keep</button>
+        <button className="ds-focus ds-memory-button" data-tone="danger" disabled={busy} onClick={() => setMode("confirm")}>Drop</button>
       </div>
-      <span className="flex shrink-0 gap-1 opacity-40 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-        <button onClick={() => setEditing(true)} className="btn-deck btn-ghost h-7 px-2" aria-label="edit">
-          <Pencil size={14} />
-        </button>
-        <button onClick={() => void onDelete()} className="btn-deck btn-danger h-7 px-2" aria-label="delete">
-          <Trash2 size={14} />
-        </button>
-      </span>
-    </div>
-  );
+      : item.status === "active" ? <div className="ds-memory-actions">
+        <button className="ds-focus ds-memory-button" data-tone="solid" disabled={busy} onClick={() => setMode("edit")}>Fix</button>
+        <button className="ds-focus ds-memory-button" disabled={busy} onClick={() => actions.carry(!item.carry)}>{item.carry ? "Stop bringing up" : "Bring it up again"}</button>
+        <button className="ds-focus ds-memory-button" data-tone="danger" disabled={busy} onClick={() => setMode("confirm")}>Forget</button>
+      </div>
+      : null}
+  </div>;
 }
 
-/**
- * Custom project disclosure (replaces native <details>): a header button with a
- * MorphSVG chevron that morphs ▸↔▾ on toggle, with a Flip reflow of the siblings.
- * Same open/close semantics as the old <summary>. Reduced motion → instant swap.
- */
-function ProjectDisclosure({ slug, body }: { slug: string; body: string }) {
-  const reduced = useReducedMotion();
-  const [open, setOpen] = useState(false);
-  const chevronRef = useRef<SVGPathElement>(null);
-
-  useGSAP(() => {
-    const path = chevronRef.current;
-    if (!path) return;
-    const target = open ? CHEVRON_OPEN : CHEVRON_CLOSED;
-    if (reduced) { gsap.set(path, { attr: { d: target } }); return; }
-    gsap.to(path, { duration: 0.4, ease: EASE, morphSVG: target });
-  }, { dependencies: [open, reduced] });
-
-  return (
-    <div className="lg-slab overflow-hidden rounded-xl">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-white/85 transition-colors hover:text-white"
-        aria-expanded={open}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" className="shrink-0 text-[var(--ac)]" aria-hidden>
-          <path
-            ref={chevronRef}
-            d={CHEVRON_CLOSED}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <span className="truncate">{slug}</span>
-      </button>
-      {open && (
-        <pre className="ml-[1.85rem] mr-3 mb-2 whitespace-pre-wrap border-l border-[rgba(92,242,255,0.25)] pl-3 text-[11px] leading-relaxed text-white/60">
-          {body || "(empty)"}
-        </pre>
-      )}
-    </div>
-  );
+function Feed({ events, limit, known, onOpen }: { events: MemoryEvent[]; limit: number; known: Map<string, MemoryItem>; onOpen: (id: string) => void }) {
+  const shown = feedEvents(events).slice(0, limit);
+  return <section className="ds-memory-feed" aria-label="Just learned">
+    <p className="ds-memory-kicker">Just learned</p>
+    {shown.length ? <ul>{shown.map((event) => {
+      const line = <><span>{event.summary ?? "Something you asked me to forget"}</span><small>{VERB[event.action]} · {moment(event.createdAt)}</small></>;
+      return <li key={event.seq}>{event.summary && known.has(event.recordId)
+        ? <button className="ds-focus" onClick={() => onOpen(event.recordId)}>{line}</button> : <p>{line}</p>}</li>;
+    })}</ul> : <p className="ds-memory-meta">Nothing new yet.</p>}
+  </section>;
 }

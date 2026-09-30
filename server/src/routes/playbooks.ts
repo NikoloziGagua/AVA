@@ -1,5 +1,6 @@
 import { Router, type RequestHandler } from "express";
 import { listPlaybooks } from "../playbooks/store.js";
+import { isDemoted } from "../playbooks/match.js";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -16,7 +17,9 @@ export function playbooksRoutes(auth: RequestHandler, deps: PlaybooksRoutesDeps)
   const r = Router();
 
   r.get("/", auth, (_req, res) => {
+    // offered: false once AVA's own rules demoted it for failing, so recall no longer uses it.
     const books = listPlaybooks(deps.memoryDir)
+      .map((book) => ({ ...book, offered: !isDemoted(book) }))
       .sort((a, b) => b.uses - a.uses || b.last_used.localeCompare(a.last_used));
     res.json({ playbooks: books });
   });

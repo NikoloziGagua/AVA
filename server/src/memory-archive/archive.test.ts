@@ -156,3 +156,25 @@ describe("importing a reviewed archive", () => {
     live.close();
   });
 });
+
+describe("changes from the Memory tab", () => {
+  it("lists history newest first, and refuses to confirm or forget a version Niko has not seen", () => {
+    const { archive } = setup();
+    const first = archive.add(memory({ text: "Niko trains at the gym at 6 pm." }), "extractor");
+    const second = archive.add(memory({ text: "Niko trains at the gym at 7 pm.", saidAt: T0 + DAY }), "extractor");
+    const third = archive.add(memory({ text: "Niko trains at the gym at 8 pm.", saidAt: T0 + 2 * DAY }), "extractor");
+    if (!first.ok || !second.ok || !third.ok) throw new Error("setup failed");
+    expect(archive.history().map((record) => record.text)).toEqual(["Niko trains at the gym at 7 pm.", "Niko trains at the gym at 6 pm."]);
+    expect(archive.history(1)).toHaveLength(1);
+
+    const waiting = archive.add(memory({ topic: "salary", text: "Niko earns 30k.", status: "unconfirmed", sensitive: true }), "extractor");
+    if (!waiting.ok) throw new Error("setup failed");
+    expect(archive.confirm(waiting.record.id, "niko", null, { expectedVersion: 2 })).toMatchObject({ ok: false, reason: "stale" });
+    expect(archive.confirm(waiting.record.id, "niko", null, { expectedVersion: 1 })).toMatchObject({ ok: true, record: { status: "active" } });
+
+    expect(archive.forget(third.record.id, "niko", { expectedVersion: 7 })).toMatchObject({ ok: false, reason: "stale" });
+    expect(archive.get(third.record.id)).not.toBeNull();
+    expect(archive.forget(third.record.id, "niko", { expectedVersion: 1 })).toEqual({ ok: true, forgotten: 3 });
+    expect(archive.history()).toEqual([]);
+  });
+});

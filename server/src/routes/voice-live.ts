@@ -350,7 +350,8 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
   // background writer's changes reach the next session through the Brief.
   let lastForgetNote = 0;
   const stopMemoryUpdates = ctx.memoryArchive?.subscribe((change) => {
-    if (closed || change.actor !== "niko" || !sessionId || change.sessionId !== sessionId) return;
+    // Sir's own changes: said in this call, or made in the Memory tab (no conversation).
+    if (closed || change.actor !== "niko" || !sessionId || (change.sessionId !== sessionId && change.sessionId !== null)) return;
     if (change.action === "forgotten") {
       if (Date.now() - lastForgetNote < 2_000) return; // one note for all erased versions
       lastForgetNote = Date.now();

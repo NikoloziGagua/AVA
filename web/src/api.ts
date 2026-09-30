@@ -1247,6 +1247,8 @@ export type PlaybookRow = {
   fail: number;
   avg_secs: number;
   lessons: string[];
+  /** False once AVA's own rules stopped offering it because it kept failing. */
+  offered?: boolean;
   learning?: {
     verified: number;
     partially_verified: number;
@@ -1264,6 +1266,10 @@ export type PlaybookRow = {
 export async function fetchPlaybooks(): Promise<PlaybookRow[]> {
   const j = await request<{ playbooks: PlaybookRow[] }>("/api/playbooks");
   return j.playbooks ?? [];
+}
+
+export async function deletePlaybook(slug: string): Promise<void> {
+  await request<{ deleted: string }>(`/api/playbooks/${encodeURIComponent(slug)}`, { method: "DELETE" });
 }
 
 export type WatchRow = {

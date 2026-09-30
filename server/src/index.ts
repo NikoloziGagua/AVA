@@ -33,6 +33,7 @@ import { agentroomRoutes } from "./routes/agentroom.js";
 import { chipsRoutes } from "./routes/chips.js";
 import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
+import { memoryArchiveRoutes } from "./routes/memory-archive.js";
 import { notesRoutes } from "./routes/notes.js";
 import { calendarRoutes } from "./routes/calendar.js";
 import { uiPreferencesRoutes } from "./routes/ui-preferences.js";
@@ -824,6 +825,7 @@ app.use("/api/chips", chipsRoutes(db, requireToken(db), { memoryDir: cfg.memoryD
 app.use("/api/reasoning", reasoningRoutes(db, requireToken(db), {
   supported: provider?.name === "openai",
 }));
+app.use("/api/memory/archive", memoryArchiveRoutes(requireToken(db), { db, archive: memoryArchive }));
 app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir, index: memoryIndex }));
 app.use("/api/notes", notesRoutes(db, requireToken(db), { queueSelfImprove }));
 app.use("/api/calendar", calendarRoutes(db, requireToken(db)));

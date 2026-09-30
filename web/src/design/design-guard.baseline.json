@@ -29,7 +29,10 @@
     "orbit/ChatListScreen.tsx",
     "voice/HoldToTalkButton.tsx",
     "voice/VoiceExactTextDialog.tsx",
-    "voice/VoiceScreen.tsx"
+    "voice/VoiceScreen.tsx",
+    "memory/MemoryScreen.tsx",
+    "memory/MemoryExtras.tsx",
+    "memory/MemoryMap.tsx"
   ],
   "files": {
     "App.tsx": {
@@ -171,11 +174,6 @@
       "tinyText": 15,
       "rawColour": 3,
       "backdrop": 0
-    },
-    "memory/MemoryScreen.tsx": {
-      "tinyText": 14,
-      "rawColour": 19,
-      "backdrop": 1
     },
     "memory/PeopleSection.tsx": {
       "tinyText": 5,

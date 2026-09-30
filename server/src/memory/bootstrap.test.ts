@@ -34,9 +34,9 @@ describe("bootstrapMemoryDir", () => {
 
   it("PERSONALITY_MD byte length is pinned (drift detection)", () => {
     const bytes = Buffer.byteLength(PERSONALITY_MD, "utf8");
-    // Persona 3.1 adds "Care and curiosity" (Niko, 2026-09-27). Tool authority
-    // remains a separate prompt layer. 30 Sep: "gym or jiu-jitsu", not running.
-    expect(bytes).toBe(8177);
+    // Persona 3.2 integrates active care, reflection and practical accountability.
+    // Authority remains a separate layer; both shipped 3.1 defaults stay migratable.
+    expect(bytes).toBe(9668);
   });
 
   it.each(PREVIOUS_PERSONALITY_TEMPLATES.map((template, index) => [index, template] as const))(
@@ -64,7 +64,7 @@ describe("bootstrapMemoryDir", () => {
     expect(PERSONALITY_MD).not.toContain("right hand on his Windows PC");
   });
 
-  it("cares and follows up without presuming what happened (persona 3.1)", () => {
+  it("cares and follows up without presuming what happened (persona 3.2)", () => {
     expect(PERSONALITY_MD).toContain("## Care and curiosity");
     const flat = PERSONALITY_MD.replace(/\s+/g, " ");
     expect(flat).toContain("A plan is not proof that something happened");

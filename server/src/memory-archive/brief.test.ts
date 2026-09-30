@@ -36,7 +36,11 @@ describe("memory brief", () => {
         record({ id: "g", kind: "fact", text: "Hidden.", carry: false }),
         record({ id: "h", kind: "fact", text: "Waiting.", status: "unconfirmed" }),
       ],
-      ended: [record({ id: "i", kind: "project", text: "Calendar and Notes are the priorities.", status: "history", validTo: NOW - 2 * DAY })],
+      ended: [
+        record({ id: "i", kind: "project", text: "Calendar and Notes are the priorities.", status: "history", validTo: NOW - 2 * DAY }),
+        record({ id: "j", kind: "fact", text: "Agile Development is one of his courses.", status: "history", validTo: NOW - DAY, supersededById: "b" }),
+        record({ id: "k", kind: "project", text: "The frontend remodel is the priority.", status: "history", validTo: NOW - 3 * DAY, supersededById: "i" }),
+      ],
     });
     expect(text.indexOf("## About Niko")).toBeLessThan(text.indexOf("## Decisions he made"));
     expect(text.indexOf("## Decisions he made")).toBeLessThan(text.indexOf("## How he wants me to work"));
@@ -45,7 +49,10 @@ describe("memory brief", () => {
     expect(text).toContain("whether it happened is unknown");
     expect(text).toContain("Dentist. (he said, 28 Sep; due 1 Oct");
     expect(text).toContain("- Until 27 Sep: Calendar and Notes are the priorities. (no longer current)");
-    for (const hidden of ["An old event.", "Hidden.", "Waiting."]) expect(text).not.toContain(hidden);
+    // A replaced priority stays in view, before the later change; an older version of a fact does not.
+    expect(text).toContain("- Until 26 Sep: The frontend remodel is the priority. (replaced since)");
+    expect(text.indexOf("frontend remodel")).toBeLessThan(text.indexOf("Until 27 Sep"));
+    for (const hidden of ["An old event.", "Hidden.", "Waiting.", "Agile Development is one of his courses."]) expect(text).not.toContain(hidden);
   });
 
   it("drops the least useful lines first and says how many are hidden", () => {

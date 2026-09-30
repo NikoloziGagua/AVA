@@ -22,7 +22,7 @@ import { retrieveAutomaticMemory } from "../src/memory-index/auto-retrieve.js";
 import { MemoryArchive } from "../src/memory-archive/archive.js";
 import { writeBrief } from "../src/memory-archive/brief.js";
 import { dublinStamp } from "../src/memory-archive/extractor.js";
-import { formatRecall, recall } from "../src/memory-archive/recall.js";
+import { formatRecall, recall, recallIdeas } from "../src/memory-archive/recall.js";
 
 type Item = { id: string; cat: string; q: string; a: string; not?: string[]; ask?: string; asOf?: string };
 type Variant = "old/prompt" | "old/auto" | "new/brief" | "new/recall";

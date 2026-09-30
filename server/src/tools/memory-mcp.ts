@@ -617,7 +617,7 @@ export function buildMemoryTools(deps: MemoryToolDeps): ToolDef[] {
   // (two writable stores is how a forget left a live copy behind).
   if (memoryV2Enabled() && deps.archive && deps.db) {
     return [
-      ...buildMemoryArchiveTools({ db: deps.db, archive: deps.archive, memoryDir: deps.memoryDir, sessionId: deps.sessionId }),
+      ...buildMemoryArchiveTools({ db: deps.db, archive: deps.archive, memoryDir: deps.memoryDir, sessionId: deps.sessionId, index: deps.index }),
       ...buildMemoryIndexTools(deps),
     ];
   }

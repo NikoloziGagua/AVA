@@ -1,4 +1,5 @@
 import type { Db } from "../state/db.js";
+import type { MemoryIndexService } from "../memory-index/store.js";
 import { ftsQuery, type MemoryArchive } from "./archive.js";
 import { AUTOMATION_TEXT, dublinStamp } from "./extractor.js";
 import type { MemoryKind, MemoryRecord } from "./types.js";
@@ -93,9 +94,29 @@ function provenance(record: MemoryRecord): string {
   return record.status === "unconfirmed" ? `${when}; not confirmed by Niko` : when;
 }
 
+export type RecalledIdea = { kind: string; title: string; summary: string; savedAt: number };
+
+/**
+ * Ideas and research saved in the older idea index (summaries of developed
+ * discussions). Keyword-only, never the development log, and only entries
+ * whose source conversation still verifies.
+ */
+export async function recallIdeas(index: MemoryIndexService, query: string, limit = 3): Promise<RecalledIdea[]> {
+  try {
+    const response = await index.search(query, {
+      limit, latestOnly: true, semantic: false, excludeKinds: ["improvement", "artifact"],
+    });
+    return response.results.filter((result) => result.usable).map((result) => ({
+      kind: result.entry.kind, title: result.entry.title, summary: result.entry.summary, savedAt: result.entry.createdAt,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /** The recall result as the model reads it: dated, attributed, sources quoted. */
-export function formatRecall(result: ReturnType<typeof recall>): string {
-  if (!result.memories.length && !result.messages.length) {
+export function formatRecall(result: ReturnType<typeof recall>, ideas: RecalledIdea[] = []): string {
+  if (!result.memories.length && !result.messages.length && !ideas.length) {
     return "Nothing in memory or past conversations matches. Say plainly that I don't know, and ask Niko if it matters.";
   }
   const parts: string[] = [];
@@ -104,6 +125,13 @@ export function formatRecall(result: ReturnType<typeof recall>): string {
     for (const memory of result.memories) {
       parts.push(`- [${memory.record.id}${memory.record.status === "history" ? ", history" : ""}] ${memory.record.text} (${provenance(memory.record)})`);
       for (const source of memory.sources) parts.push(`    source #${source.messageId}, ${source.speaker}, ${dublinStamp(source.at)}: "${source.excerpt}"`);
+    }
+  }
+  if (ideas.length) {
+    parts.push("SAVED IDEAS AND RESEARCH (summaries saved at the time; a newer memory above wins):");
+    for (const idea of ideas) {
+      const summary = idea.summary.length > 400 ? `${idea.summary.slice(0, 397)}...` : idea.summary;
+      parts.push(`- [${idea.kind}, saved ${dublinStamp(idea.savedAt)}] ${idea.title}: ${summary}`);
     }
   }
   if (result.messages.length) {

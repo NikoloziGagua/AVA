@@ -3,7 +3,8 @@ import type { Db } from "../state/db.js";
 import type { MemoryArchive } from "../memory-archive/archive.js";
 import { readBrief } from "../memory-archive/brief.js";
 import { dublinDue, dublinStamp } from "../memory-archive/extractor.js";
-import { formatRecall, recall } from "../memory-archive/recall.js";
+import { formatRecall, recall, recallIdeas } from "../memory-archive/recall.js";
+import type { MemoryIndexService } from "../memory-index/store.js";
 import { MEMORY_KINDS, type MemoryKind, type MemoryRecord, type MemoryWriteResult } from "../memory-archive/types.js";
 
 // Memory v2 tools: what the agent calls when Niko says "remember", "that's
@@ -16,6 +17,8 @@ export type MemoryArchiveToolDeps = {
   archive: MemoryArchive;
   memoryDir: string;
   sessionId?: string | null;
+  /** The older idea index: developed ideas and research summaries, searched by recall. */
+  index?: MemoryIndexService;
 };
 
 function kindOf(value: unknown): MemoryKind | null {
@@ -83,7 +86,8 @@ export function buildMemoryArchiveTools(deps: MemoryArchiveToolDeps): ToolDef[] 
           const at = Date.parse(`${value}T${end ? "23:59:59" : "00:00:00"}Z`);
           return Number.isFinite(at) ? at : undefined;
         };
-        return { ok: true, text: formatRecall(recall(deps.db, deps.archive, query, { from: day(args.from, false), to: day(args.to, true) })) };
+        const ideas = deps.index ? await recallIdeas(deps.index, query) : [];
+        return { ok: true, text: formatRecall(recall(deps.db, deps.archive, query, { from: day(args.from, false), to: day(args.to, true) }), ideas) };
       },
     },
     {

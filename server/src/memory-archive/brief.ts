@@ -90,9 +90,17 @@ export function renderBrief(input: { current: MemoryRecord[]; ended: MemoryRecor
       entries.push({ section: title, text: line(record, now), priority, order: order++ });
     }
   }
-  const changed = input.ended
+  const recent = input.ended
     .filter((record) => record.carry && record.validTo !== null && now - record.validTo <= RECENT_DAYS * DAY_MS)
     .filter((record) => record.kind !== "event");
+  // What stopped being true is worth keeping in view, so an old version found
+  // elsewhere isn't taken as current. An older version of a fact adds nothing
+  // (its replacement is listed above); a replaced priority or decision does,
+  // so the last two stay.
+  const changed = [
+    ...recent.filter((record) => !record.supersededById),
+    ...recent.filter((record) => record.supersededById && (record.kind === "project" || record.kind === "decision")).slice(-2),
+  ].sort((a, b) => a.validTo! - b.validTo!);
   for (const record of changed) {
     const how = record.supersededById ? "replaced since" : "no longer current";
     entries.push({

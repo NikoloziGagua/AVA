@@ -115,3 +115,20 @@ describe("memory v2 tools", () => {
     expect(names()).toEqual(expect.arrayContaining(["memory_recall", "memory_list", "memory_remember", "memory_correct", "memory_forget", "memory_stop_carrying", "memory_read"]));
   });
 });
+
+describe("memory recall with the idea index", () => {
+  it("adds saved ideas, dated, after the archive's own memories", async () => {
+    const { MemoryIndexService } = await import("../memory-index/store.js");
+    const { recallIdeas, formatRecall, recall } = await import("../memory-archive/recall.js");
+    const db = openInMemoryDb();
+    const index = new MemoryIndexService(db, null);
+    const archive = new MemoryArchive(db, () => T0);
+    const ideas = await recallIdeas(index, "project workspaces");
+    expect(ideas).toEqual([]);
+    const text = formatRecall(recall(db, archive, "project workspaces"), [
+      { kind: "idea", title: "Connected intelligence stack", summary: "Niko favored project workspaces.", savedAt: T0 },
+    ]);
+    expect(text).toContain("SAVED IDEAS AND RESEARCH");
+    expect(text).toContain("[idea, saved Thu 24 Sep 2026 14:00] Connected intelligence stack: Niko favored project workspaces.");
+  });
+});

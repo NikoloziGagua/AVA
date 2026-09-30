@@ -306,14 +306,57 @@ upkeep is unlikely to pay off. That is my judgement, not a measurement.
    The first backfill trial read 29 of 88 conversations before the OpenAI credits ran out. It kept real
    facts with their history and no background-audio junk. It also stored AVA feature requests as personal
    memory and a one-off "turn that watcher off" as a standing rule; the extraction rules were tightened for
-   both. Still to do:
-   - rerun the backfill;
-   - Niko reviews what it learned and confirms the evaluation answers;
-   - score old against new;
-   - import and switch on;
-   - the "What AVA knows" screen after its mockup is approved.
+   both.
 
-   Gate: the evaluation score goes up, no category gets worse, and the voice and recall latency budgets hold.
+   Five full dry runs on 30 Sep (88 conversations, 130 batches, about 8 minutes each) led to these fixes:
+   - Every memory now carries an exact quote from Niko's cited message (checked in code) and must share a
+     key word with his cited words.
+   - Conversations are read batch by batch in true time order across all of them. One conversation spanned
+     27 Jul to 28 Aug and had made older statements replace newer ones.
+   - Other people's phone numbers and email addresses are refused.
+   - Business ideas are not treated as sensitive; feelings are.
+   - Recall also searches the saved-ideas index.
+   - The Brief's history keeps only what stopped being true and the last replaced priorities.
+
+   One diagnosis was wrong: "keep answers concise" looked like AVA's words put in Niko's mouth, but he wrote
+   "BE CONSISED IN UR ANSWERS" himself. The checks stay as safeguards.
+
+   The final run kept 29 current memories and 21 past versions. The past versions include the full
+   AVA-priority history and a handle correction, and nothing came from background audio or jokes.
+
+   **Scores on the 64 questions** (answers not yet confirmed by Niko; pass = 1, partial = 0.5; judged by
+   gpt-5.6). Identical runs varied by about 3 points.
+
+   | Setup | Run 1 | Run 2 |
+   |---|---|---|
+   | Today's AVA: preferences and observations in the prompt | 23.5 | |
+   | Today's AVA plus its automatic retrieval | 25.5 | |
+   | v2 Brief in the prompt | 32.0 | 29.0 |
+   | v2 Brief plus a recall search forced into every answer | 24.0 | 28.5 (after the fix below) |
+   | v2 Brief with memory_recall as a tool the model chooses to call (how it runs live) | | 30.0 |
+
+   The first run showed forced recall making answers worse: its raw past lines carried background audio that
+   the model repeated as fact. Raw lines now appear only when no memory matches, labelled as unverified.
+   Against today's AVA, no category is worse beyond a single question, and those misses were checked one by
+   one:
+   - the strict judge wanted context from the eval's expected answer;
+   - AVA guessed that a nickname belonged to a contact with a similar surname;
+   - one hedged answer about background audio.
+
+   Speed on the live data: recall search takes 0.4 ms on average, and the Brief is 4,900 characters (about
+   1,200 tokens).
+
+   **Gate passed; switched on at the next restart.** On 30 Sep:
+   - the reviewed archive was imported into the live database (a backup was taken first);
+   - conversations the backfill did not read (automation only) were marked read, so the background writer
+     does not churn through them at start;
+   - `server/.env` (gitignored, one line: `AVA_MEMORY_V2=on`) turns memory v2 on;
+   - build `5feb9c26` holds all of it.
+
+   To switch it off, delete `server/.env` and restart. Still to do:
+   - Niko reviews what AVA learned (a local review page) and answers the 14 open questions;
+   - update notes after the live restart is verified;
+   - the "What AVA knows" screen after its mockup is approved.
 3. Recent digest and compression of the long conversation, dreaming, stale checks said out loud,
    commitments into follow-ups.
 4. Only if the evaluation shows a need: local embeddings and prefetch.

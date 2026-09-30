@@ -86,7 +86,7 @@ describe("memory extraction rules", () => {
     applyOperations(archive, [
       op({ kind: "commitment", topic: "knee appointment", text: "Niko has a doctor's appointment about his knee on 26 Sep at 15:00.",
         speechAct: "requested", sensitive: true, sourceMessageIds: [3], evidence: "a doctor's appointment about my knee", due: "2026-09-26T15:00" }),
-      op({ topic: "guess", text: "Niko might like tennis.", confidence: "low", sourceMessageIds: [3], evidence: "appointment about my knee on Friday" }),
+      op({ topic: "guess", text: "Niko may have a knee injury.", confidence: "low", sourceMessageIds: [3], evidence: "appointment about my knee on Friday" }),
     ], { batch, sessionId: "s1", origin: "conversation", actor: "extractor" });
     const waiting = archive.unconfirmed();
     expect(waiting.map((record) => record.topic)).toEqual(["knee appointment", "guess"]);
@@ -198,5 +198,45 @@ describe("memory extractor", () => {
     await expect(extractor.extractSession("chat")).rejects.toThrow(/expected JSON/);
     expect(extractor.processedThrough("chat")).toBe(0);
     expect(db.prepare("SELECT status FROM memory_extraction_runs").get()).toEqual({ status: "failed" });
+  });
+});
+
+describe("provenance and ordering", () => {
+  it("demands that the quote is about the memory, not just any line of Niko's", async () => {
+    const { quoteSupports } = await import("./extractor.js");
+    expect(quoteSupports("Don't set a watcher yet", "Niko wants AVA to keep its answers concise.")).toBe(false);
+    expect(quoteSupports("I like to be alone", "Niko likes to be alone.")).toBe(true);
+    expect(quoteSupports("My moms name is teo remember that", "Niko's mother's name is Teo.")).toBe(true);
+    expect(quoteSupports("I am indeed Georgian", "Niko is Georgian.")).toBe(true);
+  });
+
+  it("files an older statement that arrives late as history, never over a newer one", () => {
+    const archive = new MemoryArchive(openInMemoryDb(), () => T0 + 60 * MIN);
+    const newer = archive.add({ kind: "project", topic: "AVA priorities", text: "Memory is the top AVA priority.",
+      speechAct: "decided", confidence: "high", origin: "backfill", saidAt: T0 + 30 * MIN }, "backfill");
+    if (!newer.ok) throw new Error("setup failed");
+    const late = [msg(3, "user", "the visual explanations should be native in chat, that's the priority now")];
+    const outcome = applyOperations(archive, [op({ op: "update", targetId: newer.record.id, kind: "project", topic: "AVA priorities",
+      text: "Native in-chat visual explanations are the top AVA priority.", sourceMessageIds: [3], evidence: "visual explanations should be native in chat" })],
+      { batch: late, sessionId: "s1", origin: "backfill", actor: "backfill" });
+    expect(outcome.applied.map((item) => item.result)).toEqual(["added"]);
+    expect(archive.current().map((record) => record.text)).toEqual(["Memory is the top AVA priority."]);
+    expect(archive.chain(newer.record.id).map((record) => [record.status, record.saidAt])).toEqual([
+      ["history", T0 + 3 * MIN], ["active", T0 + 30 * MIN],
+    ]);
+  });
+
+  it("reads several conversations in true time order across all of them", async () => {
+    const db = openInMemoryDb();
+    seedSession(db, "long", [[1, "user", "first in long"], [5, "user", "later in long"]]);
+    seedSession(db, "short", [[3, "user", "middle in short"]]);
+    const seen: number[][] = [];
+    const model: ExtractionModel = { name: "fake", run: async ({ user }) => {
+      seen.push([...user.split("NEW MESSAGES")[1]!.matchAll(/#(\d+) /g)].map((m) => Number(m[1])));
+      return JSON.stringify({ operations: [] });
+    } };
+    const extractor = new MemoryExtractor(db, new MemoryArchive(db), model, { origin: "backfill", actor: "backfill", batchMessages: 1 });
+    await extractor.extractChronologically([{ id: "long", title: "long" }, { id: "short", title: "short" }]);
+    expect(seen).toEqual([[1], [3], [5]]);
   });
 });

@@ -56,18 +56,22 @@ async function main() {
   const skipped: SkippedOperation[] = [];
   let batches = 0, proposed = 0, applied = 0;
   let failure: string | null = null;
-  for (const [i, session] of sessions.entries()) {
-    try {
-      const report = await extractor.extractSession(session.id, { title: session.title });
-      batches += report.batches; proposed += report.proposed; applied += report.applied.length;
-      skipped.push(...report.skipped);
-      console.log(`${i + 1}/${sessions.length} ${new Date(session.firstAt).toISOString().slice(0, 10)} batches ${report.batches}, proposed ${report.proposed}, applied ${report.applied.length}`);
-    } catch (error) {
-      // Progress is saved per batch: a rerun continues from here. Still write the report.
-      failure = `stopped at conversation ${i + 1}/${sessions.length}: ${error instanceof Error ? error.message : String(error)}`;
-      console.error(failure);
-      break;
-    }
+  let done = 0;
+  try {
+    // True time order across all conversations: a conversation that spans
+    // weeks can't make older statements arrive after newer ones.
+    const report = await extractor.extractChronologically(sessions, {
+      onBatch: (_sessionId, batch) => {
+        done += 1;
+        if (batch.proposed || done % 10 === 0) console.log(`batch ${done}: proposed ${batch.proposed}, applied ${batch.applied.length}`);
+      },
+    });
+    batches = report.batches; proposed = report.proposed; applied = report.applied.length;
+    skipped.push(...report.skipped);
+  } catch (error) {
+    // Progress is saved per batch: a rerun continues from here. Still write the report.
+    failure = `stopped after ${done} batches: ${error instanceof Error ? error.message : String(error)}`;
+    console.error(failure);
   }
   const now = Date.now();
   const all = db.prepare("SELECT id FROM memory_records ORDER BY said_at, seq").all() as Array<{ id: string }>;

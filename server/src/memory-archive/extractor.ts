@@ -124,7 +124,7 @@ KINDS
 - project: one of his projects or businesses, its current state or focus, and what his priorities are right now.
 - decision: something Niko decided, with his reason if he gave one. Not something merely suggested or discussed.
 - commitment: something Niko will do or must do by a time (deadline, appointment, plan). A deadline passing never means it was done.
-- preference: a standing rule for how Niko wants AVA to behave or do things. An instruction for one task only ("don't use a watcher for this, do it yourself", "turn that watcher off") is not a standing preference: requests about one specific watcher, chat, file or task are one-offs.
+- preference: a standing rule for how Niko wants AVA to behave or do things. An instruction for one task only ("don't use a watcher for this, do it yourself", "turn that watcher off") is not a standing preference: requests about one specific watcher, chat, file or task are one-offs, and so is how to handle one night's job ("check the Claude session every 7-8 minutes tonight").
 - event: something that happened to Niko that he may refer to later, with its date.
 
 SPEECH ACTS
@@ -142,7 +142,7 @@ DO NOT STORE
 - "Forget about that for now" means drop the topic. It never asks for a memory to be erased.
 
 SENSITIVE (set sensitive=true)
-Health, money and finances, gambling, sex life, religion, politics, ethnicity or national origin, legal trouble, and other people's private matters. Output them anyway when they meet the bar above; unless Niko explicitly asked AVA to remember, they wait for his confirmation instead of becoming memory.
+Health, personal finances (income, debts, what he can afford), gambling, sex life, religion, politics, ethnicity or national origin, feelings and emotional states, legal trouble, and other people's private matters. His projects and business ideas are not sensitive. Output them anyway when they meet the bar above; unless Niko explicitly asked AVA to remember, they wait for his confirmation instead of becoming memory.
 
 WRITING EACH MEMORY
 - text: one or two plain sentences in the third person that stand on their own, e.g. "Niko's mother's name is Teo." Resolve relative dates ("tomorrow", "Friday", "next week") to absolute dates using the message time; all times are Europe/Dublin.
@@ -279,6 +279,25 @@ export function quoteFound(evidence: string, messages: ConversationMessage[]): b
   return messages.some((message) => comparable(message.content).includes(quote));
 }
 
+const COMMON_WORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "you", "your", "are", "was", "were", "have", "has", "had", "not",
+  "but", "can", "will", "would", "should", "want", "wants", "like", "just", "about", "from", "into", "what",
+  "when", "they", "them", "his", "her", "him", "she", "our", "out", "all", "any", "also", "then", "than",
+  "ava", "niko", "sir", "yes", "yeah", "okay", "please", "don", "dont", "really", "very", "much", "some",
+]);
+
+function contentWords(text: string): Set<string> {
+  return new Set(comparable(text).split(" ")
+    .map((word) => word.replace(/(?:'s|s)$/, ""))
+    .filter((word) => word.length >= 3 && !COMMON_WORDS.has(word)));
+}
+
+/** The quote must be about the memory: at least one real word in common. */
+export function quoteSupports(evidence: string, memoryText: string): boolean {
+  const memory = contentWords(memoryText);
+  return [...contentWords(evidence)].some((word) => memory.has(word));
+}
+
 export type AppliedOperation = { op: ProposedOperation; result: "added" | "replaced" | "ended" | "forgotten" | "unchanged" | "confirmed" };
 export type SkippedOperation = { op: ProposedOperation; why: string };
 
@@ -311,6 +330,10 @@ export function applyOperations(
     // ("I'll keep my answers concise") becoming Niko's preference.
     const quoteSources = (needsNiko ? nikoSources : sources).map((id) => byId.get(id)!);
     if (!quoteFound(op.evidence, quoteSources)) { skipped.push({ op, why: "evidence quote not found in the cited words" }); continue; }
+    if ((op.op === "add" || op.op === "update") && !quoteSupports(op.evidence, `${op.text} ${op.topic}`)) {
+      skipped.push({ op, why: "evidence quote does not support the memory" });
+      continue;
+    }
     const nikoText = nikoSources.map((id) => byId.get(id)!.content).join("\n");
     const speechAct: SpeechAct = op.speechAct === "requested" && !REMEMBER_REQUEST.test(nikoText) ? "stated" : op.speechAct;
     const saidAt = Math.max(...(nikoSources.length ? nikoSources : sources).map((id) => byId.get(id)!.createdAt));
@@ -337,7 +360,9 @@ export function applyOperations(
       saidAt, sensitive: op.sensitive, sourceSessionId: input.sessionId, sourceMessageIds: sources,
       dueAt: op.kind === "commitment" ? dublinDue(op.due) : null,
     };
-    if (op.op === "update" && target && target.status !== "history" && !waits) {
+    // Older news that arrives late never replaces something said later: it
+    // goes through add(), which files it into history on the same topic.
+    if (op.op === "update" && target && target.status !== "history" && !waits && target.saidAt <= saidAt) {
       const result = archive.correct(target.id, { ...memory, topic: op.topic || target.topic }, input.actor, input.sessionId);
       if (result.ok) applied.push({ op, result: result.outcome === "unchanged" ? "unchanged" : "replaced" });
       else skipped.push({ op, why: result.message });
@@ -453,6 +478,36 @@ export class MemoryExtractor {
     this.db.prepare(`INSERT INTO memory_extraction_state (session_id, through_message_id, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(session_id) DO UPDATE SET through_message_id = excluded.through_message_id, updated_at = excluded.updated_at
       WHERE excluded.through_message_id > memory_extraction_state.through_message_id`).run(sessionId, messageId, this.now());
+  }
+
+  /**
+   * Reads several conversations batch by batch in true time order across all
+   * of them, so a long conversation that spans weeks can't make older
+   * statements arrive after newer ones. The backfill uses this.
+   */
+  async extractChronologically(
+    sessions: Array<{ id: string; title: string }>,
+    opts: { signal?: AbortSignal; onBatch?: (sessionId: string, report: ExtractionReport) => void } = {},
+  ): Promise<ExtractionReport> {
+    const total: ExtractionReport = { batches: 0, proposed: 0, applied: [], skipped: [], throughMessageId: null };
+    const titles = new Map(sessions.map((session) => [session.id, session.title]));
+    for (;;) {
+      if (opts.signal?.aborted) break;
+      let next: { id: string; at: number } | null = null;
+      for (const session of sessions) {
+        const first = this.db.prepare(`SELECT created_at FROM messages WHERE session_id = ? AND id > ?
+          AND role IN ('user', 'assistant') ORDER BY id LIMIT 1`).get(session.id, this.processedThrough(session.id)) as { created_at: number } | undefined;
+        if (first && (!next || first.created_at < next.at)) next = { id: session.id, at: first.created_at };
+      }
+      if (!next) break;
+      const report = await this.extractSession(next.id, { title: titles.get(next.id), maxBatches: 1, signal: opts.signal });
+      total.batches += report.batches;
+      total.proposed += report.proposed;
+      total.applied.push(...report.applied);
+      total.skipped.push(...report.skipped);
+      opts.onBatch?.(next.id, report);
+    }
+    return total;
   }
 
   async extractSession(sessionId: string, opts: { title?: string; maxBatches?: number; signal?: AbortSignal } = {}): Promise<ExtractionReport> {

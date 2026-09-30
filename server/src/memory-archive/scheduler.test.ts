@@ -19,7 +19,7 @@ describe("memory extraction scheduler", () => {
     const run = vi.fn(async () => {
       if (fail) throw new Error("upstream unavailable");
       return JSON.stringify({ operations: [{ op: "add", target_id: null, kind: "fact", topic: "training", text: "Niko trains jiu-jitsu on Tuesdays.",
-        speech_act: "stated", sensitive: false, confidence: "high", source_message_ids: [1], due: null, reason: "routine" }] });
+        speech_act: "stated", sensitive: false, confidence: "high", source_message_ids: [1], evidence: "I train jiu-jitsu on Tuesdays", due: null, reason: "routine" }] });
     });
     const model: ExtractionModel = { name: "fake", run };
     const archive = new MemoryArchive(db, () => now);

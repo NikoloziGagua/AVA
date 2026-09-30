@@ -19,7 +19,7 @@ const MIN = 60_000;
 function op(over: Partial<ProposedOperation>): ProposedOperation {
   return {
     op: "add", targetId: null, kind: "fact", topic: "mother's name", text: "Niko's mother's name is Teo.",
-    speechAct: "stated", sensitive: false, confidence: "high", sourceMessageIds: [2], due: null, reason: "family", ...over,
+    speechAct: "stated", sensitive: false, confidence: "high", sourceMessageIds: [2], evidence: "moms name is teo", due: null, reason: "family", ...over,
   };
 }
 
@@ -51,7 +51,7 @@ describe("memory extraction rules", () => {
     const { applied, skipped } = applyOperations(archive, [
       op({ speechAct: "requested" }),
       op({ topic: "payments", text: "Niko chose Stripe.", speechAct: "decided", sourceMessageIds: [4] }),
-      op({ kind: "decision", topic: "payment provider", text: "AVA recommended Stripe over Adyen for a small start; Niko did not decide.", speechAct: "discussed", sourceMessageIds: [4] }),
+      op({ kind: "decision", topic: "payment provider", text: "AVA recommended Stripe over Adyen for a small start; Niko did not decide.", speechAct: "discussed", sourceMessageIds: [4], evidence: "Stripe is the better choice over Adyen" }),
       op({ topic: "shipping", text: "Niko wants everything shipped.", sourceMessageIds: [5] }),
       op({ topic: "old", text: "Something from context.", sourceMessageIds: [99] }),
     ], { batch, sessionId: "s1", origin: "conversation", actor: "extractor" });
@@ -64,12 +64,29 @@ describe("memory extraction rules", () => {
     ]);
   });
 
+  it("rejects a memory whose quote is AVA's words or appears nowhere, even when Niko's message is cited", () => {
+    const archive = new MemoryArchive(openInMemoryDb(), () => T0 + 60 * MIN);
+    const convo = [
+      msg(10, "user", "I want to design an interface like notes for my ideas. Don't set a watcher yet."),
+      msg(11, "assistant", "Understood. No watcher yet. I'll keep my answers concise."),
+    ];
+    const result = applyOperations(archive, [
+      op({ kind: "preference", topic: "concise answers", text: "Niko wants concise answers.", sourceMessageIds: [10, 11], evidence: "I'll keep my answers concise" }),
+      op({ kind: "preference", topic: "short replies", text: "Niko wants short replies.", sourceMessageIds: [10], evidence: "keep replies short" }),
+      op({ kind: "project", topic: "ideas interface", text: "Niko wants a notes-like interface for his ideas.", sourceMessageIds: [10], evidence: "design an interface like notes for my ideas" }),
+    ], { batch: convo, sessionId: "s1", origin: "backfill", actor: "backfill" });
+    expect(result.skipped.map((item) => item.why)).toEqual([
+      "evidence quote not found in the cited words", "evidence quote not found in the cited words",
+    ]);
+    expect(archive.current().map((record) => record.topic)).toEqual(["ideas interface"]);
+  });
+
   it("downgrades a remember that was never asked for, and holds sensitive or unsure items for Niko", () => {
     const archive = new MemoryArchive(openInMemoryDb(), () => T0 + 60 * MIN);
     applyOperations(archive, [
       op({ kind: "commitment", topic: "knee appointment", text: "Niko has a doctor's appointment about his knee on 26 Sep at 15:00.",
-        speechAct: "requested", sensitive: true, sourceMessageIds: [3], due: "2026-09-26T15:00" }),
-      op({ topic: "guess", text: "Niko might like tennis.", confidence: "low", sourceMessageIds: [3] }),
+        speechAct: "requested", sensitive: true, sourceMessageIds: [3], evidence: "a doctor's appointment about my knee", due: "2026-09-26T15:00" }),
+      op({ topic: "guess", text: "Niko might like tennis.", confidence: "low", sourceMessageIds: [3], evidence: "appointment about my knee on Friday" }),
     ], { batch, sessionId: "s1", origin: "conversation", actor: "extractor" });
     const waiting = archive.unconfirmed();
     expect(waiting.map((record) => record.topic)).toEqual(["knee appointment", "guess"]);
@@ -83,12 +100,12 @@ describe("memory extraction rules", () => {
       confidence: "high", origin: "explicit", saidAt: T0 }, "niko");
     if (!stored.ok) throw new Error("setup failed");
     const result = applyOperations(archive, [
-      op({ op: "forget", targetId: stored.record.id, sourceMessageIds: [6] }),
+      op({ op: "forget", targetId: stored.record.id, sourceMessageIds: [6], evidence: "Forget about that for now" }),
       op({ op: "forget", targetId: stored.record.id, sourceMessageIds: [2] }),
     ], { batch, sessionId: "s1", origin: "conversation", actor: "extractor" });
     expect(result.skipped.map((item) => item.why)).toEqual(["Niko did not ask to forget", "Niko did not ask to forget"]);
     expect(archive.current()).toHaveLength(1);
-    const real = applyOperations(archive, [op({ op: "forget", targetId: stored.record.id, sourceMessageIds: [7] })],
+    const real = applyOperations(archive, [op({ op: "forget", targetId: stored.record.id, sourceMessageIds: [7], evidence: "Forget my code word" })],
       { batch, sessionId: "s1", origin: "conversation", actor: "extractor" });
     expect(real.applied.map((item) => item.result)).toEqual(["forgotten"]);
     expect(archive.current()).toEqual([]);
@@ -103,7 +120,7 @@ describe("memory extraction rules", () => {
     if (!explicit.ok || !priority.ok) throw new Error("setup failed");
     const outcome = applyOperations(archive, [
       op({ speechAct: "requested" }),
-      op({ op: "end", targetId: priority.record.id, kind: "project", topic: "top priorities", sourceMessageIds: [3] }),
+      op({ op: "end", targetId: priority.record.id, kind: "project", topic: "top priorities", sourceMessageIds: [3], evidence: "doctor's appointment about my knee" }),
     ], { batch, sessionId: "s1", origin: "conversation", actor: "extractor" });
     expect(outcome.applied.map((item) => item.result)).toEqual(["unchanged", "ended"]);
     expect(archive.current().map((record) => record.text)).toEqual(["Niko's mom is called Teo."]);
@@ -156,7 +173,7 @@ describe("memory extractor", () => {
     const archive = new MemoryArchive(db, () => T0 + 60 * MIN);
     const model = fakeModel((user) => ({ operations: user.includes("#3 ") ? [
       { op: "add", target_id: null, kind: "fact", topic: "home", text: "Niko lives near Dublin.", speech_act: "stated",
-        sensitive: false, confidence: "high", source_message_ids: [3], due: null, reason: "where he lives" },
+        sensitive: false, confidence: "high", source_message_ids: [3], evidence: "I live near Dublin", due: null, reason: "where he lives" },
     ] : [] }));
     const extractor = new MemoryExtractor(db, archive, model, { origin: "backfill", actor: "backfill", batchMessages: 2 });
     expect(extractor.eligibleSessions().map((session) => session.id)).toEqual(["chat", "mixed"]);

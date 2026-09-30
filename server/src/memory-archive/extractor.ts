@@ -44,6 +44,8 @@ export type ProposedOperation = {
   sensitive: boolean;
   confidence: MemoryConfidence;
   sourceMessageIds: number[];
+  /** An exact quote from a cited message; checked against the message itself. */
+  evidence: string;
   due: string | null;
   reason: string;
 };
@@ -79,7 +81,7 @@ export const EXTRACTION_SCHEMA: Record<string, unknown> = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["op", "target_id", "kind", "topic", "text", "speech_act", "sensitive", "confidence", "source_message_ids", "due", "reason"],
+        required: ["op", "target_id", "kind", "topic", "text", "speech_act", "sensitive", "confidence", "source_message_ids", "evidence", "due", "reason"],
         properties: {
           op: { type: "string", enum: ["add", "update", "end", "forget"] },
           target_id: { type: ["string", "null"] },
@@ -90,6 +92,7 @@ export const EXTRACTION_SCHEMA: Record<string, unknown> = {
           sensitive: { type: "boolean" },
           confidence: { type: "string", enum: [...MEMORY_CONFIDENCE] },
           source_message_ids: { type: "array", items: { type: "integer" } },
+          evidence: { type: "string" },
           due: { type: ["string", "null"] },
           reason: { type: "string" },
         },
@@ -145,6 +148,7 @@ WRITING EACH MEMORY
 - text: one or two plain sentences in the third person that stand on their own, e.g. "Niko's mother's name is Teo." Resolve relative dates ("tomorrow", "Friday", "next week") to absolute dates using the message time; all times are Europe/Dublin.
 - topic: a short, stable label for what the memory is about, e.g. "mother's name", "Lasha's Instagram", "top priorities", "study session saving rule". When the new information is about the same thing as an existing memory, reuse that memory's topic exactly.
 - source_message_ids: the ids of the NEW messages that support it, including at least one of Niko's. Never cite context messages.
+- evidence: a short exact quote (3 to 25 words) copied character for character from one of the cited messages, taken from Niko's own message unless speech_act is "discussed" or "inferred". It must show the memory is really there. If you cannot quote Niko saying it, do not propose it: what AVA said is never Niko's statement.
 - due: for commitments only, "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM" in Dublin time; otherwise null.
 - confidence: high when Niko said it plainly; medium when it is clear but indirect; low when you are unsure it was really Niko or really meant.
 - reason: a few words on why this is worth remembering.
@@ -244,6 +248,7 @@ export function parseOperations(raw: string): ProposedOperation[] | null {
       confidence: o.confidence as MemoryConfidence,
       sourceMessageIds: Array.isArray(o.source_message_ids)
         ? o.source_message_ids.filter((id): id is number => Number.isSafeInteger(id)) : [],
+      evidence: typeof o.evidence === "string" ? o.evidence : "",
       due: typeof o.due === "string" && o.due.trim() ? o.due.trim() : null,
       reason: typeof o.reason === "string" ? o.reason.slice(0, 200) : "",
     });
@@ -261,6 +266,17 @@ export function dublinDue(value: string | null): number | null {
   } catch {
     return null;
   }
+}
+
+function comparable(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/** True when the quote really appears (ignoring case and punctuation) in one of the messages. */
+export function quoteFound(evidence: string, messages: ConversationMessage[]): boolean {
+  const quote = comparable(evidence);
+  if (quote.split(" ").length < 2) return false;
+  return messages.some((message) => comparable(message.content).includes(quote));
 }
 
 export type AppliedOperation = { op: ProposedOperation; result: "added" | "replaced" | "ended" | "forgotten" | "unchanged" | "confirmed" };
@@ -290,6 +306,11 @@ export function applyOperations(
     const needsNiko = op.speechAct !== "discussed" && op.speechAct !== "inferred";
     if (needsNiko && !nikoSources.length) { skipped.push({ op, why: "not supported by Niko's own words" }); continue; }
     if (!op.text.trim() || !op.topic.trim()) { skipped.push({ op, why: "empty text or topic" }); continue; }
+    // Provenance: the quote must be in Niko's own cited words (or, for an idea
+    // AVA raised, in a cited message). This is what stops AVA's own promise
+    // ("I'll keep my answers concise") becoming Niko's preference.
+    const quoteSources = (needsNiko ? nikoSources : sources).map((id) => byId.get(id)!);
+    if (!quoteFound(op.evidence, quoteSources)) { skipped.push({ op, why: "evidence quote not found in the cited words" }); continue; }
     const nikoText = nikoSources.map((id) => byId.get(id)!.content).join("\n");
     const speechAct: SpeechAct = op.speechAct === "requested" && !REMEMBER_REQUEST.test(nikoText) ? "stated" : op.speechAct;
     const saidAt = Math.max(...(nikoSources.length ? nikoSources : sources).map((id) => byId.get(id)!.createdAt));

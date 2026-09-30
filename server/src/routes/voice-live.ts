@@ -31,6 +31,7 @@ import {
 import type { MemoryIndexService } from "../memory-index/store.js";
 import type { MemoryArchive } from "../memory-archive/archive.js";
 import type { MemoryChange } from "../memory-archive/types.js";
+import type { FastLookup } from "../lookups/fast-lookup.js";
 import type { ObservabilityService } from "../observability/store.js";
 import type { ObservabilityParentContext } from "../observability/types.js";
 import { voiceMemoryBudget, withinBudget } from "./voice-memory-budget.js";
@@ -53,7 +54,8 @@ export const LIVE_MAX_DELEGATION_IDS = 512;
 export const LIVE_RESULT_HISTORY = 6;
 export const LIVE_RESULT_CHARS = 1_200;
 
-type LiveJob = { task: string; delegationId: string | null; label: string; generation: number };
+/** request/recent: Sir's own words and the recent conversation, for the fast lookup lane. */
+type LiveJob = { task: string; delegationId: string | null; label: string; generation: number; request: string; recent: string };
 
 function safeReportText(text: string, limit: number): string {
   return clipForLive(sanitiseExplorerText(text) ?? "", limit);
@@ -267,6 +269,8 @@ export type LiveSessionContext = {
   memoryAutoCapture?: (input: { sessionId: string; userMessageId: number; assistantMessageId: number; channel: "voice" }) => Promise<unknown>;
   /** Memory v2: explicit changes Sir makes during the call are pushed to GPT-Live at once. */
   memoryArchive?: MemoryArchive;
+  /** Read-only questions answered from AVA's data without the full agent (null = use the agent). */
+  fastLookup?: FastLookup;
   observability?: ObservabilityService;
   log?: Log;
   /** Frames the browser sent before the upstream was ready. */
@@ -451,6 +455,22 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
         const current = () => !controller.signal.aborted && !closed && job.generation === generation;
         sendClient(JSON.stringify({ type: "ava.action", task: label.slice(0, 200) }));
         record({ producerId: "ava:voice", type: "agent.delegation.started", status: "running", title: "GPT-Live delegated work to AVA" });
+        // Fast lane: a read-only question is answered from AVA's own data in a
+        // second or two instead of a full agent run. Anything else, or any
+        // failure, falls through to the agent below.
+        if (ctx.fastLookup) {
+          const fast = await ctx.fastLookup({ request: job.request, recent: job.recent, signal: controller.signal }).catch(() => null);
+          if (fast && current()) {
+            report(job, fast.text);
+            reply(delegationId, fast.text, true);
+            record({ producerId: "ava:voice", type: "agent.delegation.completed", status: "success",
+              title: `Answered from AVA's ${fast.route} without the agent (${fast.ms} ms)` });
+            actions.delete(controller);
+            activeJob = null;
+            continue;
+          }
+          if (!current()) { actions.delete(controller); activeJob = null; continue; }
+        }
         try {
           const result = await ctx.runAction(sessionId, taskWithResults(task, reports), (tool, args) => {
             if (current()) sendClient(JSON.stringify({ type: "ava.step", tool, args }));
@@ -477,13 +497,13 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
     } finally { pumping = false; }
   };
 
-  const runJob = (task: string, delegationId: string | null, label: string) => {
+  const runJob = (task: string, delegationId: string | null, label: string, recent = "") => {
     if (closed) return;
     if (queue.length + actions.size >= LIVE_MAX_PENDING_JOBS) {
       reply(delegationId, "Too many requests are waiting. This request was not queued; please wait for the current work and ask again.");
       return;
     }
-    queue.push({ task, delegationId, label, generation });
+    queue.push({ task, delegationId, label, generation, request: label, recent });
     void pump();
   };
 
@@ -642,7 +662,9 @@ export function startLiveSession(ctx: LiveSessionContext): Promise<boolean> {
             reply(id, "There are no new user words to act on. Do not repeat earlier work; wait for a new request.");
             return;
           }
-          runJob(composeDelegationTask(context.length ? context : sessionTurns, request), id, request.join(" "));
+          const recentTurns = (context.length ? context : sessionTurns).slice(-6)
+            .map((t) => `${t.speaker === "user" ? "Sir" : "AVA"}: ${t.text.slice(0, 300)}`).join("\n");
+          runJob(composeDelegationTask(context.length ? context : sessionTurns, request), id, request.join(" "), recentTurns);
           return;
         }
         case "session.usage.updated":

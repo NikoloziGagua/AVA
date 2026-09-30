@@ -214,3 +214,45 @@ describe("GPT-Live memory updates during a call", () => {
     expect(appended()).toHaveLength(2);
   });
 });
+
+describe("GPT-Live fast lookup lane", () => {
+  async function liveWith(fastLookup: (input: { request: string; recent: string }) => Promise<{ route: "calendar"; text: string; ms: number } | null>) {
+    const db = openInMemoryDb();
+    const sessionId = createSession(db, { title: "Synthetic voice test", origin: "human" }).id;
+    const client = new Socket(), upstream = new Socket();
+    const runAction = vi.fn<LiveRunAction>(async () => ({ sessionId, text: "The agent answered." }));
+    const started = startLiveSession({
+      client: client as unknown as WebSocket, db,
+      binding: { version: 1, sessionId, origin: "human", resolution: "resumed_exact" },
+      apiKey: "not-a-real-key", instructions: "Synthetic fixture", runAction, fastLookup,
+      hello: () => JSON.stringify({ type: "ava.session", sessionId }),
+      connect: () => upstream as unknown as WebSocket,
+    });
+    const emit = (e: unknown) => upstream.emit("message", Buffer.from(JSON.stringify(e)));
+    upstream.emit("open"); emit({ type: "session.started" }); await started;
+    cleanups.push(() => { client.close(); upstream.close(); db.close(); });
+    const ask = async (words: string, id: string) => {
+      emit({ type: "session.input_transcript.delta", delta: words });
+      emit({ type: "session.delegation.created", delegation: { target: "client", id } });
+      await tick(); await tick();
+    };
+    const spoken = () => upstream.frames.filter((f) => f.type === "session.commentary.append").map((f) => f.content as string);
+    return { runAction, ask, spoken };
+  }
+
+  it("answers a read-only question from AVA's data without starting the agent", async () => {
+    const fast = vi.fn(async () => ({ route: "calendar" as const, text: "AVA's calendar, read just now: Thu 1 Oct: 09:00-10:00 Data Science", ms: 900 }));
+    const live = await liveWith(fast);
+    await live.ask("What's on my calendar this week?", "d1");
+    expect(fast).toHaveBeenCalledWith(expect.objectContaining({ request: "What's on my calendar this week?" }));
+    expect(live.runAction).not.toHaveBeenCalled();
+    expect(live.spoken()).toEqual([expect.stringContaining("Thu 1 Oct: 09:00-10:00 Data Science")]);
+  });
+
+  it("falls through to the agent when the fast lane passes", async () => {
+    const live = await liveWith(async () => null);
+    await live.ask("Add gym on Friday at seven", "d2");
+    expect(live.runAction).toHaveBeenCalledTimes(1);
+    expect(live.spoken()).toEqual(["The agent answered."]);
+  });
+});

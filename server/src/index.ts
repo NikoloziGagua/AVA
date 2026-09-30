@@ -79,6 +79,7 @@ import { MemoryArchive } from "./memory-archive/archive.js";
 import { keepBriefCurrent, memoryV2Enabled } from "./memory-archive/brief.js";
 import { openAIExtractionModel } from "./memory-archive/extractor.js";
 import { startMemoryExtraction } from "./memory-archive/scheduler.js";
+import { createFastLookup } from "./lookups/fast-lookup.js";
 import { ActivepiecesWebhookExecutor } from "./automations/activepieces.js";
 import { AutomationPlaybookService, buildAutomationWorkflowRegistrations } from "./automations/playbooks.js";
 import { GeneratedPlaybookService } from "./automations/generated-playbooks.js";
@@ -1136,6 +1137,10 @@ const realtimeProxy = buildRealtimeProxy({
   memoryIndex,
   memoryAutoCapture,
   memoryArchive,
+  // Read-only voice questions skip the full agent (AVA_FAST_LOOKUP=off disables it).
+  fastLookup: provider && process.env.AVA_FAST_LOOKUP !== "off"
+    ? createFastLookup({ db, provider, archive: memoryArchive, index: memoryIndex })
+    : undefined,
   observability,
   voice: process.env.REALTIME_VOICE || undefined,
   providerConfig: resolveVoiceProvider(),

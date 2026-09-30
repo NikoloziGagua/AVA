@@ -6,7 +6,7 @@ Niko asked whether these three systems need improving. Short answers:
   contact's Instagram chat was recalled 33 times, 15 of them verified. Two matching bugs made them fire on
   unrelated voice requests; both are fixed. Most of what they learned came from automated Codex improvement
   cycles rather than Niko's own requests.
-- **Activepieces: not earning its keep.** It is a separate local server (not running on 30 Sep) that formats
+- **Activepieces: not earning its keep.** It is a separate local server (running, on port 3000) that formats
   two reports and signs off learned shortcuts. For shortcuts it only writes a plan that repeats the steps,
   which AVA then runs itself, so it adds up to 20 seconds, timeouts, and a way to fail. Keep it only if Niko
   wants its app integrations (Gmail, Sheets, and so on), and then use it for exactly those.
@@ -25,7 +25,7 @@ Read-only queries on the live database and files on 30 Sep 2026.
 | Activepieces `ava.system-report` | 18 runs, 28 Aug to 23 Sep | 16 completed, 2 unavailable |
 | Activepieces `ava.operations-brief` | 8 runs, 29 Aug to 23 Sep | 8 completed |
 | Activepieces `ava.approved-action-plan` | 41 runs, 29 Aug to 28 Sep | 34 completed, 6 timed out, 1 failed. About 30 were the misfiring test shortcut below |
-| Activepieces server | health check at `127.0.0.1:8080` | not reachable |
+| Activepieces server | health check at `127.0.0.1:3000`, the port AVA's start script uses | running. A first check at 8080, the example config's default, wrongly suggested it was down |
 | Microsoft UFO (pinned v3.0.8) | 2 requests, both the Notepad proof | both cancelled; no completed run |
 | Agent tool calls recorded | 327 in total | `automation_run_playbook` 30, `automation_status` 5, system report 3, operations brief 3; UFO tools 0 |
 | Learned playbooks | 49 files | 26 demoted by AVA's own rules (three or more failures, never verified); 23 still offered, of which only 3 were used more than 6 times |

@@ -64,6 +64,8 @@ import { buildMemoryTools } from "../tools/memory-mcp.js";
 import { buildNotesTools } from "../tools/notes-mcp.js";
 import { buildCalendarTools } from "../tools/calendar-mcp.js";
 import { buildProjectTools } from "../tools/projects-mcp.js";
+import { buildTrainingTools } from "../tools/training-mcp.js";
+import { routineFromMemory } from "../training/planner.js";
 import { projectBrief, projectForSession } from "../projects/store.js";
 import { extractMaterial } from "../projects/extract.js";
 import { buildVisualExplanationTools } from "../tools/visual-explanations-mcp.js";
@@ -982,6 +984,10 @@ export function chatRoutes(
           db, sessionId: sid, source: parsed.data.voice ? "voice" : "chat",
           onMaterial: (material) => void extractMaterial({ db, dataDir: agentDeps.dataDir, openai: metered.openai ?? null }, material),
         });
+        const trainingTools = buildTrainingTools({
+          db, provider, routine: routineFromMemory(agentDeps.memoryArchive), sessionId: sid,
+          source: parsed.data.voice ? "voice" : "chat",
+        });
         const visualExplanationTools = buildVisualExplanationTools({
           db,
           sessionId: sid,
@@ -1054,6 +1060,7 @@ export function chatRoutes(
             ...notesTools,
             ...calendarTools,
             ...projectTools,
+            ...trainingTools,
             ...visualExplanationTools,
             ...ufoExperimentTools,
             ...automationTools,
@@ -1084,6 +1091,7 @@ export function chatRoutes(
             ...notesTools,
             ...calendarTools,
             ...projectTools,
+            ...trainingTools,
             ...visualExplanationTools,
             ...ufoExperimentTools.filter((tool) => tool.tool.name === "ufo_experiment_status"),
             ...automationTools,

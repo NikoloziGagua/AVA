@@ -9,6 +9,7 @@ import type { MemoryIndexService } from "../memory-index/store.js";
 import { formatRecall, recall, recallIdeas } from "../memory-archive/recall.js";
 import { memoryV2Enabled } from "../memory-archive/brief.js";
 import { fastProjectAction } from "./project-actions.js";
+import { fastTrainingAction } from "./training-actions.js";
 
 // The fast lane for read-only questions. A voice question like "what's on this
 // week?" used to go through AVA's full agent: a ~23,000-token prompt and two
@@ -41,7 +42,7 @@ export type LookupPlan =
   | { route: "agent" };
 
 export type LookupResult = {
-  route: Exclude<LookupPlan["route"], "agent"> | "projects"; text: string; ms: number;
+  route: Exclude<LookupPlan["route"], "agent"> | "projects" | "training"; text: string; ms: number;
   /** The project the call is now about ("let's talk about the tyre business"). */
   project?: { id: string; name: string };
 };
@@ -174,6 +175,8 @@ export function createFastLookup(deps: {
   provider: LLMProvider;
   archive?: MemoryArchive;
   index?: MemoryIndexService;
+  /** What AVA remembers about Sir's training routine, for the planner. */
+  routine?: () => string[];
   now?: () => number;
 }): FastLookup {
   const now = deps.now ?? Date.now;
@@ -182,6 +185,9 @@ export function createFastLookup(deps: {
     // Projects first: adding or removing one must never wait for the agent.
     const projectAction = await fastProjectAction(deps, request, recent, signal);
     if (projectAction) return { route: "projects", text: projectAction.text, project: projectAction.project, ms: now() - started };
+    // Training next: "did boxing, 60 minutes" is logged in about two seconds.
+    const trainingAction = await fastTrainingAction({ db: deps.db, provider: deps.provider, routine: deps.routine, now }, request, recent, signal);
+    if (trainingAction) return { route: "training", text: trainingAction.text, ms: now() - started };
     if (!lookupCandidate(request) || signal?.aborted) return null;
     let plan: LookupPlan;
     try {

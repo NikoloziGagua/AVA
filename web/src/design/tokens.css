@@ -856,6 +856,49 @@ ul.ds-memory-steps { list-style: disc; }
   .ds-projects-body { padding: 18px 16px 24px; }
   .ds-projects-talk { min-height: 420px; }
 }
+/* Training (docs/design/ava-training.md): the Calendar workspace with a day-by-day plan. */
+[data-discipline="mobility"] { --d: var(--ds-ink-2); }
+[data-discipline="bjj"] { --d: var(--ds-kind-lecture); }
+[data-discipline="boxing"] { --d: var(--ds-danger); }
+[data-discipline="kickboxing"] { --d: var(--ds-warning); }
+[data-discipline="mma"] { --d: var(--ds-info); }
+[data-discipline="gym"] { --d: var(--ds-kind-event); }
+[data-discipline="run"] { --d: var(--ds-trace); }
+.ds-training-panel { grid-template-columns: 250px minmax(0, 1fr) 340px; }
+.ds-training-body { display: grid; align-content: start; gap: 22px; padding: 22px 24px 32px; min-width: 0; }
+.ds-training-notice { min-height: 22px; margin-bottom: 10px; font-size: 13px; color: var(--ds-ink-2); }
+.ds-training-notice[data-error="true"] { color: var(--ds-danger); }
+.ds-training-intro { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 18px; }
+.ds-training-intro > p { flex: 1 1 320px; }
+.ds-training-rail-inline { display: grid; gap: 12px; padding-bottom: 18px; box-shadow: inset 0 -1px var(--ds-panel-line); }
+.ds-training-rail-inline .ds-calendar-rail-label { margin-top: 0; }
+.ds-training-rail-inline .ds-calendar-rail-note { margin-top: 0; }
+.ds-training-day { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 14px; padding-bottom: 14px; box-shadow: inset 0 -1px var(--ds-panel-line); }
+.ds-training-day[data-past="true"] { opacity: .6; }
+.ds-training-day-label { display: grid; align-content: start; justify-items: start; gap: 4px; padding-top: 10px; }
+.ds-training-day-label strong { font-size: 18px; font-weight: 500; }
+.ds-training-day-label span { font-size: 13px; color: var(--ds-ink-3); }
+.ds-training-empty { padding: 10px 12px; font-size: 13px; color: var(--ds-ink-3); }
+.ds-training-item { display: grid; grid-template-columns: 96px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 12px; border-left: 3px solid var(--d, var(--ds-ink-3)); background: var(--ds-glass); }
+.ds-training-item[data-state="commitment"] { background: none; border-left-color: var(--ds-panel-line); opacity: .75; }
+.ds-training-item[data-state="proposed"] { background: none; box-shadow: inset 0 0 0 1px var(--ds-glass-edge); border-left-style: dashed; }
+.ds-training-item[data-state="warning"] { background: var(--ds-warning-soft); }
+.ds-training-item[data-state="skipped"] { background: none; opacity: .6; }
+.ds-training-item[data-state="skipped"] .ds-training-title { text-decoration: line-through; }
+.ds-training-title { overflow-wrap: anywhere; }
+.ds-training-time { font-size: 13px; color: var(--ds-ink-2); font-variant-numeric: tabular-nums; }
+.ds-training-dot { display: block; width: 10px; height: 10px; border-radius: 2px; background: var(--d); flex: none; }
+.ds-training-meter { height: 5px; border-radius: 3px; background: var(--ds-glass); overflow: hidden; }
+.ds-training-meter span { display: block; height: 100%; border-radius: 3px; background: var(--d); }
+.ds-training-short { width: 160px; max-width: 100%; }
+@media (max-width: 1180px) { .ds-training-panel { grid-template-columns: minmax(0, 1fr) 320px; } }
+@media (max-width: 860px) {
+  .ds-training-panel { grid-template-columns: minmax(0, 1fr); }
+  .ds-training-body { padding: 18px 16px 24px; }
+  .ds-training-day { grid-template-columns: 1fr; gap: 8px; }
+  .ds-training-day-label { grid-auto-flow: column; justify-content: start; align-items: baseline; padding-top: 4px; }
+  .ds-training-item { grid-template-columns: 1fr; gap: 6px; }
+}
 /* Small landscape / zoom: permit scrolling rather than hide meaningful content. */
 @media (max-height: 620px) { .ds-atelier-home { overflow-y: auto; } .ds-home-composition { min-height: 560px; } }
 /* Forced colours: surfaces fall back to system colours with real borders. */

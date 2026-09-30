@@ -16,6 +16,7 @@ import {
   AlarmClock,
   Brain,
   CalendarDays,
+  Dumbbell,
   House,
   FolderKanban,
   Lightbulb,
@@ -56,6 +57,9 @@ const ChatScreen = lazy(async () => ({
 }));
 const ProjectsScreen = lazy(async () => ({
   default: (await import("./projects/ProjectsScreen.js")).ProjectsScreen,
+}));
+const TrainingScreen = lazy(async () => ({
+  default: (await import("./training/TrainingScreen.js")).TrainingScreen,
 }));
 const MemoryScreen = lazy(async () => ({
   default: (await import("./memory/MemoryScreen.js")).MemoryScreen,
@@ -103,6 +107,7 @@ type View =
   | { name: "notes"; noteId?: string; handoff?: number }
   | { name: "ideas" }
   | { name: "projects" }
+  | { name: "training" }
   // `focusAt` opens the week of that moment (an idea's calendar source).
   | { name: "schedule"; focusAt?: number; focusOccurrenceKey?: string }
   | { name: "watches"; focusWatchId?: string | null; navigationOrigin?: "mission-control" }
@@ -264,6 +269,7 @@ function destinationForView(v: View): string | null {
     case "notes": return "notes";
     case "ideas": return "ideas";
     case "projects": return "projects";
+    case "training": return "training";
     case "memory": return "memory";
     case "watches": return "reminders";
     case "capabilities": return "explore";
@@ -283,6 +289,7 @@ const DESTINATIONS: Destination[] = [
   { id: "calendar", label: "Calendar", icon: <CalendarDays size={18} />, group: "primary" },
   { id: "ideas", label: "Ideas", icon: <Lightbulb size={18} />, group: "primary" },
   { id: "projects", label: "Projects", icon: <FolderKanban size={18} />, group: "primary" },
+  { id: "training", label: "Training", icon: <Dumbbell size={18} />, group: "primary" },
   { id: "memory", label: "Memory", icon: <Brain size={18} />, group: "system" },
   { id: "reminders", label: "Reminders & watches", icon: <AlarmClock size={18} />, group: "system" },
   { id: "explore", label: "Explore AVA", icon: <Radar size={18} />, group: "system" },
@@ -511,6 +518,7 @@ export function App() {
       case "ideas": setView({ name: "ideas" }); break;
       case "memory": setView({ name: "memory" }); break;
       case "projects": setView({ name: "projects" }); break;
+      case "training": setView({ name: "training" }); break;
       case "reminders": setView({ name: "watches" }); break;
       case "explore": setView({ name: "capabilities" }); break;
       case "visuals": setView({ name: "visuals" }); break;
@@ -678,6 +686,19 @@ export function App() {
             transition={enterT}
           >
             <ProjectsScreen onOpenNote={openNote} />
+          </motion.div>
+        )}
+        {view.name === "training" && (
+          <motion.div
+            key="training"
+            data-view="training"
+            data-deck-transition={deckTransition}
+            className="absolute inset-0"
+            initial={SCREEN.from}
+            animate={SCREEN.to}
+            transition={enterT}
+          >
+            <TrainingScreen onVoice={enterVoiceFromToday} onAsk={(text) => withViewTransition(() => openNewChat(text))} />
           </motion.div>
         )}
         {view.name === "schedule" && (

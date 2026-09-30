@@ -33,7 +33,8 @@
     "memory/MemoryScreen.tsx",
     "memory/MemoryExtras.tsx",
     "memory/MemoryMap.tsx",
-    "projects/ProjectsScreen.tsx"
+    "projects/ProjectsScreen.tsx",
+    "training/TrainingScreen.tsx"
   ],
   "files": {
     "App.tsx": {

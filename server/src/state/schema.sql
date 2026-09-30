@@ -1125,3 +1125,71 @@ CREATE TABLE IF NOT EXISTS project_materials (
 
 CREATE INDEX IF NOT EXISTS idx_project_materials_project
   ON project_materials(project_id, created_at);
+
+-- Training (docs/design/ava-training.md). Sessions AVA proposes, Sir
+-- approves (one calendar block each), logs or skips. Nothing reaches the
+-- calendar until he approves.
+CREATE TABLE IF NOT EXISTS training_sessions (
+  id TEXT PRIMARY KEY,
+  discipline TEXT NOT NULL CHECK (discipline IN ('mobility','bjj','boxing','kickboxing','mma','gym','run')),
+  title TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('proposed','approved','done','skipped')),
+  local_date TEXT NOT NULL,
+  start_local_time TEXT,
+  duration_min INTEGER,
+  plan TEXT NOT NULL DEFAULT '[]',
+  reason TEXT NOT NULL DEFAULT '',
+  calendar_event_id TEXT,
+  calendar_event_version INTEGER,
+  minutes INTEGER,
+  effort INTEGER CHECK (effort IS NULL OR effort BETWEEN 1 AND 10),
+  sore TEXT NOT NULL DEFAULT '[]',
+  notes TEXT NOT NULL DEFAULT '',
+  distance_km REAL,
+  duration_s INTEGER,
+  logged_at INTEGER,
+  source TEXT NOT NULL DEFAULT 'app',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_training_sessions_date
+  ON training_sessions(local_date, status);
+
+CREATE TABLE IF NOT EXISTS training_methods (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  discipline TEXT NOT NULL CHECK (discipline IN ('mobility','bjj','boxing','kickboxing','mma','gym','run')),
+  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','testing','proven','dropped')),
+  source_url TEXT,
+  source_note TEXT NOT NULL DEFAULT '',
+  key_points TEXT NOT NULL DEFAULT '[]',
+  test_plan TEXT NOT NULL DEFAULT '',
+  version INTEGER NOT NULL DEFAULT 1,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS training_trials (
+  id TEXT PRIMARY KEY,
+  method_id TEXT NOT NULL REFERENCES training_methods(id) ON DELETE CASCADE,
+  session_id TEXT REFERENCES training_sessions(id) ON DELETE SET NULL,
+  result TEXT NOT NULL CHECK (result IN ('landed','sometimes','not_yet')),
+  note TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_training_trials_method
+  ON training_trials(method_id, created_at);
+
+CREATE TABLE IF NOT EXISTS training_checkins (
+  id TEXT PRIMARY KEY,
+  local_date TEXT NOT NULL UNIQUE,
+  feeling TEXT NOT NULL CHECK (feeling IN ('fresh','ok','tired','sore','injured')),
+  sore TEXT NOT NULL DEFAULT '[]',
+  sleep_hours REAL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);

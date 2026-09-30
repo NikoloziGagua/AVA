@@ -35,6 +35,8 @@ import { reasoningRoutes } from "./routes/reasoning.js";
 import { memoryRoutes } from "./routes/memory.js";
 import { memoryArchiveRoutes } from "./routes/memory-archive.js";
 import { projectRoutes } from "./routes/projects.js";
+import { trainingRoutes } from "./routes/training.js";
+import { routineFromMemory } from "./training/planner.js";
 import { notesRoutes } from "./routes/notes.js";
 import { calendarRoutes } from "./routes/calendar.js";
 import { uiPreferencesRoutes } from "./routes/ui-preferences.js";
@@ -831,6 +833,7 @@ app.use("/api/memory", memoryRoutes(requireToken(db), { memoryDir: cfg.memoryDir
 app.use("/api/notes", notesRoutes(db, requireToken(db), { queueSelfImprove }));
 app.use("/api/calendar", calendarRoutes(db, requireToken(db)));
 app.use("/api/projects", projectRoutes(db, requireToken(db), { dataDir: cfg.dataDir, openai }));
+app.use("/api/training", trainingRoutes(db, requireToken(db), { provider, routine: routineFromMemory(memoryArchive) }));
 app.use("/api/ui/preferences", uiPreferencesRoutes(db, requireToken(db)));
 app.use("/api/visual-explanations", visualExplanationRoutes(db, requireToken(db)));
 app.use("/api/capabilities", capabilityRoutes(requireToken(db), capabilityRouteDeps));
@@ -1143,7 +1146,7 @@ const realtimeProxy = buildRealtimeProxy({
   memoryArchive,
   // Read-only voice questions skip the full agent (AVA_FAST_LOOKUP=off disables it).
   fastLookup: provider && process.env.AVA_FAST_LOOKUP !== "off"
-    ? createFastLookup({ db, provider, archive: memoryArchive, index: memoryIndex })
+    ? createFastLookup({ db, provider, archive: memoryArchive, index: memoryIndex, routine: routineFromMemory(memoryArchive) })
     : undefined,
   observability,
   voice: process.env.REALTIME_VOICE || undefined,

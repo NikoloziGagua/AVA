@@ -378,7 +378,25 @@ flowchart TB
 
 **The memory dir** (`server/data/memory/`): `personality.md` (the persona), `MEMORY.md` (the index of durable facts), `preferences.md` (learned preferences — e.g. *"open Chrome as a new tab, never overwrite the current tab"*), `observations.md` (low-confidence notes, auto-pruned), `projects/<slug>.md` (per-project context), `playbooks/*.md` (learned procedures, above), `changelog.md` (one line per shipped self-improvement — Ava's self-evolution record, `self/changelog.ts`), and `friction.json` (the mistakes ledger, `self/friction.ts`).
 
-**Assembly** (`orchestrator/system-prompt.ts`): persona → capability map → memory index → preferences → observations → (action mode only) the tool rubric + writable fsRoots. The same bytes are produced each turn for prompt-cache hits.
+**Assembly** (`server/src/orchestrator/system-prompt.ts:90`): persona →
+collaboration/register guidance → capability map and legacy memory index →
+action-mode tool/context instructions → current memory (Brief when Memory v2 is
+enabled; legacy preferences/observations otherwise) → optional project context
+and active register. Compact voice assembly skips the capability map and legacy
+index. Stable layers precede mutable context to support prompt-cache reuse.
+
+**Persona 3.2 adds active care, reflection and grounded accountability.** The
+identity permits a wider emotional range and worthwhile conversational initiative
+while keeping interpretations tentative, refusals respected and tool/Memory
+consent unchanged (`server/src/memory/personality-content.ts:12`). Prompt
+assembly reads the active identity on each call; bootstrap upgrades only exact
+known defaults, including both shipped 3.1 variants, and preserves other owner
+edits (`server/src/orchestrator/system-prompt.ts:90`,
+`server/src/memory/bootstrap.ts:6`). New voice connections read the file;
+already connected sessions need reconnecting. Hume's existing 11,000-character
+budget can still truncate the persona base. No persistent curiosity state,
+new scheduler or silence-triggered initiation is added. See
+[Persona 3.2](features/persona-v2.md) for delivery layers and verification limits.
 
 **Source-verified retrieval is a separate SQLite layer.** Research, ideas and
 improvement records live in the semantic index, not just the Markdown preference

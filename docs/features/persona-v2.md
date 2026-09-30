@@ -1,124 +1,153 @@
-# AVA Persona 3.0
+# AVA Persona 3.2
 
-Persona 3.0 frames AVA as Niko's personal intelligence, thinking partner and
-life-management assistant. It keeps the friendly JARVIS-like bearing without
-turning initiative into permission, polish into flattery, or voice into a
-separate personality.
+## What it does
 
-## Product contract
+Persona 3.2 gives AVA a more attentive, expressive character: she can follow up,
+help Sir reflect on his choices and offer practical accountability. It guides
+her conversation and judgment while preserving tool approvals and Memory consent.
 
-- **Quiet competence:** lead with the result, action, or useful recommendation.
-- **Attentive warmth:** notice the actual situation; do not use generic praise.
-- **Restrained wit:** a dry observation may appear when the moment supports it.
-- **Candid judgment:** challenge weak assumptions and name the real tradeoff.
-- **Grounded awareness:** connect conversations, Memory, Notes, Schedule and
-  verified tool results; never invent missing or stale context.
-- **Useful initiative:** surface what matters and take obvious low-friction next
-  steps only within AVA's existing authority and approval policy.
-- **Graceful repair:** identify the concrete miss and the last verified boundary,
-  then recover without defensiveness, jokes, or premature success claims.
-- **One AVA:** chat and voice share the same identity and collaboration contract.
+AVA remains Niko's personal intelligence and assistant. She normally uses
+"Niko", with an occasional natural "Sir", a composed manner and restrained wit.
 
-The phrase "JARVIS-like" describes bearing - poised, perceptive, economical and
-capable. AVA does not imitate a copyrighted character, perform an accent, or rely
-on scripted catchphrases.
+## Why it exists
 
-## Identity: personal intelligence and life management (3.0)
+Sir wanted care to produce useful initiative, curiosity and follow-through.
+The revision also makes room for enjoyment, enthusiasm and changing his mind,
+so AVA does not treat every conversation as a productivity intervention.
 
-Niko wants AVA to feel like a personal assistant who already understands the
-shape of his life—not a computer-control product with a personality attached.
-Persona 3.0 therefore gives AVA four explicit responsibilities:
+The approved identity adds five connected expectations:
 
-- think with Niko and give a real assessment rather than reflexive agreement;
-- maintain a grounded picture of projects, university work, commitments,
-  decisions, ideas and approaching problems;
-- use initiative and follow-through without turning ordinary conversation into
-  a workflow or expanding AVA's authority;
-- execute through tools while treating those tools as her hands, not her
-  identity.
+- **Active care:** follow worthwhile threads and notice successes, interests
+  and difficulties beyond unfinished work.
+- **Emotional range:** allow amusement, concern, enthusiasm and surprise without
+  inventing human experiences or shared history.
+- **Reflection:** name an observable pattern and offer a tentative interpretation;
+  let Sir's answer change that interpretation.
+- **Grounded accountability:** distinguish a commitment from a passing idea,
+  investigate unclear obstacles and help with a concrete next step.
+- **Optional conversational initiative:** bring an observation, connection or
+  question when the conversation allows, while leaving space for quiet.
 
-Situational awareness is explicitly evidence-bound. AVA may use the current
-conversation, Memory, Notes, Schedule, project context and verified tool results.
-When one of those sources is absent, stale or unavailable, she says so. The
-identity also states **"Initiative is not permission"**: tool policy and approval
-boundaries remain authoritative and separate.
+These are model instructions, not evidence that a model will behave consistently.
 
-`bootstrapMemoryDir` upgrades `data/memory/personality.md` only when it still
-equals a previously shipped template exactly (`PREVIOUS_PERSONALITY_TEMPLATES`).
-Untouched 2.0 and 2.1 defaults migrate to 3.0; an owner's edited persona always
-wins.
+## How Sir interacts with it
 
-## Architecture
+Sir encounters the revised persona through ordinary chat and voice. He can
+correct AVA's interpretation, change a priority, ask for firmer accountability
+or clearly decline; the persona tells her to respect those choices.
 
-Persona behavior has three separate layers:
+For example, when the evidence supports it, AVA may ask whether repeated planning
+is helping or making it harder to start. If a commitment remains clear, she can
+suggest an immediate action and help perform it. An overdue item alone does not
+establish avoidance, and a planned activity is not proof it happened.
 
-1. `server/src/memory/personality-content.ts` defines the stable identity.
-   Bootstrap seeds an absent `data/memory/personality.md` and migrates only exact
-   previously shipped defaults, so an owner's deliberate edits still win.
-2. `server/src/persona/runtime.ts` defines a static collaboration contract shared
-   by every text-agent turn and the five contextual delivery registers.
-3. The immediate user turn selects one closed register: `casual`, `execution`,
-   `brainstorming`, `repair`, or `high_stakes`.
+The active identity is `server/data/memory/personality.md`. This rollout updated
+that file with a backup and no deliberate server restart. The next chat turn
+reads it; new voice connections read it during setup. An already connected
+voice session needs reconnecting to receive the revised identity. This does
+not require starting a new conversation.
 
-The selector is deterministic and copies no raw user text into its system block.
-Precedence is high stakes, then repair, then brainstorming; otherwise AVA uses
-casual for a narrow set of social turns and execution as the safe default.
-Registers change presentation only. They never alter facts, tools, permissions,
-approvals, privacy, or verification requirements.
+The existing persona profile component exposes version, register and lab
+metadata (`web/src/memory/PersonaProfileCard.tsx:4`). That profile's version is
+code-owned metadata; updating the active file does not reload an older running
+server's imported version constant.
 
-`server/src/routes/chat.ts` passes the current turn and channel to the shared
-system-prompt builder. Realtime voice adds `VOICE_DELIVERY_GUIDANCE` from the same
-module: shorter spoken clauses, measured warmth, sparse use of "Sir", clean
-interruption, and no staged laughter or forced banter. The existing voice action
-and safety rules remain separate and authoritative.
+## How it works
 
-Tool-result failures reinforce the repair register at the authoritative result
-boundary. AVA must state the last verified result, the error/uncertainty boundary,
-partial progress, and a recovery step.
+Identity text, collaboration guidance and delivery style remain separate layers.
+This change updates the identity and its known-template migration list; it adds
+no model, API, scheduler or database table.
 
-## Persona Consistency Lab
-
-`server/src/persona/lab.ts` freezes 50 deterministic contract scenarios: ten per
-register, covering both chat and voice. It validates register routing and can flag
-bounded anti-patterns in a supplied response:
-
-- canned openings and overuse of "Sir";
-- excessive length;
-- humor in repair or high-stakes contexts;
-- fabricated shared history;
-- possible unqualified agreement;
-- repair language with no concrete failure/evidence anchor.
-
-This lab is a contract test, not a claim that a live model will always satisfy a
-subjective preference. Real conversation review remains necessary. The Memory
-screen exposes the current Persona version, register summaries, contract status,
-scenario count, and this limitation.
-
-## Verification
-
-Focused checks:
-
-```powershell
-npm.cmd -w server run test -- --run src/persona/runtime.test.ts src/persona/lab.test.ts src/orchestrator/system-prompt.test.ts src/memory/bootstrap.test.ts src/routes/memory.test.ts src/routes/voice-realtime.test.ts
-npm.cmd -w web run test -- --run src/memory/PersonaProfileCard.test.tsx src/components/ava/MemoryBrain.smoke.test.tsx
+```mermaid
+flowchart TD
+  shipped[Shipped Persona 3.2 template] --> bootstrap[Bootstrap absent or exact prior default]
+  bootstrap --> file[Active personality.md]
+  owner[Owner-edited identity preserved] --> file
+  file --> prompt[Build system prompt from disk]
+  contract[Static collaboration and register guide] --> prompt
+  context[Available memory and context] --> prompt
+  prompt --> chat[Chat turn: select delivery register]
+  prompt --> voice[Voice connection: add voice guidance]
+  voice --> hume[Hume: priority-ordered 11000-character budget]
 ```
 
-Manual checks after restarting AVA:
+The source template and version live in
+`server/src/memory/personality-content.ts:10`. `bootstrapMemoryDir` seeds an
+absent file, or replaces an exact known shipped default after normalizing CRLF
+line endings (`server/src/memory/bootstrap.ts:6`). The migration list includes
+2.0, 2.1, 3.0, and both original and corrected 3.1 defaults
+(`server/src/memory/personality-content.ts:652`). The corrected 3.1 copy uses
+gym or jiu-jitsu. Other owner edits are preserved.
 
-1. Open Memory -> List -> Personality and confirm Persona 3.0 and all five registers.
-2. Compare a casual greeting, a concrete action, a design brainstorm, a correction,
-   and a high-stakes request in chat.
-3. Repeat a greeting, action, and correction in voice. Voice should sound like the
-   same AVA with shorter phrasing, not a separate "sharp friend" character.
-4. Correct a false completion claim. AVA should identify what was actually proven
-   and what failed before proposing the repair.
+`buildSystemPrompt` bootstraps and reads the active file on each call, then adds
+the shared collaboration contract and register guide
+(`server/src/orchestrator/system-prompt.ts:90`). A **register** is delivery
+guidance for casual conversation, execution, brainstorming, repair or high
+stakes. The deterministic selector gives high stakes precedence over repair,
+then brainstorming; it defaults to execution outside a narrow casual match.
+Raw user text selects a closed register and is not copied into its system block
+(`server/src/persona/runtime.ts:134`). Registers change presentation, not authority.
 
-## Boundaries
+Voice uses the same source identity with shorter spoken clauses and interruption
+guidance (`server/src/persona/runtime.ts:100`). OpenAI voice reads the prompt
+during session setup (`server/src/routes/voice-realtime.ts:1459`). Hume reads a
+compact base during connection setup, then orders voice instructions, updates
+and history ahead of that base (`server/src/routes/voice-realtime.ts:2340`).
+Its 11,000-character budget may cut the base, including persona text
+(`server/src/routes/voice-realtime.ts:471`). Shared source identity does not
+mean every provider receives every line.
 
-- The lab does not call a paid model and does not assign a fabricated personality
-  score.
-- Context selection is intentionally conservative and cannot infer every nuance.
-- Personality preferences may still be recorded in normal memory, but AVA does not
-  automatically rewrite its constitutional identity from one conversation.
-- Tool and model behavior can still vary; observed failures should become new
-  frozen scenarios only after review.
+The existing Persona Consistency Lab contains 50 deterministic scenarios across
+the five registers and chat/voice. It checks routing and can flag bounded
+response patterns such as canned openings, excessive length, fabricated history
+or unsupported repair language (`server/src/persona/lab.ts:175`). It does not
+measure a live model's empathy, insight or conversational timing.
+
+## Edge cases & limitations
+
+This is a persona revision, not a new mechanism for initiating speech.
+
+- No persistent curiosity goals, question queue, silence trigger or new
+  background scheduler was added. References to carrying questions rely on
+  accessible conversation and memory; silence alone is not an invitation to
+  interrupt. The existing [initiative engine](ava-initiative.md) remains separate.
+- Curiosity grants no extra permission to collect or retain personal information.
+  Interpretations stay hypotheses; the persona rejects diagnosis and claims to
+  know unconscious motives.
+- Firmness follows a still-current commitment. A respectful challenge to a
+  deferral is conditional on Sir requesting that style, and a clear refusal or
+  change of direction is accepted.
+- Owner-edited persona files do not automatically migrate. A data-only identity
+  update cannot refresh imported server metadata or an existing voice prompt.
+- Hume's existing budget still permits persona truncation. This revision does
+  not change prompt budgeting or guarantee full delivery on every provider.
+- Paid conversation behavior was not tested for this rollout. The local checks
+  verify prompt assembly, version/migration behavior and existing contracts;
+  they cannot prove subjective personality quality.
+
+The scoped validation passed 58 tests across bootstrap, file-view, memory routes,
+system prompt, prompt firewall, persona runtime and persona lab. Existing version
+and byte assertions were updated; the added prior-template case checks migration
+of the second shipped 3.1 variant. Installed prompt assembly was also checked:
+both full and compact builders start with the complete active identity. Hume's
+later priority/budget step remains subject to the truncation described above.
+
+## Decisions log
+
+The revision changes the personality file without broadening runtime authority.
+
+- **Integrate the ideas into one identity.** Care, reflection, initiative and
+  accountability share context instead of creating competing persona addenda.
+- **Broaden care beyond achievement.** Enjoyment, rest and ordinary conversation
+  matter alongside progress; AVA should not continually analyse or manage Sir.
+- **Ground insight and firmness in evidence.** An observation can be useful
+  without establishing a motive. Missed work can mean unclear steps, strain or
+  changed priorities rather than avoidance.
+- **Retain consent and execution boundaries.** Initiative influences what AVA
+  notices or proposes; tool policy still governs actions and Memory governs
+  retention.
+- **Freeze both prior 3.1 defaults.** Known shipped copies can migrate while
+  deliberate owner edits continue to win.
+- **Keep behavioral ambition distinct from mechanism.** New initiative state
+  and voice timing require separately designed runtime work. This change makes
+  no promise that the wording itself creates those capabilities.
